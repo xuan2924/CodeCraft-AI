@@ -61,7 +61,7 @@
 - 工程目录尚未初始化；用户已确认采用 `backend/server/`、`backend/sandbox/`、`backend/proto/`。Java 业务模块、Go 包及前端 feature 边界结合首个纵向功能确定，不把规划目录当作已有工程。
 - 已确认 Maven Wrapper、npm + package-lock.json、Vitest + Vue Test Utils、Playwright；暂不引入 MapStruct、不启用虚拟线程，按实际需求再评估。
 - 日常开发采用本机 Java/Go/Vite + Docker PostgreSQL/题目测试容器；无需本机安装 PostgreSQL。正式启动与生成脚本随首个真实链路建立，当前最小验证不能替代业务验收。
-- 前端依赖安全告警与 Windows Go race 尚未关闭，任务 01 未全部验收；精确版本、门槛与证据见 [工程工具链](engineering-toolchain.md)。
+- 工具链决定票已验收：前端以精确依赖覆盖清除本次审计告警，Windows Go race 显式使用兼容 C 工具链；正式清单/脚本、Linux CI 和完整链路仍待任务 06 及相应功能实现。精确版本、覆盖策略与证据见 [工程工具链](engineering-toolchain.md)。
 - Monaco/xterm 的原生封装与 Vite worker 集成待验证；SSE 客户端结合已确认的 Cookie 身份和恢复契约选择，不因草案 POST 示例锁定库。
 - 依赖选择兼容版本并锁定，以实际清单和脚本为准；PoC 依赖不构成正式版本决定。
 - 配额、保留期限、备份目标与容量参数尚未定，不从“受控试用”推导无限资源。

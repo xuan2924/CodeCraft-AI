@@ -1,6 +1,6 @@
 # 工程初始化与验证工具链
 
-状态：初始化方式已由用户确认；基础兼容性已做最小验证，前端依赖安全告警与 Windows race 仍未闭环。任务 #1 不宣称全部验收完成，不解除第一阶段规格的工程初始化门槛。
+状态：初始化方式已由用户确认；任务 #1 的方案与工具链最小验证已完成。前端依赖告警已通过明确版本覆盖解决，Windows race 已通过进程级指定兼容编译器验证。任务 06 仍须建立正式清单、脚本及真实链路；本任务完成不代表第一阶段业务或 Linux 隔离验收完成。
 
 ## 已确认的初始化方式
 
@@ -26,16 +26,40 @@
 | Java gRPC | gRPC BOM / protoc-gen-grpc-java 1.85.1 | 使用 grpc-netty-shaded、grpc-protobuf、grpc-stub；不为初始化额外加入 gRPC Spring starter |
 | Protobuf | protoc / protobuf-java 3.25.9 | 遵循所核对 gRPC Java 官方示例的配对，双端使用同一 protoc |
 | Maven 生成 | protobuf-maven-plugin 0.6.1；os-maven-plugin 1.7.1 | 按 OS classifier 下载 protoc 与 Java 插件，不要求全局安装 protoc |
-| Go | 1.26.5 | `go.mod` 语言版本至少 1.26.0，CI/本机固定工具链；提交 go.mod、go.sum |
+| Go | 1.26.5 | `go.mod` 语言版本至少 1.26.0，CI/本机固定工具链；提交 go.mod、go.sum；Windows race 使用下述兼容 C 工具链 |
 | Go gRPC | grpc v1.85.0；protobuf v1.36.12 | Go 插件 protoc-gen-go v1.36.12、protoc-gen-go-grpc v1.6.2，不能用 `@latest` 生成 |
 | Docker SDK | github.com/moby/moby/client v0.6.2 | 官方当前模块路径；API 模块经 go.mod 锁定，本次为 v1.56.1；客户端默认协商 API 版本 |
 | Node/npm | 本机 Node 24.9.0 / npm 11.6.0 | 当前探针可运行；不要仅凭主版本判断 engines。Node 24.15.0 只在临时目录试装，未升级全局环境 |
 | Vue 构建 | Vue 3.5.45、TypeScript 5.9.3、vue-tsc 3.3.14、Vite 7.3.7、plugin-vue 6.0.10 | 安装、SFC 转换、类型检查、构建通过；不自动追随 TS 7/Vite 8 |
-| Vue 测试 | Vitest 4.1.12、Vue Test Utils 2.4.11、jsdom 27.4.0、Playwright 1.65.0、@types/node 24.10.0 | 组件及 Chromium 浏览器探针通过，间接依赖安全告警未清零 |
+| Vue 测试 | Vitest 4.1.12、Vue Test Utils 2.4.11、jsdom 27.4.0、Playwright 1.65.0、@types/node 24.10.0 | 组件及 Chromium 浏览器探针通过；须同时应用下述 overrides，干净安装后 audit 为 0 |
 
-其余已确认前端库的**候选**版本：Naive UI 2.45.3、Tailwind CSS / @tailwindcss/vite 4.3.4、Vue Router 4.6.4、Pinia 3.0.4、TanStack Vue Query 5.106.1、xterm 6.0.0。它们完成 npm 安装解析，但未逐个验证运行时接口。Monaco 0.57.0 与回退试验 0.56.0 均有 DOMPurify 安全告警，**不作为已批准版本**。Monaco worker、xterm 生命周期和 Tailwind 插件集成仍需功能级验证。
+其余已确认前端库的**候选**版本：Naive UI 2.45.3、Tailwind CSS / @tailwindcss/vite 4.3.4、Vue Router 4.6.4、Pinia 3.0.4、TanStack Vue Query 5.106.1、xterm 6.0.0。它们完成 npm 安装解析，但未逐个验证运行时接口。Monaco 基线采用 0.57.0，必须搭配下述 DOMPurify 覆盖；其 Vite worker、diff 和悬浮内容净化已做最小浏览器验证。完整编辑器行为、xterm 生命周期和 Tailwind 插件集成仍需功能级验证。
 
 新增依赖的理由限于已确认职责：Wrapper 保证 Maven 版本；Protobuf 插件生成唯一契约；Flyway PostgreSQL 模块支持迁移；Vue Test Utils/jsdom 提供组件环境；Playwright 提供真实浏览器测试。第一阶段不因技术路线中出现 LangChain4j 而提前添加模型 SDK、MapStruct 或其他通用框架。
+
+### 前端安全覆盖与维护
+
+Monaco 0.57.0 自身固定 DOMPurify 3.4.15，测试工具的间接依赖也尚未使用修复范围。正式 `package.json` 必须保留以下 overrides，并提交由 npm 11.6.0 生成的锁文件；不能只固定顶层库然后丢弃覆盖：
+
+```json
+{
+  "overrides": {
+    "monaco-editor": { "dompurify": "3.4.17" },
+    "js-beautify": { "glob": "14.0.4" },
+    "minimatch": "11.0.5"
+  }
+}
+```
+
+DOMPurify 为同一主版本补丁更新；glob/minimatch 跨主版本的理由是修复已知安全告警，而非新增产品能力。本次用 Vue Test Utils 的 `html({ raw: false })`、js-beautify CLI 通配符输入及 EditorConfig 缩进验证其实际调用路径。minimatch 根级覆盖统一两个间接消费者，避免 npm 对仅覆盖 editorconfig 的去重树报 `ELSPROBLEMS`；未来新增消费者时必须重新验证，不能把根覆盖当无限授权。
+
+干净 `npm ci` 后 `npm audit` 为 0、`npm ls` 无错误；这只是执行时的已知漏洞扫描，不是永久安全保证。上游修复后优先删除覆盖并复跑审计、类型检查、组件与浏览器测试。Monaco 0.57 的 worker 导入使用其 exports 路径 `monaco-editor/editor/editor.worker?worker`，不能沿用旧版 `monaco-editor/esm/vs/...` 路径。
+
+### Windows race 的 C 工具链
+
+Go 官方要求 Windows race 使用 mingw-w64 runtime 8+。本机 GCC 8.1.0 配套 runtime v6，空测试也在加载时退出 `0xc0000139`；调整 DLL PATH 无效。使用校验后的 LLVM-MinGW **20261104 UCRT x86_64**（runtime 15）并仅设置当前进程 `CC` 为其 `bin/clang.exe`，空测试和原 Go 探针均通过；故意竞争的负对照仍报 `WARNING: DATA RACE`。
+
+下载地址为 [官方发布资产](https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-x86_64.zip)，SHA-256：`552191b5754c49a5a20723276a6fc56541ea1922c4c50b7b669022333fc1b40f`。正式初始化在开发者工具目录解压并校验，PowerShell 设置 `$env:CC = '<解压目录>\bin\clang.exe'` 后运行 `go test -race -count=1 ./...`。本次只在临时目录验证，未更改全局 PATH、旧 MinGW 或 `go env -w`；临时目录不能作为长期工具路径。任务 06 的启动/验证说明应明确这一准备步骤，不能让 Windows 开发者继续隐式使用旧 GCC。
 
 ## 双端生成约定
 
@@ -71,10 +95,10 @@
 
 Java/前端静态检查插件版本随正式配置锁定，本次未执行 Checkstyle、ESLint 或 Failsafe。测试分层沿用第一阶段规格中用户已确认的浏览器、Java REST/SSE、Go gRPC/Docker 边界；本次仅运行工具链烟测，不宣称业务 TDD 或真实端到端测试完成。
 
-## 未关闭的门槛
+## 后续实现仍需验证
 
-1. **前端依赖安全**：npm audit 报告 Monaco→DOMPurify critical 与测试工具链 moderate 告警；自动建议在 Monaco 0.56/0.57 之间来回切换，未解决。不运行 `audit fix --force`，不默认豁免。继续核对修复版或受限覆盖策略并验证 Monaco 行为后，才能冻结正式前端锁文件。
-2. **Go race**：当前 Windows 命令以 `0xc0000139` 退出，原因未诊断；不能称其通过。Linux CI/WSL 环境需跑过 race；若保留 Windows race 为开发入口，另查运行库/编译器兼容性。
+1. **正式依赖与脚本**：任务 06 将本专题版本、覆盖与工具校验转为真实清单及启动/生成/验证脚本；当前不是可直接运行的正式工程。审计与 smoke 必须在正式锁文件上重跑。
+2. **Linux race**：Windows 工具链兼容问题已解决，但 Linux CI/WSL 的 race 尚未执行；部署侧验证仍由正式工程 CI 落实，不能用 Windows 通过代替 Linux 验收。
 3. **浏览器环境复现**：Chromium 安装命令曾超时，但随后日志确认下载完成，实际浏览器烟测通过。正式 CI 仍需可访问的官方下载或经校验的缓存；不能将一个按钮的烟测当完整业务端到端。
 4. **真实链路**：Java→Go RPC、Linux 路径/权限/资源隔离、完整 Vue IDE、备份恢复均未验证，交由相应功能任务，不扩大本任务实现范围。
 
