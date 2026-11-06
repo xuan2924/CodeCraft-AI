@@ -4,7 +4,6 @@ import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { setTimeout as delay } from 'node:timers/promises';
 import { validatePackage } from './problem-contract.mjs';
 
 const packageDirectory = fileURLToPath(new URL('../problems/cart-total/1.0.0/', import.meta.url));
@@ -53,41 +52,43 @@ async function run(name, command, source, timeoutSeconds = limits.timeoutSeconds
     containers.add(container);
     docker([...args, imageId, '-c', command]);
     const started = Date.now();
-    docker(['start', container]);
-    let timedOut = false;
-    let state;
-    do {
-        state = JSON.parse(docker(['inspect', '--format', '{{json .State}}', container]));
-        if (!state.Running) break;
-        if (Date.now() - started > timeoutSeconds * 1000) {
-            timedOut = true;
-            docker(['kill', container]);
-            state = JSON.parse(docker(['inspect', '--format', '{{json .State}}', container]));
-            break;
-        }
-        await delay(200);
-    } while (true);
-    const elapsedMs = Date.now() - started;
-    const captured = spawnSync('docker', ['logs', container], {
-        encoding: 'utf8', timeout: 15000, maxBuffer: limits.logBytes,
+    // start --attach attaches before starting: never infer total output from rotated logs.
+    const captured = spawnSync('docker', ['start', '--attach', container], {
+        timeout: timeoutSeconds * 1000, maxBuffer: limits.logBytes,
     });
-    if (captured.error) throw captured.error;
-    assert.equal(captured.status, 0, captured.stderr);
-    // Preserve both channels; this maintainer receipt does not promise stream ordering.
-    const log = captured.stdout + '\nSTDERR\n' + captured.stderr;
-    assert(Buffer.byteLength(log) <= limits.logBytes, 'Validation log exceeded cap');
+    const timedOut = captured.error?.code === 'ETIMEDOUT';
+    const observedBytes = (captured.stdout?.length ?? 0) + (captured.stderr?.length ?? 0);
+    const logExceeded = captured.error?.code === 'ENOBUFS' || observedBytes > limits.logBytes;
+    let state = JSON.parse(docker(['inspect', '--format', '{{json .State}}', container]));
+    // A killed/closed attach client does not imply that container processes stopped.
+    if (state.Running) {
+        docker(['kill', container]);
+        state = JSON.parse(docker(['inspect', '--format', '{{json .State}}', container]));
+    }
+    if (captured.error && !timedOut && !logExceeded) throw captured.error;
+    assert.equal(state.Status, 'exited', 'Container did not complete execution');
+    assert(captured.status === state.ExitCode || timedOut || logExceeded,
+        'Docker attach failed before capturing the complete result');
+    const elapsedMs = Date.now() - started;
+    // Node may return a final chunk beyond maxBuffer. Persist only the byte budget.
+    const stdout = (captured.stdout ?? Buffer.alloc(0)).subarray(0, limits.logBytes);
+    const stderr = (captured.stderr ?? Buffer.alloc(0)).subarray(0, limits.logBytes - stdout.length);
+    const log = stdout.toString('utf8') + '\nSTDERR\n' + stderr.toString('utf8');
     await writeFile(join(output, `${name}.log`), log);
     const result = { name, elapsedMs, exitCode: state.ExitCode, oomKilled: state.OOMKilled,
-        timedOut, logBytes: Buffer.byteLength(log),
-        metrics: captured.stdout.split('METRICS\n')[1]?.trim() ?? null };
+        timedOut, logExceeded, logBytes: observedBytes,
+        retainedLogBytes: stdout.length + stderr.length,
+        metrics: stdout.toString('utf8').split('METRICS\n')[1]?.trim() ?? null };
     results.push(result);
     console.log(JSON.stringify(result));
     docker(['rm', '-f', container]);
     containers.delete(container);
+    assert(!logExceeded, 'Validation log exceeded cap');
     return { ...result, log };
 }
 
 let imageId;
+let receipt;
 try {
     // Snapshot trusted maintainer inputs before building/mounting; no live workspace is used.
     const snapshot = join(scratch, 'package');
@@ -145,17 +146,20 @@ exit "$status"`, source);
         }
         results.at(-1).testSummary = testSummary;
     }
+    // Must reject excess output even if a convincing success marker follows it.
+    await assert.rejects(run('log-overflow',
+        `head -c ${limits.logBytes * 2} /dev/zero; printf 'BUILD SUCCESS\\n'`),
+        /Validation log exceeded cap/);
     const deadline = await run('deadline', 'sleep 60 & wait', null, 2);
     assert(deadline.timedOut && deadline.exitCode === 137 && !deadline.oomKilled);
     assert.equal(docker(['ps', '-aq', '--filter', `label=codecraft.validation=${runId}`]), '');
-    await writeFile(join(output, 'receipt.json'), JSON.stringify({
+    receipt = {
         validatedAt: new Date().toISOString(), packageSha256, imageId,
         platform: limits.platform, limits,
         environment: { serverVersion: environment.ServerVersion, kernel: environment.KernelVersion,
             cpus: environment.NCPU, memoryBytes: environment.MemTotal, driver: environment.Driver },
         results, verdict: 'local-contract-validation-passed',
-    }, null, 2) + '\n');
-    console.log(`Validated ${manifest.id}@${manifest.version}; receipt: ${join(output, 'receipt.json')}`);
+    };
 } finally {
     const cleanupErrors = [];
     for (const container of containers) {
@@ -164,3 +168,6 @@ exit "$status"`, source);
     await rm(scratch, { recursive: true, force: true });
     if (cleanupErrors.length) throw new AggregateError(cleanupErrors, `Cleanup failed: ${runId}`);
 }
+// No success evidence is published unless validation AND all cleanup succeeded.
+await writeFile(join(output, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
+console.log(`Validated ${manifest.id}@${manifest.version}; receipt: ${join(output, 'receipt.json')}`);

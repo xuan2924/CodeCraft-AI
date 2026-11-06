@@ -12,7 +12,9 @@
 node --check scripts/problem-contract.mjs
 node --check scripts/problem-contract.test.mjs
 node --check scripts/validate-problem.mjs
+node --check scripts/validation-cleanup.test.mjs
 node --test scripts/problem-contract.test.mjs
+node --test scripts/*.test.mjs
 node scripts/validate-problem.mjs
 ```
 
@@ -48,6 +50,20 @@ node scripts/validate-problem.mjs
 - Docker `local` logging 使用 `max-file=1` 时不能保留默认压缩，否则容器启动失败；脚本显式 `compress=false`，失败那次也已清理容器。
 - `/tmp noexec` 导致 Jansi 2.4.3 提示原生库无法映射；Maven 退化输出后仍完成编译及测试。保持 noexec，保存 stderr，不把此警告误归代码失败。
 - 预热使用实际测试生命周期，运行时 `-o` + network none + 只读仓库均通过；不以联网构建成功冒充离线验证。
+
+## 独立审查与回归修复
+
+两路只读审查以 `7e9bd98..bda32d0` 为范围；首次因审查工具无法取得已提交 diff 而受阻，提供完整 diff 文件后重试完成。
+
+### Standards
+
+发现 1 项 P2：成功回执早于临时目录清理，清理失败时可能残留成功证据。已将回执写入及成功消息移至整个 try/finally 成功返回之后；新增 `validation-cleanup.test.mjs`，在真实 Docker 验证完成后显式注入文件系统清理失败，断言命令失败且 receipt 不存在，测试自身恢复文件系统函数并移除故障目录。该故障回归已实际通过。
+
+### Spec
+
+发现 1 项 P2：仅在结束后读取 daemon 轮转日志，不能证明原始输出没超过预算。已改为 `docker start --attach` 启动前建立有界收集，超限即失败，并独立核对/终止容器；增加输出 2 MiB 后再输出成功标记的真实 Docker 探针，确认超限仍被拒绝，最多保存 1 MiB 输出载荷。
+
+修复后单独执行清理故障回归通过；初始/参考、隔离、超量拒绝、超时和容器清理均再次通过。最终完整套件为 7 项包校验 + 1 项真实 Docker 清理故障回归；成功发布验证另行顺序执行。旧测量表保留原时间与原收集格式，修复后 `logBytes` 不再计入 8 字节通道标记。
 
 ## 未验证项及后续阻塞
 

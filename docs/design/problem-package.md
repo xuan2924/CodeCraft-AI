@@ -44,7 +44,7 @@
 4. 同批验证隔离、可写目录限额、保护性超时及清理。receipt 保存包摘要、镜像身份、平台、配置、实际环境、测试摘要及测量；题目首次发布和任何包/镜像变更均重跑。
 5. 目标部署宿主复验通过后，才可由 Java 将固定版本加入可选列表。当前脚本不写业务数据库，没有实现 registry 发布或生产发布 API。
 
-仓库命令：`node --test scripts/problem-contract.test.mjs`；`node scripts/validate-problem.mjs`。仅需 Node 24 和 Docker；验证容器输入挂载的是维护者包的临时副本，不是用户活动工作区。默认 daemon seccomp 必须启用（探针检查 mode 2），不支持 unconfined 环境。
+仓库命令：`node --test scripts/problem-contract.test.mjs`（快速包验证）；`node --test scripts/*.test.mjs`（包含真实 Docker 清理故障回归）；`node scripts/validate-problem.mjs`（生成成功回执）。这些发布命令顺序执行，不并行写同一个证据目录。仅需 Node 24 和 Docker；验证容器输入挂载的是维护者包的临时副本，不是用户活动工作区。默认 daemon seccomp 必须启用（探针检查 mode 2），不支持 unconfined 环境。
 
 ## 首题资源建议与边界
 
@@ -60,7 +60,7 @@
 | 日志 | stdout/stderr 合计保留 1 MiB | 当前输出远低于此值；Go 达限后继续消费并丢弃后续内容，持久化 `truncated=true` 与已丢弃字节数，不让管道阻塞测试 |
 | 全局并发 | 1，不排队 | 这是保守准入建议，非已验证吞吐上限；同演练最多一个任务。16 CPU / 约 6.8 GiB Docker VM 不代表可以开 16 个测试 |
 
-验证脚本用 Docker `local` 日志驱动 `max-size=1048576,max-file=1,compress=false` 限制 daemon 日志；其轮转是近似文件上限，不能代替业务精确字节预算和显式截断事件。维护者验证遇到日志超过收集上限直接失败，不将残缺日志当成功。生产磁盘还必须预算镜像、只读输入副本、正式工作区与持久化日志；这些不受 tmpfs 大小约束，任务 04/16 及部署配置继续阻塞容量验收。
+验证脚本用 Docker `local` 日志驱动 `max-size=1048576,max-file=1,compress=false` 限制 daemon 日志；其轮转是近似文件上限，不能代替业务精确字节预算和显式截断事件。维护者验证用 `docker start --attach` 在启动前建立输出收集，不从轮转日志推断总输出；stdout/stderr 超过合计收集上限即失败，并确认容器已终止。保存的输出载荷最多 1 MiB（额外通道标记不计入载荷），超量时观测字节数只是已收集数量，不虚构完整丢弃字节数。故意超量探针必须被拒绝，不将残缺日志当成功。成功回执只在全部容器及临时目录清理完成后写入。生产磁盘还必须预算镜像、只读输入副本、正式工作区与持久化日志；这些不受 tmpfs 大小约束，任务 04/16 及部署配置继续阻塞容量验收。
 
 ## 结果与保护性超时
 
