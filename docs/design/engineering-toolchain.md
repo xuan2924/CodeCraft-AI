@@ -65,7 +65,7 @@
 | 范围 | 单点与快速反馈 | 完整验证 |
 |---|---|---|
 | Java | `./mvnw -Dtest=<类名> test`；`./mvnw -DskipTests compile` | `./mvnw verify`：JUnit 5/Surefire 单元与边界测试、Failsafe `*IT` 集成测试；配置 Checkstyle 检查手写代码（4 空格、显式 import），排除生成文件；编译器启用 lint |
-| Go | `go test ./internal/<包> -run <测试名> -count=1` | `gofmt -l` 输出非空即失败；`go vet ./...`；`go test -count=1 ./...`；Linux `go test -race -count=1 ./...`；`go build ./cmd/sandbox` |
+| Go | `go test ./internal/<包> -run <测试名> -count=1` | 在 Go 模块目录执行 `gofmt -l .`，输出非空即失败；`go vet ./...`；`go test -count=1 ./...`；Linux `go test -race -count=1 ./...`；`go build ./cmd/sandbox` |
 | Vue | `npm run typecheck` → `vue-tsc --noEmit`；`npm run test:unit -- <文件>` → `vitest run` | `npm run lint`（ESLint，规则匹配 Vue/TS）；`npm run typecheck`；`npm run test:unit`；`npm run build` → `vite build` |
 | 浏览器 | `npm run test:e2e -- <文件>` → `playwright test` | 安装匹配版本的 Chromium；在独立测试数据库/工作区启动真实 Java、Go、PostgreSQL、Docker，再跑全套；不能用前端假 API 代替 |
 
