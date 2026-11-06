@@ -1,0 +1,116 @@
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+THROWAWAY / LangChain4j 1.23.0 / scripted model / no API key / no persistence
+
+=== AI_SERVICES / AUTO ===
+  MODEL call=1 messages=1
+  TOOL view_file -> v1:original
+  DECISION APPLIED workspace=v2
+  TOOL apply_patch -> APPLIED workspace=v2
+  TOOL run_tests -> SIMULATED_PASS v2
+  MODEL call=2 messages=5
+  FINAL received=[call-view_file=v1:original, call-apply_patch=APPLIED workspace=v2, call-run_tests=SIMULATED_PASS v2]
+  STATE {version=2, content=ai-edit, patch=APPLIED, base=1, writes=1, testRuns=1, modelCalls=2}
+
+=== MANUAL / AUTO ===
+  MODEL call=1 messages=1
+  TOOL view_file -> v1:original
+  DECISION APPLIED workspace=v2
+  TOOL apply_patch -> APPLIED workspace=v2
+  TOOL run_tests -> SIMULATED_PASS v2
+  MODEL call=2 messages=5
+  FINAL received=[call-view_file=v1:original, call-apply_patch=APPLIED workspace=v2, call-run_tests=SIMULATED_PASS v2]
+  STATE {version=2, content=ai-edit, patch=APPLIED, base=1, writes=1, testRuns=1, modelCalls=2}
+
+=== AI_SERVICES / APPROVE ===
+  MODEL call=1 messages=1
+  TOOL view_file -> v1:original
+  WAIT invocationDone=false {version=1, content=original, patch=PENDING, base=1, writes=0, testRuns=0, modelCalls=1}
+  DECISION APPLIED workspace=v2
+  TOOL apply_patch -> APPLIED workspace=v2
+  TOOL run_tests -> SIMULATED_PASS v2
+  MODEL call=2 messages=5
+  FINAL received=[call-view_file=v1:original, call-apply_patch=APPLIED workspace=v2, call-run_tests=SIMULATED_PASS v2]
+  STATE {version=2, content=ai-edit, patch=APPLIED, base=1, writes=1, testRuns=1, modelCalls=2}
+
+=== MANUAL / APPROVE ===
+  MODEL call=1 messages=1
+  TOOL view_file -> v1:original
+  WAIT runUntilPause returned; cursor=1 {version=1, content=original, patch=PENDING, base=1, writes=0, testRuns=0, modelCalls=1}
+  DECISION APPLIED workspace=v2
+  TOOL apply_patch -> APPLIED workspace=v2
+  TOOL run_tests -> SIMULATED_PASS v2
+  MODEL call=2 messages=5
+  FINAL received=[call-view_file=v1:original, call-apply_patch=APPLIED workspace=v2, call-run_tests=SIMULATED_PASS v2]
+  STATE {version=2, content=ai-edit, patch=APPLIED, base=1, writes=1, testRuns=1, modelCalls=2}
+
+=== AI_SERVICES / REJECT ===
+  MODEL call=1 messages=1
+  TOOL view_file -> v1:original
+  WAIT invocationDone=false {version=1, content=original, patch=PENDING, base=1, writes=0, testRuns=0, modelCalls=1}
+  DECISION REJECTED workspace=v1
+  TOOL apply_patch -> REJECTED workspace=v1
+  TOOL run_tests -> SKIPPED: dependent patch not applied
+  MODEL call=2 messages=5
+  FINAL received=[call-view_file=v1:original, call-apply_patch=REJECTED workspace=v1, call-run_tests=SKIPPED: dependent patch not applied]
+  STATE {version=1, content=original, patch=REJECTED, base=1, writes=0, testRuns=0, modelCalls=2}
+
+=== MANUAL / REJECT ===
+  MODEL call=1 messages=1
+  TOOL view_file -> v1:original
+  WAIT runUntilPause returned; cursor=1 {version=1, content=original, patch=PENDING, base=1, writes=0, testRuns=0, modelCalls=1}
+  DECISION REJECTED workspace=v1
+  TOOL apply_patch -> REJECTED workspace=v1
+  TOOL run_tests -> SKIPPED: dependent patch not applied
+  MODEL call=2 messages=5
+  FINAL received=[call-view_file=v1:original, call-apply_patch=REJECTED workspace=v1, call-run_tests=SKIPPED: dependent patch not applied]
+  STATE {version=1, content=original, patch=REJECTED, base=1, writes=0, testRuns=0, modelCalls=2}
+
+=== AI_SERVICES / CONFLICT ===
+  MODEL call=1 messages=1
+  TOOL view_file -> v1:original
+  WAIT invocationDone=false {version=1, content=original, patch=PENDING, base=1, writes=0, testRuns=0, modelCalls=1}
+  USER edit -> v2
+  DECISION CONFLICT workspace=v2
+  TOOL apply_patch -> CONFLICT workspace=v2
+  TOOL run_tests -> SKIPPED: dependent patch not applied
+  MODEL call=2 messages=5
+  FINAL received=[call-view_file=v1:original, call-apply_patch=CONFLICT workspace=v2, call-run_tests=SKIPPED: dependent patch not applied]
+  STATE {version=2, content=user-edit, patch=CONFLICT, base=1, writes=0, testRuns=0, modelCalls=2}
+
+=== MANUAL / CONFLICT ===
+  MODEL call=1 messages=1
+  TOOL view_file -> v1:original
+  WAIT runUntilPause returned; cursor=1 {version=1, content=original, patch=PENDING, base=1, writes=0, testRuns=0, modelCalls=1}
+  USER edit -> v2
+  DECISION CONFLICT workspace=v2
+  TOOL apply_patch -> CONFLICT workspace=v2
+  TOOL run_tests -> SKIPPED: dependent patch not applied
+  MODEL call=2 messages=5
+  FINAL received=[call-view_file=v1:original, call-apply_patch=CONFLICT workspace=v2, call-run_tests=SKIPPED: dependent patch not applied]
+  STATE {version=2, content=user-edit, patch=CONFLICT, base=1, writes=0, testRuns=0, modelCalls=2}
+
+=== AI_SERVICES / DOUBLE_APPROVE ===
+  MODEL call=1 messages=1
+  TOOL view_file -> v1:original
+  WAIT invocationDone=false {version=1, content=original, patch=PENDING, base=1, writes=0, testRuns=0, modelCalls=1}
+  DECISION APPLIED workspace=v2
+  DECISION duplicate ignored, result=APPLIED workspace=v2
+  TOOL apply_patch -> APPLIED workspace=v2
+  TOOL run_tests -> SIMULATED_PASS v2
+  MODEL call=2 messages=5
+  FINAL received=[call-view_file=v1:original, call-apply_patch=APPLIED workspace=v2, call-run_tests=SIMULATED_PASS v2]
+  STATE {version=2, content=ai-edit, patch=APPLIED, base=1, writes=1, testRuns=1, modelCalls=2}
+
+=== MANUAL / DOUBLE_APPROVE ===
+  MODEL call=1 messages=1
+  TOOL view_file -> v1:original
+  WAIT runUntilPause returned; cursor=1 {version=1, content=original, patch=PENDING, base=1, writes=0, testRuns=0, modelCalls=1}
+  DECISION APPLIED workspace=v2
+  DECISION duplicate ignored, result=APPLIED workspace=v2
+  TOOL apply_patch -> APPLIED workspace=v2
+  TOOL run_tests -> SIMULATED_PASS v2
+  MODEL call=2 messages=5
+  FINAL received=[call-view_file=v1:original, call-apply_patch=APPLIED workspace=v2, call-run_tests=SIMULATED_PASS v2]
+  STATE {version=2, content=ai-edit, patch=APPLIED, base=1, writes=1, testRuns=1, modelCalls=2}

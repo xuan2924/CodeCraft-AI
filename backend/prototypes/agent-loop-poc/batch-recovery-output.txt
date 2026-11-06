@@ -1,0 +1,189 @@
+
+=== manual / approve ===
+BATCH PROTOTYPE pid=25180 manual start
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+MODEL proposal -> [ToolExecutionRequest { id = "batch-1-call-1", name = "view_file", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-2", name = "apply_patch", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-3", name = "run_tests", arguments = "{}" }]
+TOOL call-1 view_file -> v1:original; cursor=1 (apply_patch), next test not run
+WORKSPACE {proposalCalls=1, readRuns=1, writes=0, version=1, content=original}
+HALT after approval checkpoint pid=25180
+BATCH PROTOTYPE pid=8124 manual resume
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+RESTORED cursor=1 savedRead=ToolExecutionResultMessage{id='batch-1-call-1', toolName='view_file', contents=[TextContent { text = "v1:original" }], isError=null, attributes={}}
+RESULT APPLIED
+TOOL batch-1-call-2 -> APPLIED
+TOOL batch-1-call-3 -> SIMULATED_PASS v2
+MODEL receives batch-1-call-1 -> v1:original
+MODEL receives batch-1-call-2 -> APPLIED
+MODEL receives batch-1-call-3 -> SIMULATED_PASS v2
+FINAL All three tool results received
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=APPLIED, writes=1, version=2, content=fixed-ai-edit, testRuns=1}
+BATCH PROTOTYPE pid=26132 manual resume
+ALREADY FINISHED; no model or tool replay
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=APPLIED, writes=1, version=2, content=fixed-ai-edit, testRuns=1}
+
+=== manual / reject ===
+BATCH PROTOTYPE pid=14192 manual start
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+MODEL proposal -> [ToolExecutionRequest { id = "batch-1-call-1", name = "view_file", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-2", name = "apply_patch", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-3", name = "run_tests", arguments = "{}" }]
+TOOL call-1 view_file -> v1:original; cursor=1 (apply_patch), next test not run
+WORKSPACE {proposalCalls=1, readRuns=1, writes=0, version=1, content=original}
+HALT after approval checkpoint pid=14192
+BATCH PROTOTYPE pid=42228 manual resume
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+RESTORED cursor=1 savedRead=ToolExecutionResultMessage{id='batch-1-call-1', toolName='view_file', contents=[TextContent { text = "v1:original" }], isError=null, attributes={}}
+RESULT REJECTED
+TOOL batch-1-call-2 -> REJECTED
+TOOL batch-1-call-3 -> SKIPPED: dependent patch REJECTED
+MODEL receives batch-1-call-1 -> v1:original
+MODEL receives batch-1-call-2 -> REJECTED
+MODEL receives batch-1-call-3 -> SKIPPED: dependent patch REJECTED
+FINAL All three tool results received
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=REJECTED, writes=0, version=1, content=original}
+BATCH PROTOTYPE pid=42940 manual resume
+ALREADY FINISHED; no model or tool replay
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=REJECTED, writes=0, version=1, content=original}
+
+=== manual / conflict ===
+BATCH PROTOTYPE pid=39036 manual start
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+MODEL proposal -> [ToolExecutionRequest { id = "batch-1-call-1", name = "view_file", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-2", name = "apply_patch", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-3", name = "run_tests", arguments = "{}" }]
+TOOL call-1 view_file -> v1:original; cursor=1 (apply_patch), next test not run
+WORKSPACE {proposalCalls=1, readRuns=1, writes=0, version=1, content=original}
+HALT after approval checkpoint pid=39036
+BATCH PROTOTYPE pid=28656 manual edit
+USER edit {proposalCalls=1, readRuns=1, writes=0, version=2, content=user-edit}
+BATCH PROTOTYPE pid=37064 manual resume
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+RESTORED cursor=1 savedRead=ToolExecutionResultMessage{id='batch-1-call-1', toolName='view_file', contents=[TextContent { text = "v1:original" }], isError=null, attributes={}}
+RESULT CONFLICT
+TOOL batch-1-call-2 -> CONFLICT
+TOOL batch-1-call-3 -> SKIPPED: dependent patch CONFLICT
+MODEL receives batch-1-call-1 -> v1:original
+MODEL receives batch-1-call-2 -> CONFLICT
+MODEL receives batch-1-call-3 -> SKIPPED: dependent patch CONFLICT
+FINAL All three tool results received
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=CONFLICT, writes=0, version=2, content=user-edit}
+BATCH PROTOTYPE pid=25652 manual resume
+ALREADY FINISHED; no model or tool replay
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=CONFLICT, writes=0, version=2, content=user-edit}
+
+=== agentic / approve ===
+BATCH PROTOTYPE pid=34012 agentic start
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+MODEL proposal -> [ToolExecutionRequest { id = "batch-1-call-1", name = "view_file", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-2", name = "apply_patch", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-3", name = "run_tests", arguments = "{}" }]
+TOOL call-1 view_file -> v1:original; cursor=1 (apply_patch), next test not run
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+SUSPENDED framework pending=[patch-approval]
+WORKSPACE {proposalCalls=1, readRuns=1, writes=0, version=1, content=original}
+HALT after approval checkpoint pid=34012
+BATCH PROTOTYPE pid=19688 agentic resume
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+RESTORED cursor=1 savedRead=ToolExecutionResultMessage{id='batch-1-call-1', toolName='view_file', contents=[TextContent { text = "v1:original" }], isError=null, attributes={}}
+RESULT APPLIED
+TOOL batch-1-call-2 -> APPLIED
+TOOL batch-1-call-3 -> SIMULATED_PASS v2
+MODEL receives batch-1-call-1 -> v1:original
+MODEL receives batch-1-call-2 -> APPLIED
+MODEL receives batch-1-call-3 -> SIMULATED_PASS v2
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+FINAL All three tool results received
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=APPLIED, writes=1, version=2, content=fixed-ai-edit, testRuns=1}
+BATCH PROTOTYPE pid=39584 agentic resume
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+ALREADY FINISHED; no model or tool replay
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=APPLIED, writes=1, version=2, content=fixed-ai-edit, testRuns=1}
+
+=== agentic / reject ===
+BATCH PROTOTYPE pid=26496 agentic start
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+MODEL proposal -> [ToolExecutionRequest { id = "batch-1-call-1", name = "view_file", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-2", name = "apply_patch", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-3", name = "run_tests", arguments = "{}" }]
+TOOL call-1 view_file -> v1:original; cursor=1 (apply_patch), next test not run
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+SUSPENDED framework pending=[patch-approval]
+WORKSPACE {proposalCalls=1, readRuns=1, writes=0, version=1, content=original}
+HALT after approval checkpoint pid=26496
+BATCH PROTOTYPE pid=42456 agentic resume
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+RESTORED cursor=1 savedRead=ToolExecutionResultMessage{id='batch-1-call-1', toolName='view_file', contents=[TextContent { text = "v1:original" }], isError=null, attributes={}}
+RESULT REJECTED
+TOOL batch-1-call-2 -> REJECTED
+TOOL batch-1-call-3 -> SKIPPED: dependent patch REJECTED
+MODEL receives batch-1-call-1 -> v1:original
+MODEL receives batch-1-call-2 -> REJECTED
+MODEL receives batch-1-call-3 -> SKIPPED: dependent patch REJECTED
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+FINAL All three tool results received
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=REJECTED, writes=0, version=1, content=original}
+BATCH PROTOTYPE pid=36592 agentic resume
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+ALREADY FINISHED; no model or tool replay
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=REJECTED, writes=0, version=1, content=original}
+
+=== agentic / conflict ===
+BATCH PROTOTYPE pid=26504 agentic start
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+MODEL proposal -> [ToolExecutionRequest { id = "batch-1-call-1", name = "view_file", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-2", name = "apply_patch", arguments = "{}" }, ToolExecutionRequest { id = "batch-1-call-3", name = "run_tests", arguments = "{}" }]
+TOOL call-1 view_file -> v1:original; cursor=1 (apply_patch), next test not run
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+SUSPENDED framework pending=[patch-approval]
+WORKSPACE {proposalCalls=1, readRuns=1, writes=0, version=1, content=original}
+HALT after approval checkpoint pid=26504
+BATCH PROTOTYPE pid=16932 agentic edit
+USER edit {proposalCalls=1, readRuns=1, writes=0, version=2, content=user-edit}
+BATCH PROTOTYPE pid=38048 agentic resume
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+RESTORED cursor=1 savedRead=ToolExecutionResultMessage{id='batch-1-call-1', toolName='view_file', contents=[TextContent { text = "v1:original" }], isError=null, attributes={}}
+RESULT CONFLICT
+TOOL batch-1-call-2 -> CONFLICT
+TOOL batch-1-call-3 -> SKIPPED: dependent patch CONFLICT
+MODEL receives batch-1-call-1 -> v1:original
+MODEL receives batch-1-call-2 -> CONFLICT
+MODEL receives batch-1-call-3 -> SKIPPED: dependent patch CONFLICT
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+STORE checkpoint AgenticScopeKey[agentId=prototype.BatchRecoveryPoc$Workflow, memoryId=prototype-task]
+FINAL All three tool results received
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=CONFLICT, writes=0, version=2, content=user-edit}
+BATCH PROTOTYPE pid=36724 agentic resume
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+ALREADY FINISHED; no model or tool replay
+WORKSPACE {proposalCalls=1, finalCalls=1, readRuns=1, receipt=CONFLICT, writes=0, version=2, content=user-edit}
+
+Scratch state retained for inspection: D:\hot\prototype\CodeCraft-AI\backend\prototypes\agent-loop-poc\target\PROTOTYPE-wipe-me-f054cb61eb7d464eb1e6b6ab7457eaa9

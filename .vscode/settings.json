@@ -1,0 +1,12 @@
+{
+    "[java]": {
+        "editor.tabSize": 4, // 阿里标准：4 个空格
+        "editor.insertSpaces": true, // 禁止使用真正的 Tab 字符，转为空格
+        "editor.formatOnSave": true, // 保存自动对齐格式
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "always" // 保存自动清理无用 import、按类展开
+        }
+    },
+    // 确保同一包下即便引用很多类，也绝不折叠为通配符 *
+    "java.completion.importOrder": ["java", "javax", "org", "com"]
+}

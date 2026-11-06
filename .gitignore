@@ -1,0 +1,15 @@
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# Generated dependencies and build output
+node_modules/
+target/
+dist/
+coverage/
+
+# Local runtime and operating-system files
+*.log
+.DS_Store
+Thumbs.db

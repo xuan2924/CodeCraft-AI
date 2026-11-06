@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>一次性原型 · Agent 审批状态</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#20332e;background:#f5f7f5;line-height:1.65}body{max-width:1060px;margin:40px auto;padding:0 22px}h1{margin-bottom:8px}h2{font-size:19px;margin-top:28px}.hint{color:#52645d}.badge{color:#176548;font-weight:700}section{border-top:1px solid #ced8d1;padding:15px 0}button{font:inherit;padding:7px 12px;border:1px solid #b8c9bf;background:white;border-radius:5px;cursor:pointer;margin:4px}button:hover,button[aria-selected=true]{border-color:#176548;background:#e6f1ea}button:focus-visible{outline:3px solid #176548}button:disabled{opacity:.45;cursor:default}dl{display:grid;grid-template-columns:160px 1fr;gap:8px}dt{color:#52645d}dd{margin:0;overflow-wrap:anywhere}pre{background:#eaf0eb;padding:14px;white-space:pre-wrap;overflow-wrap:anywhere}.grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}#notice{padding:12px;border-left:4px solid #176548;background:#e6f1ea}li{margin:5px 0}@media(max-width:700px){.grid{grid-template-columns:1fr}dl{grid-template-columns:115px 1fr}}
+</style>
+<header><span class="badge">THROWAWAY / 一次性逻辑原型 / 无真实 API</span><h1>修改前停在哪里，批准后从哪里继续？</h1><p>探索 Copilot 的审批、拒绝、版本冲突、取消和恢复语义。所有模型、文件、测试及服务重启均为内存模拟；本页不比较 SDK 能力，不证明持久化可靠性。刷新页面会丢失全部状态。</p><p class="hint">待确认假设：一个修改待审批时停止本轮后续动作；拒绝或冲突作为工具结果交回模型。服务恢复后不自动续跑模型。这里仅模拟单文件 Patch。</p></header>
+<div id="notice" role="status" aria-live="polite"></div>
+<section><h2>当前完整状态</h2><div class="grid"><dl id="state"></dl><div><strong>工作区：OrderService.java（模拟）</strong><pre id="file"></pre><strong>最近修改提案</strong><pre id="patch"></pre></div></div><strong>模型已收到的工具结果</strong><pre id="results"></pre></section>
+<section><h2>自由操作</h2><p class="hint">可以乱序点击；不允许的动作会解释原因，不会悄悄改变工作区。保存检查点、崩溃和恢复仅模拟服务状态；工作区视作独立 Go 服务仍存活。</p><div id="actions"></div></section>
+<section><h2>引导场景</h2><div id="tabs" role="tablist" aria-label="审批场景"></div><div id="walkthrough" role="tabpanel"></div></section>
+<section><h2>事件记录（本次会话）</h2><ol id="events"></ol><details><summary>查看原始状态（包括模拟检查点）</summary><pre id="raw"></pre></details></section>
+<script>
+// Pure state model: no DOM, storage, network or timers. NOT a production executor.
+const Prototype = (() => {
+  const initial = () => ({mode:'ask',phase:'ready',online:true,version:1,content:'return stock;',patch:null,nextId:1,results:[],calls:0,tests:[],checkpoint:null,events:[],notice:'请生成一个修改提案，或选择下方引导场景。'});
+  function reduce(previous, action) {
+    const s = structuredClone(previous);
+    const note = text => {s.notice=text;s.events.push(text);return s;};
+    const result = value => s.results.push({toolCallId:s.patch.id,value});
+    const apply = () => {
+      if(s.patch.base!==s.version){s.patch.status='conflict';s.phase='result';result('版本冲突；未写入，请重新读取');return note('基线已过期：保留用户编辑，将冲突作为工具结果。');}
+      s.content=s.patch.after;s.version++;s.patch.status='applied';s.phase='result';result('已应用到 v'+s.version);return note('修改已应用一次；等待将结果交回模型。');
+    };
+    if(action==='reset') return initial();
+    if(action==='edit'){s.content+='\n// 用户编辑 '+(s.version+1);s.version++;return note('用户保存编辑，工作区升至 v'+s.version+'；旧提案基线不变。');}
+    if(action==='crash'){
+      if(!s.online)return note('服务已经离线。');
+      s.online=false;s.phase='offline';s.mode=null;s.patch=null;s.results=[];s.calls=null;s.nextId=null;s.tests=[];
+      return note('模拟 Java 进程丢失运行状态；Go 工作区与模拟检查点仍保留。');
+    }
+    if(action==='restore'){
+      if(s.online)return note('服务仍在线，无需恢复。');
+      if(!s.checkpoint)return note('没有检查点，无法证明安全恢复；禁止猜测并自动重放。请重置原型。');
+      Object.assign(s,JSON.parse(s.checkpoint));s.online=true;
+      if(s.patch?.status==='pending' && s.patch.base!==s.version){s.phase='uncertain';return note('检查点基线与外部工作区不符：结果不确定，需人工核对，不自动重放。');}
+      return note('从内存中的 JSON 检查点恢复；未再次调用模型。此动作不是磁盘持久化测试。');
+    }
+    if(!s.online)return note('服务离线，只有用户编辑、恢复或重置可执行。');
+    switch(action){
+      case 'mode':s.mode=s.mode==='ask'?'auto':'ask';return note('切换为 '+s.mode+'，不批准已有待审批提案。');
+      case 'propose':
+        if(s.phase!=='ready')return note('当前任务未就绪，先处理未决结果或重置。');
+        s.calls++;s.patch={id:'tool-'+s.nextId++,path:'OrderService.java',base:s.version,before:s.content,after:s.content+'\n// AI 修改：增加库存校验',modeAtCreation:s.mode,status:'pending'};
+        s.phase='approval';return s.mode==='auto'?apply():note('模型提出修改，尚未写入；后续模型与测试暂停。');
+      case 'approve':
+        if(s.phase!=='approval'||s.patch?.status!=='pending')return note('没有可审批的提案；重复批准或取消后批准不会写入。');
+        return apply();
+      case 'reject':
+        if(s.phase!=='approval')return note('没有待审批提案。');
+        s.patch.status='rejected';s.phase='result';result('用户拒绝；未修改文件');return note('已拒绝，工作区不变；下一轮模型会收到拒绝结果。');
+      case 'continue':
+        if(s.phase!=='result')return note('必须先得到修改工具的确定结果；不能绕过审批。');
+        s.calls++;s.phase='ready';return note('模拟模型收到工具结果；已就绪，可重新提案或运行测试。');
+      case 'test':
+        if(s.phase!=='ready')return note('当前原型暂停后续动作：先解决审批/冲突结果；不测试未应用的修改。');
+        s.tests.push({version:s.version,status:'模拟通过'});return note('记录 v'+s.version+' 的模拟测试结果；没有运行 Maven 或 Docker。');
+      case 'cancel':
+        if(s.phase==='cancelled')return note('任务已经取消。');
+        if(s.patch?.status==='pending'){s.patch.status='cancelled';result('任务取消；未应用');}
+        s.phase='cancelled';return note('任务已取消；已应用修改不回滚，待审批修改不能再批准。');
+      case 'save':{
+        const {mode,phase,patch,nextId,results,calls,tests}=s;
+        s.checkpoint=JSON.stringify({mode,phase,patch,nextId,results,calls,tests});
+        return note('序列化运行检查点到页面内存；工作区独立，不随恢复回滚。');
+      }
+      default:return note('未知动作。');
+    }
+  }
+  return {initial,reduce};
+})();
+</script>
+<script>
+const labels={propose:'模拟模型提出修改',approve:'批准修改',reject:'拒绝修改',continue:'将工具结果交回模型',edit:'用户编辑并保存',mode:'切换审批模式',test:'模拟运行测试',cancel:'取消任务',save:'保存模拟检查点',crash:'模拟服务崩溃',restore:'从检查点恢复',reset:'重置全部'};
+const scenarios=[
+ ['审批后继续','观察批准前后文件版本与模型调用次数。',['propose','approve','approve','continue','test']],
+ ['自动应用','auto 修改直接应用，但仍产生工具结果。',['mode','propose','continue','test']],
+ ['拒绝修改','拒绝不会写入，模型收到明确的拒绝结果。',['propose','reject','continue']],
+ ['编辑冲突','旧提案不可覆盖用户的新编辑。',['propose','edit','approve','continue','propose']],
+ ['切换模式','切换 auto 不会批准旧提案，新提案才使用新模式。',['propose','mode','reject','continue','propose']],
+ ['等待中取消','取消后迟到的批准必须无效。',['propose','cancel','approve']],
+ ['等待中恢复','恢复等待状态不增加模型调用次数。',['propose','save','crash','restore','approve','continue']],
+ ['副作用窗口','旧检查点不知道已应用结果；禁止静默重放。此原型只能发现不一致，不能完成对账。',['propose','save','approve','crash','restore','approve']],
+ ['无检查点','丢失执行状态不能靠聊天记忆猜测恢复。',['propose','crash','restore']]
+];
+let state=Prototype.initial(), selected=-1, step=0;
+const $=id=>document.getElementById(id);
+function button(text,fn){const b=document.createElement('button');b.textContent=text;b.onclick=fn;return b;}
+function dispatch(action){state=Prototype.reduce(state,action);render();}
+for(const [action,label] of Object.entries(labels))$('actions').append(button(label,()=>{selected=-1;dispatch(action);}));
+function render(){
+ $('notice').textContent=state.notice;
+ const phases={ready:'就绪',approval:'等待审批',result:'工具结果待交回模型',cancelled:'已取消',offline:'服务离线',uncertain:'结果不确定，需核对'};
+ const fields={'服务':state.online?'在线':'离线','审批模式':state.mode===null?'已丢失':state.mode==='ask'?'ask for approve':'auto','运行状态':phases[state.phase],'工作区版本':'v'+state.version,'模型调用次数':state.calls??'已丢失','下一工具编号':state.nextId??'已丢失','提案状态':state.patch?.status??'无','检查点':state.checkpoint?'已保存（仅页面内存）':'无','测试记录':JSON.stringify(state.tests)};
+ $('state').replaceChildren();for(const [k,v] of Object.entries(fields)){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=v;$('state').append(dt,dd);}
+ $('file').textContent=state.content;
+ $('patch').textContent=state.patch?JSON.stringify(state.patch,null,2):'尚无提案';
+ $('results').textContent=state.results.length?JSON.stringify(state.results,null,2):'尚无工具结果';
+ $('events').replaceChildren();for(const text of state.events){const li=document.createElement('li');li.textContent=text;$('events').append(li);}
+ $('raw').textContent=JSON.stringify(state,null,2);
+ $('tabs').replaceChildren();scenarios.forEach(([name],i)=>{const b=button(name,()=>{selected=i;step=0;state=Prototype.initial();render();});b.setAttribute('role','tab');b.setAttribute('aria-selected',String(selected===i));$('tabs').append(b);});
+ $('walkthrough').replaceChildren();
+ if(selected<0){$('walkthrough').textContent='选择一个场景将重置状态。自由操作会退出引导，但保留当前状态。';return;}
+ const [,description,actions]=scenarios[selected];const p=document.createElement('p');p.textContent=description;$('walkthrough').append(p);
+ actions.forEach((a,i)=>{const b=button((i<step?'✓ ':`${i+1}. `)+labels[a],()=>{step++;dispatch(a);});b.disabled=i!==step;$('walkthrough').append(b);});
+ if(step===actions.length){const p=document.createElement('p');p.textContent='场景结束。你认为这些行为合理吗？可重新选择场景或自由操作。';$('walkthrough').append(p);}
+}
+render();
+</script>
+</html>
