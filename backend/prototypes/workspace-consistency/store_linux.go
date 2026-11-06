@@ -31,7 +31,8 @@ var (
 )
 
 // Request describes a batch; nil content deletes a path. ID is scoped to this
-// workspace incarnation. Callers must not reuse it for another payload.
+// workspace incarnation and must be nonempty valid UTF-8. Callers must not
+// reuse it for another payload.
 type Request struct {
 	ID      string
 	Base    uint64
@@ -202,8 +203,8 @@ func (s *Store) Apply(ctx context.Context, req Request) (r Receipt, err error) {
 		if err != nil {
 			return err
 		}
-		if req.ID == "" {
-			return errors.New("empty request ID")
+		if req.ID == "" || !utf8.ValidString(req.ID) {
+			return errors.New("request ID must be nonempty valid UTF-8")
 		}
 		if old, ok := m.Receipts[req.ID]; ok {
 			if old.Fingerprint != fingerprint {
@@ -248,14 +249,15 @@ func (s *Store) Apply(ctx context.Context, req Request) (r Receipt, err error) {
 
 // Freeze durably closes admission under the write lock without incrementing the
 // content revision. It waits for earlier writes and is recoverable by request ID.
+// The ID must be nonempty valid UTF-8, as for Apply.
 func (s *Store) Freeze(ctx context.Context, id string) (r Receipt, err error) {
 	err = s.withLock(ctx, func() error {
 		m, files, seq, err := s.load()
 		if err != nil {
 			return err
 		}
-		if id == "" {
-			return errors.New("empty request ID")
+		if id == "" || !utf8.ValidString(id) {
+			return errors.New("request ID must be nonempty valid UTF-8")
 		}
 		if old, ok := m.Receipts[id]; ok {
 			if old.Fingerprint != "freeze" {
@@ -273,8 +275,11 @@ func (s *Store) Freeze(ctx context.Context, id string) (r Receipt, err error) {
 }
 
 // Copy materializes a detached tree for exactly the expected current revision.
-// The destination must not exist and its parent must be service-owned. A failed
-// copy is not published. This conservative probe holds the lock during copying.
+// The destination must not exist and its parent must be service-owned.
+// Preparation failures do not publish; errors after rename may leave a complete
+// destination (for example, parent-directory sync or cleanup errors). Callers
+// must not infer destination absence from an error or start testing on error.
+// This conservative probe holds the lock during copying.
 func (s *Store) Copy(ctx context.Context, expected uint64, dest string) (revision uint64, err error) {
 	err = s.withLock(ctx, func() (err error) {
 		m, files, _, err := s.load()

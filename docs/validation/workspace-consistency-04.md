@@ -35,16 +35,25 @@
 | 内部/外部/目录 symlink、硬链接、FIFO | Read/Apply/Copy 失败关闭；外部夹具未修改；FIFO 不阻塞 |
 | 并发目录交换为外部 symlink，200 次读取 | 运行样本未泄露外部标记；不推导任意宿主攻击下的文件树完整性 |
 | 最新已提交 manifest 损坏 | Read/Query 报错，不悄悄回退旧版本 |
+| 非 UTF-8 请求标识用于 Apply/Freeze | 拒绝且不发布，不推进修订、不冻结；回归先失败后通过 |
 
 完成时执行：
 
 - `gofmt -l .`：无输出。
 - `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go vet ./...`：通过。
 - `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...`：通过（编译/类型检查）。
-- `go test -c` 后在上述 Linux 容器执行 `/probe -test.v -test.timeout=60s`：全套通过；14 个行为测试 + 1 个子进程 helper 顶层测试，包含 9 个子案例。
+- `go test -c` 后在上述 Linux 容器执行 `/probe -test.v -test.timeout=60s`：全套通过；15 个行为测试 + 1 个子进程 helper 顶层测试，包含 11 个子案例。
 - 仓库现有回归 `node --test scripts/*.test.mjs`：8/8 通过；包含真实 Docker 初始解失败、参考解通过、日志预算、截止停止和清理失败阻止发布的检查。
 
 复现命令见 [探针 README](../../backend/prototypes/workspace-consistency/README.md)。未改动 Java Agent 一次性 PoC，本次未执行其 Maven 测试；仓库尚无正式 Java/Vue 测试套件。
+
+## 独立审查与修正
+
+以 `516e4b8` 为基线，两个只读审查器分别审查规范与规格（审查提交 `aae5c66`），未代替主执行者运行测试。
+
+- **Standards：1 项 P2**。Copy 注释原称所有失败均不发布，但 rename 后 Sync/清理错误可能留下完整目标。已修正公开契约：准备失败不发布，发布后错误不能推断目录不存在，错误时不能启动测试。
+- **Spec：1 项 P2**。非 UTF-8 请求 ID 被 JSON 替换，成功写入后原 ID 无法查询。已为 Apply/Freeze 加入有效 UTF-8 检查，公开接口回归先复现失败，再修复通过；非空约束保留。任务 05 的正式 ID 格式仍不由探针决定。
+- 修正后重跑编译、vet、单点回归及全套 Linux 探针，均通过。另在修正前将并发去重、复制、冻结、目录交换四项重复 20 轮，均通过；这不是 race 检测。
 
 ## 没有证明的保证 / 后续门槛
 

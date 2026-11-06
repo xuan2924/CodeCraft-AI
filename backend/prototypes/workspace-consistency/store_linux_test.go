@@ -83,4 +83,34 @@ func TestNoopConflictRenameAndFreeze(t *testing.T) {
 	}
 }
 
+func TestInvalidRequestIDDoesNotPublish(t *testing.T) {
+	for _, operation := range []string{"apply", "freeze"} {
+		t.Run(operation, func(t *testing.T) {
+			root := t.TempDir()
+			s := seed(t, root)
+			id := string([]byte{0xff})
+			var err error
+			if operation == "apply" {
+				req := batch()
+				req.ID = id
+				_, err = s.Apply(context.Background(), req)
+			} else {
+				_, err = s.Freeze(context.Background(), id)
+			}
+			if err == nil {
+				t.Fatal("invalid UTF-8 request ID accepted")
+			}
+			reopened := workspace.Open(root, editable, nil)
+			assertVersion(t, reopened, 1, "old-a", "old-b")
+			view, err := reopened.Read(context.Background())
+			if err != nil || view.Frozen {
+				t.Fatalf("invalid request froze workspace: %+v %v", view, err)
+			}
+			if _, err = reopened.Query(context.Background(), id); !errors.Is(err, workspace.ErrNotFound) {
+				t.Fatalf("invalid ID receipt: %v", err)
+			}
+		})
+	}
+}
+
 func text(s string) *string { return &s }
