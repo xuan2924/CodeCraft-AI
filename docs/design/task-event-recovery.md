@@ -84,7 +84,17 @@ Java 短事务：校验身份/控制权，记录关闭准入意图与 transition
 - 文件写入先发布，则接管保留其结果；CloseGate 先发布，则旧代次不能再发布。Go 先查已提交回执可返回原结果，这不是新写入；Java 返回该回执前仍校验当前身份/归属。
 - 查询 NotFound 不证明 RPC 已取消。只有拿到覆盖旧代次的持久化关闭回执后，无回执才允许收敛为未提交；无法确认栅栏则保持 `PENDING_RECONCILIATION`，不换键重发、不宣布接管成功。
 - 到期的 Go 提交检查直接拒绝超时发布，不依赖 Java 定时器是否及时运行。Java 恢复/任何业务请求也检查 deadline，关闭新作答准入，推进 CLOSING。已有成功文件提交不回滚；冻结不提交本地草稿。
-- 启动测试等异步命令也带代次和 notAfter；Go 在登记执行/稳定副本准入时与栅栏排序。已经登记的测试不因后续接管被停止，执行槽位和取消墓碑防止迟到 Start 重复执行。
+- 手动启动测试带作答 gateEpoch 和 notAfter；Go 在登记执行/稳定副本准入时与栅栏排序，要求 OPEN、未冻结、作答期限未到。已经登记的测试不因后续接管被停止，执行槽位和取消墓碑防止迟到 Start 重复执行。
+
+### 系统最终验收的独立准入
+
+最终验收不是继续作答。内部 StartTest 明确区分 `purpose=MANUAL` 与 `purpose=FINAL_VERIFICATION`；浏览器测试路由只能映射 MANUAL，不接受客户端指定 purpose、冻结回执或系统预算。
+
+- Java 只在 FINAL_TESTING 中、已有确认冻结回执、未耗尽次数/总预算且执行槽位可用时，事务内分配稳定 `finalizationId`、`attemptId`、taskId/executionInstanceId 和派发记录；同一次尝试不得换任务 ID 重发。派发授权绑定工作区实例、冻结回执 ID、冻结 gateEpoch、finalRevision、题目/镜像/目标及 `finalizationDeadlineAt`，纳入幂等指纹。
+- Go 的 FINAL_VERIFICATION 分支要求该实例仍 FROZEN/CLOSED，冻结回执/代次/修订匹配，尝试标识完整，且 `now < notAfter <= finalizationDeadlineAt`；此 notAfter 来源是持久化收尾预算，不是已到期的作答期限或用户会话期限。授权仅来自受信任 Java。复制冻结树不要求 OPEN，不执行 OpenGate，也不赋予任何写入权限。
+- Go 在原子登记/冻结副本准入时检查该系统授权，并在实际创建/启动容器前再次检查 notAfter 与取消墓碑；排队或重启不能延长期限。与手动任务共用每演练执行槽位及停止/去重协议。已经登记的任务查询走 QueryTask；过期重发不得创建新执行。
+- 次数或收尾预算用尽、演练删除时，Java 停止该 finalization 的新派发，按已持久化 taskId 发出停止/取消墓碑；Go 禁止迟到启动。Go 失联时，旧授权最迟在既定 notAfter 失效，未知执行继续隔离；业务结束不回收身份/版本证据，也不假装进程已退出。
+- 因此到期冻结后仍可执行系统验收；旧页面迟到 MANUAL 请求始终被关闭栅栏/作答截止拒绝，不能改用系统分支。
 
 ### 密码重置、改密与退出
 
@@ -134,7 +144,7 @@ Go 暂不可用时保持可查询的撤销操作未决，禁止新副作用，�
 | CloseGate / OpenGate / QueryGate | 实例、transitionId、expectedEpoch；返回持久化 epoch、OPEN/CLOSED/FROZEN、转换回执 |
 | ApplyBatch / QueryMutation | 实例、requestId、operationId、指纹、基线、gateEpoch、notAfter、变更；返回任务 04 回执/NOT_FOUND/UNKNOWN |
 | Freeze / QueryFreeze | 实例、关闭栅栏代次、operationId；返回冻结版本；不自行冻结一个仍 OPEN 的实例 |
-| StartTest / QueryTask / StopTask | exerciseId、taskId、executionInstanceId、实例/预期修订/目标/固定执行配置、gateEpoch、notAfter；返回执行登记/结果/静默与清理状态 |
+| StartTest / QueryTask / StopTask | exerciseId、taskId、executionInstanceId、purpose、实例/预期修订/目标/固定执行配置、gateEpoch、notAfter；FINAL_VERIFICATION 另含 finalizationId、attemptId、冻结回执及 finalizationDeadlineAt；返回执行登记/结果/静默与清理状态 |
 | WatchTask | taskId、executionInstanceId、afterSequence；服务端流 TaskEvent，支持显式 RESET_REQUIRED |
 | ListExecutions / Reconcile / Cleanup | 有界分页 inventory 与宿主执行代次；清理只作用于经校验归属的精确实例，不模糊匹配目录/容器名 |
 

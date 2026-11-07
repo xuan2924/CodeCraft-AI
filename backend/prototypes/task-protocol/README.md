@@ -22,6 +22,7 @@ go test -v ./...
 
 - `workspace.go`：文件发布与 Close/Open/Freeze 在同一串行协调区的抽象；不实现文件内容、路径、无变化保存和 I/O。
 - `transition.go`：Java 意图与 Go 回执分离，丢失 Close/Open 响应后恢复；省略真实授权、未决操作扫描和数据库并发。
+- `admission.go`：区分手动测试与冻结后的系统最终验收准入，后者仅使用可信 Java 的冻结回执/尝试/预算授权，不重新开放写入；省略真实鉴权和尝试登记。
 - `tasks.go`：同一演练的执行槽位、重复启动、取消墓碑、停止/结果排序及未知执行隔离；不运行容器，不验证杀进程。
 - `events.go`、`connection.go`：有界序列、快照/订阅、重复/缺口检测、发送前及空闲授权复核。模型按条数限额；字节预算、UTF-8 切块及网络发送属于正式实现测试。
 - `lifecycle.go`：准备失败重试/放弃、冻结回执之后的最终验收次数/墙钟预算。不是完整 FSM；`BeginFinalTesting` 注入已经确认的冻结回执，省略 READY/ACTIVE/CLOSING。
