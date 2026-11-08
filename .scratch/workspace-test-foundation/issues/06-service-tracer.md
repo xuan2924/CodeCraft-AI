@@ -28,3 +28,4 @@
 - 已建立正式 Java/Go/Vue 工程、唯一 Protobuf、数据库迁移、依赖锁定、生成/启动/验证入口和 Linux CI 配置。内部接口仅返回固定可用性字段，服务均 loopback，不复用任务 05 的业务接口。
 - [运行步骤](../../../README.md)；[实际验证记录](../../../docs/validation/service-tracer-06.md)。正式本地检查通过；真实 Chromium→Java→PostgreSQL/Go 正常、停服、恢复和 Java 启动失败关闭路径通过。测试资源与开发数据库隔离并清理。
 - Windows Go race、npm 干净安装/audit、类型/静态检查、单元/边界测试和生产构建已通过；Linux race、远程 CI、产品业务闭环与题目隔离未验收，不伪报通过。
+- 两路独立审查：Standards 发现 2 项 P2（缺少依赖诊断、重复主色来源），已修正并重跑正式全套与真实链路；Spec 0 项。PowerShell/Git Bash 生成入口、生成漂移检查及四个开发启动入口也已实际验证。

@@ -6,11 +6,14 @@ import ai.codecraft.status.v1.SandboxStatusGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
 import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 @Service
 public class StatusService {
+    private static final Logger LOGGER = LoggerFactory.getLogger(StatusService.class);
     private final DatabaseStatusMapper database;
     private final SandboxStatusGrpc.SandboxStatusBlockingStub sandbox;
 
@@ -22,21 +25,21 @@ public class StatusService {
     public DependencyStatus check() {
         Availability databaseStatus = Availability.UNAVAILABLE;
         Availability sandboxStatus = Availability.UNAVAILABLE;
-        // Expected dependency failures are intentionally represented without exception text.
+        // Diagnostics stay server-side; HTTP responses contain only availability enums.
         try {
             if (database.isMigrated()) {
                 databaseStatus = Availability.AVAILABLE;
             }
-        } catch (DataAccessException ignored) {
-            // A failed query never reuses an earlier success.
+        } catch (DataAccessException failure) {
+            LOGGER.warn("Dependency status check failed (database)", failure);
         }
         try {
             if (sandbox.withDeadlineAfter(1, TimeUnit.SECONDS)
                     .check(CheckRequest.getDefaultInstance()).getServing()) {
                 sandboxStatus = Availability.AVAILABLE;
             }
-        } catch (StatusRuntimeException ignored) {
-            // This is process liveness, not Docker/execution readiness.
+        } catch (StatusRuntimeException failure) {
+            LOGGER.warn("Dependency status check failed (sandbox), code={}", failure.getStatus().getCode(), failure);
         }
         return new DependencyStatus(databaseStatus, sandboxStatus);
     }

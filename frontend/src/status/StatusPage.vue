@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query';
-import { NButton } from 'naive-ui';
+import { NButton, useThemeVars } from 'naive-ui';
 import { fetchStatus } from './api';
 
+const themeVars = useThemeVars();
 const { data, isFetching, isError, refetch } = useQuery({
   queryKey: ['internal-dependency-status'],
   queryFn: ({ signal }) => fetchStatus(signal),
@@ -14,7 +15,10 @@ const { data, isFetching, isError, refetch } = useQuery({
 </script>
 
 <template>
-  <main class="status-page">
+  <main
+    class="status-page"
+    :style="{ '--primary': themeVars.primaryColor }"
+  >
     <header>
       <p class="project-name">
         CodeCraft / 工程底座
