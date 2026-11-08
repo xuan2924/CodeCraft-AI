@@ -1,0 +1,35 @@
+server:
+  address: 127.0.0.1
+  port: ${JAVA_PORT:8080}
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+  tomcat:
+    threads:
+      max: 16
+      min-spare: 2
+    max-connections: 64
+    accept-count: 16
+spring:
+  application:
+    name: codecraft-server
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:${POSTGRES_PORT:5432}/${POSTGRES_DB:codecraft}?connectTimeout=2&socketTimeout=3
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+    hikari:
+      maximum-pool-size: 4
+      minimum-idle: 0
+      connection-timeout: 2000
+      validation-timeout: 1000
+  flyway:
+    clean-disabled: true
+    baseline-on-migrate: false
+    validate-on-migrate: true
+mybatis:
+  configuration:
+    default-statement-timeout: 2
+    local-cache-scope: STATEMENT
+tracer:
+  sandbox-port: ${SANDBOX_PORT:9090}

@@ -1,10 +1,10 @@
 # 工程初始化与验证工具链
 
-状态：初始化方式已由用户确认；任务 #1 的方案与工具链最小验证已完成。前端依赖告警已通过明确版本覆盖解决，Windows race 已通过进程级指定兼容编译器验证。任务 06 仍须建立正式清单、脚本及真实链路；本任务完成不代表第一阶段业务或 Linux 隔离验收完成。
+状态：初始化方式已由用户确认；任务 #1 的方案与工具链最小验证已完成。任务 06 已建立正式清单、生成/启动/验证脚本与本机真实状态链路，入口见 [README](../../README.md)，证据见 [任务 06 验证](../validation/service-tracer-06.md)。账号、工作区、沙箱执行及 Linux 隔离仍未交付；状态链路不代表第一阶段业务闭环。
 
 ## 已确认的初始化方式
 
-- 正式目录采用 `backend/server/`（Java）、`backend/sandbox/`（Go）、`backend/proto/`（共享 `.proto` 契约），前端在 `frontend/`。目录随任务 06 的首个真实功能建立，本任务不创建空服务骨架。
+- 正式目录采用 `backend/server/`（Java）、`backend/sandbox/`（Go）、`backend/proto/`（共享 `.proto` 契约），前端在 `frontend/`。任务 06 已随状态查询建立这些目录，不创建空业务框架。
 - 日常开发在本机启动 Java、Go、Vite；Docker Compose 提供 PostgreSQL，题目代码始终在专用 Docker 容器运行。完整联调/部署再验证应用容器化，不把 Windows 开发成功当 Linux 隔离验收。
 - 不要求本机安装 PostgreSQL 或 psql；可通过数据库容器执行 psql。数据库端口仅绑定 `127.0.0.1`，数据用具名卷持久化，凭证放未跟踪的 `.env`，测试库与开发库隔离。数据卷不是备份。
 - 前端唯一包管理器为 npm；提交 `package-lock.json`，干净安装用 `npm ci`，不生成 yarn/pnpm 锁文件。`packageManager` 声明 npm 精确版本，直接依赖用精确版本；Node 版本也写入工程说明与 CI。
@@ -14,7 +14,7 @@
 
 ## 版本与锁定
 
-以下是本次验证的精确版本，不是“永远使用最新”的策略。正式清单由任务 06 建立；探针的版本不自动成为安全批准。任何阻断项解决后先复验，再冻结正式清单。
+以下是任务 01 验证的精确版本，不是“永远使用最新”的策略。任务 06 已按需落入正式清单；未用到的模型、Docker SDK、编辑器和状态路由库暂不添加。正式新增静态检查为 Checkstyle Maven plugin 3.6.0、ESLint 10.14.0、@eslint/js 10.0.1、eslint-plugin-vue 10.12.0、typescript-eslint 8.72.1；选择理由是执行现有规范且避免初始化已停止支持的 ESLint 9。正式依赖树须持续审计。
 
 | 层 | 验证基线 | 锁定与用途 |
 |---|---|---|
@@ -67,12 +67,12 @@ Go 官方要求 Windows race 使用 mingw-w64 runtime 8+。本机 GCC 8.1.0 配�
 - Java POM 将 `../proto` 配为 `protoSourceRoot`，绑定 `compile` 与 `compile-custom` 到生成阶段，输出至 `target/generated-sources/`，不提交生成代码。
 - Go 工具安装在项目本地工具目录，固定 `GOBIN`，使用上述精确插件版本；脚本解析同一固定版本 protoc 的 OS 二进制，不从任意 PATH 接受另一个版本。
 - Go 输出到 `backend/sandbox/internal/gen/`，采用 `paths=source_relative`，提交生成文件；CI 重新生成后 `git diff --exit-code` 检查漂移。删除字段保留名称和编号，生成文件不手改。
-- 任务 06 提供 `scripts/generate-proto.ps1` / `.sh` 统一入口，负责固定版本下载、校验、插件路径、双端输出及失败退出；这两个脚本目前不存在。
-- 当前证明的是同一简单 `.proto` 两端生成和编译，不是 Java→Go RPC、流式日志或契约演进已经验证。
+- `scripts/generate-proto.ps1` / `.sh` 已提供统一入口，共用 Node 实现，负责固定版本下载、校验、插件路径、双端输出及失败退出。目前校验支持 Windows/Linux x64。
+- `status.proto` 仅用于任务 06 的内部在线查询，不预先实现任务 05 的业务 RPC。Java→Go 状态 RPC 已真实联调；流式日志与业务契约仍待后续任务。
 
 ## 数据迁移与启动约定
 
-正式工程的入口由任务 06 实现，以下均为**规划命令，不是当前仓库可运行命令**：
+以下约定已由任务 06 落地；准确可执行入口和环境要求见 [README](../../README.md)。本票 Go 只做在线查询，Docker SDK 配置留到实际执行功能：
 
 1. 根目录 `.env.example` 仅提供变量名及非敏感默认值；开发者建立 `.env`，提供数据库凭证、端口及工作区路径。Compose 的 `.env` 不会自动注入本机 Java/Go，启动脚本必须显式读取并传递白名单变量，不打印凭证。
 2. `docker compose up -d --wait postgres`：检查数据库健康，具名卷持久化；不自动执行 `down -v` 或删除开发数据。
@@ -84,7 +84,7 @@ Go 官方要求 Windows race 使用 mingw-w64 runtime 8+。本机 GCC 8.1.0 配�
 
 ## 验证命令契约
 
-下表为任务 06 应提供的命令/配置，不代表现有仓库已有脚本或正式测试套件：
+下表命令已随任务 06 建立；`scripts/verify.mjs` 汇总本地检查，`scripts/test-tracer.mjs` 用隔离真实依赖补充 Failsafe 与浏览器验证：
 
 | 范围 | 单点与快速反馈 | 完整验证 |
 |---|---|---|
@@ -93,13 +93,13 @@ Go 官方要求 Windows race 使用 mingw-w64 runtime 8+。本机 GCC 8.1.0 配�
 | Vue | `npm run typecheck` → `vue-tsc --noEmit`；`npm run test:unit -- <文件>` → `vitest run` | `npm run lint`（ESLint，规则匹配 Vue/TS）；`npm run typecheck`；`npm run test:unit`；`npm run build` → `vite build` |
 | 浏览器 | `npm run test:e2e -- <文件>` → `playwright test` | 安装匹配版本的 Chromium；在独立测试数据库/工作区启动真实 Java、Go、PostgreSQL、Docker，再跑全套；不能用前端假 API 代替 |
 
-Java/前端静态检查插件版本随正式配置锁定，本次未执行 Checkstyle、ESLint 或 Failsafe。测试分层沿用第一阶段规格中用户已确认的浏览器、Java REST/SSE、Go gRPC/Docker 边界；本次仅运行工具链烟测，不宣称业务 TDD 或真实端到端测试完成。
+Java/前端静态检查插件已锁定，任务 06 已实际执行 Checkstyle、ESLint 和 Failsafe。测试分层沿用规格已确认的浏览器、Java REST、Go gRPC 边界；只验证内部状态查询，不宣称 SSE、Docker 沙箱或业务闭环完成。
 
 ## 后续实现仍需验证
 
-1. **正式依赖与脚本**：任务 06 将本专题版本、覆盖与工具校验转为真实清单及启动/生成/验证脚本；当前不是可直接运行的正式工程。审计与 smoke 必须在正式锁文件上重跑。
-2. **Linux race**：Windows 工具链兼容问题已解决，但 Linux CI/WSL 的 race 尚未执行；部署侧验证仍由正式工程 CI 落实，不能用 Windows 通过代替 Linux 验收。
+1. **正式依赖与脚本**：任务 06 已提供真实清单、启动/生成/验证脚本并在正式锁文件上复验；后续新增候选库仍需接口核实和安全审计。
+2. **Linux race**：Windows 正式 Go 测试已通过 race；已添加 Linux CI 配置，但本地未执行 Linux race，远程 CI 尚未运行，不能用 Windows 通过代替 Linux 验收。
 3. **浏览器环境复现**：Chromium 安装命令曾超时，但随后日志确认下载完成，实际浏览器烟测通过。正式 CI 仍需可访问的官方下载或经校验的缓存；不能将一个按钮的烟测当完整业务端到端。
-4. **真实链路**：Java→Go RPC、Linux 路径/权限/资源隔离、完整 Vue IDE、备份恢复均未验证，交由相应功能任务，不扩大本任务实现范围。
+4. **真实链路**：任务 06 已验证浏览器→Java→PostgreSQL/Go 的正常、停服与恢复路径；Linux 路径/权限/资源隔离、完整 Vue IDE、备份恢复仍未验证，交由相应功能任务。
 
 环境、执行结果及官方资料见 [任务 01 验证记录](../validation/toolchain-01.md)。

@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package codecraft.status.v1;
+option java_package = "ai.codecraft.status.v1";
+option java_multiple_files = true;
+option go_package = "codecraft.local/sandbox/internal/gen;statusv1";
+
+// Internal loopback-only liveness. This does not certify Docker or test readiness.
+service SandboxStatus {
+  rpc Check(CheckRequest) returns (CheckResponse);
+}
+message CheckRequest {}
+message CheckResponse {
+  bool serving = 1;
+}

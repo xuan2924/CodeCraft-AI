@@ -1,6 +1,6 @@
 # 架构与首期范围
 
-状态：本文件及关联专题记录用户已确认的设计；各文件的“待决与实现验证”不是已批准方案。正式服务尚未实现，设计、研究与一次性 PoC 不代表生产能力。
+状态：本文件及关联专题记录用户已确认的设计；各文件的“待决与实现验证”不是已批准方案。任务 06 已实现仅本机访问的内部状态链路，见 [运行入口](../../README.md)；账号、工作区与执行等产品能力尚未实现，设计、研究与一次性 PoC 不代表生产能力。
 
 ## 技术路线与职责
 
@@ -58,10 +58,10 @@
 
 ## 待决与实现验证
 
-- 工程目录尚未初始化；用户已确认采用 `backend/server/`、`backend/sandbox/`、`backend/proto/`。Java 业务模块、Go 包及前端 feature 边界结合首个纵向功能确定，不把规划目录当作已有工程。
+- 工程目录已随任务 06 初始化为 `backend/server/`、`backend/sandbox/`、`backend/proto/` 和 `frontend/`。当前只有内部依赖状态查询；后续业务模块与 feature 边界按功能建立，不提前搭建无用途框架。
 - 已确认 Maven Wrapper、npm + package-lock.json、Vitest + Vue Test Utils、Playwright；暂不引入 MapStruct、不启用虚拟线程，按实际需求再评估。
-- 日常开发采用本机 Java/Go/Vite + Docker PostgreSQL/题目测试容器；无需本机安装 PostgreSQL。正式启动与生成脚本随首个真实链路建立，当前最小验证不能替代业务验收。
-- 工具链决定票已验收：前端以精确依赖覆盖清除本次审计告警，Windows Go race 显式使用兼容 C 工具链；正式清单/脚本、Linux CI 和完整链路仍待任务 06 及相应功能实现。精确版本、覆盖策略与证据见 [工程工具链](engineering-toolchain.md)。
+- 日常开发采用本机 Java/Go/Vite + Docker PostgreSQL/题目测试容器；无需本机安装 PostgreSQL。任务 06 已建立正式启动与生成脚本，真实状态链路不能替代题目执行与业务验收。
+- 工具链决定票已验收：前端以精确依赖覆盖清除本次审计告警，Windows Go race 显式使用兼容 C 工具链。任务 06 已交付正式清单/脚本与 Linux CI 配置；远程 CI、Linux 隔离及完整业务链路仍待验证。精确版本、覆盖策略与证据见 [工程工具链](engineering-toolchain.md)。
 - Monaco/xterm 的原生封装与 Vite worker 集成待验证；SSE 客户端结合已确认的 Cookie 身份和恢复契约选择，不因草案 POST 示例锁定库。
 - 依赖选择兼容版本并锁定，以实际清单和脚本为准；PoC 依赖不构成正式版本决定。
 - 配额、保留期限、备份目标与容量参数尚未定，不从“受控试用”推导无限资源。

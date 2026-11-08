@@ -8,6 +8,12 @@ node_modules/
 target/
 dist/
 coverage/
+.tools/
+.runtime/
+frontend/test-results/
+frontend/playwright-report/
+backend/sandbox/sandbox
+backend/sandbox/sandbox.exe
 problems/.validation/
 
 # Local runtime and operating-system files
