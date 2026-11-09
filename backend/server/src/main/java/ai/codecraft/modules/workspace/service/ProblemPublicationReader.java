@@ -1,0 +1,133 @@
+package ai.codecraft.modules.workspace.service;
+
+import ai.codecraft.modules.workspace.model.dto.ProblemResponse;
+import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
+import com.fasterxml.jackson.core.StreamReadConstraints;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.springframework.stereotype.Component;
+
+@Component
+public class ProblemPublicationReader {
+    private static final int ARTIFACT_LIMIT = 1024 * 1024;
+    private final ObjectMapper json;
+
+    public ProblemPublicationReader(ObjectMapper json) {
+        // Maintainer artifacts have a separate bounded parser; HTTP limits remain unchanged.
+        this.json = json.copy().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+        this.json.getFactory().setStreamReadConstraints(StreamReadConstraints.builder()
+            .maxStringLength(ARTIFACT_LIMIT).maxDocumentLength(ARTIFACT_LIMIT).maxNestingDepth(16).build());
+    }
+
+    public ProblemVersionEntity read(Path path) throws IOException {
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Publication must be a regular file");
+        byte[] bytes;
+        try (InputStream input = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
+            bytes = input.readNBytes(ARTIFACT_LIMIT + 1);
+        }
+        if (bytes.length > ARTIFACT_LIMIT) throw new IOException("Publication artifact exceeds limit");
+        JsonNode artifact = json.readTree(bytes);
+        validate(artifact);
+        JsonNode identity = artifact.path("identity");
+        return new ProblemVersionEntity(UUID.randomUUID().toString(), identity.path("problem_id").asText(),
+            identity.path("version").asText(), identity.path("package_sha256").asText(),
+            identity.path("execution_image_digest").asText(), identity.path("platform").asText(),
+            new String(bytes, StandardCharsets.UTF_8));
+    }
+
+    public ProblemResponse describe(ProblemVersionEntity version) {
+        try {
+            JsonNode artifact = json.readTree(version.artifact());
+            validate(artifact);
+            JsonNode manifest = artifact.path("manifest");
+            List<String> roots = new ArrayList<>();
+            manifest.path("editableRoots").forEach(root -> roots.add(root.asText()));
+            Map<String, String> acceptance = new LinkedHashMap<>();
+            artifact.path("acceptanceFiles").fields().forEachRemaining(entry -> acceptance.put(entry.getKey(), entry.getValue().asText()));
+            return new ProblemResponse(version.id(), version.problemId(), version.version(), manifest.path("title").asText(),
+                artifact.path("requirements").asText(), manifest.path("durationSeconds").asInt(), List.copyOf(roots),
+                Map.copyOf(acceptance), version.packageSha256(), version.executionImageDigest(), version.platform(), "LOCAL_DOCKER_IMAGE_ID");
+        } catch (IOException error) {
+            throw new IllegalStateException("Stored publication is invalid", error);
+        }
+    }
+
+    private void validate(JsonNode artifact) {
+        JsonNode identity = artifact.path("identity");
+        JsonNode manifest = artifact.path("manifest");
+        JsonNode receipt = artifact.path("receipt");
+        try {
+            Map<String, Object> inputs = new LinkedHashMap<>();
+            for (String field : List.of("manifest", "requirements", "initialFiles", "acceptanceFiles")) {
+                inputs.put(field, json.convertValue(artifact.path(field), Object.class));
+            }
+            byte[] canonical = json.writer().with(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).writeValueAsBytes(inputs);
+            String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
+            require(digest.equals(receipt.path("publicationInputsSha256").asText()));
+        } catch (IOException | NoSuchAlgorithmException error) {
+            throw new IllegalStateException("Cannot verify publication inputs", error);
+        }
+        require(artifact.path("schemaVersion").asInt(-1) == 1 && manifest.path("schemaVersion").asInt(-1) == 1);
+        require(identity.path("problem_id").asText().matches("[a-z][a-z0-9-]{0,63}"));
+        require(identity.path("version").asText().matches("[0-9]+\\.[0-9]+\\.[0-9]+") && identity.path("version").asText().length() <= 32);
+        require(identity.path("package_sha256").asText().matches("[0-9a-f]{64}"));
+        require(identity.path("execution_image_digest").asText().matches("sha256:[0-9a-f]{64}"));
+        require("linux/amd64".equals(identity.path("platform").asText()));
+        require(manifest.path("id").equals(identity.path("problem_id")) && manifest.path("version").equals(identity.path("version")));
+        require(!manifest.path("title").asText().isBlank() && !artifact.path("requirements").asText().isBlank());
+        require(manifest.path("durationSeconds").canConvertToInt() && manifest.path("durationSeconds").asInt() > 0);
+        require(manifest.path("editableRoots").toString().equals("[\"src/main/java\",\"src/test/java\"]"));
+        require("forbidden".equals(manifest.path("symlinks").asText()) && manifest.path("targets").toString().equals("[\"base\"]"));
+        require("local-contract-validation-passed".equals(receipt.path("verdict").asText()));
+        require(receipt.path("packageSha256").equals(identity.path("package_sha256")) && receipt.path("imageId").equals(identity.path("execution_image_digest")));
+        require(receipt.path("platform").equals(identity.path("platform")) && receipt.path("limits").equals(manifest.path("runtime")));
+        require(!receipt.path("environment").path("daemonId").asText().isBlank());
+        for (String variant : List.of("initial", "reference")) {
+            JsonNode expected = manifest.path(variant.equals("initial") ? "expectedInitial" : "expectedReference");
+            boolean found = false;
+            for (JsonNode result : receipt.path("results")) {
+                if (variant.equals(result.path("name").asText()) && expected.equals(result.path("testSummary"))) found = true;
+            }
+            require(found && expected.path("tests").asInt() > 0);
+        }
+        require(manifest.path("expectedReference").path("failures").asInt(-1) == 0
+            && manifest.path("expectedReference").path("errors").asInt(-1) == 0
+            && manifest.path("expectedReference").path("skipped").asInt(-1) == 0);
+        require(artifact.path("initialFiles").has("pom.xml") && artifact.path("acceptanceFiles").has("CartTotalTest.java"));
+        for (String section : List.of("initialFiles", "acceptanceFiles")) {
+            require(artifact.path(section).isObject());
+            artifact.path(section).fields().forEachRemaining(entry -> {
+                require(validPath(entry.getKey()) && entry.getValue().isTextual() && entry.getValue().asText().indexOf(0) < 0);
+                if (section.equals("initialFiles")) require(entry.getKey().equals("pom.xml")
+                    || entry.getKey().startsWith("src/main/java/") || entry.getKey().startsWith("src/test/java/"));
+            });
+        }
+    }
+
+    private static boolean validPath(String path) {
+        if (path.isBlank() || path.length() > 4096) return false;
+        for (String part : path.split("/", -1)) {
+            if (!part.matches("[a-zA-Z0-9_.-]+") || part.equals(".") || part.equals("..")) return false;
+        }
+        return true;
+    }
+    private static void require(boolean valid) {
+        if (!valid) throw new IllegalStateException("Invalid maintainer publication contract");
+    }
+}

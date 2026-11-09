@@ -1,8 +1,12 @@
 package ai.codecraft.modules.workspace;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.codecraft.modules.identity.service.IdentitySecrets;
+import ai.codecraft.modules.workspace.config.WorkspaceProperties;
+import ai.codecraft.modules.workspace.service.ProblemService;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
@@ -39,6 +43,8 @@ class WorkspaceIT {
     @Autowired private ObjectMapper json;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     @Autowired private IdentitySecrets secrets;
+    @Autowired private ProblemService publications;
+    @Autowired private WorkspaceProperties workspaceProperties;
     private String token;
     private String csrf;
 
@@ -55,6 +61,22 @@ class WorkspaceIT {
 
     @AfterEach
     void closeClient() { http.close(); }
+
+    @Test
+    void alteredPublicationBytesCannotReuseTheValidationReceipt() throws Exception {
+        JsonNode before = request("GET", "/api/problems", null, null, 200).path("data");
+        JsonNode artifact = json.readTree(Files.readAllBytes(Path.of(workspaceProperties.publicationFile())));
+        ((ObjectNode) artifact.path("initialFiles")).put("src/main/java/interview/CartTotal.java", "not compilable");
+        Path altered = Files.createTempFile("workspace-altered-publication-", ".json");
+        try {
+            Files.writeString(altered, json.writeValueAsString(artifact));
+            assertThatThrownBy(() -> publications.publish(altered)).isInstanceOf(IllegalStateException.class)
+                .hasMessage("Invalid maintainer publication contract");
+            assertThat(request("GET", "/api/problems", null, null, 200).path("data")).isEqualTo(before);
+        } finally {
+            Files.deleteIfExists(altered);
+        }
+    }
 
     @Test
     void publishedProblemCreatesAnIsolatedReadableWorkspace() throws Exception {

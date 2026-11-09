@@ -15,10 +15,13 @@ public class WorkspaceRevocationBarrier implements IdentityRevocationBarrier {
     private final WorkspaceFenceTransactionService store;
     private final SandboxWorkspaceGateway sandbox;
     private final ObjectMapper json;
-    public WorkspaceRevocationBarrier(WorkspaceFenceTransactionService store, SandboxWorkspaceGateway sandbox, ObjectMapper json) {
+    private final PreparationReceiptValidator receipts;
+    public WorkspaceRevocationBarrier(WorkspaceFenceTransactionService store, SandboxWorkspaceGateway sandbox,
+                                      ObjectMapper json, PreparationReceiptValidator receipts) {
         this.store = store;
         this.sandbox = sandbox;
         this.json = json;
+        this.receipts = receipts;
     }
     @Override
     public List<String> pendingPreparations(String userId, String sessionHash) {
@@ -39,14 +42,7 @@ public class WorkspaceRevocationBarrier implements IdentityRevocationBarrier {
         WorkspaceSnapshot result = sandbox.query(exercise.workspaceInstanceId());
         if (result != null && result.getPrepared()) {
             ProblemVersionEntity problem = store.problem(exercise.problemVersionId());
-            if (result.getCancelled() || result.getRevision() != 0 || problem == null
-                || !result.getWorkspaceInstanceId().equals(exercise.workspaceInstanceId())
-                || !result.getOperationId().equals(exercise.preparationOperationId())
-                || !result.getProblem().getProblemId().equals(problem.problemId())
-                || !result.getProblem().getVersion().equals(problem.version())
-                || !result.getProblem().getPackageSha256().equals(problem.packageSha256())
-                || !result.getProblem().getExecutionImageDigest().equals(problem.executionImageDigest())
-                || !result.getProblem().getPlatform().equals(problem.platform())) {
+            if (!receipts.matches(result, exercise.workspaceInstanceId(), exercise.preparationOperationId(), problem)) {
                 throw new IllegalStateException("Preparation receipt cannot be reconciled during revocation");
             }
             try { store.prepared(exercise, result.getRevision(), json.writeValueAsString(result.getPathsList())); }

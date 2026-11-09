@@ -21,14 +21,17 @@ public class WorkspacePreparationWorker {
     private final SandboxWorkspaceGateway sandbox;
     private final ObjectMapper json;
     private final WorkspaceRevocationBarrier revocations;
+    private final PreparationReceiptValidator receipts;
 
     public WorkspacePreparationWorker(ExerciseTransactionService exercises, ProblemTransactionService problems,
-                                      SandboxWorkspaceGateway sandbox, ObjectMapper json, WorkspaceRevocationBarrier revocations) {
+                                      SandboxWorkspaceGateway sandbox, ObjectMapper json, WorkspaceRevocationBarrier revocations,
+                                      PreparationReceiptValidator receipts) {
         this.exercises = exercises;
         this.problems = problems;
         this.sandbox = sandbox;
         this.json = json;
         this.revocations = revocations;
+        this.receipts = receipts;
     }
 
     @Scheduled(fixedDelay = 1000)
@@ -78,14 +81,7 @@ public class WorkspacePreparationWorker {
                     exercises.preparationFailed(operation);
                     continue;
                 }
-                if (!result.getPrepared() || result.getCancelled() || result.getRevision() != 0
-                    || !result.getWorkspaceInstanceId().equals(operation.workspaceInstanceId())
-                    || !result.getOperationId().equals(operation.id())
-                    || !result.getProblem().getProblemId().equals(problem.problemId())
-                    || !result.getProblem().getVersion().equals(problem.version())
-                    || !result.getProblem().getPackageSha256().equals(problem.packageSha256())
-                    || !result.getProblem().getExecutionImageDigest().equals(problem.executionImageDigest())
-                    || !result.getProblem().getPlatform().equals(problem.platform())) {
+                if (!receipts.matches(result, operation.workspaceInstanceId(), operation.id(), problem)) {
                     throw new IllegalStateException("Preparation receipt identity mismatch");
                 }
                 exercises.prepared(operation, result.getRevision(), json.writeValueAsString(result.getPathsList()));
