@@ -32,10 +32,12 @@ mybatis:
     default-statement-timeout: 2
     local-cache-scope: STATEMENT
 workspace:
+  sandbox-host: ${SANDBOX_HOST:127.0.0.1}
   sandbox-port: ${SANDBOX_PORT:9090}
   publication-file: ${PROBLEM_PUBLICATION_FILE:}
   rpc-key: ${SANDBOX_RPC_KEY:}
 tracer:
+  sandbox-host: ${SANDBOX_HOST:127.0.0.1}
   sandbox-port: ${SANDBOX_PORT:9090}
 identity:
   public-origin: ${PUBLIC_ORIGIN:http://localhost:5173}

@@ -5,7 +5,7 @@
 ## 已确认的初始化方式
 
 - 正式目录采用 `backend/server/`（Java）、`backend/sandbox/`（Go）、`backend/proto/`（共享 `.proto` 契约），前端在 `frontend/`。任务 06 已随状态查询建立这些目录，不创建空业务框架。
-- 日常开发及真实链路验收中的 Java/Go 统一到同一 Linux VM/宿主时钟域；Windows 可运行编辑器、Vite 和浏览器。该用户已确认的变更替代原“本机 Java + Linux Go”路线，原因见 [ADR 0002](../adr/0002-java-go-shared-linux-clock.md)；正式启动/验收入口迁移仍待实现，Java 镜像、网络与调试配置不从诊断夹具直接继承。
+- 日常开发及真实链路验收中的 Java/Go 统一到同一 Linux VM/宿主时钟域；Windows 可运行编辑器、Vite 和浏览器。该用户已确认的变更替代原“本机 Java + Linux Go”路线，原因见 [ADR 0002](../adr/0002-java-go-shared-linux-clock.md)；正式 `dev.mjs java` / `test-tracer.mjs` 已采用 Linux Java 容器，应用通过 Compose 私网连接 PostgreSQL/Go，宿主仅 loopback 映射；集成测试独立容器/报告目录，复用固定摘要的 Java 21/Maven 镜像。未开放远程调试端口，不继承诊断夹具共享网络或应用 socket 权限。
 - Docker 继续提供 PostgreSQL，Go 私有工作区放在 Linux 具名卷；保留任务 09 已确认的 Linux 原子文件语义，不将 Windows `os.Rename` 视为原子发布。题目代码始终在独立受限容器执行，不获得 Go 存储根或 Docker socket。
 - 不要求本机安装 PostgreSQL 或 psql；可通过数据库容器执行 psql。数据库端口仅绑定 `127.0.0.1`，数据用具名卷持久化，凭证放未跟踪的 `.env`，测试库与开发库隔离。数据卷不是备份。
 - 前端唯一包管理器为 npm；提交 `package-lock.json`，干净安装用 `npm ci`，不生成 yarn/pnpm 锁文件。`packageManager` 声明 npm 精确版本，直接依赖用精确版本；Node 版本也写入工程说明与 CI。
@@ -73,19 +73,19 @@ Go 官方要求 Windows race 使用 mingw-w64 runtime 8+。本机 GCC 8.1.0 配�
 
 ## 数据迁移与启动约定
 
-以下列出当前已落地入口及迁移边界；准确可执行入口和环境要求见 [README](../../README.md)。ADR 0002 已确认同一 Linux 时钟域路线，但当前 `dev.mjs` / `test-tracer.mjs` 仍从启动脚本所在宿主运行 Java，尚未自动完成迁移。Windows 本机启动 Java 的旧入口不能作为截止时间敏感业务验收；本地编译、静态检查和单元测试仍可使用。Docker SDK 配置随实际执行功能落实：
+以下列出当前已落地入口及迁移边界；准确可执行入口和环境要求见 [README](../../README.md)。ADR 0002 的同一 Linux 时钟域路线已落实到 `dev.mjs java` / `test-tracer.mjs`。Windows 本机启动 Java 的旧入口不能作为截止时间敏感业务验收；本地编译、静态检查和单元测试仍可使用。Docker SDK 配置随实际执行功能落实：
 
 1. 根目录 `.env.example` 仅提供变量名及非敏感默认值；开发者建立 `.env`，提供数据库凭证、端口及工作区路径。Compose 的 `.env` 不会自动注入本机 Java/Go，启动脚本必须显式读取并传递白名单变量，不打印凭证。
 2. `docker compose up -d --wait postgres`：检查数据库健康，具名卷持久化；不自动执行 `down -v` 或删除开发数据。
 3. 运行双端生成脚本；`node scripts/dev.mjs sandbox` 交叉编译 Linux 静态 Go 二进制，在仅含构建产物的临时上下文构建镜像，再由 Compose 启动。Go 非 root、只读根文件系统、持久化私有具名卷，端口只发布到宿主 loopback。原生 Go 入口仅保留状态链路兼容性，不提供 Windows 工作区保证。Docker SDK/socket 接入仍随执行功能落实，不将 Docker CLI context 选择隐式当成 SDK 配置。
-4. 现有入口在 `backend/server/` 中以 `./mvnw spring-boot:run`（Windows 为 `./mvnw.cmd spring-boot:run`）启动 Java；目标入口须保证 Java 与 Go 位于同一 Linux 时钟域，不能将 Windows 命令可运行等同于迁移完成。Flyway 执行 `src/main/resources/db/migration/V<版本>__<说明>.sql` 并校验，失败阻止启动。已发布迁移不可修改，不自动 baseline、clean 或忽略校验。
+4. `node scripts/dev.mjs java` 先执行 Maven package，将 jar/题目发布产物放入独立最小构建上下文并构建 Java 镜像，再由 Compose 启动非 root、只读根文件系统容器。容器内 HTTP 监听 `0.0.0.0:8080`，宿主仅 loopback 映射，Java 默认本机绑定仍为 `127.0.0.1`；显式传递配置白名单，不挂载开发 `.env`、源代码、Go 工作区或 Docker socket。修改代码后重新执行该入口；单独 `spring-boot:run` 不作为跨端入口。Flyway 执行 `src/main/resources/db/migration/V<版本>__<说明>.sql` 并校验，失败阻止启动。已发布迁移不可修改，不自动 baseline、clean 或忽略校验。
 5. `frontend/` 中 `npm ci`、`npm run dev`；Vite 将浏览器 API 请求代理给 Java，浏览器不直连 Go 或数据库。具体端口、健康检查及 Cookie/CSRF 配置由实际配置和任务 02/06 提供。
 
 容器镜像下载发生在环境准备阶段；题目执行阶段仍禁网且依赖预装。Go 创建容器时挂载路径由 Docker daemon 解释，Windows 路径映射和 Linux 权限须独立验收。不得为联调向题目容器挂载 Docker socket。
 
 ## 验证命令契约
 
-下表命令已随任务 06 建立；`scripts/verify.mjs` 汇总本地检查，`scripts/test-tracer.mjs` 用隔离真实依赖补充 Failsafe 与浏览器验证。涉及跨端截止的 Java 测试 JVM 也须与 Go 处于同一 Linux 时钟域，不能只迁移应用 Java 而留下 Windows 测试 JVM。现有 tracer 的正式迁移及全链路复验尚未完成：
+下表命令已随任务 06 建立；`scripts/verify.mjs` 汇总本地检查，`scripts/test-tracer.mjs` 用隔离真实依赖补充 Failsafe 与浏览器验证。涉及跨端截止的 Java 测试 JVM 也运行于同一 Linux daemon，离线复用只读 Maven repository，各模式复制编译产物并隔离报告，零执行或跳过所选测试失败。可信工作区故障测试容器拥有临时 Docker socket 权限，不能充当用户代码沙箱。迁移及真实链路证据见 [#10–#12 验证](../validation/workspace-write-browser-10-12.md)，时钟异常保护仍未交付：
 
 | 范围 | 单点与快速反馈 | 完整验证 |
 |---|---|---|

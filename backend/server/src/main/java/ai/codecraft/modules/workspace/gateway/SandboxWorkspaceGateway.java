@@ -33,7 +33,7 @@ public class SandboxWorkspaceGateway {
     private final WorkspaceStorageGrpc.WorkspaceStorageBlockingStub stub;
 
     public SandboxWorkspaceGateway(WorkspaceProperties properties) {
-        channel = ManagedChannelBuilder.forAddress("127.0.0.1", properties.sandboxPort()).usePlaintext()
+        channel = ManagedChannelBuilder.forAddress(properties.sandboxHost(), properties.sandboxPort()).usePlaintext()
             .maxInboundMessageSize(2 * 1024 * 1024).build();
         Metadata metadata = new Metadata();
         metadata.put(Metadata.Key.of("x-codecraft-internal-key", Metadata.ASCII_STRING_MARSHALLER), properties.rpcKey());

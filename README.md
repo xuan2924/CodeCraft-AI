@@ -12,7 +12,7 @@ AI 结对编程面试平台。目前提供 **本机工程底座**：服务状态
 
 ## 初始化与本地启动
 
-> **运行路线变更已确认，脚本迁移尚未完成：** Java/Go 的日常业务开发及真实链路验收须运行在同一 Linux VM/宿主时钟域；Windows 可保留编辑器、Vite 和浏览器。现有 `dev.mjs java` 和 `test-tracer.mjs` 仍在脚本所在宿主启动 Java，不能在 Windows 执行后当作新路线已落实。下列命令保留用于说明当前入口；Windows 本地编译/单元测试不受此限制，Windows JVM + Linux Go 不再作为截止时间敏感业务验收基线。原因、范围与待实施项见 [ADR 0002](docs/adr/0002-java-go-shared-linux-clock.md)。
+> **Java/Go 同一 Linux 时钟域：** `dev.mjs java` 构建 Java 应用镜像并由 Compose 启动；`test-tracer.mjs` 将应用及 Java 集成测试 JVM 均运行于同一个 Docker Linux daemon。Windows 可保留编辑器、Vite、浏览器及本地编译/单元测试，不再用 Windows JVM + Linux Go 验收截止时间敏感业务。该布局不替代尚待实现的时钟异常保护。决定见 [ADR 0002](docs/adr/0002-java-go-shared-linux-clock.md)。
 
 在仓库根目录操作。复制 `.env.example` 为未跟踪的 `.env`，自行填写 `POSTGRES_USER`、`POSTGRES_PASSWORD`、`BOOTSTRAP_ADMIN_USERNAME`、`BOOTSTRAP_ADMIN_PASSWORD` 和 `IDENTITY_FINGERPRINT_KEY`；不要提交或分享该文件。数据库名/用户名使用小写字母开头的字母、数字、下划线。值按字面量解析，含空格、`#` 或双引号时用单引号包裹；不支持变量展开、命令替换、多行或嵌入单引号。不要用 `source .env`。
 
@@ -34,7 +34,7 @@ cd ..
 ./scripts/generate-proto.sh
 ```
 
-当前启动命令如下（语法跨平台，但运行位置须遵循上述边界；自动化迁移待完成）：
+启动数据库后，在独立终端启动 Go、Java 和 Vite（Windows/Linux 同一入口；Java 启动前会执行 Maven package）：
 
 ```sh
 node scripts/dev.mjs postgres
@@ -43,8 +43,9 @@ node scripts/dev.mjs java
 node scripts/dev.mjs web
 ```
 
-访问 **http://localhost:5173**（若修改 `WEB_PORT`，使用对应端口）。浏览器只通过 Vite 代理访问 Java。Java、Vite 及 Go/PostgreSQL 的宿主映射端口均绑定 `127.0.0.1`，**不得改为公网/局域网入口或为其配置公开反向代理**。此页面免登录的前提仅是本机可信联调，不是未来产品鉴权方案。
+访问 **http://localhost:5173**（若修改 `WEB_PORT`，使用对应端口）。浏览器只通过 Vite 代理访问 Java。Java 在容器内监听 `0.0.0.0:8080`，通过私网访问 `postgres:5432` 和 `sandbox:9090`；其宿主 HTTP 映射、Vite 及 Go/PostgreSQL 的宿主映射端口均绑定 `127.0.0.1`，**不得改为公网/局域网入口或为其配置公开反向代理**。此页面免登录的前提仅是本机可信联调，不是未来产品鉴权方案。
 
+- Java 使用固定摘要的 Java 21/Maven 基础镜像，非 root、只读根文件系统，只提供 `/tmp` 临时空间；不挂载源代码、Go 工作区或 Docker socket。修改 Java 代码后重新运行 `node scripts/dev.mjs java` 构建并替换容器，当前未提供热更新/远程调试端口。
 - Go 启动脚本构建 Linux 静态二进制与本地镜像，通过 Compose 启动非 root 服务。私有数据使用 `sandbox-data` 具名卷；新容器可重新挂载，进程锁拒绝同时启动第二个存储所有者。未配置题目发布产物时仅提供在线查询；配置后提供初始工作区存储，不宣称测试执行服务已交付。
 - 启动脚本显式读取根目录 `.env`，只按服务传递白名单键；前端与 Go 不接收数据库/管理员凭证，不打印配置值。Spring Boot、Go 本身不会自动读取 `.env`。
 - Java 启动时 Flyway 在空库创建 `codecraft` schema；重复启动校验已发布迁移。数据库不可达、迁移失败或校验失败会阻止启动。不 baseline、clean 或忽略校验。
@@ -54,7 +55,7 @@ node scripts/dev.mjs web
 - 输入、会话、CSRF 和限流规则见[身份契约](docs/design/api-events.md#账号与登录契约任务-02)。本机代理下请求共享 loopback 限额；浏览器固定使用 `localhost` 和 Vite 入口，避免跨源或混用主机名导致拒绝。
 - HMAC 密钥应在本机用安全随机生成器生成并直接写入未跟踪 `.env`，不要粘贴到对话、提交或命令参数。公开部署尚未验收；HTTPS 源配置会强制 Secure Cookie，但不能因此把本机状态接口暴露到公网。
 - 停止应用使用各终端 Ctrl+C；数据库使用 `docker compose stop postgres`。开发数据使用具名卷保留；**不要执行 `down -v` 来修复启动问题**。改变 `.env` 密码不会自动改变已有卷中的数据库密码。
-- 单独执行 `./mvnw spring-boot:run`（Windows `./mvnw.cmd`）需自行显式提供环境变量。原生 `go run ./cmd/sandbox` 仅保留在线查询兼容入口；工作区运行方式固定为上述 Linux 容器，不将 Windows 文件系统当作原子发布后端。
+- 单独执行 `./mvnw spring-boot:run`（Windows `./mvnw.cmd`）仍需自行显式提供环境变量，但这不是正式跨端启动入口；特别是 Windows JVM 不再作为工作区截止时间敏感业务的运行基线。原生 `go run ./cmd/sandbox` 仅保留在线查询兼容入口；工作区运行方式固定为上述 Linux 容器，不将 Windows 文件系统当作原子发布后端。
 
 ## 本机首题发布与工作区
 
@@ -123,7 +124,14 @@ node scripts/test-tracer.mjs
 node scripts/test-tracer.mjs --identity
 # 工作区 REST、真实浏览器、Go/Java 重启、撤销及故障恢复
 node scripts/test-tracer.mjs --workspace
+# 仅工作区 REST 边界（含精确 JVM 崩溃恢复）
+node scripts/test-tracer.mjs --workspace --boundary-only
+# 仅精确 JVM 崩溃恢复 / 单项原过期准备测试
+node scripts/test-tracer.mjs --workspace --boundary-only --workspace-recovery-only
+node scripts/test-tracer.mjs --workspace --boundary-only --workspace-test=expiredPreparationAuthorityCannotCreateFilesAfterSandboxRecovery
 ```
+
+Java 集成测试使用已有 `~/.m2/repository` 的只读挂载，以离线 Maven 运行预先编译的 classes/test-classes；首次先完成本机 Maven 构建。每次/每种模式的 Failsafe 输出放在其 `.runtime/cc-tracer-*/java-tests-*`，缺失产物/依赖、零执行或跳过所选测试均失败。工作区故障测试容器临时挂载 Docker socket，通过受限命令适配器真实暂停/恢复本次 Go 容器并注入损坏文件；**它是可信测试夹具，拥有 Docker 管理权限，不是用户代码沙箱**。Java 应用及题目容器不获得该挂载。
 
 该脚本不读取开发 `.env`：生成随机凭证、独立 Compose 项目/具名卷和独立端口，启动实际进程及 **Vite preview 的生产构建**，执行 Java Failsafe 集成测试及 Playwright：
 
@@ -136,7 +144,7 @@ node scripts/test-tracer.mjs --workspace
 
 脚本还检查 Go 非 root、只读根、私有具名卷、宿主 loopback 端口与无数据库/管理员凭证。浏览器同时检查响应形状、HTTP 200/503、`no-store`、键盘重试和窄屏。没有替换浏览器 API。清理仅针对该次随机项目的进程、容器和卷；删除临时凭证文件，日志保存在忽略的 `.runtime/`。Docker/浏览器/依赖缺失均非零失败，不能算作通过。若终端被强制关闭，检查 `.runtime/cc-tracer-*` 对应的测试项目并只清理该项目，勿清理开发资源。
 
-`--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器实际完成管理员改密、创建用户、用户改密、越权拒绝和退出，并验证 Java 重启后数据库会话仍可用。该模式禁用 trace、截图和视频，避免记录一次性凭证。各模式顺序运行（Maven/Playwright 的输出目录共用），不能把跳过的测试算作通过。`--workspace` 还覆盖选题/准备/只读浏览/开始/放弃、跨用户拒绝、Go 暂停期间的撤销与授权过期，以及 16 个损坏清理实例不阻塞新准备。验证边界见 [#09 记录](docs/validation/problem-workspace-09.md)。
+`--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器实际完成管理员改密、创建用户、用户改密、越权拒绝和退出，并验证 Java 重启后数据库会话仍可用。该模式禁用 trace、截图和视频，避免记录一次性凭证。各模式仍顺序运行（本机构建产物及 Playwright 的输出目录共用），不能把跳过的测试算作通过。`--workspace` 还覆盖选题/准备/只读浏览/开始/放弃、跨用户拒绝、Go 暂停期间的撤销与授权过期，以及 16 个损坏清理实例不阻塞新准备。另在独立测试库启动子 JVM：收到 Go 真实提交回执后立即 halt，重启后只用 REST GET 确认原操作/内容/修订，任何重新 Apply 都使测试失败。验证边界见 [#09 记录](docs/validation/problem-workspace-09.md)和 [#10–#12 记录](docs/validation/workspace-write-browser-10-12.md)。
 
 已有独立服务时，可在 `frontend/` 设置 `TRACER_WEB_URL=http://127.0.0.1:<端口>` 后执行 `npm run test:e2e -- e2e/status.spec.ts`；默认断言两项依赖可用。普通 `npm run test:e2e` 不会偷偷启动假服务。
 

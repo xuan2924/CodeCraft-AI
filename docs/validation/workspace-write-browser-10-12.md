@@ -151,6 +151,45 @@
 - 清理后执行 `node scripts/verify.mjs`：9 项脚本测试、18 项 Java 单元测试通过；Maven verify 已重新生成不含探针的编译产物；仍在原有 `mutation_linux_test.go` gofmt 检查停止，不宣称全量通过。日志 `.runtime/linux-clock-final-verify.log`。
 - 独立 Standards / Spec 评审未发现问题；Spec 复核了 10 份测试结果及 8 组双端时间数据。评审仅覆盖本次文档及既有证据，不代表独立重跑或生产迁移获批。
 
+## 后续收尾实施切片（基线 `59ddab6`）
+
+| 不变量 | 权威依据 / 提交点 | 故障或竞态 | 验证入口 |
+|---|---|---|---|
+| Java 应用及集成测试与 Go 同时钟域 | 同一 Docker Linux daemon 上的容器 | Windows/VM 截止时间分歧 | 原过期准备 REST 用例，保持等待与断言；容器化 tracer |
+| 已提交文件不因 Java 崩溃丢失/重放 | Go 原子提交，Java 待派发记录已持久化 | Go 成功返回后、Java 回执入库前 JVM 非正常终止 | 测试专用子 JVM halt；重启后仅 REST 查询原幂等操作、内容和修订 |
+| 开发迁移不暴露宿主服务或 Docker 权限 | Compose loopback 映射与挂载清单 | 容器内绑定地址变化、错误挂载/凭证传递 | 真实 tracer 启停/重启及容器 inspect；题目/Java 应用无 socket |
+
+### 本切片已实现
+
+- `dev.mjs java` 构建并启动固定摘要的 Java 21 Linux 镜像；tracer 的应用 Java、各模式集成测试 JVM 与 Go 均在同一 Docker Linux daemon。应用非 root、只读根、仅 `/tmp` 临时空间，HTTP 宿主映射保持 loopback，不挂载 Docker socket、源代码或 Go 工作区。默认本机 HTTP 绑定仍为 loopback；容器通过显式配置监听内部网卡。Java/Go 两类 gRPC 客户端集中配置 sandbox host，默认仍为 loopback。
+- Failsafe 各模式独立复制已编译 classes/test-classes 和报告目录，离线复用只读 Maven repository，不读取个人 settings 或开发 `.env`。可信工作区故障测试容器临时持有 Docker socket，使用真实 Engine API pause/unpause/archive；不宣称该适配脚本隔离了 Docker 管理权限。独立崩溃测试不挂载 socket。
+- `WorkspaceCrashRecoveryIT` 启动测试专用子 JVM，经真实 REST 创建演练、获取控制权、开始及写入。测试专用 gateway 调用真实 Go Apply，得到已提交回执后 fsync 记录关联 ID 并立即 `Runtime.halt(137)`，尚未返回给 Java coordinator；仅在崩溃阶段阻止竞争的回执查询先行落库。重启后的恢复仍使用真实 Go，任何再次 Apply 都记录故障并 halt(138)。随后只用 REST GET 核对原 operation 的 SUCCEEDED、修订 1 和完整文件内容，不通过数据库断言、不重发保存。
+- 测试故障注入仅位于 `src/test`，不进入应用 jar，不增加生产故障开关。Java 清理异常以 suppressed 保留；测试容器运行和清理命令均有超时，聚合原始与清理错误，并继续删除临时凭证文件。
+
+### 实际执行与失败证据
+
+| 验证 | 结果 |
+|---|---|
+| 新崩溃测试负对照 | 临时禁用 `pendingMutations` 恢复扫描，已提交操作重启后停在 PENDING，测试预期 SUCCEEDED 而失败；不是夹具/编译失败。源码随即恢复，正常产物重新构建 |
+| `node scripts/test-tracer.mjs --workspace` | 14 项 WorkspaceIT + 1 项真实崩溃恢复 + 1 项 StatusIT 全部实际执行、无跳过；浏览器保存、双页面接管、冲突、草稿、文件操作、退出，以及 Go 重建、Java 重启、数据库停服/恢复通过 |
+| `node scripts/test-tracer.mjs --identity` | 13 项身份边界 + 1 项 StatusIT 无跳过；浏览器与会话跨 Java 容器重启通过 |
+| `node scripts/verify.mjs`（显式设置已声明 LLVM-MinGW 的 CC） | 9 项脚本、18 项 Java 单元、Go vet/测试及 Windows race、Linux 工作区故障测试、前端 lint/typecheck/35 项单元/build 通过；并未把默认跳过的 Failsafe 当作集成通过 |
+| 评审修复后的焦点回归 | Maven verify、`--workspace --boundary-only --workspace-recovery-only`、原过期准备单方法用例均通过 |
+| 清理故障实验 | 临时外部 Docker CLI 替身令运行退出 17、清理超时；确认 AggregateError 同时保留两项错误，凭证文件仍删除，清理有界。该项仅验证驱动失败路径，不作为真实 Docker/REST 证据 |
+
+- 负对照执行期间父命令被中断，子测试继续完成并留下 Failsafe 失败报告；已收集报告并仅清理该次 `cc-tracer-3660-fe2b4044` 的容器/网络/卷及临时凭证，未清理其他项目。
+- 入口搭建初期分别发现 Docker COPY 创建目录权限错误、原强制 loopback customizer 覆盖容器绑定配置，均定位后修复；不把这两次启动失败计入业务用例结果。
+- 首次迁移全链路虽然退出成功，但 StatusIT 的启用条件只接受 loopback URL，在容器服务名下实际跳过。新增“所选测试必须实际执行且无跳过”检查后，负对照明确失败；随后允许精确容器地址并复跑，StatusIT 实际通过。早期跳过的运行不算状态集成证据。
+- 修正原有 `mutation_linux_test.go` gofmt 阻断，仅格式变动；其后默认旧 MinGW 导致 Windows race 以 `0xc0000139` 退出，按既有文档仅对该进程设置 `.tools/llvm-mingw-20261104-ucrt-x86_64/bin/clang.exe` 后全量本地验证通过，未更改全局工具链或关闭 race。
+- 证据：`.runtime/linux-workspace-final.log`、`linux-identity-final.log`、`linux-migration-verify-2.log`、`linux-review-fixes-{java,crash,expiry}.log`、`linux-status-skipped-negative.log`、`linux-cleanup-fault-validation.log`。负对照报告为 `.runtime/cc-tracer-3660-fe2b4044/java-tests-recovery/server/target/failsafe-reports/ai.codecraft.modules.workspace.WorkspaceCrashRecoveryIT.txt`。日志仅作本地证据，不作为可公开凭证包。
+
+### 评审及仍未完成的门槛
+
+- 独立 Standards 评审指出清理覆盖原始错误、Docker 清理无超时两项 P2；均已修复并完成上述焦点/失败路径验证。Spec 评审未发现本切片实现偏离。首次评审因工具无法确认基线而阻塞，不计作有效评审；补齐 HEAD=`59ddab6` 和完整差异证据后重新完成评审。
+- 同域迁移和精确 Java 崩溃切片已补齐，不代表 Windows 混合模式被修复；系统时间回退/无法确认时拒绝新写入的保护及受控时钟竞态仍未实现验证。异常检测阈值、异常状态恢复与重启处理尚需形成有效实施方案，不能以同域通过替代。
+- Linux 存储测试实际运行但本轮未运行 Linux race；Windows race 不替代它。真实断电/目标部署卷的持久性边界也未新增验证。
+- #10–#12 尚未逐项完成全部组合验收，不整体勾选；#13–#16 的受限测试执行、流式停止恢复、冻结最终验收及删除/容量/引用回收仍未交付。
+
 ## 后续用户确认
 
 用户在上述复验及运行布局说明后，确认将 Java/Go 日常开发与真实链路验收统一到同一 Linux VM/宿主时钟域，Windows 保留编辑器、Vite 和浏览器。决定已记录为 [ADR 0002](../adr/0002-java-go-shared-linux-clock.md)，并同步有效设计与 README。上文“待确认”保留为实验当时的历史记录，不再表示此运行边界未获批准；启动/验收脚本迁移、时钟异常保护及完整回归仍未交付。本次仅记录决定，没有新增测试通过证据。

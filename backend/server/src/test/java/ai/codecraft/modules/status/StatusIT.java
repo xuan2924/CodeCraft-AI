@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 // Explicit opt-in: scripts/test-tracer.mjs provisions a disposable real database and Go process.
-@EnabledIfEnvironmentVariable(named = "TRACER_IT_URL", matches = "http://127\\.0\\.0\\.1:[0-9]+")
+@EnabledIfEnvironmentVariable(named = "TRACER_IT_URL", matches = "http://(127\\.0\\.0\\.1:[0-9]+|java:8080)")
 class StatusIT {
     @Test
     void realDatabaseAndGoAreAvailableThroughJava() throws Exception {

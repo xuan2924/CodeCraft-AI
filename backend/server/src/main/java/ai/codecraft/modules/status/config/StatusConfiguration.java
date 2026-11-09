@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
 class StatusConfiguration {
     @Bean(destroyMethod = "shutdownNow")
     ManagedChannel sandboxChannel(StatusProperties properties) {
-        return ManagedChannelBuilder.forAddress("127.0.0.1", properties.sandboxPort()).usePlaintext()
+        return ManagedChannelBuilder.forAddress(properties.sandboxHost(), properties.sandboxPort()).usePlaintext()
             .maxInboundMessageSize(1024).build();
     }
 

@@ -6,9 +6,11 @@ import { openSync, closeSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { root, run, maven, windows } from './process.mjs';
+import { root, run, windows } from './process.mjs';
 import { serviceEnv } from './local-config.mjs';
 import { buildSandboxImage } from './build-sandbox.mjs';
+import { buildJavaImage, javaComposeEnv } from './build-java.mjs';
+import { linuxJavaTests } from './linux-java-tests.mjs';
 
 const identityMode = process.argv.includes('--identity');
 const workspaceMode = process.argv.includes('--workspace');
@@ -18,6 +20,10 @@ const workspaceTestOption = process.argv.find((argument) => argument.startsWith(
 const workspaceTest = workspaceTestOption?.slice('--workspace-test='.length);
 if (workspaceTestOption !== undefined && (!boundaryOnly || !/^[A-Za-z][A-Za-z0-9]*$/.test(workspaceTest))) {
   throw new Error('--workspace-test requires --workspace --boundary-only and one test method name');
+}
+const recoveryOnly = process.argv.includes('--workspace-recovery-only');
+if (recoveryOnly && (!workspaceMode || !boundaryOnly || workspaceTest)) {
+  throw new Error('--workspace-recovery-only requires --workspace --boundary-only without --workspace-test');
 }
 const updatedIdentityPassword = randomBytes(32).toString('hex');
 // Never consumes the development .env, database, volume, or running services.
@@ -60,6 +66,10 @@ async function stop(child) {
   if (child?.sandboxContainer) {
     compose(['stop', 'sandbox']);
     child.sandboxContainer = false;
+  }
+  if (child?.javaContainer) {
+    compose(['stop', 'java']);
+    child.javaContainer = false;
   }
   if (!child || child.exitCode !== null || child.signalCode !== null || child.startError) return;
   const exited = new Promise((resolve) => child.once('exit', resolve));
@@ -104,7 +114,10 @@ function sandbox() {
   return child;
 }
 function java() {
-  return start('java', 'java', ['-jar', join(root, 'backend/server/target/server-0.1.0-SNAPSHOT.jar')], serviceEnv(values, 'java'));
+  Object.assign(composeEnv, javaComposeEnv(values));
+  const child = start('java', 'docker', [...composeArgs, 'up', '--no-deps', '--abort-on-container-exit', '--exit-code-from', 'java', 'java'], composeEnv);
+  child.javaContainer = true;
+  return child;
 }
 function browser(database = 'AVAILABLE', sandboxState = 'AVAILABLE', javaState = 'AVAILABLE') {
   run(process.execPath, [join(root, 'frontend/node_modules/@playwright/test/cli.js'), 'test', identityMode ? 'identity.spec.ts' : 'status.spec.ts'], {
@@ -118,6 +131,19 @@ function browser(database = 'AVAILABLE', sandboxState = 'AVAILABLE', javaState =
 function sandboxId() {
   return run('docker', [...composeArgs, 'ps', '-q', 'sandbox'],
     { env: composeEnv, encoding: 'utf8', stdio: 'pipe' }).stdout.trim();
+}
+function inspectJava() {
+  const id = run('docker', [...composeArgs, 'ps', '-q', 'java'],
+    { env: composeEnv, encoding: 'utf8', stdio: 'pipe' }).stdout.trim();
+  assert(id, 'Java must run in the same Docker Linux daemon, not the host JVM');
+  const info = JSON.parse(run('docker', ['inspect', id], { encoding: 'utf8', stdio: 'pipe' }).stdout)[0];
+  assert.equal(info.Config.Image, composeEnv.JAVA_IMAGE);
+  assert.equal(info.Config.User, '10001:10001');
+  assert.equal(info.HostConfig.ReadonlyRootfs, true);
+  assert(info.HostConfig.CapDrop.includes('ALL'));
+  assert(info.HostConfig.SecurityOpt.some((value) => value.startsWith('no-new-privileges')));
+  assert(info.Mounts.every((mount) => mount.Type === 'tmpfs' && mount.Destination === '/tmp'), 'Java must not receive source, workspace or Docker socket mounts');
+  assert.equal(info.HostConfig.PortBindings['8080/tcp'][0].HostIp, '127.0.0.1');
 }
 function inspectSandbox() {
   const id = sandboxId();
@@ -143,32 +169,36 @@ try {
   run('docker', ['info'], { stdio: 'ignore' });
   composeEnv.SANDBOX_IMAGE = await buildSandboxImage(values.PROBLEM_PUBLICATION_FILE);
   composeEnv.SANDBOX_PORT = values.SANDBOX_PORT;
+  composeEnv.JAVA_IMAGE = await buildJavaImage(values.PROBLEM_PUBLICATION_FILE);
+  Object.assign(composeEnv, javaComposeEnv(values));
   // Fail fast if built artifacts or matching browser are missing; see README setup.
   compose(['up', '-d', '--wait', 'postgres']);
   if (identityMode) {
     compose(['exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB,
       '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE DATABASE identity_boundary']);
-    maven(['failsafe:integration-test', 'failsafe:verify'], { env: { ...serviceEnv(values, 'java'),
-      IDENTITY_IT_RUN: 'disposable', SPRING_DATASOURCE_URL: `jdbc:postgresql://127.0.0.1:${values.POSTGRES_PORT}/identity_boundary`,
-      SPRING_DATASOURCE_USERNAME: values.POSTGRES_USER, SPRING_DATASOURCE_PASSWORD: values.POSTGRES_PASSWORD } });
+    await linuxJavaTests({ directory, project, values, database: 'identity_boundary', mode: 'identity' });
   }
   let goProcess = sandbox();
   let javaProcess = java();
   await waitFor(`${javaUrl}/api/internal/status`, 200, javaProcess);
+  inspectJava();
   if (workspaceMode) {
     compose(['exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB,
       '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE DATABASE workspace_boundary']);
-    maven([...(workspaceTest ? [`-Dit.test=WorkspaceIT#${workspaceTest}`] : []),
-      'failsafe:integration-test', 'failsafe:verify'], { env: { ...serviceEnv(values, 'java'),
-      WORKSPACE_IT_RUN: 'disposable', SANDBOX_TEST_CONTAINER: sandboxId(), SPRING_DATASOURCE_URL: `jdbc:postgresql://127.0.0.1:${values.POSTGRES_PORT}/workspace_boundary`,
-      SPRING_DATASOURCE_USERNAME: values.POSTGRES_USER, SPRING_DATASOURCE_PASSWORD: values.POSTGRES_PASSWORD } });
+    if (!recoveryOnly) await linuxJavaTests({ directory, project, values, database: 'workspace_boundary', mode: 'workspace',
+      sandbox: sandboxId(), test: workspaceTest ? `WorkspaceIT#${workspaceTest}` : undefined });
+    if (!workspaceTest) {
+      compose(['exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB,
+        '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE DATABASE workspace_recovery']);
+      await linuxJavaTests({ directory, project, values, database: 'workspace_recovery', mode: 'recovery', test: 'WorkspaceCrashRecoveryIT' });
+    }
   }
   if (!boundaryOnly) {
   const initialSandbox = inspectSandbox();
   const marker = join(directory, 'volume-marker.txt');
   await writeFile(marker, project);
   run('docker', ['cp', marker, `${initialSandbox}:/var/lib/codecraft/volume-marker.txt`]);
-  maven(['failsafe:integration-test', 'failsafe:verify'], { env: { ...process.env, TRACER_IT_URL: javaUrl } });
+  await linuxJavaTests({ directory, project, values, database: values.POSTGRES_DB, mode: 'tracer', url: 'http://java:8080' });
   const webProcess = start('web', process.execPath,
     [join(root, 'frontend/node_modules/vite/bin/vite.js'), 'preview', join(root, 'frontend'), '--config', join(root, 'frontend/vite.config.ts')],
     serviceEnv(values, 'web'));

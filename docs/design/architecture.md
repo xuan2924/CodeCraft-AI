@@ -62,7 +62,7 @@
 
 - 工程目录已随任务 06 初始化为 `backend/server/`、`backend/sandbox/`、`backend/proto/` 和 `frontend/`。当前已交付内部状态与身份模块；后续业务模块与 feature 边界按功能建立，不提前搭建无用途框架。
 - 已确认 Maven Wrapper、npm + package-lock.json、Vitest + Vue Test Utils、Playwright；暂不引入 MapStruct、不启用虚拟线程，按实际需求再评估。
-- 日常开发与真实链路验收已改为 Java/Go 同处一个 Linux VM/宿主时钟域；Windows 可保留编辑器、Vite 和浏览器，不再以 Windows JVM + Linux VM 混合模式作为截止时间敏感的业务基线。变更原因与取舍见 [ADR 0002](../adr/0002-java-go-shared-linux-clock.md)。PostgreSQL 继续由 Docker 提供，Go 工作区使用持久化具名卷，题目仍在独立受限容器执行。当前启动/验收脚本尚未完成迁移；同一时钟域不免除时钟异常保护及真实业务验收。
+- 日常开发与真实链路验收已改为 Java/Go 同处一个 Linux VM/宿主时钟域；Windows 可保留编辑器、Vite 和浏览器，不再以 Windows JVM + Linux VM 混合模式作为截止时间敏感的业务基线。变更原因与取舍见 [ADR 0002](../adr/0002-java-go-shared-linux-clock.md)。PostgreSQL 继续由 Docker 提供，Go 工作区使用持久化具名卷，题目仍在独立受限容器执行。启动/验收脚本已迁移到 Linux Java 容器（含集成测试 JVM），证据见 [#10–#12 验证](../validation/workspace-write-browser-10-12.md)；同一时钟域不免除尚待实现的时钟异常保护及后续真实业务验收。
 - 工具链决定票已验收：前端以精确依赖覆盖清除本次审计告警，Windows Go race 显式使用兼容 C 工具链。任务 06 已交付正式清单/脚本与 Linux CI 配置；远程 CI、Linux 隔离及完整业务链路仍待验证。精确版本、覆盖策略与证据见 [工程工具链](engineering-toolchain.md)。
 - Monaco/xterm 的原生封装与 Vite worker 集成待验证；SSE 客户端结合已确认的 Cookie 身份和恢复契约选择，不因草案 POST 示例锁定库。
 - 依赖选择兼容版本并锁定，以实际清单和脚本为准；PoC 依赖不构成正式版本决定。

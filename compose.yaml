@@ -1,4 +1,30 @@
 services:
+  java:
+    image: ${JAVA_IMAGE:-codecraft/java:unbuilt}
+    pull_policy: never
+    platform: linux/amd64
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    environment:
+      SERVER_ADDRESS: "0.0.0.0"
+      JAVA_PORT: "8080"
+      SANDBOX_HOST: sandbox
+      SANDBOX_PORT: "9090"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-codecraft}?connectTimeout=2&socketTimeout=3
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      IDENTITY_FINGERPRINT_KEY: ${IDENTITY_FINGERPRINT_KEY:-}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:5173}
+      SANDBOX_RPC_KEY: ${SANDBOX_RPC_KEY:-}
+      PROBLEM_PUBLICATION_FILE: ${JAVA_PUBLICATION_FILE:-}
+    ports:
+      - "127.0.0.1:${JAVA_PORT:-8080}:8080"
   sandbox:
     image: ${SANDBOX_IMAGE:-codecraft/sandbox:unbuilt}
     pull_policy: never
