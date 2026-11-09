@@ -26,6 +26,13 @@
 - 状态接口保留原响应契约；修正安全过滤器与状态控制器重复写入 `Cache-Control` 的回归。
 - 匿名上下文和限流窗口落库并串行准入；限流表最多 2,000 个短期桶、Argon2 最多两个并发任务，满额拒绝。业务数据/回执总体配额与保留仍归 #16。
 
+## 结构重构回归（2026-11-09）
+
+- 业务代码与测试迁入 `ai.codecraft.modules`；公共响应/异常独立，配置使用构造器绑定的 `@ConfigurationProperties`。新增分层、错误包装和配置绑定检查。
+- `maven clean test`：17 项测试通过。`node scripts/verify.mjs`：17 项 Java 测试、13 项前端测试以及脚本、Go、静态检查、构建和审计通过；外部集成测试按条件跳过。
+- `node scripts/test-tracer.mjs --identity` 复跑：10 项身份集成、1 项状态集成、浏览器闭环及重启会话验证通过。`node scripts/test-tracer.mjs`：五种浏览器状态及启动失败关闭通过。
+- 首次身份回归在重启前的 CSRF GET 遇到一次 `ECONNRESET`；未修改代码的复跑通过，代理日志未提供原因。该偶发测试网络故障尚未定位，不将复跑成功称为修复。
+
 ## 未验证
 
 生产 HTTPS 端到端、目标部署负载、Linux/远程 CI、跨服务撤销栅栏、SSE 旧连接、工作区归属与测试隔离尚未验收。Secure Cookie 有边界测试，不等于生产 HTTPS 已验收。当前连接 IP 取直连地址；本机 Vite 代理请求共享 loopback 限额，不信任任意转发头。第一阶段完整交付尚未完成。
