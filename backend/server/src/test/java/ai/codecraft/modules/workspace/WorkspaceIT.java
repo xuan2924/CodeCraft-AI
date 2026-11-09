@@ -106,6 +106,55 @@ class WorkspaceIT {
     }
 
     @Test
+    void takeoverWaitsForUnavailableSandboxAndReconcilesTheOriginalWrite() throws Exception {
+        String exercise = readyExercise("takeover-pending-write");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "control", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "start", 200, credential);
+        Object batch = Map.of("expectedRevision", "0", "changes", List.of(
+            Map.of("path", "src/test/java/Pending.java", "kind", "CREATE", "content", "class Pending {}")));
+        String container = System.getenv("SANDBOX_TEST_CONTAINER");
+        assertThat(container).matches("[0-9a-f]{64}");
+        JsonNode accepted;
+        docker("pause", container);
+        try {
+            accepted = request("POST", base + "/file-batches", batch, "pending-write", 202, credential).path("data");
+            JsonNode takeover = request("POST", base + "/control/takeover", Map.of(), "takeover", 202).path("data");
+            assertThat(takeover.path("state").asText()).isEqualTo("PENDING");
+            assertThat(takeover.path("credentialDelivered").asBoolean()).isFalse();
+            assertThat(takeover.path("credential").isNull()).isTrue();
+            request("POST", base + "/file-batches", batch, "during-transition", 409, credential);
+        } finally { docker("unpause", container); }
+        long until = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+        JsonNode control;
+        do {
+            control = request("GET", base + "/control", null, null, 200).path("data");
+            if (control.path("state").asText().equals("SUCCEEDED")) break;
+            Thread.sleep(100);
+        } while (System.nanoTime() < until);
+        assertThat(control.path("state").asText()).isEqualTo("SUCCEEDED");
+        JsonNode result = request("GET", accepted.path("queryUrl").asText(), null, null, 200).path("data");
+        // A committed write wins before CloseGate; otherwise the closed gate proves rejection.
+        // Neither outcome permits a pending receipt or partial/new effect after takeover.
+        assertThat(result.path("state").asText()).isIn("SUCCEEDED", "REJECTED");
+        String revision = result.path("state").asText().equals("SUCCEEDED") ? "1" : "0";
+        assertThat(request("GET", base, null, null, 200).path("data").path("revision").asText()).isEqualTo(revision);
+        if (revision.equals("1")) {
+            assertThat(request("GET", base + "/files?path=src/test/java/Pending.java", null, null, 200)
+                .path("data").path("content").asText()).isEqualTo("class Pending {}");
+        } else {
+            request("GET", base + "/files?path=src/test/java/Pending.java", null, null, 404);
+        }
+        request("POST", base + "/file-batches", batch, "late-old-page", 409, credential);
+        String replacement = request("POST", base + "/control/takeover", Map.of(), "explicit-new-secret", 200)
+            .path("data").path("credential").asText();
+        Object fresh = Map.of("expectedRevision", revision, "changes", List.of(
+            Map.of("path", "src/test/java/NewPage.java", "kind", "CREATE", "content", "class NewPage {}")));
+        assertThat(request("POST", base + "/file-batches", fresh, "new-page", 200, replacement)
+            .path("data").path("revision").asText()).isEqualTo(revision.equals("1") ? "2" : "1");
+    }
+
+    @Test
     void logoutFencesWritableWorkspaceAndSamePageCanResumeAfterRelogin() throws Exception {
         String exercise = readyExercise("logout-writable");
         String base = "/api/exercises/" + exercise;
