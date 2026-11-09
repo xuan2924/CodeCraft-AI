@@ -17,8 +17,8 @@ const exercise: api.Exercise = { exerciseId: 'exercise', problemVersionId: 'prob
 let view: VueWrapper | undefined;
 beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }); });
 afterEach(async () => { view?.unmount(); view = undefined; await flushPromises(); vi.useRealTimers(); vi.clearAllMocks(); });
-function render() {
-  view = mount(WorkspaceEditor, { props: { owner: 'owner', exercise, file, selected: file.path, credential: 'credential' } });
+function render(owner = 'owner') {
+  view = mount(WorkspaceEditor, { props: { owner, exercise, file, selected: file.path, credential: 'credential' } });
   return view;
 }
 it('retains newer input when a save response arrives and backs it up with the new baseline', async () => {
@@ -47,6 +47,84 @@ it('restores a conflicting draft only into the editor without writing the server
   expect(page.text()).toContain('尚未写入服务器');
   expect(api.save).not.toHaveBeenCalled();
 });
+it('warns before closing a dirty file and retains its buffer when reopened', async () => {
+  const confirmation = vi.spyOn(globalThis, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+  try {
+    const page = render(); await flushPromises();
+    await page.get('textarea').setValue('draft survives close');
+    const close = page.findAll('button').find((button) => button.text() === '关闭文件');
+    expect(close).toBeDefined();
+    await close!.trigger('click');
+    expect(page.emitted('select')).toBeUndefined();
+    await close!.trigger('click');
+    expect(page.emitted('select')).toEqual([['']]);
+    await page.setProps({ selected: '', file: undefined });
+    await page.setProps({ selected: file.path, file });
+    expect(page.get('textarea').element.value).toBe('draft survives close');
+    expect(drafts.removeDraft).not.toHaveBeenCalled();
+  } finally { confirmation.mockRestore(); }
+});
+
+it('retains each file buffer and draft while switching files', async () => {
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('first file draft');
+  const second = { ...file, path: 'src/main/java/Second.java', content: 'second baseline' };
+  await page.setProps({ selected: second.path, file: second });
+  await flushPromises();
+  await page.get('textarea').setValue('second file draft');
+  await vi.advanceTimersByTimeAsync(350);
+  await page.setProps({ selected: file.path, file });
+  await flushPromises();
+  expect(page.get('textarea').element.value).toBe('first file draft');
+  expect(drafts.putDraft).toHaveBeenCalledWith(expect.objectContaining({ path: file.path, content: 'first file draft' }), 0);
+  expect(drafts.putDraft).toHaveBeenCalledWith(expect.objectContaining({ path: second.path, content: 'second file draft' }), 0);
+  expect(api.save).not.toHaveBeenCalled();
+});
+
+it('requires another explicit baseline adoption when the server changes again', async () => {
+  vi.mocked(api.save).mockResolvedValueOnce({ exerciseId: 'exercise', operationId: 'save-operation', state: 'SUCCEEDED', revision: '3', changed: true, failureCode: null });
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('local work');
+  await page.setProps({ file: { ...file, revision: '1', content: 'server version one' } });
+  await flushPromises();
+  expect(page.get('[aria-label="当前服务端内容"]').text()).toContain('server version one');
+  await page.findAll('button').find((button) => button.text() === '保留本地内容，采用此基线')!.trigger('click');
+  await page.setProps({ file: { ...file, revision: '2', content: 'server version two' } });
+  await flushPromises();
+  expect(page.get('[aria-label="当前服务端内容"]').text()).toContain('server version two');
+  await page.findAll('button').find((button) => button.text() === '保存文件')!.trigger('click');
+  await flushPromises();
+  expect(api.save).not.toHaveBeenCalled();
+  expect(page.get('textarea').element.value).toBe('local work');
+  await page.findAll('button').find((button) => button.text() === '保留本地内容，采用此基线')!.trigger('click');
+  await page.findAll('button').find((button) => button.text() === '保存文件')!.trigger('click');
+  await flushPromises();
+  expect(api.save).toHaveBeenCalledWith('exercise', '2', [{ path: file.path, kind: 'UPDATE', content: 'local work' }], expect.any(String), 'credential', expect.any(AbortSignal));
+  expect(page.text()).toContain('已保存到工作区，修订 3');
+});
+
+it('keeps late draft reads and backups scoped to the old account after remount', async () => {
+  let finishRead!: (values: drafts.Draft[]) => void;
+  let finishBackup!: () => void;
+  vi.mocked(drafts.listDrafts).mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+  vi.mocked(drafts.putDraft).mockImplementationOnce(() => new Promise((resolve) => { finishBackup = resolve; }));
+  const oldPage = render('old-owner'); await flushPromises();
+  await oldPage.get('textarea').setValue('old private text');
+  await vi.advanceTimersByTimeAsync(350);
+  oldPage.unmount(); view = undefined;
+  const newPage = render('new-owner'); await flushPromises();
+  await newPage.get('textarea').setValue('new account text');
+  finishRead([{ owner: 'old-owner', exercise: 'exercise', path: file.path, id: 'old-page', revision: '0', baseContent: 'base', content: 'old private backup', updatedAt: 1 }]);
+  finishBackup(); await flushPromises();
+  await vi.advanceTimersByTimeAsync(350);
+  expect(newPage.get('textarea').element.value).toBe('new account text');
+  expect(newPage.text()).not.toContain('old private');
+  expect(newPage.findAll('button').some((button) => button.text() === '恢复此草稿')).toBe(false);
+  const backups = vi.mocked(drafts.putDraft).mock.calls.map(([draft]) => draft);
+  expect(backups.some((draft) => draft.owner === 'new-owner' && draft.content === 'new account text')).toBe(true);
+  expect(backups.filter((draft) => draft.content === 'old private text').every((draft) => draft.owner === 'old-owner')).toBe(true);
+});
+
 it('reports storage failures and ignores a save response after disposal', async () => {
   vi.mocked(drafts.putDraft).mockRejectedValueOnce(new Error('quota fixture'));
   let finish!: (value: api.Mutation) => void;

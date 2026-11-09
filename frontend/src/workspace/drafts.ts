@@ -89,6 +89,54 @@ export async function listDrafts(owner: string, exercise: string, path: string):
     };
   });
 }
+export async function listAccountDrafts(owner: string): Promise<Draft[]> {
+  return transaction<Draft[]>('readonly', (store, result) => {
+    const request = store.openCursor();
+    const drafts: Draft[] = [];
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) { result(drafts.sort((left, right) => left.exercise.localeCompare(right.exercise) || left.path.localeCompare(right.path) || right.updatedAt - left.updatedAt)); return; }
+      const value: unknown = cursor.value;
+      if (valid(value) && value.owner === owner) drafts.push(value);
+      cursor.continue();
+    };
+  });
+}
+// Check emptiness and fence all existing writers in the same IndexedDB transaction.
+// Unlike explicit discard, this never deletes a draft that appeared during saving.
+export async function sealDraftsForLogout(owner: string, expectedEpoch: number): Promise<boolean> {
+  return transaction<boolean>('readwrite', (store, result, accounts) => {
+    const account = accounts.get(owner);
+    account.onsuccess = () => {
+      const value: unknown = account.result;
+      try {
+        if (epoch(value) !== expectedEpoch || (object(value) && value.blocked === true)) { result(false); return; }
+        const request = store.openCursor();
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) { accounts.put({ owner, epoch: expectedEpoch + 1, blocked: true }); result(true); return; }
+          const draft: unknown = cursor.value;
+          if (object(draft) && draft.owner === owner) { result(false); return; }
+          cursor.continue();
+        };
+      } catch { accounts.transaction.abort(); }
+    };
+  });
+}
+// Release only the seal owned by this attempt, never a later login/logout epoch.
+export async function releaseDraftLogout(owner: string, sealedEpoch: number): Promise<boolean> {
+  return transaction<boolean>('readwrite', (_store, result, accounts) => {
+    const request = accounts.get(owner);
+    request.onsuccess = () => {
+      const value: unknown = request.result;
+      try {
+        if (epoch(value) !== sealedEpoch || !object(value) || value.blocked !== true) { result(false); return; }
+        accounts.put({ owner, epoch: sealedEpoch + 1, blocked: false });
+        result(true);
+      } catch { accounts.transaction.abort(); }
+    };
+  });
+}
 export async function removeDraft(value: Draft): Promise<void> {
   await transaction<void>('readwrite', (store, result) => {
     const key = [value.owner, value.exercise, value.path, value.id];

@@ -8,7 +8,7 @@ import { buffer, committed, dirty, observe, useLatestBaseline, type Buffer } fro
 import { listDrafts, putDraft, readDraftEpoch, removeDraft, type Draft } from './drafts';
 import CodeEditor from './CodeEditor.vue';
 
-const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string }>();
+const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean }>();
 const emit = defineEmits<{ saved: []; select: [path: string]; 'stale-control': [] }>();
 const theme = useThemeVars();
 const buffers = reactive(new Map<string, Buffer>());
@@ -37,7 +37,7 @@ let backupQueue = Promise.resolve();
 let loadGeneration = 0;
 interface Pending { key: string; revision: string; changes: api.FileChange[]; operationId?: string; select?: string }
 const unresolved = ref<Pending | null>(null);
-const editorLocked = computed(() => !current.value || !/^src\/(main|test)\/java\//.test(props.selected) ||
+const editorLocked = computed(() => props.locked || !current.value || !/^src\/(main|test)\/java\//.test(props.selected) ||
   unresolved.value?.changes.some((change) => change.path === props.selected && change.kind === 'DELETE') === true);
 const leaving = ref(false);
 let finishLeave: ((value: boolean) => void) | undefined;
@@ -167,7 +167,19 @@ async function saveBuffers(values: Buffer[]): Promise<boolean> {
   const changes: api.FileChange[] = values.map((value) => ({ path: value.path, kind: 'UPDATE', content: value.content }));
   return submit({ key: globalThis.crypto.randomUUID(), revision: values[0]!.revision, changes });
 }
-function saveCurrent() { if (current.value) void saveBuffers([current.value]); }
+async function saveForLogout(): Promise<boolean> {
+  if (busy.value || unresolved.value || disposed) return false;
+  if (edited.value && !await saveBuffers([...buffers.values()].filter(dirty))) return false;
+  await flushBackup();
+  return !disposed && !edited.value && !unresolved.value;
+}
+defineExpose({ saveForLogout });
+function saveCurrent() { if (current.value && !props.locked) void saveBuffers([current.value]); }
+function closeFile() {
+  if (!current.value || busy.value || unresolved.value || props.locked) return;
+  if (dirty(current.value) && !globalThis.confirm('文件有未保存修改。关闭视图会保留本页缓冲区，不代表已保存或已备份；是否关闭？')) return;
+  emit('select', '');
+}
 function createFile() {
   if (!canWrite.value || !props.exercise.revision || busy.value || unresolved.value) return;
   void submit({ key: globalThis.crypto.randomUUID(), revision: props.exercise.revision,
@@ -182,10 +194,11 @@ function removeOrRename(rename: boolean) {
   void submit({ key: globalThis.crypto.randomUUID(), revision: value.revision, changes, select: rename ? newPath.value : '' });
 }
 function beforeUnload(event: globalThis.BeforeUnloadEvent) {
-  if (edited.value || unresolved.value) { event.preventDefault(); event.returnValue = ''; }
+  if (props.locked || edited.value || unresolved.value) { event.preventDefault(); event.returnValue = ''; }
 }
 globalThis.addEventListener('beforeunload', beforeUnload);
 onBeforeRouteLeave(() => {
+  if (props.locked) return false;
   if (!edited.value && !unresolved.value) return true;
   if (finishLeave) return false;
   leaving.value = true;
@@ -226,7 +239,8 @@ onScopeDispose(() => {
 </script>
 
 <template>
-  <section
+  <fieldset
+    :disabled="locked"
     class="editor-panel"
     aria-label="文件编辑"
     :style="{ '--editor-border': theme.borderColor }"
@@ -252,6 +266,12 @@ onScopeDispose(() => {
         保存文件
       </NButton>
       <NButton
+        :disabled="!current || busy || !!unresolved"
+        @click="closeFile"
+      >
+        关闭文件
+      </NButton>
+      <NButton
         v-if="unresolved"
         :disabled="busy"
         @click="submit(unresolved)"
@@ -271,7 +291,8 @@ onScopeDispose(() => {
       :key="draft.id"
       class="draft-choice"
     >
-      <span>可恢复草稿 · {{ new Date(draft.updatedAt).toLocaleString() }}</span>
+      <span>可恢复草稿 · {{ new Date(draft.updatedAt).toLocaleString() }} · 页面 {{ draft.id }}</span>
+      <details><summary>查看备份内容</summary><pre>{{ draft.content }}</pre></details>
       <NButton
         :disabled="editorLocked || busy"
         @click="restore(draft)"
@@ -359,11 +380,11 @@ onScopeDispose(() => {
         取消离开
       </NButton>
     </div>
-  </section>
+  </fieldset>
 </template>
 
 <style scoped>
-.editor-panel { min-width: 0; }
+.editor-panel { min-width: 0; border: 0; margin: 0; padding: 0; }
 .editor-actions, .file-actions, .draft-choice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .file-actions { margin-top: 16px; }
 .file-actions input { width: min(100%, 36rem); padding: 8px; font-family: Consolas, monospace; }

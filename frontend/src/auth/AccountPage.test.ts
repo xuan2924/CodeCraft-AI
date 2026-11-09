@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 import AccountPage from './AccountPage.vue';
 import { validPassword, validUsername } from './api';
 import { clearDrafts } from '../workspace/drafts';
+import { cancelSaveLogout, saveLogoutOwner } from '../workspace/logoutIntent';
 vi.mock('../workspace/drafts', () => ({ clearDrafts: vi.fn(async () => {}), resumeDrafts: vi.fn(async () => {}) }));
 
 const fixtures = {
@@ -24,13 +25,28 @@ async function render(fetcher: typeof fetch) {
   const page = mount(AccountPage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
   pages.push(page);
   await flushPromises();
-  return { page, client };
+  return { page, client, router };
 }
 afterEach(() => {
+  cancelSaveLogout();
   for (const page of pages.splice(0)) page.unmount();
   for (const client of clients.splice(0)) client.clear();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+});
+
+it('offers a save-and-logout flow without logging out or clearing drafts immediately', async () => {
+  const fetcher = vi.fn<typeof fetch>(async (input) => String(input) === '/api/auth/session' ? ok(fixtures.user) : ok(null));
+  const { page, router } = await render(fetcher);
+  await page.get('.logout-button').trigger('click');
+  await flushPromises();
+  expect(page.get('[role="dialog"]').text()).toContain('保存后退出');
+  await page.findAll('button').find((button) => button.text() === '保存后退出')!.trigger('click');
+  await flushPromises();
+  expect(saveLogoutOwner.value).toBe('fixture-user');
+  expect(router.currentRoute.value.name).toBe('workspace');
+  expect(clearDrafts).not.toHaveBeenCalled();
+  expect(fetcher.mock.calls.some(([input]) => String(input) === '/api/auth/logout')).toBe(false);
 });
 
 it('clears account drafts only after confirmed logout', async () => {
@@ -43,7 +59,7 @@ it('clears account drafts only after confirmed logout', async () => {
   await page.get('.logout-button').trigger('click');
   await flushPromises();
   expect(clearDrafts).not.toHaveBeenCalled();
-  expect(page.get('[role="dialog"]').text()).toContain('返回工作区保存');
+  expect(page.get('[role="dialog"]').text()).toContain('保存后退出');
   await page.findAll('button').find((button) => button.text() === '丢弃账号草稿并退出')!.trigger('click');
   await flushPromises();
   expect(clearDrafts).toHaveBeenCalledWith('fixture-user');

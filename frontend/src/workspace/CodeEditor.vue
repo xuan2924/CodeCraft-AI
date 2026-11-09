@@ -18,6 +18,16 @@ function sync() {
   if (!instance) return;
   applying = true;
   try {
+    if (!props.path) {
+      const closed = instance.getModel();
+      instance.setModel(null);
+      if (closed) {
+        closed.dispose();
+        for (const [path, model] of models) if (model === closed) models.delete(path);
+      }
+      instance.updateOptions({ readOnly: true });
+      return;
+    }
     let model = models.get(props.path);
     if (!model) {
       model = editor.createModel(props.modelValue, props.path.endsWith('.java') ? 'java' : 'plaintext', Uri.parse(`inmemory://${scope}/${props.path || 'empty'}`));

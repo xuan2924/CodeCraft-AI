@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { NButton, useThemeVars } from 'naive-ui';
-import { RouterLink } from 'vue-router';
+import { RouterLink, useRouter } from 'vue-router';
+import { requestSaveLogout } from '../workspace/logoutIntent';
 import { validPassword, validUsername } from './api';
 import { useAccount } from './useAccount';
 
 const theme = useThemeVars();
+const router = useRouter();
 const { query, identity, pending, error, notice, temporaryPassword, createdUsername, createdUserId, unresolvedCreate,
   unresolvedReset, signIn, signOut, password, create, reset } = useAccount();
 const username = ref('');
@@ -28,6 +30,11 @@ watch(() => identity.value?.id, () => {
   logoutRequested.value = false;
   temporaryPassword.value = null;
 });
+async function saveThenLogout() {
+  if (!identity.value || pending.value) return;
+  requestSaveLogout(identity.value.id);
+  await router.push({ name: 'workspace' });
+}
 async function submitLogin() {
   if (!loginValid.value || pending.value) return;
   try { await signIn(username.value, loginPassword.value); } finally { loginPassword.value = ''; }
@@ -247,14 +254,17 @@ async function submitPassword() {
           aria-label="确认退出与草稿处理"
         >
           <h2>退出前处理本地草稿</h2>
-          <p>退出会清除本浏览器该账号的全部草稿，包括其他页面和未恢复的备份。若需保存，请先返回工作区逐项恢复并显式保存；保存失败时不要退出。</p>
-          <RouterLink
+          <p>保存后退出会进入工作区逐份处理账号草稿；需要显式操作权，不自动选择冲突版本。保存失败或仍有未处理备份时不会退出。</p>
+          <NButton
             v-if="!identity.passwordChangeRequired"
-            :to="{ name: 'workspace' }"
-          >返回工作区保存</RouterLink>
+            :disabled="pending"
+            @click="saveThenLogout"
+          >
+            保存后退出
+          </NButton>
           <NButton
             :disabled="pending"
-            @click="signOut"
+            @click="signOut()"
           >
             丢弃账号草稿并退出
           </NButton>

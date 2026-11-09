@@ -229,7 +229,7 @@ Standards 与 Spec 两轴并行审查均未发现本切片阻断问题，结论�
 
 - #10 此处原缺口已由下方“#10 逐票验收收口”补齐；#15 结束冻结与状态转换仍不在 #10 验收范围内。
 - #11 此处原缺口的补测见下方“#11 逐票验收收口”；既有 Go 原子失败证据保留，另扩展重命名实际子进程故障。
-- #12 登录过期后同账号草稿恢复、账号切换中的延迟草稿回调、冲突采用基线后再次变化、文件切换与 Monaco 资源释放仍须补齐组合证据。当前退出入口是返回工作区保存/丢弃/取消，尚不将它等同直接“保存后退出”的完整验收。
+- #12 此处原缺口的补测与保存后退出实现见下方“#12 逐票验收收口”；最终验收仍以该票独立评审结论为准。
 - #13–#16 尚未开始；本轮修复的真实数据丢失问题属于其前置任务，不用时钟专项风险扩大阻塞。
 
 ## #10 逐票验收收口（基线 `089e9f1`）
@@ -287,6 +287,45 @@ Standards 与 Spec 两轴并行审查均未发现本切片阻断问题，结论�
 - 完整 workspace tracer：20 WorkspaceIT + 1精确JVM崩溃恢复 + 1 StatusIT实际执行、无跳过，浏览器编辑/草稿/文件操作及重启/依赖恢复通过。日志 `.runtime/ticket11-workspace.log`，资源目录 `.runtime/cc-tracer-36288-5f8c3b05`。
 
 不声称覆盖真实 ENOSPC、掉电或目标部署持久卷；本票EFBIG故障明确来自暂存写入。#12完整草稿生命周期及#16跨存储计量/删除仍单独交付。独立评审完成：Standards 0 项发现；Spec 0 项发现且确认七项验收全部满足。Spec 核对执行日志，双方未自行重跑测试。#11 已完成验收。
+
+## #12 逐票验收收口（基线 `4153199`，已完成）
+
+### 实现与失败切片
+
+初步只读审查确认“返回工作区保存”不等于保存后退出：没有退出意图、没有覆盖其他页面备份、保存完成也不会退出。本轮先在 AccountPage 组件取得“缺少保存后退出”红灯，再补充账号作用域内存意图、工作区备份处理面板及最终空集合检查。没有把所有备份按时间自动覆盖服务器：用户逐份查看/恢复/比较/保存，或明确丢弃。需要显式获取操作权，失败/未决/新输入均留页。其他演练/不可写的备份不能伪报已保存。
+
+最终退出之前，IndexedDB 在同一 readwrite transaction 中检查账号epoch、确认没有任何该账号备份并封闭旧 writer；期间新备份出现则保留并拒绝退出。封闭后调用真实 logout，但保存退出不再执行无条件全账号清理（已确认空集合，不能删除随后新epoch备份）；显式丢弃退出仍保留既有清理。退出失败/未知或流程卸载时不伪报成功，仅条件释放本次epoch的封锁；页面有效且成功释放时重建已保存的编辑器。账号切换/取消不清草稿，刷新取消内存退出意图。服务端授权、RPC、数据库协议均未修改。
+
+另补“关闭文件”入口：先取得缺少按钮的红灯，再实现脏文件确认提示；关闭仅清选中视图、保留本页buffer及已有备份，重新打开仍有内容。未知操作或退出处理时不能关闭，不承诺未成功的备份已落盘。
+
+### 验收对应
+
+| #12 验收项 | 证据 |
+|---|---|
+| IndexedDB隔离、基线/内容/时间与防抖 | 既有真实浏览器备份/刷新恢复与账号epoch fence；本轮增加文件切换、关闭重开buffer保留及迟到旧账号读/写回调隔离组件测试 |
+| 文案与存储失败 | 原有存储失败组件测试、旧writer失败浏览器断言；关闭视图明确不等于保存/备份，退出核对失败不伪报成功 |
+| 恢复/双栏/显式提交 | 真实浏览器恢复后REST仍无本地文本、接管冲突比较后显式保存；新增组件采用revision1后服务端revision2再次冲突，未经再次确认不调用save，确认后仅用revision2提交 |
+| 保存清理匹配草稿，保留新输入 | 原有提交快照及丢弃竞态测试；本轮账号面板不替用户选择/丢弃其他页面备份，保存后仍有备份就不退出 |
+| 退出保存/丢弃/取消、失败留页、过期保留 | AccountPage显式保存分支；WorkspaceLogout组件覆盖保存失败、未处理多份备份、最终fence失败、成功顺序、退出未知恢复、账号切换；浏览器缺操作权保存后退出失败仍有真实会话，获得操作权后成功保存才退出。丢弃并退出原有浏览器证据保留且组件再次运行，取消本轮浏览器执行 |
+| 路由/刷新/关闭、接管保留草稿 | 既有路由保存失败/新输入留页、beforeunload组件测试；本轮真实浏览器关闭取消/确认/重开保留，刷新和双页接管恢复链路仍通过 |
+| 销毁与真实恢复 | 新 CodeEditor adapter测试：复用两文件model，销毁释放editor/models/change listener/ResizeObserver，销毁后快捷键不再preventDefault；真实Monaco仍经浏览器编辑/切换验证，资源释放的精确断言使用明确外部替身 |
+
+真实浏览器登录失效场景采用清除 Cookie 后走真实401和同账号重新登录，IndexedDB保留且恢复不提交；并非实际等待服务端TTL到期，后者的身份边界沿用已验收测试。迟到备份场景在真实 IndexedDB readwrite 最终游标开始时注入一条记录（无伪造HTTP响应），验证初步列表为空也不能删除新备份并退出；用户明确删除此份后才完成退出。旧页面仅替换身份查询为旧快照以验证本地writer栅栏，所有保存/退出仍使用真实服务。
+
+### 执行记录与边界
+
+- 红灯 `.runtime/ticket12-save-logout-red.log`（缺少保存退出分支）、`ticket12-close-red.log`（缺少关闭入口）；对应组件及全量最终通过。资源测试初版误用卸载后清空的 emitted 记录，改为 DOM 事件是否仍被拦截；这是测试夹具修正，不称生产缺陷。
+- `node scripts/verify.mjs` 全部通过，含Java18单测、Go本地/race/Linux、前端53项单测/lint/vue-tsc/build/audit；Windows35项集成跳过不计通过。日志 `.runtime/ticket12-verify.log`。
+- 随后仅新增关闭文件交互，重跑前端完整54项单测、lint/vue-tsc/build，以及真实 workspace tracer；不重复无关Go本地验证。日志 `.runtime/ticket12-final-unit.log`、`ticket12-final-build.log`、`ticket12-final-workspace-ready.log`。后者实际执行20 WorkspaceIT + crash1 + StatusIT1，无跳过，全部浏览器及重启/故障链路通过；资源目录 `.runtime/cc-tracer-49756-857b47d2`。
+- 中间浏览器失败均记录，不用重跑掩盖：第一次preview旧dist，构建后纠正；一次登录click后尚未完成即读REST，改为等待登录后导航；追加重登录次数触发真实429，合并已有退出/旧页场景以复用save-logout后的登录，未改限流；一次文件尚未加载就输入，改为等待源码并明确断言输入已进入编辑器。日志依次 `ticket12-browser.log`、`ticket12-browser-built.log`、`ticket12-browser-current.log`、`ticket12-final-workspace.log`。
+### #12 初轮评审整改
+
+- Standards发现P1：无ACTIVE编辑器时，面板在seal等待期间卸载会遗留封锁。新增延迟seal→unmount测试先红后绿；面板独立拥有路由与beforeunload保护，finally即使已卸载也以本次sealedEpoch调用条件释放。`releaseDraftLogout`同事务核对epoch和blocked，不改变后续actor状态。新增被更新epoch取代时不重开/不重建测试。
+- Spec发现P1：seal后另一页重新登录可开启新epoch并写草稿，旧signOut的全账号清理会误删。保存退出改为显式 `signOut('saved')`，返回服务器退出是否确认，绝不在该分支调用clearDrafts。它原本已封锁空集合，不需要事后删除任何内容；后续新epoch草稿必须保留。真实浏览器延迟真实logout响应，在IndexedDB中布置重新登录后的epoch+备份，释放响应后断言备份仍在，同账号重新登录可恢复且服务器不被覆盖。该fixture模拟本地resume状态，不宣称在延迟窗口真正执行第二次HTTP登录。
+- 该误删测试另做负对照：临时恢复saved分支的全量清理，浏览器期望1条备份实际0条而失败。差异与日志 `.runtime/ticket12-late-login-negative.diff`、`ticket12-late-login-negative.log`。恢复修复后通过，负对照未留源码。
+- 两轴均发现P2：关闭文件未释放Monaco model。新增close/reopen adapter测试先红，再在空selection时卸载并dispose当前model，不创建empty-path model；另存buffer仍可重开重建，切换文件与组件销毁行为不变。
+- 定向红/绿日志：`ticket12-seal-dispose-{red,green}.log`、`ticket12-close-model-{red,green}.log`。最新前端57项单测、lint、vue-tsc、build通过；完整workspace tracer20+crash1+StatusIT1及浏览器通过，无跳过。日志 `.runtime/ticket12-review-unit.log`、`ticket12-review-build.log`、`ticket12-review-workspace.log`。期间类型检查指出测试guard返回类型被推断为true字面量，补boolean标注后再执行；不是业务缺陷。
+- 整改独立复核完成：Standards 与 Spec 均0项发现、无阻断；Spec确认七项验收均满足。两轴核对源码、负对照及最终日志，未自行重跑测试；lint由父代理实际执行通过。#12已完成验收，#13–#16未实施。
 
 ## 首期时钟风险取舍（后续确认）
 

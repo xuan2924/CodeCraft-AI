@@ -60,6 +60,14 @@ test('published problem, controlled editing, drafts, conflicts and atomic files'
   await expect(page.getByText('本地草稿已更新；', { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: '重命名文件', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: '删除文件', exact: true })).toBeDisabled();
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: '关闭文件', exact: true }).click();
+  await expect(page.getByTestId('source')).toContainText('obsolete draft after undo');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: '关闭文件', exact: true }).click();
+  await page.getByRole('button', { name: path, exact: true }).click();
+  await expect(page.getByTestId('source')).toContainText('obsolete draft after undo');
+  await editor.focus();
   await page.keyboard.press('ControlOrMeta+a');
   await page.keyboard.insertText(original + '\n// saved by browser\n');
   await expect(page.getByText('当前页面没有未保存修改；', { exact: false })).toBeVisible();
@@ -73,6 +81,19 @@ test('published problem, controlled editing, drafts, conflicts and atomic files'
   await expect(page.getByText('本地草稿已更新；', { exact: false })).toBeVisible();
   page.once('dialog', (dialog) => dialog.accept());
   await page.reload();
+  await page.getByRole('button', { name: path, exact: true }).click();
+  await page.getByRole('button', { name: '恢复此草稿' }).first().click();
+  await expect(page.getByTestId('source')).toContainText('recover this local draft');
+  expect((await (await page.request.get(fileUrl)).json()).data.content).not.toContain('recover this local draft');
+  // Lose the browser session without explicit logout: IndexedDB must not be cleared.
+  await context.clearCookies();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.reload();
+  await page.goto('/account');
+  await page.getByLabel('账号名', { exact: true }).fill(username);
+  await page.getByLabel('密码', { exact: true }).fill(password);
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.getByRole('link', { name: '题目与工作区', exact: true }).click();
   await page.getByRole('button', { name: path, exact: true }).click();
   await page.getByRole('button', { name: '恢复此草稿' }).first().click();
   await expect(page.getByTestId('source')).toContainText('recover this local draft');
@@ -119,12 +140,80 @@ test('published problem, controlled editing, drafts, conflicts and atomic files'
   await expect(stalePage.getByText('本地草稿已更新；', { exact: false })).toBeVisible();
   await page.getByRole('link', { name: '账号与登录' }).click();
   await page.getByRole('button', { name: '退出登录', exact: true }).click();
-  await expect(page.getByRole('link', { name: '返回工作区保存' })).toBeVisible();
   await page.getByRole('button', { name: '取消退出', exact: true }).click();
-  await expect(page.getByRole('button', { name: '退出登录', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '退出登录', exact: true }).click();
-  await page.getByRole('button', { name: '丢弃账号草稿并退出', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '受邀账号登录' })).toBeVisible();
+  await page.getByRole('button', { name: '保存后退出', exact: true }).click();
+  const logoutPanel = page.getByRole('region', { name: '保存后退出处理' });
+  await expect(logoutPanel).toBeVisible();
+  // Older page variants are not silently removed by saving a different variant.
+  await logoutPanel.getByRole('button', { name: '刷新草稿列表' }).click();
+  await expect(logoutPanel.getByRole('button', { name: '刷新草稿列表' })).toBeEnabled();
+  while (await logoutPanel.getByRole('button', { name: '丢弃这份备份' }).count()) {
+    page.once('dialog', (dialog) => dialog.accept());
+    await logoutPanel.getByRole('button', { name: '丢弃这份备份' }).first().click();
+    await expect(logoutPanel.getByRole('button', { name: '刷新草稿列表' })).toBeEnabled();
+  }
+  await page.getByRole('button', { name: path, exact: true }).click();
+  await expect(page.getByTestId('source')).toContainText('class CartTotal');
+  await editor.focus();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.insertText('// saved before logout\n');
+  await expect(page.getByTestId('source')).toContainText('saved before logout');
+  await logoutPanel.getByRole('button', { name: '保存编辑内容并完成退出' }).click();
+  await expect(logoutPanel.getByRole('alert')).toContainText('保存未确认');
+  expect((await page.request.get('/api/auth/session')).status()).toBe(200);
+  await page.getByRole('button', { name: '接管操作权' }).click();
+  await expect(page.getByText('当前页面持有操作权', { exact: true })).toBeVisible();
+  const logoutOwner = (await (await page.request.get('/api/auth/session')).json()).data.id as string;
+  // Deterministically introduce a late backup at the real IndexedDB final check,
+  // after the preliminary list was empty. No API response is mocked.
+  await page.evaluate((draft) => {
+    const originalCursor = IDBObjectStore.prototype.openCursor;
+    IDBObjectStore.prototype.openCursor = function (...args) {
+      if (this.name === 'drafts' && this.transaction.mode === 'readwrite') {
+        IDBObjectStore.prototype.openCursor = originalCursor;
+        this.put(draft);
+      }
+      return originalCursor.apply(this, args);
+    };
+  }, { owner: logoutOwner, exercise: current.data.exerciseId as string, path, id: 'late-logout-race', revision: '6', baseContent: original, content: 'do not silently delete', updatedAt: Date.now() });
+  await logoutPanel.getByRole('button', { name: '保存编辑内容并完成退出' }).click();
+  await expect(logoutPanel.getByRole('alert')).toContainText('状态已变化');
+  await expect(logoutPanel.getByText('do not silently delete', { exact: true })).toBeAttached();
+  expect((await page.request.get('/api/auth/session')).status()).toBe(200);
+  page.once('dialog', (dialog) => dialog.accept());
+  await logoutPanel.getByRole('button', { name: '丢弃这份备份' }).click();
+  await page.route('**/api/auth/logout', async (route) => {
+    const response = await route.fetch();
+    // Model a successful concurrent login's local epoch reopening while the old
+    // logout response is delayed. Use the real database, not a mocked draft API.
+    await page.evaluate((draft) => new Promise<void>((resolve, reject) => {
+      const opened = indexedDB.open('codecraft-workspace-drafts');
+      opened.onerror = () => reject(new Error('Draft database unavailable'));
+      opened.onsuccess = () => {
+        const database = opened.result;
+        const tx = database.transaction(['drafts', 'accounts'], 'readwrite');
+        tx.oncomplete = () => { database.close(); resolve(); };
+        tx.onabort = () => { database.close(); reject(new Error('Draft fixture failed')); };
+        const accounts = tx.objectStore('accounts');
+        const account = accounts.get(draft.owner);
+        account.onsuccess = () => {
+          accounts.put({ owner: draft.owner, epoch: Number(account.result.epoch) + 1, blocked: false });
+          tx.objectStore('drafts').put(draft);
+        };
+      };
+    }), { owner: logoutOwner, exercise: current.data.exerciseId as string, path, id: 'new-login-draft', revision: '7', baseContent: original, content: 'new login draft must survive old logout', updatedAt: Date.now() });
+    await route.fulfill({ response });
+  });
+  await logoutPanel.getByRole('button', { name: '保存编辑内容并完成退出' }).click();
+  await expect(page.getByText('请先登录并完成临时密码修改。', { exact: true })).toBeVisible();
+  await page.goto('/account');
+  await page.getByLabel('账号名', { exact: true }).fill(username);
+  await page.getByLabel('密码', { exact: true }).fill(password);
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.getByRole('link', { name: '题目与工作区', exact: true }).click();
+  expect((await (await page.request.get(fileUrl)).json()).data.content).toContain('saved before logout');
+
   const countDrafts = () => page.evaluate(() => new Promise<number>((resolve, reject) => {
     const request = indexedDB.open('codecraft-workspace-drafts');
     request.onerror = () => reject(new Error('Draft database unavailable'));
@@ -135,15 +224,15 @@ test('published problem, controlled editing, drafts, conflicts and atomic files'
       count.onerror = () => { database.close(); reject(new Error('Draft count failed')); };
     };
   }));
-  expect(await countDrafts()).toBe(0);
-  await page.getByLabel('账号名', { exact: true }).fill(username);
-  await page.getByLabel('密码', { exact: true }).fill(password);
-  await page.getByRole('button', { name: '登录', exact: true }).click();
-  await expect(page.getByRole('link', { name: '题目与工作区', exact: true })).toBeVisible();
+  expect(await countDrafts()).toBe(1);
   await stalePage.getByRole('textbox', { name: '文件编辑器', exact: false }).focus();
   await stalePage.keyboard.insertText('// must not revive after logout and login\n');
   await expect(stalePage.getByText('本地草稿更新失败', { exact: false })).toBeVisible();
-  expect(await countDrafts()).toBe(0);
+  expect(await countDrafts()).toBe(1);
+  await page.getByRole('button', { name: path, exact: true }).click();
+  await page.getByRole('button', { name: '恢复此草稿' }).click();
+  await expect(page.getByTestId('source')).toContainText('new login draft must survive old logout');
+  expect((await (await page.request.get(fileUrl)).json()).data.content).not.toContain('new login draft must survive old logout');
   stalePage.once('dialog', (dialog) => dialog.accept());
   await stalePage.close();
 });

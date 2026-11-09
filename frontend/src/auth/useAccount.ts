@@ -55,11 +55,15 @@ export function useAccount() {
       if (!disposed) client.setQueryData(sessionKey, result);
     });
   }
-  async function signOut() {
+  async function signOut(mode: 'discard' | 'saved' = 'discard'): Promise<boolean> {
+    let confirmed = false;
     await action(async () => {
       const owner = identity.value?.id;
       await api.logout(controller.signal);
-      if (owner) {
+      confirmed = true;
+      // Save-and-logout already sealed an empty set. A later login may have
+      // created new-epoch drafts; this older completion must never delete them.
+      if (owner && mode === 'discard') {
         try { await clearDrafts(owner); }
         catch { if (!disposed) error.value = '已退出登录，但本地草稿清理失败。请重新登录后重试退出，或清除本站浏览器数据。'; }
       }
@@ -67,6 +71,7 @@ export function useAccount() {
       await forgetIdentity();
       notice.value = '已退出登录。';
     });
+    return confirmed;
   }
   async function password(currentPassword: string, newPassword: string) {
     await action(async () => {

@@ -6,6 +6,8 @@ import { RouterLink } from 'vue-router';
 import { session } from '../auth/api';
 import { ApiError } from '../api/request';
 import * as api from './api';
+import WorkspaceLogout from './WorkspaceLogout.vue';
+import { cancelSaveLogout, saveLogoutOwner } from './logoutIntent';
 
 const WorkspaceEditor = defineAsyncComponent(() => import('./WorkspaceEditor.vue'));
 const theme = useThemeVars();
@@ -20,6 +22,18 @@ const active = useQuery({ queryKey: ['workspace', owner, 'current'], queryFn: ({
 const exercise = computed(() => active.data.value);
 const problem = computed(() => catalogue.data.value?.find((item) => item.problemVersionId === exercise.value?.problemVersionId));
 const selected = ref('');
+const editorView = ref<{ saveForLogout: () => Promise<boolean> }>();
+const logoutBusy = ref(false);
+const editorGeneration = ref(0);
+async function saveForLogout() {
+  if (!writable.value || pending.value || unresolved.value) return false;
+  if (editorView.value) return editorView.value.saveForLogout();
+  return !active.isPending.value && !active.isError.value && exercise.value?.state !== 'ACTIVE';
+}
+function restartEditor() { editorGeneration.value++; credential.value = ''; }
+watch(() => account.data.value, (value) => {
+  if (value !== undefined && saveLogoutOwner.value && saveLogoutOwner.value !== value?.id) cancelSaveLogout();
+});
 const credential = ref('');
 const credentialGeneration = ref('');
 const controlState = useQuery({ queryKey: ['workspace', owner, 'control', computed(() => exercise.value?.exerciseId)],
@@ -43,6 +57,7 @@ let generation = 0;
 let disposed = false;
 watch(owner, () => {
   generation++;
+  logoutBusy.value = false;
   controller.abort();
   controller = new globalThis.AbortController();
   unresolved.value = null;
@@ -133,6 +148,16 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
       请先登录并完成临时密码修改。
     </p>
     <template v-if="allowed">
+      <WorkspaceLogout
+        v-if="saveLogoutOwner === owner"
+        :key="owner"
+        :owner="owner"
+        :exercise-id="exercise?.exerciseId"
+        :save="saveForLogout"
+        @select="selected = $event"
+        @busy="logoutBusy = $event"
+        @restart="restartEditor"
+      />
       <p
         v-if="error"
         role="alert"
@@ -307,7 +332,9 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             </NButton>
             <WorkspaceEditor
               v-if="exercise.state === 'ACTIVE'"
-              :key="owner + exercise.workspaceInstanceId"
+              :key="owner + exercise.workspaceInstanceId + editorGeneration"
+              ref="editorView"
+              :locked="logoutBusy"
               :owner="owner"
               :exercise="exercise"
               :file="source.data.value"
