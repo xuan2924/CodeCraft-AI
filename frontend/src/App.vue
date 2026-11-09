@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NConfigProvider, type GlobalThemeOverrides } from 'naive-ui';
-import StatusPage from './status/StatusPage.vue';
+import { RouterView } from 'vue-router';
 
 const theme: GlobalThemeOverrides = {
   common: {
@@ -13,6 +13,6 @@ const theme: GlobalThemeOverrides = {
 
 <template>
   <NConfigProvider :theme-overrides="theme">
-    <StatusPage />
+    <RouterView />
   </NConfigProvider>
 </template>

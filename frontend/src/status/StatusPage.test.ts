@@ -25,7 +25,7 @@ test('shows unavailable dependency from a real-shaped 503 response, not a generi
   await flushPromises();
   expect(page.get('[data-testid="database"]').text()).toContain('可用');
   expect(page.get('[data-testid="sandbox"]').text()).toContain('不可用');
-  expect(page.text()).toContain('账号、AI 与完整演练尚未接入');
+  expect(page.text()).toContain('AI 与完整演练尚未接入');
 });
 
 test('hides stale success when a refresh cannot reach Java and allows retry', async () => {

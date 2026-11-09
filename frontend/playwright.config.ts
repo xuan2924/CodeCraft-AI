@@ -9,5 +9,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   timeout: 30000,
-  use: { baseURL: process.env.TRACER_WEB_URL, browserName: 'chromium', trace: 'retain-on-failure' },
+  preserveOutput: process.env.IDENTITY_E2E ? 'never' : 'always',
+  use: { baseURL: process.env.TRACER_WEB_URL, browserName: 'chromium',
+    trace: process.env.IDENTITY_E2E ? 'off' : 'retain-on-failure', screenshot: 'off', video: 'off' },
 });

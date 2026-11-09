@@ -8,6 +8,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { root, run, maven, windows } from './process.mjs';
 import { serviceEnv } from './local-config.mjs';
 
+const identityMode = process.argv.includes('--identity');
+const updatedIdentityPassword = randomBytes(32).toString('hex');
 // Never consumes the development .env, database, volume, or running services.
 const project = `cc-tracer-${process.pid}-${randomBytes(4).toString('hex')}`;
 const directory = join(root, '.runtime', project);
@@ -23,6 +25,8 @@ async function reservePort() {
 const values = {
   POSTGRES_USER: 'tracer_test', POSTGRES_DB: 'tracer_test',
   POSTGRES_PASSWORD: randomBytes(32).toString('hex'),
+  BOOTSTRAP_ADMIN_USERNAME: 'tracer_admin', BOOTSTRAP_ADMIN_PASSWORD: randomBytes(32).toString('hex'),
+  IDENTITY_FINGERPRINT_KEY: randomBytes(32).toString('hex'),
   POSTGRES_PORT: await reservePort(), JAVA_PORT: await reservePort(),
   SANDBOX_PORT: await reservePort(), WEB_PORT: await reservePort(),
 };
@@ -75,7 +79,7 @@ async function waitFor(url, expectedStatus, child) {
   throw new Error(`Readiness timed out; inspect ${directory}`);
 }
 const javaUrl = `http://127.0.0.1:${values.JAVA_PORT}`;
-const webUrl = `http://127.0.0.1:${values.WEB_PORT}`;
+const webUrl = `http://${identityMode ? 'localhost' : '127.0.0.1'}:${values.WEB_PORT}`;
 function sandbox() {
   return start('sandbox', join(root, 'backend/sandbox', windows ? 'sandbox.exe' : 'sandbox'), [], serviceEnv(values, 'sandbox'));
 }
@@ -83,10 +87,12 @@ function java() {
   return start('java', 'java', ['-jar', join(root, 'backend/server/target/server-0.1.0-SNAPSHOT.jar')], serviceEnv(values, 'java'));
 }
 function browser(database = 'AVAILABLE', sandboxState = 'AVAILABLE', javaState = 'AVAILABLE') {
-  run(process.execPath, [join(root, 'frontend/node_modules/@playwright/test/cli.js'), 'test'], {
+  run(process.execPath, [join(root, 'frontend/node_modules/@playwright/test/cli.js'), 'test', identityMode ? 'identity.spec.ts' : 'status.spec.ts'], {
     cwd: join(root, 'frontend'),
     env: { ...serviceEnv(values, 'web'), TRACER_WEB_URL: webUrl, TRACER_SCREENSHOT_DIR: directory,
-      EXPECT_DATABASE: database, EXPECT_SANDBOX: sandboxState, EXPECT_JAVA: javaState },
+      EXPECT_DATABASE: database, EXPECT_SANDBOX: sandboxState, EXPECT_JAVA: javaState,
+      ...(identityMode ? { IDENTITY_E2E: 'true', IDENTITY_TEST_ADMIN: values.BOOTSTRAP_ADMIN_USERNAME,
+        IDENTITY_TEST_PASSWORD: values.BOOTSTRAP_ADMIN_PASSWORD, IDENTITY_TEST_NEW_PASSWORD: updatedIdentityPassword } : {}) },
   });
 }
 let failure;
@@ -94,6 +100,13 @@ try {
   run('docker', ['info'], { stdio: 'ignore' });
   // Fail fast if built artifacts or matching browser are missing; see README setup.
   compose(['up', '-d', '--wait', 'postgres']);
+  if (identityMode) {
+    compose(['exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB,
+      '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE DATABASE identity_boundary']);
+    maven(['failsafe:integration-test', 'failsafe:verify'], { env: { ...serviceEnv(values, 'java'),
+      IDENTITY_IT_RUN: 'disposable', SPRING_DATASOURCE_URL: `jdbc:postgresql://127.0.0.1:${values.POSTGRES_PORT}/identity_boundary`,
+      SPRING_DATASOURCE_USERNAME: values.POSTGRES_USER, SPRING_DATASOURCE_PASSWORD: values.POSTGRES_PASSWORD } });
+  }
   let goProcess = sandbox();
   let javaProcess = java();
   await waitFor(`${javaUrl}/api/internal/status`, 200, javaProcess);
@@ -105,6 +118,25 @@ try {
   await waitFor(webUrl, 200, webProcess);
   console.log('Browser: all dependencies available');
   browser();
+  if (identityMode) {
+    const csrfResponse = await fetch(`${webUrl}/api/auth/csrf`);
+    const csrfBody = await csrfResponse.json();
+    const anonymousCookie = csrfResponse.headers.getSetCookie().map((value) => value.split(';')[0]).join('; ');
+    const loginResponse = await fetch(`${webUrl}/api/auth/login`, { method: 'POST',
+      headers: { Origin: webUrl, Cookie: anonymousCookie, 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfBody.data.token },
+      body: JSON.stringify({ username: values.BOOTSTRAP_ADMIN_USERNAME, password: updatedIdentityPassword }) });
+    if (loginResponse.status !== 200) throw new Error('Identity restart probe could not authenticate');
+    const sessionCookie = loginResponse.headers.getSetCookie().find((value) => value.startsWith('codecraft_session='))?.split(';')[0];
+    if (!sessionCookie) throw new Error('Identity restart probe did not receive a session');
+    await stop(javaProcess);
+    // Existing administrators must survive changed bootstrap configuration on a real restart.
+    values.BOOTSTRAP_ADMIN_PASSWORD = randomBytes(32).toString('hex');
+    javaProcess = java();
+    await waitFor(`${javaUrl}/api/internal/status`, 200, javaProcess);
+    const resumed = await fetch(`${webUrl}/api/auth/session`, { headers: { Cookie: sessionCookie } });
+    if (resumed.status !== 200) throw new Error('Database session did not survive Java restart');
+    console.log('Identity: database session survived Java restart and changed bootstrap configuration');
+  } else {
   await stop(goProcess);
   await waitFor(`${javaUrl}/api/internal/status`, 503, javaProcess);
   console.log('Browser: Go stopped');
@@ -133,6 +165,7 @@ try {
   if (failedStartup.startError || failedStartup.exitCode === null || failedStartup.exitCode === 0) {
     throw new Error('Expected Java to exit nonzero when its migration database is unavailable');
   }
+  }
 } catch (error) {
   failure = error;
 } finally {
@@ -143,4 +176,4 @@ try {
   await rm(envFile, { force: true });
 }
 if (failure) throw failure;
-console.log(`Real tracer suite passed. Logs: ${directory}`);
+console.log(`Real ${identityMode ? 'identity' : 'tracer'} suite passed. Logs: ${directory}`);

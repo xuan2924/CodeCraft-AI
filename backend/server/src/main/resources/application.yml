@@ -33,3 +33,8 @@ mybatis:
     local-cache-scope: STATEMENT
 tracer:
   sandbox-port: ${SANDBOX_PORT:9090}
+identity:
+  public-origin: ${PUBLIC_ORIGIN:http://localhost:5173}
+  fingerprint-key: ${IDENTITY_FINGERPRINT_KEY:}
+  bootstrap-username: ${BOOTSTRAP_ADMIN_USERNAME:}
+  bootstrap-password: ${BOOTSTRAP_ADMIN_PASSWORD:}

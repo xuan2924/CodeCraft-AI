@@ -1,6 +1,6 @@
 # CodeCraft-AI
 
-AI 结对编程面试平台。目前正式工程只交付 **本机内部服务链路检查**：浏览器 → Java → PostgreSQL / Go。账号、AI、工作区及沙箱执行尚未接入；Go 在线不代表 Docker 或执行环境已就绪。
+AI 结对编程面试平台。目前正式工程提供 **本机内部服务链路检查与受邀账号闭环**：浏览器 → Java → PostgreSQL / Go，以及管理员初始化、强制改密、创建账号、登录和退出。AI、工作区及沙箱执行尚未接入；Go 在线不代表 Docker 或执行环境已就绪。
 
 ## 环境
 
@@ -12,7 +12,7 @@ AI 结对编程面试平台。目前正式工程只交付 **本机内部服务�
 
 ## 初始化与本地启动
 
-在仓库根目录操作。复制 `.env.example` 为未跟踪的 `.env`，自行填写 `POSTGRES_USER` 与 `POSTGRES_PASSWORD`；不要提交或分享该文件。数据库名/用户名使用小写字母开头的字母、数字、下划线。值按字面量解析，含空格、`#` 或双引号时用单引号包裹；不支持变量展开、命令替换、多行或嵌入单引号。不要用 `source .env`。
+在仓库根目录操作。复制 `.env.example` 为未跟踪的 `.env`，自行填写 `POSTGRES_USER`、`POSTGRES_PASSWORD`、`BOOTSTRAP_ADMIN_USERNAME`、`BOOTSTRAP_ADMIN_PASSWORD` 和 `IDENTITY_FINGERPRINT_KEY`；不要提交或分享该文件。数据库名/用户名使用小写字母开头的字母、数字、下划线。值按字面量解析，含空格、`#` 或双引号时用单引号包裹；不支持变量展开、命令替换、多行或嵌入单引号。不要用 `source .env`。
 
 ```sh
 cd frontend
@@ -46,7 +46,10 @@ node scripts/dev.mjs web
 - 启动脚本显式读取根目录 `.env`，只按服务传递白名单键；前端与 Go 不接收数据库/管理员凭证，不打印配置值。Spring Boot、Go 本身不会自动读取 `.env`。
 - Java 启动时 Flyway 在空库创建 `codecraft` schema；重复启动校验已发布迁移。数据库不可达、迁移失败或校验失败会阻止启动。不 baseline、clean 或忽略校验。
 - 状态查询通过 MyBatis 实际检查数据库中的 schema，并通过有 1 秒 deadline 的真实 gRPC 检查 Go。数据库查询/连接也有超时；无后台自动重试。
-- `.env.example` 的管理员键仅为任务 07 保留；当前不创建身份或账号。
+- 首次启动在数据库事务中建立唯一初始管理员；缺少合法初始凭证时失败关闭。已有管理员则跳过，重启或改 `.env` 不能重置密码。初始化成功后可移除初始密码，但必须保留稳定的 `IDENTITY_FINGERPRINT_KEY`（密码变更幂等指纹使用的随机 HMAC 密钥，不入库）。
+- **http://localhost:5173/account** 提供账号入口：首次登录必须改密并重新登录，管理员才能创建受邀账号。临时密码只在创建成功时展示一次，需人工可信交付；未知结果使用原请求核对，重放不会重新交付密码。密码重置属于后续 #08，本次还没有重置入口。
+- 输入、会话、CSRF 和限流规则见[身份契约](docs/design/api-events.md#账号与登录契约任务-02)。本机代理下请求共享 loopback 限额；浏览器固定使用 `localhost` 和 Vite 入口，避免跨源或混用主机名导致拒绝。
+- HMAC 密钥应在本机用安全随机生成器生成并直接写入未跟踪 `.env`，不要粘贴到对话、提交或命令参数。公开部署尚未验收；HTTPS 源配置会强制 Secure Cookie，但不能因此把本机状态接口暴露到公网。
 - 停止应用使用各终端 Ctrl+C；数据库使用 `docker compose stop postgres`。开发数据使用具名卷保留；**不要执行 `down -v` 来修复启动问题**。改变 `.env` 密码不会自动改变已有卷中的数据库密码。
 - 单独执行 `./mvnw spring-boot:run`（Windows `./mvnw.cmd`）或 `go run ./cmd/sandbox` 时，需自行显式提供环境变量；日常使用上面的启动脚本避免漏传。
 
@@ -82,7 +85,7 @@ npm run build
 node scripts/verify.mjs
 ```
 
-执行已有题目脚本测试、Java `verify`（Checkstyle、lint 编译、JUnit、Failsafe）、Go 格式/vet/普通测试/race/构建、Vue lint/类型/组件测试/生产构建及 npm audit。独立运行 Java `verify` 时 `StatusIT` **明确跳过**；真实依赖集成必须运行下一节，不能将跳过称为通过。历史一次性 `backend/prototypes/` 不属于正式套件。
+执行已有题目脚本测试、Java `verify`（Checkstyle、lint 编译、JUnit、Failsafe）、Go 格式/vet/普通测试/race/构建、Vue lint/类型/组件测试/生产构建及 npm audit。独立运行 Java `verify` 时 `StatusIT`、`IdentityIT` **明确跳过**；真实依赖集成必须运行下一节，不能将跳过称为通过。历史一次性 `backend/prototypes/` 不属于正式套件。
 
 **Windows race 准备**：按 [工具链设计](docs/design/engineering-toolchain.md#windows-race-的-c-工具链) 下载 LLVM-MinGW **20261104 UCRT x86_64**，验证 ZIP SHA-256 为 `552191b5754c49a5a20723276a6fc56541ea1922c4c50b7b669022333fc1b40f`，解压到自己的工具目录。只为当前终端设置：
 
@@ -103,6 +106,8 @@ npx playwright install chromium
 # Linux CI: npx playwright install --with-deps chromium
 cd ..
 node scripts/test-tracer.mjs
+# 账号 REST/PostgreSQL 边界、真实浏览器闭环及会话跨重启
+node scripts/test-tracer.mjs --identity
 ```
 
 该脚本不读取开发 `.env`：生成随机凭证、独立 Compose 项目/具名卷和独立端口，启动实际进程及 **Vite preview 的生产构建**，执行 Java Failsafe 集成测试及 Playwright：
@@ -116,6 +121,8 @@ node scripts/test-tracer.mjs
 
 浏览器同时检查响应形状、HTTP 200/503、`no-store`、键盘重试和窄屏。没有替换浏览器 API。清理仅针对该次随机项目的进程、容器和卷；删除临时凭证文件，日志保存在忽略的 `.runtime/`。Docker/浏览器/依赖缺失均非零失败，不能算作通过。若终端被强制关闭，检查 `.runtime/cc-tracer-*` 对应的测试项目并只清理该项目，勿清理开发资源。
 
+`--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器实际完成管理员改密、创建用户、用户改密、越权拒绝和退出，并验证 Java 重启后数据库会话仍可用。该模式禁用 trace、截图和视频，避免记录一次性凭证。两个模式顺序运行（Maven/Playwright 的输出目录共用），不能把跳过的测试算作通过。
+
 已有独立服务时，可在 `frontend/` 设置 `TRACER_WEB_URL=http://127.0.0.1:<端口>` 后执行 `npm run test:e2e -- e2e/status.spec.ts`；默认断言两项依赖可用。普通 `npm run test:e2e` 不会偷偷启动假服务。
 
 ## 契约与目录
@@ -125,6 +132,7 @@ backend/proto/status.proto        唯一 Protobuf 源码，只定义内部状态
 backend/server/                  Java HTTP 聚合、MyBatis 查询、Flyway 迁移
 backend/sandbox/                 Go gRPC 在线检查，无数据库或 Docker 访问
 frontend/src/status/             查询缓存、边界校验和状态页
+frontend/src/auth/               登录、强制改密、账号管理；凭证不写入浏览器持久存储
 scripts/                        初始化、生成、检查与真实链路测试
 ```
 
@@ -132,4 +140,4 @@ scripts/                        初始化、生成、检查与真实链路测试
 
 Go 生成文件提交，Java 生成文件仅在 `target/`。生成脚本固定插件版本、下载校验 protoc；Wrapper 分发也校验 SHA-256。CI 重新生成后检查 Go 契约漂移，并运行 Linux race 与真实服务链路；**添加了 CI 配置不代表远程 CI 已通过**。
 
-具体决策见 [工程工具链](docs/design/engineering-toolchain.md)，执行证据见 [任务 06 验证记录](docs/validation/service-tracer-06.md)。
+具体决策见 [工程工具链](docs/design/engineering-toolchain.md) 和 [身份契约](docs/design/api-events.md)，执行证据见 [任务 06 验证记录](docs/validation/service-tracer-06.md) 与 [任务 07 验证记录](docs/validation/account-login-07.md)。

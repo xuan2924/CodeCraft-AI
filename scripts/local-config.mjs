@@ -7,7 +7,7 @@ const defaults = {
   SANDBOX_PORT: '9090', WEB_PORT: '5173',
 };
 const allowed = new Set([...Object.keys(defaults), 'POSTGRES_USER', 'POSTGRES_PASSWORD',
-  'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD']);
+  'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN']);
 
 // Deliberately a literal subset, not a shell/dotenv evaluator. Never log values.
 export function parseConfig(text) {
@@ -56,7 +56,7 @@ export async function loadConfig() {
 export function serviceEnv(values, service) {
   const keys = {
     java: ['POSTGRES_DB', 'POSTGRES_PORT', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'JAVA_PORT', 'SANDBOX_PORT',
-      'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD'],
+      'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN'],
     sandbox: ['SANDBOX_PORT'], web: ['JAVA_PORT', 'WEB_PORT'],
     postgres: ['POSTGRES_DB', 'POSTGRES_PORT', 'POSTGRES_USER', 'POSTGRES_PASSWORD'],
   }[service];
@@ -64,5 +64,6 @@ export function serviceEnv(values, service) {
   const env = { ...process.env };
   for (const key of allowed) delete env[key];
   for (const key of keys) if (values[key] !== undefined) env[key] = values[key];
+  if (service === 'java' && !env.PUBLIC_ORIGIN) env.PUBLIC_ORIGIN = `http://localhost:${values.WEB_PORT}`;
   return env;
 }

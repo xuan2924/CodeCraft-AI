@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "packageManager": "npm@11.6.0",
-  "engines": { "node": "24.9.0", "npm": "11.6.0" },
+  "engines": {
+    "node": "24.9.0",
+    "npm": "11.6.0"
+  },
   "scripts": {
     "dev": "vite",
     "preview": "vite preview",
@@ -17,7 +20,8 @@
   "dependencies": {
     "@tanstack/vue-query": "5.106.1",
     "naive-ui": "2.45.3",
-    "vue": "3.5.45"
+    "vue": "3.5.45",
+    "vue-router": "4.6.4"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -35,8 +39,12 @@
     "vue-tsc": "3.3.14"
   },
   "overrides": {
-    "monaco-editor": { "dompurify": "3.4.17" },
-    "js-beautify": { "glob": "14.0.4" },
+    "monaco-editor": {
+      "dompurify": "3.4.17"
+    },
+    "js-beautify": {
+      "glob": "14.0.4"
+    },
     "minimatch": "11.0.5"
   }
 }

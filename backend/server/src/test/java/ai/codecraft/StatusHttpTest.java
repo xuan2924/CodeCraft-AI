@@ -2,6 +2,8 @@ package ai.codecraft;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ai.codecraft.identity.IdentityBootstrap;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import ai.codecraft.status.v1.CheckRequest;
 import ai.codecraft.status.v1.CheckResponse;
 import ai.codecraft.status.v1.SandboxStatusGrpc;
@@ -25,12 +27,15 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
     "spring.flyway.enabled=false",
+    "identity.fingerprint-key=0000000000000000000000000000000000000000000000000000000000000000",
     "spring.datasource.url=jdbc:postgresql://127.0.0.1:1/unavailable?connectTimeout=1&socketTimeout=2",
     "spring.datasource.username=test",
     "spring.datasource.password=test-only",
     "spring.datasource.hikari.initialization-fail-timeout=-1"
 })
 class StatusHttpTest {
+    @MockitoBean
+    private IdentityBootstrap identityBootstrap;
     private static volatile String behavior = "unavailable";
     private static Server fixture;
 
@@ -100,7 +105,7 @@ class StatusHttpTest {
                 "http://127.0.0.1:" + port + "/api/internal/status")).timeout(Duration.ofSeconds(7)).build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             assertThat(response.statusCode()).isEqualTo(503);
-            assertThat(response.headers().firstValue("cache-control")).contains("no-store");
+            assertThat(response.headers().allValues("cache-control")).containsExactly("no-store");
             assertThat(response.body()).isEqualTo("{\"database\":\"UNAVAILABLE\",\"sandbox\":\"" + sandbox + "\"}");
         }
     }

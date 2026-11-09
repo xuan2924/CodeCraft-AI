@@ -90,7 +90,7 @@ const { data, isFetching, isError, refetch } = useQuery({
     </section>
     <footer>
       <p>Go 在线仅表示 gRPC 可响应，不代表 Docker 或沙箱执行已就绪。</p>
-      <p>账号、AI 与完整演练尚未接入。</p>
+      <p>AI 与完整演练尚未接入。<a href="/account">受邀账号登录</a></p>
     </footer>
   </main>
 </template>

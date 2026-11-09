@@ -7,7 +7,7 @@ const expectedSandbox = process.env.EXPECT_SANDBOX ?? 'AVAILABLE';
 test('browser reports actual dependency state through Java, with keyboard retry', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '服务链路检查' })).toBeVisible();
-  await expect(page.getByText('账号、AI 与完整演练尚未接入。')).toBeVisible();
+  await expect(page.getByText('AI 与完整演练尚未接入。')).toBeVisible();
   const retry = page.getByRole('button', { name: '重新检查' });
   if (javaUnavailable) {
     await expect(page.getByRole('alert')).toContainText('无法取得有效状态');
