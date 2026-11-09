@@ -1,11 +1,13 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"syscall"
 
@@ -13,12 +15,14 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	containerMode := flag.Bool("container", false, "listen inside a Linux container; publish only on host loopback")
+	flag.Parse()
+	if err := run(*containerMode); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run() error {
+func run(containerMode bool) error {
 	port := os.Getenv("SANDBOX_PORT")
 	if port == "" {
 		port = "9090"
@@ -27,8 +31,20 @@ func run() error {
 	if err != nil || number < 1 || number > 65535 {
 		return fmt.Errorf("SANDBOX_PORT must be an integer from 1 to 65535")
 	}
-	// Deliberately not configurable: this unauthenticated tracer is local-only.
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", port))
+	host := "127.0.0.1"
+	if containerMode {
+		if runtime.GOOS != "linux" {
+			return fmt.Errorf("container mode requires Linux")
+		}
+		storage, err := acquireStorage()
+		if err != nil {
+			return err
+		}
+		defer storage.Close()
+		// Docker publishes this container port only on host loopback.
+		host = "0.0.0.0"
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, port))
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
@@ -38,7 +54,7 @@ func run() error {
 	defer signal.Stop(stop)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
-	log.Print("sandbox liveness listening on loopback; execution is not implemented")
+	log.Print("sandbox liveness listening; workspace and execution readiness are not certified")
 	select {
 	case err := <-done:
 		server.Stop()

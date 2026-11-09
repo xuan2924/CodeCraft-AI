@@ -1,12 +1,14 @@
+import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { openSync, closeSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { root, run, maven, windows } from './process.mjs';
 import { serviceEnv } from './local-config.mjs';
+import { buildSandboxImage } from './build-sandbox.mjs';
 
 const identityMode = process.argv.includes('--identity');
 const updatedIdentityPassword = randomBytes(32).toString('hex');
@@ -45,13 +47,19 @@ function start(name, executable, args, env) {
   return child;
 }
 async function stop(child) {
+  if (child?.sandboxContainer) {
+    compose(['stop', 'sandbox']);
+    child.sandboxContainer = false;
+  }
   if (!child || child.exitCode !== null || child.signalCode !== null || child.startError) return;
   const exited = new Promise((resolve) => child.once('exit', resolve));
   if (windows) {
-    const killed = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    if (killed.status !== 0 && child.exitCode === null) throw new Error(`Unable to stop owned process ${child.pid}`);
+    // Compose may have exited during its synchronous container stop; Node has not
+    // necessarily delivered the exit event yet. The bounded wait below is authoritative.
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
   } else {
-    process.kill(-child.pid, 'SIGTERM');
+    try { process.kill(-child.pid, 'SIGTERM'); }
+    catch (error) { if (error.code !== 'ESRCH') throw error; }
   }
   let timer;
   try {
@@ -81,7 +89,9 @@ async function waitFor(url, expectedStatus, child) {
 const javaUrl = `http://127.0.0.1:${values.JAVA_PORT}`;
 const webUrl = `http://${identityMode ? 'localhost' : '127.0.0.1'}:${values.WEB_PORT}`;
 function sandbox() {
-  return start('sandbox', join(root, 'backend/sandbox', windows ? 'sandbox.exe' : 'sandbox'), [], serviceEnv(values, 'sandbox'));
+  const child = start('sandbox', 'docker', [...composeArgs, 'up', '--no-deps', 'sandbox'], composeEnv);
+  child.sandboxContainer = true;
+  return child;
 }
 function java() {
   return start('java', 'java', ['-jar', join(root, 'backend/server/target/server-0.1.0-SNAPSHOT.jar')], serviceEnv(values, 'java'));
@@ -95,9 +105,33 @@ function browser(database = 'AVAILABLE', sandboxState = 'AVAILABLE', javaState =
         IDENTITY_TEST_PASSWORD: values.BOOTSTRAP_ADMIN_PASSWORD, IDENTITY_TEST_NEW_PASSWORD: updatedIdentityPassword } : {}) },
   });
 }
+function sandboxId() {
+  return run('docker', [...composeArgs, 'ps', '-q', 'sandbox'],
+    { env: composeEnv, encoding: 'utf8', stdio: 'pipe' }).stdout.trim();
+}
+function inspectSandbox() {
+  const id = sandboxId();
+  assert(id, 'sandbox container missing');
+  const info = JSON.parse(run('docker', ['inspect', id], { encoding: 'utf8', stdio: 'pipe' }).stdout)[0];
+  assert.equal(info.Config.User, '10001:10001');
+  assert.equal(info.HostConfig.ReadonlyRootfs, true);
+  assert(info.HostConfig.CapDrop.includes('ALL'));
+  assert(info.HostConfig.SecurityOpt.some((value) => value.startsWith('no-new-privileges')));
+  assert.equal(info.Mounts.length, 1, 'only the private data volume may be mounted');
+  assert.equal(info.Mounts[0].Type, 'volume');
+  assert.equal(info.Mounts[0].Destination, '/var/lib/codecraft');
+  assert.equal(info.HostConfig.PortBindings['9090/tcp'][0].HostIp, '127.0.0.1');
+  assert(!info.Config.Env.some((value) => /^(POSTGRES_|BOOTSTRAP_|IDENTITY_)/.test(value)));
+  const second = spawnSync('docker', ['exec', id, '/sandbox', '--container'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(second.status, 1, 'second storage owner must be rejected');
+  assert(second.stderr.includes('acquire exclusive storage ownership'), 'must reject the storage lock, not merely the port');
+  return id;
+}
 let failure;
 try {
   run('docker', ['info'], { stdio: 'ignore' });
+  composeEnv.SANDBOX_IMAGE = await buildSandboxImage();
+  composeEnv.SANDBOX_PORT = values.SANDBOX_PORT;
   // Fail fast if built artifacts or matching browser are missing; see README setup.
   compose(['up', '-d', '--wait', 'postgres']);
   if (identityMode) {
@@ -110,6 +144,10 @@ try {
   let goProcess = sandbox();
   let javaProcess = java();
   await waitFor(`${javaUrl}/api/internal/status`, 200, javaProcess);
+  const initialSandbox = inspectSandbox();
+  const marker = join(directory, 'volume-marker.txt');
+  await writeFile(marker, project);
+  run('docker', ['cp', marker, `${initialSandbox}:/var/lib/codecraft/volume-marker.txt`]);
   maven(['failsafe:integration-test', 'failsafe:verify'], { env: { ...process.env, TRACER_IT_URL: javaUrl } });
   const webProcess = start('web', process.execPath,
     [join(root, 'frontend/node_modules/vite/bin/vite.js'), 'preview', join(root, 'frontend'), '--config', join(root, 'frontend/vite.config.ts')],
@@ -141,8 +179,15 @@ try {
   await waitFor(`${javaUrl}/api/internal/status`, 503, javaProcess);
   console.log('Browser: Go stopped');
   browser('AVAILABLE', 'UNAVAILABLE');
+  compose(['rm', '-f', 'sandbox']);
   goProcess = sandbox();
   await waitFor(`${javaUrl}/api/internal/status`, 200, javaProcess);
+  const recreatedSandbox = inspectSandbox();
+  assert.notEqual(recreatedSandbox, initialSandbox);
+  const recoveredMarker = join(directory, 'recovered-marker.txt');
+  run('docker', ['cp', `${recreatedSandbox}:/var/lib/codecraft/volume-marker.txt`, recoveredMarker]);
+  assert.equal(await readFile(recoveredMarker, 'utf8'), project);
+  console.log('Sandbox: Linux ownership checks and persistent volume survived container recreation');
   compose(['stop', 'postgres']);
   await waitFor(`${javaUrl}/api/internal/status`, 503, javaProcess);
   console.log('Browser: database stopped');

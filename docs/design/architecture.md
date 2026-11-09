@@ -60,7 +60,7 @@
 
 - 工程目录已随任务 06 初始化为 `backend/server/`、`backend/sandbox/`、`backend/proto/` 和 `frontend/`。当前已交付内部状态与身份模块；后续业务模块与 feature 边界按功能建立，不提前搭建无用途框架。
 - 已确认 Maven Wrapper、npm + package-lock.json、Vitest + Vue Test Utils、Playwright；暂不引入 MapStruct、不启用虚拟线程，按实际需求再评估。
-- 日常开发采用本机 Java/Go/Vite + Docker PostgreSQL/题目测试容器；无需本机安装 PostgreSQL。任务 06 已建立正式启动与生成脚本，真实状态链路不能替代题目执行与业务验收。
+- 日常开发采用本机 Java/Vite + Docker PostgreSQL/Linux Go/题目测试容器；Go 工作区使用持久化具名卷，避免依赖未验证的 Windows 原子重命名语义。无需本机安装 PostgreSQL。任务 06 已建立正式启动与生成脚本，真实状态链路不能替代题目执行与业务验收。
 - 工具链决定票已验收：前端以精确依赖覆盖清除本次审计告警，Windows Go race 显式使用兼容 C 工具链。任务 06 已交付正式清单/脚本与 Linux CI 配置；远程 CI、Linux 隔离及完整业务链路仍待验证。精确版本、覆盖策略与证据见 [工程工具链](engineering-toolchain.md)。
 - Monaco/xterm 的原生封装与 Vite worker 集成待验证；SSE 客户端结合已确认的 Cookie 身份和恢复契约选择，不因草案 POST 示例锁定库。
 - 依赖选择兼容版本并锁定，以实际清单和脚本为准；PoC 依赖不构成正式版本决定。

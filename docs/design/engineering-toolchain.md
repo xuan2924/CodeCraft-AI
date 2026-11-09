@@ -5,7 +5,7 @@
 ## 已确认的初始化方式
 
 - 正式目录采用 `backend/server/`（Java）、`backend/sandbox/`（Go）、`backend/proto/`（共享 `.proto` 契约），前端在 `frontend/`。任务 06 已随状态查询建立这些目录，不创建空业务框架。
-- 日常开发在本机启动 Java、Go、Vite；Docker Compose 提供 PostgreSQL，题目代码始终在专用 Docker 容器运行。完整联调/部署再验证应用容器化，不把 Windows 开发成功当 Linux 隔离验收。
+- 日常开发在本机启动 Java、Vite；Docker Compose 提供 PostgreSQL 和 Linux Go 服务，Go 私有工作区放在具名卷。用户在任务 09 实施时确认此调整：已选原子文件方案依赖 Linux 语义，不将 Windows `os.Rename` 视为原子发布。题目代码始终在独立受限容器执行，不获得 Go 存储根或 Docker socket。
 - 不要求本机安装 PostgreSQL 或 psql；可通过数据库容器执行 psql。数据库端口仅绑定 `127.0.0.1`，数据用具名卷持久化，凭证放未跟踪的 `.env`，测试库与开发库隔离。数据卷不是备份。
 - 前端唯一包管理器为 npm；提交 `package-lock.json`，干净安装用 `npm ci`，不生成 yarn/pnpm 锁文件。`packageManager` 声明 npm 精确版本，直接依赖用精确版本；Node 版本也写入工程说明与 CI。
 - Java 使用 Maven Wrapper，同时提供 `mvnw`、`mvnw.cmd`。Windows 首选 PowerShell + `mvnw.cmd`，Linux 使用 `./mvnw`。
@@ -76,7 +76,7 @@ Go 官方要求 Windows race 使用 mingw-w64 runtime 8+。本机 GCC 8.1.0 配�
 
 1. 根目录 `.env.example` 仅提供变量名及非敏感默认值；开发者建立 `.env`，提供数据库凭证、端口及工作区路径。Compose 的 `.env` 不会自动注入本机 Java/Go，启动脚本必须显式读取并传递白名单变量，不打印凭证。
 2. `docker compose up -d --wait postgres`：检查数据库健康，具名卷持久化；不自动执行 `down -v` 或删除开发数据。
-3. 运行双端生成脚本；`backend/sandbox/` 中 `go run ./cmd/sandbox` 启动 Go。Windows Docker Desktop 明确设置 `DOCKER_HOST=npipe:////./pipe/dockerDesktopLinuxEngine`；SDK 不等于 Docker CLI 的 context 自动选择。Linux 使用受信任本地 socket，不暴露未认证 TCP。
+3. 运行双端生成脚本；`node scripts/dev.mjs sandbox` 交叉编译 Linux 静态 Go 二进制，在仅含构建产物的临时上下文构建镜像，再由 Compose 启动。Go 非 root、只读根文件系统、持久化私有具名卷，端口只发布到宿主 loopback。原生 Go 入口仅保留状态链路兼容性，不提供 Windows 工作区保证。Docker SDK/socket 接入仍随执行功能落实，不将 Docker CLI context 选择隐式当成 SDK 配置。
 4. `backend/server/` 中 `./mvnw spring-boot:run`（Windows `./mvnw.cmd spring-boot:run`）启动 Java；Flyway 执行 `src/main/resources/db/migration/V<版本>__<说明>.sql` 并校验，失败阻止启动。已发布迁移不可修改，不自动 baseline、clean 或忽略校验。
 5. `frontend/` 中 `npm ci`、`npm run dev`；Vite 将浏览器 API 请求代理给 Java，浏览器不直连 Go 或数据库。具体端口、健康检查及 Cookie/CSRF 配置由实际配置和任务 02/06 提供。
 

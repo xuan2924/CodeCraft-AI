@@ -41,8 +41,9 @@ node scripts/dev.mjs java
 node scripts/dev.mjs web
 ```
 
-访问 **http://localhost:5173**（若修改 `WEB_PORT`，使用对应端口）。浏览器只通过 Vite 代理访问 Java。Java、Go、Vite 和 PostgreSQL 映射端口均绑定 `127.0.0.1`，**不得改为公网/局域网入口或为其配置公开反向代理**。此页面免登录的前提仅是本机可信联调，不是未来产品鉴权方案。
+访问 **http://localhost:5173**（若修改 `WEB_PORT`，使用对应端口）。浏览器只通过 Vite 代理访问 Java。Java、Vite 及 Go/PostgreSQL 的宿主映射端口均绑定 `127.0.0.1`，**不得改为公网/局域网入口或为其配置公开反向代理**。此页面免登录的前提仅是本机可信联调，不是未来产品鉴权方案。
 
+- Go 启动脚本构建 Linux 静态二进制与本地镜像，通过 Compose 启动非 root 服务。私有数据使用 `sandbox-data` 具名卷；新容器可重新挂载，进程锁拒绝同时启动第二个存储所有者。当前仍只有在线查询，不代表工作区业务已经交付。
 - 启动脚本显式读取根目录 `.env`，只按服务传递白名单键；前端与 Go 不接收数据库/管理员凭证，不打印配置值。Spring Boot、Go 本身不会自动读取 `.env`。
 - Java 启动时 Flyway 在空库创建 `codecraft` schema；重复启动校验已发布迁移。数据库不可达、迁移失败或校验失败会阻止启动。不 baseline、clean 或忽略校验。
 - 状态查询通过 MyBatis 实际检查数据库中的 schema，并通过有 1 秒 deadline 的真实 gRPC 检查 Go。数据库查询/连接也有超时；无后台自动重试。
@@ -51,7 +52,7 @@ node scripts/dev.mjs web
 - 输入、会话、CSRF 和限流规则见[身份契约](docs/design/api-events.md#账号与登录契约任务-02)。本机代理下请求共享 loopback 限额；浏览器固定使用 `localhost` 和 Vite 入口，避免跨源或混用主机名导致拒绝。
 - HMAC 密钥应在本机用安全随机生成器生成并直接写入未跟踪 `.env`，不要粘贴到对话、提交或命令参数。公开部署尚未验收；HTTPS 源配置会强制 Secure Cookie，但不能因此把本机状态接口暴露到公网。
 - 停止应用使用各终端 Ctrl+C；数据库使用 `docker compose stop postgres`。开发数据使用具名卷保留；**不要执行 `down -v` 来修复启动问题**。改变 `.env` 密码不会自动改变已有卷中的数据库密码。
-- 单独执行 `./mvnw spring-boot:run`（Windows `./mvnw.cmd`）或 `go run ./cmd/sandbox` 时，需自行显式提供环境变量；日常使用上面的启动脚本避免漏传。
+- 单独执行 `./mvnw spring-boot:run`（Windows `./mvnw.cmd`）需自行显式提供环境变量。原生 `go run ./cmd/sandbox` 仅保留在线查询兼容入口；工作区运行方式固定为上述 Linux 容器，不将 Windows 文件系统当作原子发布后端。
 
 ## 验证
 
@@ -114,12 +115,12 @@ node scripts/test-tracer.mjs --identity
 
 1. 空库迁移后，两项依赖可用。
 2. 停止 Go，仅 Go 不可用。
-3. 恢复 Go、停止数据库，仅数据库不可用。
+3. 删除并重建 Go 容器，确认卷内标记保留和独占锁生效；停止数据库，仅数据库不可用。
 4. 恢复数据库、重启 Java，迁移校验后恢复可用。
 5. 停止 Java，页面提示无法取得状态，不展示旧成功。
 6. 数据库不可达时重新启动 Java，必须非零退出。
 
-浏览器同时检查响应形状、HTTP 200/503、`no-store`、键盘重试和窄屏。没有替换浏览器 API。清理仅针对该次随机项目的进程、容器和卷；删除临时凭证文件，日志保存在忽略的 `.runtime/`。Docker/浏览器/依赖缺失均非零失败，不能算作通过。若终端被强制关闭，检查 `.runtime/cc-tracer-*` 对应的测试项目并只清理该项目，勿清理开发资源。
+脚本还检查 Go 非 root、只读根、私有具名卷、宿主 loopback 端口与无数据库/管理员凭证。浏览器同时检查响应形状、HTTP 200/503、`no-store`、键盘重试和窄屏。没有替换浏览器 API。清理仅针对该次随机项目的进程、容器和卷；删除临时凭证文件，日志保存在忽略的 `.runtime/`。Docker/浏览器/依赖缺失均非零失败，不能算作通过。若终端被强制关闭，检查 `.runtime/cc-tracer-*` 对应的测试项目并只清理该项目，勿清理开发资源。
 
 `--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器实际完成管理员改密、创建用户、用户改密、越权拒绝和退出，并验证 Java 重启后数据库会话仍可用。该模式禁用 trace、截图和视频，避免记录一次性凭证。两个模式顺序运行（Maven/Playwright 的输出目录共用），不能把跳过的测试算作通过。
 
@@ -140,4 +141,4 @@ scripts/                        初始化、生成、检查与真实链路测试
 
 Go 生成文件提交，Java 生成文件仅在 `target/`。生成脚本固定插件版本、下载校验 protoc；Wrapper 分发也校验 SHA-256。CI 重新生成后检查 Go 契约漂移，并运行 Linux race 与真实服务链路；**添加了 CI 配置不代表远程 CI 已通过**。
 
-具体决策见 [工程工具链](docs/design/engineering-toolchain.md) 和 [身份契约](docs/design/api-events.md)，执行证据见 [任务 06 验证记录](docs/validation/service-tracer-06.md) 、[任务 07 验证记录](docs/validation/account-login-07.md)和[任务 08 验证记录](docs/validation/password-revocation-08.md)。
+具体决策见 [工程工具链](docs/design/engineering-toolchain.md) 和 [身份契约](docs/design/api-events.md)，执行证据见 [任务 06 验证记录](docs/validation/service-tracer-06.md)、[任务 07 验证记录](docs/validation/account-login-07.md)和[任务 08 验证记录](docs/validation/password-revocation-08.md)。
