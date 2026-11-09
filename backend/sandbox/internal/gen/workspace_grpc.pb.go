@@ -25,6 +25,9 @@ const (
 	WorkspaceStorage_CancelPreparation_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/CancelPreparation"
 	WorkspaceStorage_CloseGate_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/CloseGate"
 	WorkspaceStorage_QueryGate_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryGate"
+	WorkspaceStorage_OpenGate_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/OpenGate"
+	WorkspaceStorage_ApplyBatch_FullMethodName        = "/codecraft.workspace.v1.WorkspaceStorage/ApplyBatch"
+	WorkspaceStorage_QueryMutation_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/QueryMutation"
 )
 
 // WorkspaceStorageClient is the client API for WorkspaceStorage service.
@@ -39,6 +42,9 @@ type WorkspaceStorageClient interface {
 	CancelPreparation(ctx context.Context, in *CancelPreparationRequest, opts ...grpc.CallOption) (*WorkspaceSnapshot, error)
 	CloseGate(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error)
 	QueryGate(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*GateResponse, error)
+	OpenGate(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error)
+	ApplyBatch(ctx context.Context, in *ApplyBatchRequest, opts ...grpc.CallOption) (*MutationReceipt, error)
+	QueryMutation(ctx context.Context, in *QueryMutationRequest, opts ...grpc.CallOption) (*MutationReceipt, error)
 }
 
 type workspaceStorageClient struct {
@@ -109,6 +115,36 @@ func (c *workspaceStorageClient) QueryGate(ctx context.Context, in *QueryWorkspa
 	return out, nil
 }
 
+func (c *workspaceStorageClient) OpenGate(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GateResponse)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_OpenGate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) ApplyBatch(ctx context.Context, in *ApplyBatchRequest, opts ...grpc.CallOption) (*MutationReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MutationReceipt)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_ApplyBatch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) QueryMutation(ctx context.Context, in *QueryMutationRequest, opts ...grpc.CallOption) (*MutationReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MutationReceipt)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_QueryMutation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkspaceStorageServer is the server API for WorkspaceStorage service.
 // All implementations must embed UnimplementedWorkspaceStorageServer
 // for forward compatibility.
@@ -121,6 +157,9 @@ type WorkspaceStorageServer interface {
 	CancelPreparation(context.Context, *CancelPreparationRequest) (*WorkspaceSnapshot, error)
 	CloseGate(context.Context, *CloseGateRequest) (*GateResponse, error)
 	QueryGate(context.Context, *QueryWorkspaceRequest) (*GateResponse, error)
+	OpenGate(context.Context, *CloseGateRequest) (*GateResponse, error)
+	ApplyBatch(context.Context, *ApplyBatchRequest) (*MutationReceipt, error)
+	QueryMutation(context.Context, *QueryMutationRequest) (*MutationReceipt, error)
 	mustEmbedUnimplementedWorkspaceStorageServer()
 }
 
@@ -148,6 +187,15 @@ func (UnimplementedWorkspaceStorageServer) CloseGate(context.Context, *CloseGate
 }
 func (UnimplementedWorkspaceStorageServer) QueryGate(context.Context, *QueryWorkspaceRequest) (*GateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryGate not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) OpenGate(context.Context, *CloseGateRequest) (*GateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OpenGate not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) ApplyBatch(context.Context, *ApplyBatchRequest) (*MutationReceipt, error) {
+	return nil, status.Error(codes.Unimplemented, "method ApplyBatch not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) QueryMutation(context.Context, *QueryMutationRequest) (*MutationReceipt, error) {
+	return nil, status.Error(codes.Unimplemented, "method QueryMutation not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) mustEmbedUnimplementedWorkspaceStorageServer() {}
 func (UnimplementedWorkspaceStorageServer) testEmbeddedByValue()                          {}
@@ -278,6 +326,60 @@ func _WorkspaceStorage_QueryGate_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkspaceStorage_OpenGate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CloseGateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).OpenGate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_OpenGate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).OpenGate(ctx, req.(*CloseGateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_ApplyBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApplyBatchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).ApplyBatch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_ApplyBatch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).ApplyBatch(ctx, req.(*ApplyBatchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_QueryMutation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMutationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).QueryMutation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_QueryMutation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).QueryMutation(ctx, req.(*QueryMutationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // WorkspaceStorage_ServiceDesc is the grpc.ServiceDesc for WorkspaceStorage service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -308,6 +410,18 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "QueryGate",
 			Handler:    _WorkspaceStorage_QueryGate_Handler,
+		},
+		{
+			MethodName: "OpenGate",
+			Handler:    _WorkspaceStorage_OpenGate_Handler,
+		},
+		{
+			MethodName: "ApplyBatch",
+			Handler:    _WorkspaceStorage_ApplyBatch_Handler,
+		},
+		{
+			MethodName: "QueryMutation",
+			Handler:    _WorkspaceStorage_QueryMutation_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

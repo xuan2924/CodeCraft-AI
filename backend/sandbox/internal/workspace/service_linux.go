@@ -44,8 +44,9 @@ type Service struct {
 }
 
 type record struct {
-	Snapshot *rpc.WorkspaceSnapshot `json:"snapshot"`
-	Hashes   map[string]string      `json:"hashes"`
+	Snapshot  *rpc.WorkspaceSnapshot          `json:"snapshot"`
+	Hashes    map[string]string               `json:"hashes"`
+	Mutations map[string]*rpc.MutationReceipt `json:"mutations,omitempty"`
 }
 
 // NewService configures published inputs and private local storage, never a user path.
@@ -74,6 +75,9 @@ func NewService(root string, publications []Publication, key string) (*Service, 
 				return nil, fmt.Errorf("invalid initial file")
 			}
 			copy.InitialFiles[path] = content
+		}
+		if err := validateContentLimits(copy.InitialFiles); err != nil {
+			return nil, err
 		}
 		s.publications = append(s.publications, copy)
 	}
@@ -219,6 +223,20 @@ func (s *Service) CancelPreparation(ctx context.Context, request *rpc.CancelPrep
 				return nil, storageError(err)
 			}
 			return previous.Snapshot, nil
+		}
+		// Preparation cancellation must never discard write receipts or an activated
+		// workspace. Ended-workspace deletion needs the separate reconciliation flow.
+		gates, gateErr := gateRecords(fd, request.WorkspaceInstanceId)
+		if gateErr != nil {
+			return nil, storageError(gateErr)
+		}
+		if len(previous.Mutations) != 0 {
+			return nil, status.Error(codes.FailedPrecondition, "workspace has mutations")
+		}
+		for _, gate := range gates {
+			if gate.State == "OPEN" {
+				return nil, status.Error(codes.FailedPrecondition, "workspace already activated")
+			}
 		}
 		sequence, err = strconv.ParseUint(commit[7:], 10, 64)
 		if err != nil || sequence == ^uint64(0) {
@@ -474,6 +492,18 @@ func latest(parent int, expectedID string) (*record, string, error) {
 	for index, path := range r.Snapshot.Paths {
 		if !validPath(path) || !digest.MatchString(r.Hashes[path]) || (index > 0 && path <= r.Snapshot.Paths[index-1]) {
 			return nil, "", fmt.Errorf("invalid file manifest")
+		}
+	}
+	sequence, err := strconv.ParseUint(name[7:], 10, 64)
+	if err != nil || (r.Snapshot.Prepared && uint64(len(r.Mutations)) != sequence) {
+		return nil, "", fmt.Errorf("incomplete mutation history")
+	}
+	for requestID, receipt := range r.Mutations {
+		if receipt == nil || !uuid.MatchString(requestID) || receipt.RequestId != requestID ||
+			receipt.WorkspaceInstanceId != expectedID || !uuid.MatchString(receipt.OperationId) ||
+			!digest.MatchString(receipt.Fingerprint) || receipt.Revision > r.Snapshot.Revision ||
+			(receipt.Changed && receipt.Revision == 0) {
+			return nil, "", fmt.Errorf("invalid mutation receipt")
 		}
 	}
 	return &r, name, nil

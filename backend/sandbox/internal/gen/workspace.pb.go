@@ -518,6 +518,297 @@ func (x *GateResponse) GetState() string {
 	return ""
 }
 
+// CREATE and DELETE together represent an atomic rename. Duplicate paths are rejected.
+type FileChange struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`       // CREATE, UPDATE, DELETE
+	Content       string                 `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"` // DELETE must be empty
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileChange) Reset() {
+	*x = FileChange{}
+	mi := &file_workspace_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileChange) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileChange) ProtoMessage() {}
+
+func (x *FileChange) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileChange.ProtoReflect.Descriptor instead.
+func (*FileChange) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *FileChange) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *FileChange) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *FileChange) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
+type ApplyBatchRequest struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceInstanceId string                 `protobuf:"bytes,1,opt,name=workspace_instance_id,json=workspaceInstanceId,proto3" json:"workspace_instance_id,omitempty"`
+	RequestId           string                 `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	OperationId         string                 `protobuf:"bytes,3,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	ExpectedRevision    uint64                 `protobuf:"varint,4,opt,name=expected_revision,json=expectedRevision,proto3" json:"expected_revision,omitempty"`
+	GateEpoch           uint64                 `protobuf:"varint,5,opt,name=gate_epoch,json=gateEpoch,proto3" json:"gate_epoch,omitempty"`
+	NotAfterUnixMillis  int64                  `protobuf:"varint,6,opt,name=not_after_unix_millis,json=notAfterUnixMillis,proto3" json:"not_after_unix_millis,omitempty"`
+	Changes             []*FileChange          `protobuf:"bytes,7,rep,name=changes,proto3" json:"changes,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *ApplyBatchRequest) Reset() {
+	*x = ApplyBatchRequest{}
+	mi := &file_workspace_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApplyBatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApplyBatchRequest) ProtoMessage() {}
+
+func (x *ApplyBatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApplyBatchRequest.ProtoReflect.Descriptor instead.
+func (*ApplyBatchRequest) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ApplyBatchRequest) GetWorkspaceInstanceId() string {
+	if x != nil {
+		return x.WorkspaceInstanceId
+	}
+	return ""
+}
+
+func (x *ApplyBatchRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ApplyBatchRequest) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *ApplyBatchRequest) GetExpectedRevision() uint64 {
+	if x != nil {
+		return x.ExpectedRevision
+	}
+	return 0
+}
+
+func (x *ApplyBatchRequest) GetGateEpoch() uint64 {
+	if x != nil {
+		return x.GateEpoch
+	}
+	return 0
+}
+
+func (x *ApplyBatchRequest) GetNotAfterUnixMillis() int64 {
+	if x != nil {
+		return x.NotAfterUnixMillis
+	}
+	return 0
+}
+
+func (x *ApplyBatchRequest) GetChanges() []*FileChange {
+	if x != nil {
+		return x.Changes
+	}
+	return nil
+}
+
+type QueryMutationRequest struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceInstanceId string                 `protobuf:"bytes,1,opt,name=workspace_instance_id,json=workspaceInstanceId,proto3" json:"workspace_instance_id,omitempty"`
+	RequestId           string                 `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *QueryMutationRequest) Reset() {
+	*x = QueryMutationRequest{}
+	mi := &file_workspace_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QueryMutationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QueryMutationRequest) ProtoMessage() {}
+
+func (x *QueryMutationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QueryMutationRequest.ProtoReflect.Descriptor instead.
+func (*QueryMutationRequest) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *QueryMutationRequest) GetWorkspaceInstanceId() string {
+	if x != nil {
+		return x.WorkspaceInstanceId
+	}
+	return ""
+}
+
+func (x *QueryMutationRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+// NOT_FOUND is only a linearized observation, never permission to replay a write.
+// Fingerprint is computed by Go over the canonical business payload, not authorization.
+type MutationReceipt struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceInstanceId string                 `protobuf:"bytes,1,opt,name=workspace_instance_id,json=workspaceInstanceId,proto3" json:"workspace_instance_id,omitempty"`
+	RequestId           string                 `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	OperationId         string                 `protobuf:"bytes,3,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	Fingerprint         string                 `protobuf:"bytes,4,opt,name=fingerprint,proto3" json:"fingerprint,omitempty"`
+	Revision            uint64                 `protobuf:"varint,5,opt,name=revision,proto3" json:"revision,omitempty"`
+	Changed             bool                   `protobuf:"varint,6,opt,name=changed,proto3" json:"changed,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *MutationReceipt) Reset() {
+	*x = MutationReceipt{}
+	mi := &file_workspace_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MutationReceipt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MutationReceipt) ProtoMessage() {}
+
+func (x *MutationReceipt) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MutationReceipt.ProtoReflect.Descriptor instead.
+func (*MutationReceipt) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *MutationReceipt) GetWorkspaceInstanceId() string {
+	if x != nil {
+		return x.WorkspaceInstanceId
+	}
+	return ""
+}
+
+func (x *MutationReceipt) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *MutationReceipt) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *MutationReceipt) GetFingerprint() string {
+	if x != nil {
+		return x.Fingerprint
+	}
+	return ""
+}
+
+func (x *MutationReceipt) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *MutationReceipt) GetChanged() bool {
+	if x != nil {
+		return x.Changed
+	}
+	return false
+}
+
 type WorkspaceSnapshot struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	WorkspaceInstanceId string                 `protobuf:"bytes,1,opt,name=workspace_instance_id,json=workspaceInstanceId,proto3" json:"workspace_instance_id,omitempty"`
@@ -533,7 +824,7 @@ type WorkspaceSnapshot struct {
 
 func (x *WorkspaceSnapshot) Reset() {
 	*x = WorkspaceSnapshot{}
-	mi := &file_workspace_proto_msgTypes[8]
+	mi := &file_workspace_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -545,7 +836,7 @@ func (x *WorkspaceSnapshot) String() string {
 func (*WorkspaceSnapshot) ProtoMessage() {}
 
 func (x *WorkspaceSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[8]
+	mi := &file_workspace_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -558,7 +849,7 @@ func (x *WorkspaceSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceSnapshot.ProtoReflect.Descriptor instead.
 func (*WorkspaceSnapshot) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{8}
+	return file_workspace_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *WorkspaceSnapshot) GetWorkspaceInstanceId() string {
@@ -649,7 +940,34 @@ const file_workspace_proto_rawDesc = "" +
 	"\x15workspace_instance_id\x18\x01 \x01(\tR\x13workspaceInstanceId\x12#\n" +
 	"\rtransition_id\x18\x02 \x01(\tR\ftransitionId\x12\x14\n" +
 	"\x05epoch\x18\x03 \x01(\x04R\x05epoch\x12\x14\n" +
-	"\x05state\x18\x04 \x01(\tR\x05state\"\x99\x02\n" +
+	"\x05state\x18\x04 \x01(\tR\x05state\"N\n" +
+	"\n" +
+	"FileChange\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x18\n" +
+	"\acontent\x18\x03 \x01(\tR\acontent\"\xc6\x02\n" +
+	"\x11ApplyBatchRequest\x122\n" +
+	"\x15workspace_instance_id\x18\x01 \x01(\tR\x13workspaceInstanceId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12!\n" +
+	"\foperation_id\x18\x03 \x01(\tR\voperationId\x12+\n" +
+	"\x11expected_revision\x18\x04 \x01(\x04R\x10expectedRevision\x12\x1d\n" +
+	"\n" +
+	"gate_epoch\x18\x05 \x01(\x04R\tgateEpoch\x121\n" +
+	"\x15not_after_unix_millis\x18\x06 \x01(\x03R\x12notAfterUnixMillis\x12<\n" +
+	"\achanges\x18\a \x03(\v2\".codecraft.workspace.v1.FileChangeR\achanges\"i\n" +
+	"\x14QueryMutationRequest\x122\n" +
+	"\x15workspace_instance_id\x18\x01 \x01(\tR\x13workspaceInstanceId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\"\xdf\x01\n" +
+	"\x0fMutationReceipt\x122\n" +
+	"\x15workspace_instance_id\x18\x01 \x01(\tR\x13workspaceInstanceId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12!\n" +
+	"\foperation_id\x18\x03 \x01(\tR\voperationId\x12 \n" +
+	"\vfingerprint\x18\x04 \x01(\tR\vfingerprint\x12\x1a\n" +
+	"\brevision\x18\x05 \x01(\x04R\brevision\x12\x18\n" +
+	"\achanged\x18\x06 \x01(\bR\achanged\"\x99\x02\n" +
 	"\x11WorkspaceSnapshot\x122\n" +
 	"\x15workspace_instance_id\x18\x01 \x01(\tR\x13workspaceInstanceId\x12!\n" +
 	"\foperation_id\x18\x02 \x01(\tR\voperationId\x12A\n" +
@@ -657,14 +975,18 @@ const file_workspace_proto_rawDesc = "" +
 	"\brevision\x18\x04 \x01(\x04R\brevision\x12\x1a\n" +
 	"\bprepared\x18\x05 \x01(\bR\bprepared\x12\x1c\n" +
 	"\tcancelled\x18\x06 \x01(\bR\tcancelled\x12\x14\n" +
-	"\x05paths\x18\a \x03(\tR\x05paths2\x99\x05\n" +
+	"\x05paths\x18\a \x03(\tR\x05paths2\xbf\a\n" +
 	"\x10WorkspaceStorage\x12n\n" +
 	"\x10PrepareWorkspace\x12/.codecraft.workspace.v1.PrepareWorkspaceRequest\x1a).codecraft.workspace.v1.WorkspaceSnapshot\x12j\n" +
 	"\x0eQueryWorkspace\x12-.codecraft.workspace.v1.QueryWorkspaceRequest\x1a).codecraft.workspace.v1.WorkspaceSnapshot\x12x\n" +
 	"\x11ReadWorkspaceFile\x120.codecraft.workspace.v1.ReadWorkspaceFileRequest\x1a1.codecraft.workspace.v1.ReadWorkspaceFileResponse\x12p\n" +
 	"\x11CancelPreparation\x120.codecraft.workspace.v1.CancelPreparationRequest\x1a).codecraft.workspace.v1.WorkspaceSnapshot\x12[\n" +
 	"\tCloseGate\x12(.codecraft.workspace.v1.CloseGateRequest\x1a$.codecraft.workspace.v1.GateResponse\x12`\n" +
-	"\tQueryGate\x12-.codecraft.workspace.v1.QueryWorkspaceRequest\x1a$.codecraft.workspace.v1.GateResponseBL\n" +
+	"\tQueryGate\x12-.codecraft.workspace.v1.QueryWorkspaceRequest\x1a$.codecraft.workspace.v1.GateResponse\x12Z\n" +
+	"\bOpenGate\x12(.codecraft.workspace.v1.CloseGateRequest\x1a$.codecraft.workspace.v1.GateResponse\x12`\n" +
+	"\n" +
+	"ApplyBatch\x12).codecraft.workspace.v1.ApplyBatchRequest\x1a'.codecraft.workspace.v1.MutationReceipt\x12f\n" +
+	"\rQueryMutation\x12,.codecraft.workspace.v1.QueryMutationRequest\x1a'.codecraft.workspace.v1.MutationReceiptBL\n" +
 	"\x19ai.codecraft.workspace.v1P\x01Z-codecraft.local/sandbox/internal/gen;statusv1b\x06proto3"
 
 var (
@@ -679,7 +1001,7 @@ func file_workspace_proto_rawDescGZIP() []byte {
 	return file_workspace_proto_rawDescData
 }
 
-var file_workspace_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_workspace_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_workspace_proto_goTypes = []any{
 	(*ProblemIdentity)(nil),           // 0: codecraft.workspace.v1.ProblemIdentity
 	(*PrepareWorkspaceRequest)(nil),   // 1: codecraft.workspace.v1.PrepareWorkspaceRequest
@@ -689,28 +1011,39 @@ var file_workspace_proto_goTypes = []any{
 	(*CancelPreparationRequest)(nil),  // 5: codecraft.workspace.v1.CancelPreparationRequest
 	(*CloseGateRequest)(nil),          // 6: codecraft.workspace.v1.CloseGateRequest
 	(*GateResponse)(nil),              // 7: codecraft.workspace.v1.GateResponse
-	(*WorkspaceSnapshot)(nil),         // 8: codecraft.workspace.v1.WorkspaceSnapshot
+	(*FileChange)(nil),                // 8: codecraft.workspace.v1.FileChange
+	(*ApplyBatchRequest)(nil),         // 9: codecraft.workspace.v1.ApplyBatchRequest
+	(*QueryMutationRequest)(nil),      // 10: codecraft.workspace.v1.QueryMutationRequest
+	(*MutationReceipt)(nil),           // 11: codecraft.workspace.v1.MutationReceipt
+	(*WorkspaceSnapshot)(nil),         // 12: codecraft.workspace.v1.WorkspaceSnapshot
 }
 var file_workspace_proto_depIdxs = []int32{
-	0, // 0: codecraft.workspace.v1.PrepareWorkspaceRequest.problem:type_name -> codecraft.workspace.v1.ProblemIdentity
-	0, // 1: codecraft.workspace.v1.WorkspaceSnapshot.problem:type_name -> codecraft.workspace.v1.ProblemIdentity
-	1, // 2: codecraft.workspace.v1.WorkspaceStorage.PrepareWorkspace:input_type -> codecraft.workspace.v1.PrepareWorkspaceRequest
-	2, // 3: codecraft.workspace.v1.WorkspaceStorage.QueryWorkspace:input_type -> codecraft.workspace.v1.QueryWorkspaceRequest
-	3, // 4: codecraft.workspace.v1.WorkspaceStorage.ReadWorkspaceFile:input_type -> codecraft.workspace.v1.ReadWorkspaceFileRequest
-	5, // 5: codecraft.workspace.v1.WorkspaceStorage.CancelPreparation:input_type -> codecraft.workspace.v1.CancelPreparationRequest
-	6, // 6: codecraft.workspace.v1.WorkspaceStorage.CloseGate:input_type -> codecraft.workspace.v1.CloseGateRequest
-	2, // 7: codecraft.workspace.v1.WorkspaceStorage.QueryGate:input_type -> codecraft.workspace.v1.QueryWorkspaceRequest
-	8, // 8: codecraft.workspace.v1.WorkspaceStorage.PrepareWorkspace:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
-	8, // 9: codecraft.workspace.v1.WorkspaceStorage.QueryWorkspace:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
-	4, // 10: codecraft.workspace.v1.WorkspaceStorage.ReadWorkspaceFile:output_type -> codecraft.workspace.v1.ReadWorkspaceFileResponse
-	8, // 11: codecraft.workspace.v1.WorkspaceStorage.CancelPreparation:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
-	7, // 12: codecraft.workspace.v1.WorkspaceStorage.CloseGate:output_type -> codecraft.workspace.v1.GateResponse
-	7, // 13: codecraft.workspace.v1.WorkspaceStorage.QueryGate:output_type -> codecraft.workspace.v1.GateResponse
-	8, // [8:14] is the sub-list for method output_type
-	2, // [2:8] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	0,  // 0: codecraft.workspace.v1.PrepareWorkspaceRequest.problem:type_name -> codecraft.workspace.v1.ProblemIdentity
+	8,  // 1: codecraft.workspace.v1.ApplyBatchRequest.changes:type_name -> codecraft.workspace.v1.FileChange
+	0,  // 2: codecraft.workspace.v1.WorkspaceSnapshot.problem:type_name -> codecraft.workspace.v1.ProblemIdentity
+	1,  // 3: codecraft.workspace.v1.WorkspaceStorage.PrepareWorkspace:input_type -> codecraft.workspace.v1.PrepareWorkspaceRequest
+	2,  // 4: codecraft.workspace.v1.WorkspaceStorage.QueryWorkspace:input_type -> codecraft.workspace.v1.QueryWorkspaceRequest
+	3,  // 5: codecraft.workspace.v1.WorkspaceStorage.ReadWorkspaceFile:input_type -> codecraft.workspace.v1.ReadWorkspaceFileRequest
+	5,  // 6: codecraft.workspace.v1.WorkspaceStorage.CancelPreparation:input_type -> codecraft.workspace.v1.CancelPreparationRequest
+	6,  // 7: codecraft.workspace.v1.WorkspaceStorage.CloseGate:input_type -> codecraft.workspace.v1.CloseGateRequest
+	2,  // 8: codecraft.workspace.v1.WorkspaceStorage.QueryGate:input_type -> codecraft.workspace.v1.QueryWorkspaceRequest
+	6,  // 9: codecraft.workspace.v1.WorkspaceStorage.OpenGate:input_type -> codecraft.workspace.v1.CloseGateRequest
+	9,  // 10: codecraft.workspace.v1.WorkspaceStorage.ApplyBatch:input_type -> codecraft.workspace.v1.ApplyBatchRequest
+	10, // 11: codecraft.workspace.v1.WorkspaceStorage.QueryMutation:input_type -> codecraft.workspace.v1.QueryMutationRequest
+	12, // 12: codecraft.workspace.v1.WorkspaceStorage.PrepareWorkspace:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
+	12, // 13: codecraft.workspace.v1.WorkspaceStorage.QueryWorkspace:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
+	4,  // 14: codecraft.workspace.v1.WorkspaceStorage.ReadWorkspaceFile:output_type -> codecraft.workspace.v1.ReadWorkspaceFileResponse
+	12, // 15: codecraft.workspace.v1.WorkspaceStorage.CancelPreparation:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
+	7,  // 16: codecraft.workspace.v1.WorkspaceStorage.CloseGate:output_type -> codecraft.workspace.v1.GateResponse
+	7,  // 17: codecraft.workspace.v1.WorkspaceStorage.QueryGate:output_type -> codecraft.workspace.v1.GateResponse
+	7,  // 18: codecraft.workspace.v1.WorkspaceStorage.OpenGate:output_type -> codecraft.workspace.v1.GateResponse
+	11, // 19: codecraft.workspace.v1.WorkspaceStorage.ApplyBatch:output_type -> codecraft.workspace.v1.MutationReceipt
+	11, // 20: codecraft.workspace.v1.WorkspaceStorage.QueryMutation:output_type -> codecraft.workspace.v1.MutationReceipt
+	12, // [12:21] is the sub-list for method output_type
+	3,  // [3:12] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_workspace_proto_init() }
@@ -724,7 +1057,7 @@ func file_workspace_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_workspace_proto_rawDesc), len(file_workspace_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

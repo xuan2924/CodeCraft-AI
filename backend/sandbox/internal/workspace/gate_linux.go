@@ -16,8 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// CloseGate serializes with preparation publication and durably fences late
-// initial writes. There is no writable OPEN gate in the read-only #09 slice.
+// CloseGate serializes with all file publications and durably fences late writes.
 func (s *Service) CloseGate(ctx context.Context, request *rpc.CloseGateRequest) (*rpc.GateResponse, error) {
 	release, err := s.enter(ctx)
 	if err != nil {
@@ -37,7 +36,7 @@ func (s *Service) CloseGate(ctx context.Context, request *rpc.CloseGateRequest) 
 		return nil, storageError(err)
 	}
 	for _, gate := range gates {
-		if gate.TransitionId == request.TransitionId {
+		if gate.TransitionId == request.TransitionId && gate.State == "CLOSED" {
 			if gate.Epoch-1 != request.ExpectedEpoch {
 				return nil, status.Error(codes.AlreadyExists, "transition payload changed")
 			}
@@ -52,6 +51,55 @@ func (s *Service) CloseGate(ctx context.Context, request *rpc.CloseGateRequest) 
 		return nil, status.Error(codes.FailedPrecondition, "gate epoch conflict")
 	}
 	gate := &rpc.GateResponse{WorkspaceInstanceId: request.WorkspaceInstanceId, TransitionId: request.TransitionId, Epoch: current + 1, State: "CLOSED"}
+	if err = publishGate(ctx, fd, gate); err != nil {
+		return nil, storageError(err)
+	}
+	return gate, nil
+}
+
+// OpenGate activates only the exact closed transition. Replays return historical
+// receipts without changing the current gate; a delayed Open cannot undo a Close.
+func (s *Service) OpenGate(ctx context.Context, request *rpc.CloseGateRequest) (*rpc.GateResponse, error) {
+	release, err := s.enter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if !uuid.MatchString(request.TransitionId) {
+		return nil, status.Error(codes.InvalidArgument, "invalid transition")
+	}
+	fd, err := s.instance(request.WorkspaceInstanceId, false)
+	if err != nil {
+		return nil, err
+	}
+	defer syscall.Close(fd)
+	r, _, err := latest(fd, request.WorkspaceInstanceId)
+	if err != nil {
+		return nil, storageError(err)
+	}
+	if r.Snapshot.Cancelled {
+		return nil, status.Error(codes.FailedPrecondition, "workspace cancelled")
+	}
+	gates, err := gateRecords(fd, request.WorkspaceInstanceId)
+	if err != nil {
+		return nil, storageError(err)
+	}
+	for _, gate := range gates {
+		if gate.TransitionId == request.TransitionId && gate.State == "OPEN" {
+			if gate.Epoch-1 != request.ExpectedEpoch {
+				return nil, status.Error(codes.AlreadyExists, "transition payload changed")
+			}
+			return gate, nil
+		}
+	}
+	if len(gates) == 0 {
+		return nil, status.Error(codes.FailedPrecondition, "closed transition required")
+	}
+	current := gates[len(gates)-1]
+	if current.State != "CLOSED" || current.TransitionId != request.TransitionId || current.Epoch != request.ExpectedEpoch || current.Epoch == ^uint64(0) {
+		return nil, status.Error(codes.FailedPrecondition, "gate epoch conflict")
+	}
+	gate := &rpc.GateResponse{WorkspaceInstanceId: request.WorkspaceInstanceId, TransitionId: request.TransitionId, Epoch: current.Epoch + 1, State: "OPEN"}
 	if err = publishGate(ctx, fd, gate); err != nil {
 		return nil, storageError(err)
 	}
@@ -115,7 +163,7 @@ func gateRecords(parent int, expectedID string) ([]*rpc.GateResponse, error) {
 		if err = json.Unmarshal(data, &gate); err != nil {
 			return nil, err
 		}
-		if gate.Epoch != epoch || gate.WorkspaceInstanceId != expectedID || !uuid.MatchString(gate.TransitionId) || gate.State != "CLOSED" {
+		if gate.Epoch != epoch || gate.WorkspaceInstanceId != expectedID || !uuid.MatchString(gate.TransitionId) || (gate.State != "CLOSED" && gate.State != "OPEN") {
 			return nil, fmt.Errorf("invalid gate receipt")
 		}
 		gates = append(gates, &gate)
@@ -125,6 +173,9 @@ func gateRecords(parent int, expectedID string) ([]*rpc.GateResponse, error) {
 	for index, gate := range gates {
 		if gate.Epoch != uint64(index)+1 {
 			return nil, fmt.Errorf("missing gate receipt")
+		}
+		if gate.State == "OPEN" && (index == 0 || gates[index-1].State != "CLOSED" || gates[index-1].TransitionId != gate.TransitionId) {
+			return nil, fmt.Errorf("open gate without matching close")
 		}
 	}
 	return gates, nil

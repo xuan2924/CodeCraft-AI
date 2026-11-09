@@ -13,6 +13,9 @@ service WorkspaceStorage {
   rpc CancelPreparation(CancelPreparationRequest) returns (WorkspaceSnapshot);
   rpc CloseGate(CloseGateRequest) returns (GateResponse);
   rpc QueryGate(QueryWorkspaceRequest) returns (GateResponse);
+  rpc OpenGate(CloseGateRequest) returns (GateResponse);
+  rpc ApplyBatch(ApplyBatchRequest) returns (MutationReceipt);
+  rpc QueryMutation(QueryMutationRequest) returns (MutationReceipt);
 }
 
 message ProblemIdentity {
@@ -55,6 +58,35 @@ message GateResponse {
   string transition_id = 2;
   uint64 epoch = 3;
   string state = 4;
+}
+// CREATE and DELETE together represent an atomic rename. Duplicate paths are rejected.
+message FileChange {
+  string path = 1;
+  string kind = 2; // CREATE, UPDATE, DELETE
+  string content = 3; // DELETE must be empty
+}
+message ApplyBatchRequest {
+  string workspace_instance_id = 1;
+  string request_id = 2;
+  string operation_id = 3;
+  uint64 expected_revision = 4;
+  uint64 gate_epoch = 5;
+  int64 not_after_unix_millis = 6;
+  repeated FileChange changes = 7;
+}
+message QueryMutationRequest {
+  string workspace_instance_id = 1;
+  string request_id = 2;
+}
+// NOT_FOUND is only a linearized observation, never permission to replay a write.
+// Fingerprint is computed by Go over the canonical business payload, not authorization.
+message MutationReceipt {
+  string workspace_instance_id = 1;
+  string request_id = 2;
+  string operation_id = 3;
+  string fingerprint = 4;
+  uint64 revision = 5;
+  bool changed = 6;
 }
 message WorkspaceSnapshot {
   string workspace_instance_id = 1;

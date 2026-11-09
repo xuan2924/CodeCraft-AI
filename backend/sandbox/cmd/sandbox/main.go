@@ -12,6 +12,8 @@ import (
 	"syscall"
 
 	"codecraft.local/sandbox/internal/status"
+	"codecraft.local/sandbox/internal/workspace"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -49,7 +51,11 @@ func run(containerMode bool) error {
 		return fmt.Errorf("listen: %w", err)
 	}
 	defer listener.Close()
-	server := status.NewServer()
+	var options []grpc.ServerOption
+	if containerMode {
+		options = append(options, grpc.MaxRecvMsgSize(workspace.MaxBatchRequestBytes))
+	}
+	server := status.NewServer(options...)
 	if containerMode {
 		if err := registerWorkspace(server, os.Getenv("SANDBOX_RPC_KEY")); err != nil {
 			return err

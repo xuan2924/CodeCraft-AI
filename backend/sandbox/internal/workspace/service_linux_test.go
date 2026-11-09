@@ -42,7 +42,7 @@ func connect(t *testing.T, root string) (rpc.WorkspaceStorageClient, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := grpc.NewServer()
+	server := grpc.NewServer(grpc.MaxRecvMsgSize(workspace.MaxBatchRequestBytes))
 	rpc.RegisterWorkspaceStorageServer(server, service)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
