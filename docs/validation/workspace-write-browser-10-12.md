@@ -102,3 +102,51 @@
 - 清理探针后重新打包 Java 成功；`node scripts/verify.mjs` 再次执行，9 项脚本测试、18 项 Java 单元测试通过，仍在既有 `mutation_linux_test.go` gofmt 检查停止，不宣称全量通过。此文档切片未重复前端/浏览器验证。日志：`.runtime/clock-clean-build.log`、`.runtime/clock-final-verify.log`。
 - 独立 Standards / Spec 双轴评审未发现文档或时间计算问题；主代理核对评审启动时 HEAD 为 `2e8068f` 且差异仅为本文档。评审不替代修复和集成验收。
 - 此诊断未补齐 Java 回执落库前 Kill 测试，未实现 #13–#16，也不表示真实跨端授权恢复验收已通过。
+
+## 同一 Linux VM 时钟域复验（基线 `f93a986`）
+
+用户授权将 Java、Go 放在同一 Linux 时钟域做验证。本轮仅为诊断实验，未改变正式 Compose、日常开发入口或支持范围。
+
+### 实验配置与安全边界
+
+- Java 测试运行于已有 Maven 镜像 `maven@sha256:d6e32a254897415a445654a3c43c30fbc731a4d946cf5c66d1cb9184141c20c1`（Maven 3.9.15，Temurin 21.0.11+10）。Windows 对照 JVM 同为 Temurin 21.0.11+10。
+- Java 容器使用 `--network container:<本次 Go 容器>`，Go 地址保持 `127.0.0.1:9090`；PostgreSQL 使用同一独立 Compose 网络中的 `postgres:5432`。Java、Go、PostgreSQL 均在 Docker Desktop Linux VM 内，未调整宿主或 VM 时钟。
+- 复制编译后的 classes/test-classes、pom 和已验证的题目发布文件到独立诊断目录；离线复用只读 Maven repository，不挂载整个仓库、开发 `.env` 或 Maven settings。使用临时随机凭证、独立数据库和工作区卷，报告与宿主 target 分离。
+- 只执行原 `WorkspaceIT#expiredPreparationAuthorityCannotCreateFilesAfterSandboxRecovery`，不修改 5500 ms 等待、原始状态断言或业务判断。临时 `[DEBUG-clock]` 探针与上轮相同，只记录 Java 派发、Go 接收/发布检查及测试恢复时间。
+- 可信 Java 测试容器临时挂载 Docker socket；该挂载本身具有宿主 Docker 管理能力，不宣称它是安全执行用户代码的沙箱。仅在该容器提供名为 `docker` 的诊断适配脚本，校验目标为本次 Go 容器，只映射 pause/unpause 到真实 Engine API `POST /v1.48/containers/{id}/pause|unpause`（成功 204），未模拟暂停。Go 容器隔离配置未放宽，用户代码未获得 socket。接口依据 [Moby v28 API 定义](https://github.com/moby/moby/blob/v28.0.0/api/swagger.yaml)，本机 daemon 支持 API 1.40–1.54。
+- 容器内每次执行 `mvn -o -B -ntp -Dit.test=WorkspaceIT#expiredPreparationAuthorityCannotCreateFilesAfterSandboxRecovery failsafe:integration-test failsafe:verify`，预先限定 10 次、失败即停止。每次新建测试 JVM和测试账号，10 次共享本次独立数据库/Go 服务，**不是 10 次完整环境重建或完整 WorkspaceIT 套件**。
+
+### 结果
+
+首次搭建夹具遗漏空库 bootstrap 管理员配置，ApplicationContext 启动失败，未进入目标行为；补充临时管理员凭证后才开始下表 10 次正式重复。该夹具失败不计为授权问题复现，也不计为通过。
+
+10 次均实际执行 1 项测试，0 failure/error/skip，原断言确认 AUTHORIZATION_REVOKED、清理成功、无路径，并允许新登录重新准备成功。关联过期操作的观察如下（毫秒）：
+
+| 次数 | Java 派发时已过期 | Go 接收时已过期 | Go 接收 − Java 派发 | 过期实例进入发布前检查 |
+|---|---:|---:|---:|---|
+| 1 | 931 | 990 | 59 | 否 |
+| 2 | 977 | 1045 | 68 | 否 |
+| 3 | 996 | 1064 | 68 | 否 |
+| 4 | 947 | 1018 | 71 | 否 |
+| 5 | 未派发 | 未接收 | 不适用 | 否 |
+| 6 | 943 | 1013 | 70 | 否 |
+| 7 | 948 | 1010 | 62 | 否 |
+| 8 | 未派发 | 未接收 | 不适用 | 否 |
+| 9 | 1006 | 1077 | 71 | 否 |
+| 10 | 999 | 1072 | 73 | 否 |
+
+8 次命中原问题所需的“Java 检查授权后等待 QueryWorkspace、过期才派发 PrepareWorkspace”路径，但 Go 此时同样认为期限已过，未发布；其余 2 次没有派发该过期 operation，在 Java 侧收敛。未出现此前 Go 接收时间小于 Java 派发时间的倒序。59–73 ms 包含传输和调度耗时，不是精确时钟偏差测量。
+
+### 结论、未验证项与后续决定
+
+- 此受控样本支持“同一 Linux 时钟域可避免已观测到的跨运行时截止判断分歧”，而非单纯依靠 10 次绿色状态推断。没有延长授权或增加等待。
+- 不能据此声称 Windows JVM + Linux VM 模式已修复，也不能证明同一 Linux 环境不发生时钟跳变；时钟回退/无法确认时拒绝准入的设计约束仍未实现验证。底层 Windows/VM 同步偏差的来源仍未知。
+- **建议**将截止时间敏感的 Java/Go 开发与验收链路统一到同一 Linux VM/宿主；Windows 可继续运行浏览器/Vite。正式入口迁移、Windows 混合模式的支持承诺、时间异常检测及拒绝准入策略仍需确认和实现，本实验没有默默改变已确认日常开发路线。
+- 本轮没有完整 WorkspaceIT、浏览器链路、真实时钟跳变或精确 Java Kill 验证；不解除 #10–#16 的剩余验收门槛。
+
+### 证据与清理
+
+- 本地诊断入口为未跟踪的 `.runtime/linux-clock-probe.mjs`；10 次记录位于 `.runtime/cc-clock-linux-9764-5f231c7b/run-{1..10}.log`，对应 `sandbox.log`；总日志 `.runtime/linux-clock-probe-2.log`。首次夹具失败记录位于 `.runtime/cc-clock-linux-50356-f8f2eda9/run-1.log`。这些是诊断材料，不是正式工具入口或可公开日志包。
+- 两次自建 Compose 项目及可信测试容器、网络和卷已清理，临时 `.env`/`java.env` 已删除；未触碰其他项目。临时探针全部移除，业务源码与断言恢复基线，最终差异仅为本文档。
+- 清理后执行 `node scripts/verify.mjs`：9 项脚本测试、18 项 Java 单元测试通过；Maven verify 已重新生成不含探针的编译产物；仍在原有 `mutation_linux_test.go` gofmt 检查停止，不宣称全量通过。日志 `.runtime/linux-clock-final-verify.log`。
+- 独立 Standards / Spec 评审未发现问题；Spec 复核了 10 份测试结果及 8 组双端时间数据。评审仅覆盖本次文档及既有证据，不代表独立重跑或生产迁移获批。
