@@ -85,7 +85,7 @@ Go 官方要求 Windows race 使用 mingw-w64 runtime 8+。本机 GCC 8.1.0 配�
 
 ## 验证命令契约
 
-下表命令已随任务 06 建立；`scripts/verify.mjs` 汇总本地检查，`scripts/test-tracer.mjs` 用隔离真实依赖补充 Failsafe 与浏览器验证。涉及跨端截止的 Java 测试 JVM 也运行于同一 Linux daemon，离线复用只读 Maven repository，各模式复制编译产物并隔离报告，零执行或跳过所选测试失败。可信工作区故障测试容器拥有临时 Docker socket 权限，不能充当用户代码沙箱。迁移及真实链路证据见 [#10–#12 验证](../validation/workspace-write-browser-10-12.md)，时钟异常保护仍未交付：
+下表命令已随任务 06 建立；`scripts/verify.mjs` 汇总本地检查，`scripts/test-tracer.mjs` 用隔离真实依赖补充 Failsafe 与浏览器验证。涉及跨端截止的 Java 测试 JVM 也运行于同一 Linux daemon，离线复用只读 Maven repository，各模式复制编译产物并隔离报告，零执行或跳过所选测试失败。可信工作区故障测试容器拥有临时 Docker socket 权限，不能充当用户代码沙箱。迁移及真实链路证据见 [#10–#12 验证](../validation/workspace-write-browser-10-12.md)，专项时钟异常保护已按 [ADR 0003](../adr/0003-accept-shared-system-clock-risk.md) 排除首期范围，不作为未完成的验收门槛；正常时间前提下的过期拒绝与重启恢复测试仍保留：
 
 | 范围 | 单点与快速反馈 | 完整验证 |
 |---|---|---|

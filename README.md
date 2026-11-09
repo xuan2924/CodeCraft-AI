@@ -12,7 +12,7 @@ AI 结对编程面试平台。目前提供 **本机工程底座**：服务状态
 
 ## 初始化与本地启动
 
-> **Java/Go 同一 Linux 时钟域：** `dev.mjs java` 构建 Java 应用镜像并由 Compose 启动；`test-tracer.mjs` 将应用及 Java 集成测试 JVM 均运行于同一个 Docker Linux daemon。Windows 可保留编辑器、Vite、浏览器及本地编译/单元测试，不再用 Windows JVM + Linux Go 验收截止时间敏感业务。该布局不替代尚待实现的时钟异常保护。决定见 [ADR 0002](docs/adr/0002-java-go-shared-linux-clock.md)。
+> **Java/Go 同一 Linux 时钟域：** `dev.mjs java` 构建 Java 应用镜像并由 Compose 启动；`test-tracer.mjs` 将应用及 Java 集成测试 JVM 均运行于同一个 Docker Linux daemon。Windows 可保留编辑器、Vite、浏览器及本地编译/单元测试，不再用 Windows JVM + Linux Go 验收截止时间敏感业务。首期信任共享系统时间，接受校时可能影响实际截止的风险，不建设专项时钟异常检测或人工恢复机制，也不为此新增单调计时改造；不修改自动校时、不增加授权宽限。决定见 [ADR 0002](docs/adr/0002-java-go-shared-linux-clock.md)及 [ADR 0003](docs/adr/0003-accept-shared-system-clock-risk.md)。
 
 在仓库根目录操作。复制 `.env.example` 为未跟踪的 `.env`，自行填写 `POSTGRES_USER`、`POSTGRES_PASSWORD`、`BOOTSTRAP_ADMIN_USERNAME`、`BOOTSTRAP_ADMIN_PASSWORD` 和 `IDENTITY_FINGERPRINT_KEY`；不要提交或分享该文件。数据库名/用户名使用小写字母开头的字母、数字、下划线。值按字面量解析，含空格、`#` 或双引号时用单引号包裹；不支持变量展开、命令替换、多行或嵌入单引号。不要用 `source .env`。
 
