@@ -12,6 +12,7 @@ import (
 	"time"
 
 	rpc "codecraft.local/sandbox/internal/gen"
+	"codecraft.local/sandbox/internal/workspace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -43,6 +44,45 @@ func update(epoch uint64) *rpc.ApplyBatchRequest {
 	return &rpc.ApplyBatchRequest{WorkspaceInstanceId: instance, RequestId: mutation, OperationId: mutation,
 		GateEpoch: epoch, NotAfterUnixMillis: time.Now().Add(time.Minute).UnixMilli(),
 		Changes: []*rpc.FileChange{{Path: sourcePath, Kind: "UPDATE", Content: "class Main { int value; }\n"}}}
+}
+
+func TestMutationExpiresAfterStagingBeforePublication(t *testing.T) {
+	root := t.TempDir()
+	stagedWhileAuthorized := make(chan bool, 1)
+	client, close := connect(t, root, func(service *workspace.Service) {
+		workspace.BeforeMutationPublishForTest(service, func(ctx context.Context) {
+			deadline, ok := ctx.Deadline()
+			stagedWhileAuthorized <- ok && time.Now().Before(deadline) && ctx.Err() == nil
+			// The real authorization expires naturally while the complete staged
+			// tree waits. No system/test clock is changed and no RPC is cancelled.
+			<-ctx.Done()
+		})
+	})
+	request := update(writable(t, client))
+	request.NotAfterUnixMillis = time.Now().Add(2 * time.Second).UnixMilli()
+	_, err := client.ApplyBatch(authorized(t), request)
+	close()
+	select {
+	case valid := <-stagedWhileAuthorized:
+		if !valid {
+			t.Fatal("authorization was not valid at the post-staging barrier")
+		}
+	default:
+		t.Fatal("mutation never reached the post-staging barrier")
+	}
+	if status.Code(err) != codes.DeadlineExceeded {
+		t.Fatalf("expired staged write was not rejected: %v", err)
+	}
+	// Recreate the service: only durable authority can establish no publication.
+	client, close = connect(t, root)
+	defer close()
+	if _, err = client.QueryMutation(authorized(t), &rpc.QueryMutationRequest{WorkspaceInstanceId: instance, RequestId: mutation}); status.Code(err) != codes.NotFound {
+		t.Fatalf("expired write has a committed receipt: %v", err)
+	}
+	file, err := client.ReadWorkspaceFile(authorized(t), &rpc.ReadWorkspaceFileRequest{WorkspaceInstanceId: instance, ExpectedRevision: 0, Path: sourcePath})
+	if err != nil || file.Revision != 0 || file.Content != "class Main {}\n" {
+		t.Fatalf("expired write changed the published tree: %v %v", file, err)
+	}
 }
 
 func TestMutationReceiptSurvivesLostResponseAndRestart(t *testing.T) {

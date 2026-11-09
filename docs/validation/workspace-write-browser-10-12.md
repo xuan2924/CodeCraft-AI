@@ -227,10 +227,42 @@ Standards 与 Spec 两轴并行审查均未发现本切片阻断问题，结论�
 
 ### 尚待逐项收口
 
-- #10 正常截止边界及只读保存拒绝仍须补充精确 REST 验收，不能从本次接管测试推导；#15 结束冻结不在此切片内。
+- #10 此处原缺口已由下方“#10 逐票验收收口”补齐；#15 结束冻结与状态转换仍不在 #10 验收范围内。
 - #11 仍需完整对应非法/冲突批次的 REST 组合证据、未决重命名的编辑锁验证；既有 Go 原子失败证据不丢弃也不重复宣称。
 - #12 登录过期后同账号草稿恢复、账号切换中的延迟草稿回调、冲突采用基线后再次变化、文件切换与 Monaco 资源释放仍须补齐组合证据。当前退出入口是返回工作区保存/丢弃/取消，尚不将它等同直接“保存后退出”的完整验收。
 - #13–#16 尚未开始；本轮修复的真实数据丢失问题属于其前置任务，不用时钟专项风险扩大阻塞。
+
+## #10 逐票验收收口（基线 `089e9f1`）
+
+本票补充验收，未改变授权及发布规则；初轮新增测试首次即通过，不虚构缺陷红灯。评审后为发布前到期场景增加服务实例私有同步点：只有测试构建导出设置函数，启动服务前配置，生产无 RPC/配置入口且始终 nil；在暂存树 fsync 后、既有截止复核之前等待正常授权到期。沿用真实 REST/PostgreSQL/Go 接缝：SQL 仅设定正常过期及只读状态夹具，所有结果经公开 API 断言，不把夹具状态当作 #15 生命周期实现。
+
+| #10 验收项 | 实际证据 |
+|---|---|
+| 持久化修订、相同内容不推进 | `savesAtomicBatchesWithControlAndPersistentReceipts`；浏览器保存后 REST 内容复核 |
+| 旧基线、保护路径、未开始、只读与截止拒绝 | 强化上述测试：REVISION_CONFLICT / PATH_FORBIDDEN 后原内容和修订不变；新增 `unstartedAndReadOnlyExercisesRejectWritesWithoutChangingTheWorkspace` 覆盖 READY/CLOSING/FINAL_TESTING/ENDED；`expiredExerciseRejectsNewWritesWithoutLosingCommittedReceipts` 覆盖正常过期、新写入拒绝、原成功回执可查询及同键历史结果不重写 |
+| 原子写入、丢回执不盲重放 | 真实 Go 原子/崩溃恢复测试；真实子 JVM `committedBatchSurvivesJavaDeathBeforeReceiptPersistenceWithoutReplay`，Go 提交后 Java 落库前终止，重启仅 GET 核对 |
+| 页面凭证、第二页、接管、刷新 | 真实浏览器双页面及刷新，localStorage/sessionStorage 不含凭证；REST acquire 重复不交付秘密、第二页拒绝；组件凭证页面作用域及销毁逻辑 |
+| 接管与在途写入排序、旧凭证拒绝 | `takeoverWaitsForUnavailableSandboxAndReconcilesTheOriginalWrite`；Go CloseGate/Apply 竞争及延迟旧代次测试 |
+| 已准入、完整暂存树准备后到期 | `TestMutationExpiresAfterStagingBeforePublication`：真实认证 gRPC 调用，断言到达同步点时授权有效，等待正常到期后拒绝；重建服务后无成功回执，内容和修订仍为原值 |
+| 保存反馈、保存期间新输入 | `WorkspaceEditor.test.ts` 保存等待中输入保留、响应丢失只查原操作，既有浏览器反馈；#12 草稿缺陷修复保留 |
+| 跨用户、并发、重启与浏览器冲突 | REST 跨用户返回404；新增 `concurrentSavesFromOneBaselinePublishExactlyOneVersion` 同时发起两个真实 HTTP 请求，唯一成功且内容匹配胜者、revision=1；真实浏览器冲突比较/采用基线/保存；Go 与 Java 重启恢复 |
+
+执行记录：
+
+- 四个定向调用（新增截止、只读、并发及强化冲突方法）分别实际执行 1 项，无失败/错误/跳过。日志 `.runtime/ticket10-{expiry,readonly,concurrent,conflict}.log`。
+- `node scripts/verify.mjs` 首次因未设置本终端 CC 使用旧 MinGW，race 启动失败 `0xc0000139`；未改测试/依赖/全局配置，按 README 设置现有 LLVM-MinGW clang 后重跑通过。日志 `.runtime/ticket10-verify.log`（失败）、`ticket10-verify-configured.log`（通过）。通过包含脚本测试、Checkstyle/编译、18 Java 单测、Go 本地/race/Linux workspace 验证、前端 lint/typecheck/40 单测/build/audit。Windows Java verify 的33项集成明确跳过，不计通过。
+- `node scripts/test-tracer.mjs --workspace` 实际执行 WorkspaceIT 18、精确崩溃恢复1、StatusIT 1，全部无跳过；完整工作区浏览器、Java/Go 重启及依赖故障恢复通过。日志 `.runtime/ticket10-workspace.log`，资源目录 `.runtime/cc-tracer-41996-ec9f6080`。
+- 本轮未跑独立身份浏览器模式；身份完整验收沿用前次记录。没有远程 CI 结论。
+
+### #10 评审补充与复核
+
+- 初轮 Standards：无硬性违规；1 项 P2 重复请求构造建议，已抽取 `buildRequest` 供同步及并发调用共用。
+- 初轮 Spec：1 项 P1 发布前到期验证缺口，阻止整票完成，已新增上表真实 gRPC 测试。它只等待正常时间流逝，不调整系统时钟、不新增时钟异常保护或授权宽限。
+- 新测试先运行通过；为验证敏感性，临时删除 `publish` 的两项既有发布前检查并保存差异，负对照因 `expired staged write was not rejected: <nil>` 失败。随后恢复检查，定向测试再次通过。日志 `.runtime/ticket10-publish-expiry{,-negative,-restored}.log`，负对照差异 `.runtime/ticket10-expiry-negative-control.diff`。负对照未保留在源码中。
+- 发布同步点加入及 Java 测试 helper 整理后再次完整执行 verify 与 workspace tracer，通过。日志 `.runtime/ticket10-final-verify.log`、`ticket10-final-workspace.log`；Java18单测、前端40单测、Go本地/race/Linux、18 WorkspaceIT + crash1 + StatusIT1 和浏览器。集成跳过仍不计入通过数。
+- 独立复核完成：Standards 0 项发现；Spec 0 项发现，原 P1 已解除，并确认 #10 七项验收可全部勾选。Standards 为源码只读审查，Spec 同时核对负对照与最终日志；两者未自行重跑测试。本票已完成验收。
+
+#11–#16 不随 #10 收口而视为完成。正常截止准入与只读拒绝已验证；自动收尾、冻结、最终验收、删除和保留仍按后续票顺序实施。专项时钟异常保护仍按 ADR 0003 排除。
 
 ## 首期时钟风险取舍（后续确认）
 

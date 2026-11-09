@@ -89,7 +89,13 @@ class WorkspaceIT {
         JsonNode unchanged = request("POST", base + "/file-batches", noChange, "same-content", 200, credential).path("data");
         assertThat(unchanged.path("changed").asBoolean()).isFalse();
         assertThat(unchanged.path("revision").asText()).isEqualTo("1");
-        request("POST", base + "/file-batches", batch, "stale-baseline", 409, credential);
+        Object stale = Map.of("expectedRevision", "0", "changes", List.of(
+            Map.of("path", "src/test/java/Example.java", "kind", "UPDATE", "content", "stale overwrite")));
+        assertThat(request("POST", base + "/file-batches", stale, "stale-baseline", 409, credential)
+            .path("code").asText()).isEqualTo("REVISION_CONFLICT");
+        JsonNode afterConflict = request("GET", base + "/files?path=src/test/java/Example.java", null, null, 200).path("data");
+        assertThat(afterConflict.path("content").asText()).isEqualTo("class Example {}");
+        assertThat(afterConflict.path("revision").asText()).isEqualTo("1");
         String newCredential = request("POST", base + "/control/takeover", Map.of(), "takeover", 200).path("data").path("credential").asText();
         request("POST", base + "/file-batches", noChange, "old-page", 409, credential);
         Object rename = Map.of("expectedRevision", "1", "changes", List.of(
@@ -98,11 +104,97 @@ class WorkspaceIT {
         assertThat(request("POST", base + "/file-batches", rename, "rename", 200, newCredential).path("data").path("revision").asText()).isEqualTo("2");
         request("GET", base + "/files?path=src/test/java/Example.java", null, null, 404);
         assertThat(request("GET", base + "/files?path=src/test/java/Renamed.java", null, null, 200).path("data").path("content").asText()).isEqualTo("class Renamed {}");
-        request("POST", base + "/file-batches", Map.of("expectedRevision", "2", "changes", List.of(Map.of("path", "pom.xml", "kind", "UPDATE", "content", "override"))), "protected", 403, newCredential);
+        JsonNode protectedFile = request("GET", base + "/files?path=pom.xml", null, null, 200).path("data");
+        assertThat(request("POST", base + "/file-batches", Map.of("expectedRevision", "2", "changes", List.of(Map.of("path", "pom.xml", "kind", "UPDATE", "content", "override"))), "protected", 403, newCredential)
+            .path("code").asText()).isEqualTo("PATH_FORBIDDEN");
+        assertThat(request("GET", base + "/files?path=pom.xml", null, null, 200).path("data")).isEqualTo(protectedFile);
+        assertThat(request("GET", base, null, null, 200).path("data").path("revision").asText()).isEqualTo("2");
         seedDisposableIdentity();
         request("POST", base + "/control/takeover", Map.of(), "foreign-control", 404);
         request("POST", base + "/file-batches", noChange, "foreign-write", 404, newCredential);
         request("GET", saved.path("queryUrl").asText(), null, null, 404);
+    }
+
+    @Test
+    void concurrentSavesFromOneBaselinePublishExactlyOneVersion() throws Exception {
+        String exercise = readyExercise("concurrent-save");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "control", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "start", 200, credential);
+        String path = "src/main/java/interview/CartTotal.java";
+        List<CompletableFuture<HttpResponse<String>>> pending = new ArrayList<>();
+        for (String content : List.of("first candidate", "second candidate")) {
+            Object batch = Map.of("expectedRevision", "0", "changes", List.of(
+                Map.of("path", path, "kind", "UPDATE", "content", content)));
+            HttpRequest write = buildRequest("POST", base + "/file-batches", batch, UUID.randomUUID().toString(), credential);
+            pending.add(http.sendAsync(write, HttpResponse.BodyHandlers.ofString()));
+        }
+        HttpResponse<String> first = pending.get(0).get(15, TimeUnit.SECONDS);
+        HttpResponse<String> second = pending.get(1).get(15, TimeUnit.SECONDS);
+        assertThat(List.of(first.statusCode(), second.statusCode())).containsExactlyInAnyOrder(200, 409);
+        JsonNode failure = json.readTree(first.statusCode() == 409 ? first.body() : second.body());
+        assertThat(failure.path("code").asText()).isEqualTo("REVISION_CONFLICT");
+        JsonNode winner = json.readTree(first.statusCode() == 200 ? first.body() : second.body()).path("data");
+        assertThat(winner.path("revision").asText()).isEqualTo("1");
+        JsonNode file = request("GET", base + "/files?path=" + path, null, null, 200).path("data");
+        assertThat(file.path("content").asText()).isEqualTo(first.statusCode() == 200 ? "first candidate" : "second candidate");
+        assertThat(file.path("revision").asText()).isEqualTo("1");
+        assertThat(request("GET", base, null, null, 200).path("data").path("revision").asText()).isEqualTo("1");
+        JsonNode receipt = request("GET", winner.path("queryUrl").asText(), null, null, 200).path("data");
+        assertThat(receipt.path("state").asText()).isEqualTo("SUCCEEDED");
+        assertThat(receipt.path("revision").asText()).isEqualTo("1");
+    }
+
+    @Test
+    void expiredExerciseRejectsNewWritesWithoutLosingCommittedReceipts() throws Exception {
+        String exercise = readyExercise("expired-save");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "control", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "start", 200, credential);
+        String path = "src/test/java/Deadline.java";
+        Object initial = Map.of("expectedRevision", "0", "changes", List.of(
+            Map.of("path", path, "kind", "CREATE", "content", "class Deadline {}")));
+        JsonNode saved = request("POST", base + "/file-batches", initial, "before-deadline", 200, credential).path("data");
+        assertThat(saved.path("revision").asText()).isEqualTo("1");
+        // Fixture only: normal expiry in the shared Linux clock domain, no clock adjustment.
+        jdbc.update("UPDATE workspace_exercise SET deadline_at = now() - interval '1 second' WHERE id = ?::uuid", exercise);
+        Object update = Map.of("expectedRevision", "1", "changes", List.of(
+            Map.of("path", path, "kind", "UPDATE", "content", "must not be published")));
+        assertThat(request("POST", base + "/file-batches", update, "after-deadline", 409, credential)
+            .path("code").asText()).isEqualTo("EXERCISE_EXPIRED");
+        JsonNode file = request("GET", base + "/files?path=" + path, null, null, 200).path("data");
+        assertThat(file.path("content").asText()).isEqualTo("class Deadline {}");
+        assertThat(file.path("revision").asText()).isEqualTo("1");
+        assertThat(request("GET", base, null, null, 200).path("data").path("revision").asText()).isEqualTo("1");
+        JsonNode receipt = request("GET", saved.path("queryUrl").asText(), null, null, 200).path("data");
+        assertThat(receipt.path("state").asText()).isEqualTo("SUCCEEDED");
+        assertThat(receipt.path("revision").asText()).isEqualTo("1");
+        assertThat(request("POST", base + "/file-batches", initial, "before-deadline", 200, credential)
+            .path("data").path("operationId")).isEqualTo(saved.path("operationId"));
+    }
+
+    @Test
+    void unstartedAndReadOnlyExercisesRejectWritesWithoutChangingTheWorkspace() throws Exception {
+        String exercise = readyExercise("read-only-save");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "control", 200).path("data").path("credential").asText();
+        String path = "src/main/java/interview/CartTotal.java";
+        JsonNode original = request("GET", base + "/files?path=" + path, null, null, 200).path("data");
+        Object update = Map.of("expectedRevision", "0", "changes", List.of(
+            Map.of("path", path, "kind", "UPDATE", "content", "must not be published")));
+        assertThat(request("POST", base + "/file-batches", update, "before-start", 409, credential)
+            .path("code").asText()).isEqualTo("INVALID_STATE");
+        assertThat(request("GET", base + "/files?path=" + path, null, null, 200).path("data")).isEqualTo(original);
+        request("POST", base + "/start", Map.of(), "start", 200, credential);
+        // State fixtures test admission only. Closing/freezing transitions belong to ticket #15.
+        for (String state : List.of("CLOSING", "FINAL_TESTING", "ENDED")) {
+            jdbc.update("UPDATE workspace_exercise SET state = ? WHERE id = ?::uuid", state, exercise);
+            assertThat(request("GET", base, null, null, 200).path("data").path("state").asText()).isEqualTo(state);
+            assertThat(request("POST", base + "/file-batches", update, "read-only-" + state, 409, credential)
+                .path("code").asText()).isEqualTo("INVALID_STATE");
+            assertThat(request("GET", base + "/files?path=" + path, null, null, 200).path("data")).isEqualTo(original);
+            assertThat(request("GET", base, null, null, 200).path("data").path("revision").asText()).isEqualTo("0");
+        }
     }
 
     @Test
@@ -550,6 +642,12 @@ class WorkspaceIT {
     }
 
     private JsonNode request(String method, String path, Object body, String key, int expected, String credential) throws Exception {
+        HttpResponse<String> response = http.send(buildRequest(method, path, body, key, credential), HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).as(method + " " + path).isEqualTo(expected);
+        return response.body().isEmpty() ? json.createObjectNode() : json.readTree(response.body());
+    }
+
+    private HttpRequest buildRequest(String method, String path, Object body, String key, String credential) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
             .timeout(Duration.ofSeconds(10)).header("Cookie", "codecraft_session=" + token)
             .header("Origin", "http://localhost:5173").header("X-CSRF-TOKEN", csrf);
@@ -557,8 +655,6 @@ class WorkspaceIT {
         if (credential != null) request.header("X-Operation-Credential", credential);
         if (body == null) request.method(method, HttpRequest.BodyPublishers.noBody());
         else request.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)));
-        HttpResponse<String> response = http.send(request.build(), HttpResponse.BodyHandlers.ofString());
-        assertThat(response.statusCode()).as(method + " " + path).isEqualTo(expected);
-        return response.body().isEmpty() ? json.createObjectNode() : json.readTree(response.body());
+        return request.build();
     }
 }

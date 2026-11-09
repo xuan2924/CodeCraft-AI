@@ -32,11 +32,14 @@ func publication() workspace.Publication {
 		InitialFiles: map[string]string{"pom.xml": "<project/>", "src/main/java/Main.java": "class Main {}\n"}}
 }
 
-func connect(t *testing.T, root string) (rpc.WorkspaceStorageClient, func()) {
+func connect(t *testing.T, root string, configure ...func(*workspace.Service)) (rpc.WorkspaceStorageClient, func()) {
 	t.Helper()
 	service, err := workspace.NewService(root, []workspace.Publication{publication()}, fixtureKey)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, option := range configure {
+		option(service)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

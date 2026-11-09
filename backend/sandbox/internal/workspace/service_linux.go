@@ -41,6 +41,8 @@ type Service struct {
 	key          string
 	publications []Publication
 	gate         chan struct{}
+	// Test-only synchronization, configured before serving; never exposed by RPC or configuration.
+	beforeMutationPublish func(context.Context)
 }
 
 type record struct {
@@ -187,7 +189,7 @@ func (s *Service) PrepareWorkspace(ctx context.Context, request *rpc.PrepareWork
 		r.Hashes[path] = sum([]byte(content))
 	}
 	sort.Strings(view.Paths)
-	if err = publish(ctx, fd, 0, r, publication.InitialFiles); err != nil {
+	if err = publish(ctx, fd, 0, r, publication.InitialFiles, nil); err != nil {
 		return nil, storageError(err)
 	}
 	return view, nil
@@ -244,7 +246,7 @@ func (s *Service) CancelPreparation(ctx context.Context, request *rpc.CancelPrep
 		sequence++
 		view.Problem = previous.Snapshot.Problem
 	}
-	if err = publish(ctx, fd, sequence, &record{Snapshot: view, Hashes: map[string]string{}}, nil); err != nil {
+	if err = publish(ctx, fd, sequence, &record{Snapshot: view, Hashes: map[string]string{}}, nil, nil); err != nil {
 		return nil, storageError(err)
 	}
 	if err = cleanupPreparation(ctx, fd, fmt.Sprintf("commit-%020d", sequence), true); err != nil {
@@ -507,7 +509,7 @@ func latest(parent int, expectedID string) (*record, string, error) {
 	}
 	return &r, name, nil
 }
-func publish(ctx context.Context, parent int, sequence uint64, r *record, files map[string]string) (result error) {
+func publish(ctx context.Context, parent int, sequence uint64, r *record, files map[string]string, beforePublish func(context.Context)) (result error) {
 	// Pin cleanup to the already-open directory, not a mutable absolute path.
 	owned, err := os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", parent))
 	if err != nil {
@@ -542,6 +544,9 @@ func publish(ctx context.Context, parent int, sequence uint64, r *record, files 
 	}
 	if err = syscall.Fsync(stageFD); err != nil {
 		return err
+	}
+	if beforePublish != nil {
+		beforePublish(ctx)
 	}
 	if err = ctx.Err(); err != nil {
 		return err

@@ -12,12 +12,12 @@
 ## Acceptance criteria
 
 - [x] 保存真实写入 Go 工作区并返回持久化修订版本；相同内容不推进版本。
-- [ ] 基线过期不写入，显示明确冲突；无权限路径、未开始或已只读状态不能保存。
+- [x] 基线过期不写入，显示明确冲突；无权限路径、未开始或已只读状态不能保存。
 - [x] 使用已验证原子写入/回执机制，响应丢失后核对结果，不盲重放。
 - [x] 操作凭证只在页面内存持有；第二页面只读，接管使旧凭证失效，刷新不静默抢占。
-- [ ] 接管与在途写入按协议排序；服务端拒绝旧页面写入，不仅前端禁用按钮。
+- [x] 接管与在途写入按协议排序；服务端拒绝旧页面写入，不仅前端禁用按钮。
 - [x] 区分未保存、保存中、已保存和失败；保存期间新输入保留，未完成草稿功能不伪报已备份。
-- [ ] 浏览器覆盖双页面、编辑保存和冲突；REST/gRPC 覆盖跨用户写入、并发及重启版本恢复。
+- [x] 浏览器覆盖双页面、编辑保存和冲突；REST/gRPC 覆盖跨用户写入、并发及重启版本恢复。
 
 ## Comments
 
@@ -60,3 +60,19 @@
 ### 首期时钟风险接受
 
 用户后续通过 [ADR 0003](../../../docs/adr/0003-accept-shared-system-clock-risk.md) 明确不建设专项时钟异常保护，也不为此新增单调计时改造。上述时钟保护待办不再阻塞本票及 #13–#16；保留正常系统时间前提下的截止拒绝、临界竞争、持久化恢复和其余组合验收。未因此勾选其他验收项或宣称本票完成。
+
+### 本票验收收口（基线 `089e9f1`，已完成）
+
+沿用已确认的真实 REST/PostgreSQL/Go 与浏览器接缝；SQL 仅布置截止时间/只读状态夹具，所有结果通过公开 REST 观察，不替代 #15 的状态转换测试。
+
+| 验收条件 / 不变量 | 权威状态与提交点 | 失败或竞态 | 可观察结果 / 测试入口 |
+|---|---|---|---|
+| 正常截止拒绝新保存，历史回执仍可查询 | Java 持久化 deadline + Go commit | 已有成功写入后截止，旧凭证仍在页面 | REST 拒绝新 operation，内容/修订不变，原 operation 仍成功 |
+| 未开始与只读拒绝 | Java exercise state | READY、CLOSING、FINAL_TESTING、ENDED 中提交有效批次 | REST INVALID_STATE，Go 文件与版本不变；状态由夹具提供，不宣称生命周期已实现 |
+| 过期基线与保护路径不写入 | Go 原子 commit / Java 路径准入 | 旧 revision、pom.xml 修改 | REST 明确错误码，内容与 revision 不变 |
+| 接管与在途写入排序 | Java control transition + Go CloseGate | Go 不可达时写入和接管 | 已通过 `takeoverWaitsForUnavailableSandboxAndReconcilesTheOriginalWrite`，保留成功或确认拒绝，无残留未决 |
+| 双页面、冲突、版本恢复 | REST/gRPC 与真实浏览器 | 同基线并发、响应丢失、进程重启 | 新增真实 HTTP concurrent saves；复用浏览器冲突测试、Go concurrent mutation 及精确 JVM crash 证据 |
+
+新增截止、只读、并发及强化冲突四个定向方法已各自实际通过；完整本地套件和工作区真实链路（18 WorkspaceIT + 1 精确崩溃恢复 + 1 StatusIT + 浏览器）通过。
+
+初轮评审发现发布前到期验证仍缺失，未关闭本票。补充失败场景：Go 已准入、暂存树 fsync 完成后等待正常授权到期，正式 commit 不得发布；入口为真实 gRPC `TestMutationExpiresAfterStagingBeforePublication`，服务重建后通过 QueryMutation/ReadWorkspaceFile 观察无成功回执、原内容和修订。增加私有、启动前配置的测试同步点，不新增生产控制接口或改变授权规则。临时去掉原有发布前复核的负对照确实失败，恢复后通过；完整 verify 与 workspace tracer 再次通过。详见验证记录“#10 逐票验收收口”；独立复核 Standards 与 Spec 均通过，无剩余发现；Spec 明确确认七项验收均可勾选。全部验收已完成，分诊 Status 保留原值，不用标签代替证据。#11–#16 继续分别交付。
