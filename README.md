@@ -12,6 +12,8 @@ AI 结对编程面试平台。目前提供 **本机工程底座**：服务状态
 
 ## 初始化与本地启动
 
+> **运行路线变更已确认，脚本迁移尚未完成：** Java/Go 的日常业务开发及真实链路验收须运行在同一 Linux VM/宿主时钟域；Windows 可保留编辑器、Vite 和浏览器。现有 `dev.mjs java` 和 `test-tracer.mjs` 仍在脚本所在宿主启动 Java，不能在 Windows 执行后当作新路线已落实。下列命令保留用于说明当前入口；Windows 本地编译/单元测试不受此限制，Windows JVM + Linux Go 不再作为截止时间敏感业务验收基线。原因、范围与待实施项见 [ADR 0002](docs/adr/0002-java-go-shared-linux-clock.md)。
+
 在仓库根目录操作。复制 `.env.example` 为未跟踪的 `.env`，自行填写 `POSTGRES_USER`、`POSTGRES_PASSWORD`、`BOOTSTRAP_ADMIN_USERNAME`、`BOOTSTRAP_ADMIN_PASSWORD` 和 `IDENTITY_FINGERPRINT_KEY`；不要提交或分享该文件。数据库名/用户名使用小写字母开头的字母、数字、下划线。值按字面量解析，含空格、`#` 或双引号时用单引号包裹；不支持变量展开、命令替换、多行或嵌入单引号。不要用 `source .env`。
 
 ```sh
@@ -32,7 +34,7 @@ cd ..
 ./scripts/generate-proto.sh
 ```
 
-启动数据库，再在三个独立终端启动服务（Windows/Linux 相同）：
+当前启动命令如下（语法跨平台，但运行位置须遵循上述边界；自动化迁移待完成）：
 
 ```sh
 node scripts/dev.mjs postgres

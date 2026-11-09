@@ -150,3 +150,7 @@
 - 两次自建 Compose 项目及可信测试容器、网络和卷已清理，临时 `.env`/`java.env` 已删除；未触碰其他项目。临时探针全部移除，业务源码与断言恢复基线，最终差异仅为本文档。
 - 清理后执行 `node scripts/verify.mjs`：9 项脚本测试、18 项 Java 单元测试通过；Maven verify 已重新生成不含探针的编译产物；仍在原有 `mutation_linux_test.go` gofmt 检查停止，不宣称全量通过。日志 `.runtime/linux-clock-final-verify.log`。
 - 独立 Standards / Spec 评审未发现问题；Spec 复核了 10 份测试结果及 8 组双端时间数据。评审仅覆盖本次文档及既有证据，不代表独立重跑或生产迁移获批。
+
+## 后续用户确认
+
+用户在上述复验及运行布局说明后，确认将 Java/Go 日常开发与真实链路验收统一到同一 Linux VM/宿主时钟域，Windows 保留编辑器、Vite 和浏览器。决定已记录为 [ADR 0002](../adr/0002-java-go-shared-linux-clock.md)，并同步有效设计与 README。上文“待确认”保留为实验当时的历史记录，不再表示此运行边界未获批准；启动/验收脚本迁移、时钟异常保护及完整回归仍未交付。本次仅记录决定，没有新增测试通过证据。
