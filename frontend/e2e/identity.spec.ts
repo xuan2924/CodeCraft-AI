@@ -77,6 +77,7 @@ test('invitation, mandatory password change, administrator reset and old-browser
     await page.getByRole('button', { name: '已交付，清除显示' }).click();
   } finally { await userContext.close(); }
   await page.getByRole('button', { name: '退出登录', exact: true }).click();
+  await page.getByRole('button', { name: '丢弃账号草稿并退出', exact: true }).click();
   await expect(page.getByRole('heading', { name: '受邀账号登录' })).toBeVisible();
   expect((await context.request.get('/api/auth/session')).status()).toBe(401);
   expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);

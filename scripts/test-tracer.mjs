@@ -12,6 +12,8 @@ import { buildSandboxImage } from './build-sandbox.mjs';
 
 const identityMode = process.argv.includes('--identity');
 const workspaceMode = process.argv.includes('--workspace');
+const boundaryOnly = process.argv.includes('--boundary-only');
+if (boundaryOnly && !workspaceMode) throw new Error('--boundary-only requires --workspace');
 const updatedIdentityPassword = randomBytes(32).toString('hex');
 // Never consumes the development .env, database, volume, or running services.
 const project = `cc-tracer-${process.pid}-${randomBytes(4).toString('hex')}`;
@@ -155,6 +157,7 @@ try {
       WORKSPACE_IT_RUN: 'disposable', SANDBOX_TEST_CONTAINER: sandboxId(), SPRING_DATASOURCE_URL: `jdbc:postgresql://127.0.0.1:${values.POSTGRES_PORT}/workspace_boundary`,
       SPRING_DATASOURCE_USERNAME: values.POSTGRES_USER, SPRING_DATASOURCE_PASSWORD: values.POSTGRES_PASSWORD } });
   }
+  if (!boundaryOnly) {
   const initialSandbox = inspectSandbox();
   const marker = join(directory, 'volume-marker.txt');
   await writeFile(marker, project);
@@ -186,13 +189,17 @@ try {
     const snapshotResponse = await fetch(`${webUrl}/api/exercises/current`, { headers: { Cookie: cookie } });
     assert.equal(snapshotResponse.status, 200);
     const snapshot = (await snapshotResponse.json()).data;
+    const initialFileResponse = await fetch(`${webUrl}/api/exercises/${snapshot.exerciseId}/files?path=src/main/java/interview/CartTotal.java`, { headers: { Cookie: cookie } });
+    assert.equal(initialFileResponse.status, 200);
+    const initialContent = (await initialFileResponse.json()).data.content;
     workspaceProbe = async () => {
       const response = await fetch(`${webUrl}/api/exercises/${snapshot.exerciseId}/files?path=src/main/java/interview/CartTotal.java`,
         { headers: { Cookie: cookie }, signal: AbortSignal.timeout(10000) });
       assert.equal(response.status, 200, 'Workspace file must remain readable after restart');
       const file = (await response.json()).data;
       assert.equal(file.workspaceInstanceId, snapshot.workspaceInstanceId);
-      assert.equal(file.revision, '0');
+      assert.equal(file.revision, snapshot.revision);
+      assert.equal(file.content, initialContent);
       assert(file.content.includes('class CartTotal'));
     };
     await workspaceProbe();
@@ -258,6 +265,7 @@ try {
   while (failedStartup.exitCode === null && !failedStartup.startError && Date.now() < startupDeadline) await delay(250);
   if (failedStartup.startError || failedStartup.exitCode === null || failedStartup.exitCode === 0) {
     throw new Error('Expected Java to exit nonzero when its migration database is unavailable');
+  }
   }
   }
 } catch (error) {

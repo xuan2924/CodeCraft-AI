@@ -6,6 +6,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.workspace.config.WorkspaceProperties;
 import ai.codecraft.modules.workspace.service.ProblemService;
+import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
+import ai.codecraft.workspace.v1.ApplyBatchRequest;
+import ai.codecraft.workspace.v1.FileChange;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,6 +50,7 @@ class WorkspaceIT {
     @Autowired private IdentitySecrets secrets;
     @Autowired private ProblemService publications;
     @Autowired private WorkspaceProperties workspaceProperties;
+    @Autowired private SandboxWorkspaceGateway sandboxGateway;
     private String token;
     private String csrf;
 
@@ -61,6 +67,133 @@ class WorkspaceIT {
 
     @AfterEach
     void closeClient() { http.close(); }
+
+    @Test
+    void savesAtomicBatchesWithControlAndPersistentReceipts() throws Exception {
+        String exercise = readyExercise("write-fixture");
+        String base = "/api/exercises/" + exercise;
+        JsonNode acquired = request("POST", base + "/control/acquire", Map.of(), "page-a", 200).path("data");
+        String credential = acquired.path("credential").asText();
+        assertThat(credential).hasSize(43);
+        assertThat(request("POST", base + "/control/acquire", Map.of(), "page-a", 200).path("data").path("credentialDelivered").asBoolean()).isFalse();
+        request("POST", base + "/control/acquire", Map.of(), "page-b", 409);
+        Object batch = Map.of("expectedRevision", "0", "changes", List.of(Map.of("path", "src/test/java/Example.java", "kind", "CREATE", "content", "class Example {}")));
+        request("POST", base + "/file-batches", batch, "save-before-start", 409, credential);
+        request("POST", base + "/start", Map.of(), "start-write", 200, credential);
+        JsonNode saved = request("POST", base + "/file-batches", batch, "save-once", 200, credential).path("data");
+        assertThat(saved.path("revision").asText()).isEqualTo("1");
+        assertThat(saved.path("changed").asBoolean()).isTrue();
+        assertThat(request("POST", base + "/file-batches", batch, "save-once", 200, credential).path("data").path("operationId")).isEqualTo(saved.path("operationId"));
+        assertThat(request("GET", saved.path("queryUrl").asText(), null, null, 200).path("data").path("revision").asText()).isEqualTo("1");
+        Object noChange = Map.of("expectedRevision", "1", "changes", List.of(Map.of("path", "src/test/java/Example.java", "kind", "UPDATE", "content", "class Example {}")));
+        JsonNode unchanged = request("POST", base + "/file-batches", noChange, "same-content", 200, credential).path("data");
+        assertThat(unchanged.path("changed").asBoolean()).isFalse();
+        assertThat(unchanged.path("revision").asText()).isEqualTo("1");
+        request("POST", base + "/file-batches", batch, "stale-baseline", 409, credential);
+        String newCredential = request("POST", base + "/control/takeover", Map.of(), "takeover", 200).path("data").path("credential").asText();
+        request("POST", base + "/file-batches", noChange, "old-page", 409, credential);
+        Object rename = Map.of("expectedRevision", "1", "changes", List.of(
+            Map.of("path", "src/test/java/Example.java", "kind", "DELETE", "content", ""),
+            Map.of("path", "src/test/java/Renamed.java", "kind", "CREATE", "content", "class Renamed {}")));
+        assertThat(request("POST", base + "/file-batches", rename, "rename", 200, newCredential).path("data").path("revision").asText()).isEqualTo("2");
+        request("GET", base + "/files?path=src/test/java/Example.java", null, null, 404);
+        assertThat(request("GET", base + "/files?path=src/test/java/Renamed.java", null, null, 200).path("data").path("content").asText()).isEqualTo("class Renamed {}");
+        request("POST", base + "/file-batches", Map.of("expectedRevision", "2", "changes", List.of(Map.of("path", "pom.xml", "kind", "UPDATE", "content", "override"))), "protected", 403, newCredential);
+        seedDisposableIdentity();
+        request("POST", base + "/control/takeover", Map.of(), "foreign-control", 404);
+        request("POST", base + "/file-batches", noChange, "foreign-write", 404, newCredential);
+        request("GET", saved.path("queryUrl").asText(), null, null, 404);
+    }
+
+    @Test
+    void logoutFencesWritableWorkspaceAndSamePageCanResumeAfterRelogin() throws Exception {
+        String exercise = readyExercise("logout-writable");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "control", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "start", 200, credential);
+        String owner = jdbc.queryForObject("SELECT user_id::text FROM identity_session WHERE token_hash = ?", String.class, IdentitySecrets.digest(token));
+        Object batch = Map.of("expectedRevision", "0", "changes", List.of(Map.of("path", "src/test/java/Resume.java", "kind", "CREATE", "content", "class Resume {}")));
+        request("POST", "/api/auth/logout", null, null, 204);
+        request("POST", base + "/file-batches", batch, "revoked-session", 403, credential);
+        // Explicit replacement-session fixture; a real login never restores the page secret.
+        token = secrets.token(); csrf = secrets.token();
+        jdbc.update("INSERT INTO identity_session(token_hash, user_id, auth_version, csrf_token, issued_at, last_activity) SELECT ?, id, auth_version, ?, now(), now() FROM identity_user WHERE id = ?::uuid",
+            IdentitySecrets.digest(token), csrf, owner);
+        assertThat(request("POST", base + "/file-batches", batch, "resumed-session", 200, credential).path("data").path("revision").asText()).isEqualTo("1");
+    }
+
+    @Test
+    void passwordResetFencesDelayedWritesBeforeReportingSuccess() throws Exception {
+        String exercise = readyExercise("delayed-write");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "control", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "start", 200, credential);
+        String victimToken = token;
+        String victimCsrf = csrf;
+        String victim = jdbc.queryForObject("SELECT user_id::text FROM identity_session WHERE token_hash = ?", String.class, IdentitySecrets.digest(token));
+        String instance = request("GET", base, null, null, 200).path("data").path("workspaceInstanceId").asText();
+        long oldEpoch = jdbc.queryForObject("SELECT gate_epoch FROM workspace_control WHERE exercise_id = ?::uuid", Long.class, exercise);
+        String container = System.getenv("SANDBOX_TEST_CONTAINER");
+        assertThat(container).matches("[0-9a-f]{64}");
+        docker("pause", container);
+        try {
+            JsonNode accepted = request("POST", base + "/file-batches", Map.of("expectedRevision", "0", "changes",
+                List.of(Map.of("path", "src/test/java/Delayed.java", "kind", "CREATE", "content", "class Delayed {}"))), "delayed-save", 202, credential).path("data");
+            assertThat(accepted.path("operationId").asText()).isNotBlank();
+            seedDisposableIdentity();
+            jdbc.update("UPDATE identity_user SET role = 'ADMIN' WHERE id = (SELECT user_id FROM identity_session WHERE token_hash = ?)", IdentitySecrets.digest(token));
+            JsonNode reset = request("POST", "/api/admin/users/" + victim + "/password-reset", Map.of(), "reset-delayed", 202).path("data");
+            assertThat(reset.path("temporaryPassword").isMissingNode() || reset.path("temporaryPassword").isNull()).isTrue();
+        } finally { docker("unpause", container); }
+        long until = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+        HttpResponse<String> response;
+        do {
+            HttpRequest reset = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/admin/users/" + victim + "/password-reset"))
+                .timeout(Duration.ofSeconds(10)).header("Cookie", "codecraft_session=" + token)
+                .header("Origin", "http://localhost:5173").header("X-CSRF-TOKEN", csrf)
+                .header("Content-Type", "application/json").header("Idempotency-Key", "reset-delayed")
+                .POST(HttpRequest.BodyPublishers.ofString("{}")).build();
+            response = http.send(reset, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 200) break;
+            assertThat(response.statusCode()).isEqualTo(202);
+            Thread.sleep(100);
+        } while (System.nanoTime() < until);
+        assertThat(response.statusCode()).isEqualTo(200);
+        token = victimToken; csrf = victimCsrf;
+        request("GET", base, null, null, 401);
+        long before = sandboxGateway.query(instance).getRevision();
+        ApplyBatchRequest late = ApplyBatchRequest.newBuilder().setWorkspaceInstanceId(instance)
+            .setOperationId(UUID.randomUUID().toString()).setRequestId(UUID.randomUUID().toString())
+            .setGateEpoch(oldEpoch).setExpectedRevision(before).setNotAfterUnixMillis(Instant.now().plusSeconds(30).toEpochMilli())
+            .addChanges(FileChange.newBuilder().setPath("src/test/java/Late.java").setKind("CREATE").setContent("class Late {}")) .build();
+        assertThatThrownBy(() -> sandboxGateway.apply(late)).isInstanceOfSatisfying(StatusRuntimeException.class,
+            error -> assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION));
+        assertThat(sandboxGateway.query(instance).getRevision()).isEqualTo(before);
+    }
+
+    @Test
+    void readyAbandonmentClosesActivatedGateBeforeCancellation() throws Exception {
+        String exercise = readyExercise("abandon-controlled");
+        String base = "/api/exercises/" + exercise;
+        request("POST", base + "/control/acquire", Map.of(), "control", 200);
+        JsonNode abandoned = request("POST", base + "/abandon", Map.of(), "abandon", 202).path("data");
+        long until = System.nanoTime() + Duration.ofSeconds(15).toNanos();
+        JsonNode result;
+        do {
+            result = request("GET", abandoned.path("queryUrl").asText(), null, null, 200).path("data");
+            if (result.path("state").asText().equals("SUCCEEDED")) break;
+            Thread.sleep(100);
+        } while (System.nanoTime() < until);
+        assertThat(result.path("state").asText()).isEqualTo("SUCCEEDED");
+        request("GET", base + "/files?path=pom.xml", null, null, 404);
+    }
+
+    private String readyExercise(String key) throws Exception {
+        String version = request("GET", "/api/problems", null, null, 200).path("data").get(0).path("problemVersionId").asText();
+        String exercise = request("POST", "/api/exercises", Map.of("problemVersionId", version), key, 202).path("data").path("exerciseId").asText();
+        waitForState(exercise, "READY");
+        return exercise;
+    }
 
     @Test
     void alteredPublicationBytesCannotReuseTheValidationReceipt() throws Exception {
@@ -114,14 +247,15 @@ class WorkspaceIT {
         long waitUntil = System.nanoTime() + Duration.ofSeconds(15).toNanos();
         while (!"READY".equals(request("GET", "/api/exercises/" + exercise, null, null, 200).path("data").path("state").asText())
             && System.nanoTime() < waitUntil) Thread.sleep(100);
-        JsonNode started = request("POST", "/api/exercises/" + exercise + "/start", Map.of(), "start-once", 200).path("data");
+        String credential = request("POST", "/api/exercises/" + exercise + "/control/acquire", Map.of(), "control-start", 200).path("data").path("credential").asText();
+        JsonNode started = request("POST", "/api/exercises/" + exercise + "/start", Map.of(), "start-once", 200, credential).path("data");
         assertThat(started.path("state").asText()).isEqualTo("ACTIVE");
         assertThat(started.path("startedAt").asText()).isNotBlank();
         assertThat(Duration.between(Instant.parse(started.path("startedAt").asText()),
             Instant.parse(started.path("deadlineAt").asText()))).isEqualTo(Duration.ofSeconds(2700));
-        JsonNode replay = request("POST", "/api/exercises/" + exercise + "/start", Map.of(), "start-once", 200).path("data");
+        JsonNode replay = request("POST", "/api/exercises/" + exercise + "/start", Map.of(), "start-once", 200, credential).path("data");
         assertThat(replay.path("deadlineAt")).isEqualTo(started.path("deadlineAt"));
-        request("POST", "/api/exercises/" + exercise + "/start", Map.of(), "another-start", 409);
+        request("POST", "/api/exercises/" + exercise + "/start", Map.of(), "another-start", 409, credential);
     }
 
     @Test
@@ -363,10 +497,15 @@ class WorkspaceIT {
     }
 
     private JsonNode request(String method, String path, Object body, String key, int expected) throws Exception {
+        return request(method, path, body, key, expected, null);
+    }
+
+    private JsonNode request(String method, String path, Object body, String key, int expected, String credential) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
             .timeout(Duration.ofSeconds(10)).header("Cookie", "codecraft_session=" + token)
             .header("Origin", "http://localhost:5173").header("X-CSRF-TOKEN", csrf);
         if (key != null) request.header("Idempotency-Key", key);
+        if (credential != null) request.header("X-Operation-Credential", credential);
         if (body == null) request.method(method, HttpRequest.BodyPublishers.noBody());
         else request.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)));
         HttpResponse<String> response = http.send(request.build(), HttpResponse.BodyHandlers.ofString());

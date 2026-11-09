@@ -14,6 +14,7 @@ const currentPassword = ref('');
 const newPassword = ref('');
 const invitedUsername = ref('');
 const changingPassword = ref(false);
+const logoutRequested = ref(false);
 const resetTarget = ref('');
 const resetValid = computed(() => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resetTarget.value));
 const showPasswordForm = computed(() => identity.value?.passwordChangeRequired || changingPassword.value);
@@ -24,6 +25,7 @@ watch(() => identity.value?.id, () => {
   currentPassword.value = '';
   newPassword.value = '';
   changingPassword.value = false;
+  logoutRequested.value = false;
   temporaryPassword.value = null;
 });
 async function submitLogin() {
@@ -234,10 +236,35 @@ async function submitPassword() {
         <NButton
           class="logout-button"
           :disabled="pending"
-          @click="signOut"
+          @click="logoutRequested = true"
         >
           退出登录
         </NButton>
+        <section
+          v-if="logoutRequested"
+          role="dialog"
+          aria-modal="true"
+          aria-label="确认退出与草稿处理"
+        >
+          <h2>退出前处理本地草稿</h2>
+          <p>退出会清除本浏览器该账号的全部草稿，包括其他页面和未恢复的备份。若需保存，请先返回工作区逐项恢复并显式保存；保存失败时不要退出。</p>
+          <RouterLink
+            v-if="!identity.passwordChangeRequired"
+            :to="{ name: 'workspace' }"
+          >返回工作区保存</RouterLink>
+          <NButton
+            :disabled="pending"
+            @click="signOut"
+          >
+            丢弃账号草稿并退出
+          </NButton>
+          <NButton
+            :disabled="pending"
+            @click="logoutRequested = false"
+          >
+            取消退出
+          </NButton>
+        </section>
       </template>
       <div
         v-if="temporaryPassword"

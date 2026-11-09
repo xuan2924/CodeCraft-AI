@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onScopeDispose, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onScopeDispose, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { NButton, useThemeVars } from 'naive-ui';
 import { RouterLink } from 'vue-router';
@@ -7,23 +7,34 @@ import { session } from '../auth/api';
 import { ApiError } from '../api/request';
 import * as api from './api';
 
+const WorkspaceEditor = defineAsyncComponent(() => import('./WorkspaceEditor.vue'));
 const theme = useThemeVars();
 const client = useQueryClient();
 const account = useQuery({ queryKey: ['identity-session'], queryFn: ({ signal }) => session(signal), retry: false, gcTime: 0 });
-const allowed = computed(() => !!account.data.value && !account.data.value.passwordChangeRequired && !account.isError.value);
+const allowed = computed(() => !!account.data.value && !account.data.value.passwordChangeRequired &&
+  !(account.error.value instanceof ApiError && [401, 403].includes(account.error.value.status)));
 const owner = computed(() => account.data.value?.id ?? '');
 const catalogue = useQuery({ queryKey: ['workspace', owner, 'problems'], queryFn: ({ signal }) => api.problems(signal), enabled: allowed, retry: false });
 const active = useQuery({ queryKey: ['workspace', owner, 'current'], queryFn: ({ signal }) => api.current(signal),
   enabled: allowed, retry: false, refetchInterval: 2000 });
-const exercise = computed(() => active.isError.value ? null : active.data.value);
+const exercise = computed(() => active.data.value);
 const problem = computed(() => catalogue.data.value?.find((item) => item.problemVersionId === exercise.value?.problemVersionId));
 const selected = ref('');
-watch(() => exercise.value?.workspaceInstanceId, () => { selected.value = ''; });
-const source = useQuery({ queryKey: ['workspace', owner, 'file', computed(() => exercise.value?.workspaceInstanceId), selected],
+const credential = ref('');
+const credentialGeneration = ref('');
+const controlState = useQuery({ queryKey: ['workspace', owner, 'control', computed(() => exercise.value?.exerciseId)],
+  queryFn: ({ signal }) => api.control(exercise.value!.exerciseId, null, signal),
+  enabled: computed(() => allowed.value && !!exercise.value && ['READY', 'ACTIVE'].includes(exercise.value.state)), retry: false, refetchInterval: 2000 });
+watch(() => controlState.data.value?.generation, (value) => {
+  if (value && credential.value && value !== credentialGeneration.value) credential.value = '';
+});
+watch(() => exercise.value?.workspaceInstanceId, () => { selected.value = ''; credential.value = ''; });
+const source = useQuery({ queryKey: ['workspace', owner, 'file', computed(() => exercise.value?.workspaceInstanceId), selected, computed(() => exercise.value?.revision)],
   queryFn: ({ signal }) => {
     if (!exercise.value) throw new Error('Workspace is not available');
     return api.file(exercise.value, selected.value, signal);
   }, enabled: computed(() => allowed.value && !!exercise.value && exercise.value.revision !== null && !!selected.value), retry: false, gcTime: 0 });
+const writable = computed(() => allowed.value && !account.isError.value && !active.isError.value && !controlState.isError.value);
 const pending = ref(false);
 const error = ref('');
 const unresolved = ref<api.Action | null>(null);
@@ -37,6 +48,7 @@ watch(owner, () => {
   unresolved.value = null;
   error.value = '';
   pending.value = false;
+  credential.value = '';
 }, { flush: 'sync' });
 onScopeDispose(() => {
   disposed = true;
@@ -51,7 +63,7 @@ async function perform(action: api.Action) {
   error.value = '';
   unresolved.value = action;
   try {
-    await api.act(action, controller.signal);
+    await api.act(action, controller.signal, credential.value || undefined);
     if (disposed || generation !== startedGeneration) return;
     unresolved.value = null;
     await client.invalidateQueries({ queryKey: ['workspace', startedOwner, 'current'] });
@@ -66,6 +78,25 @@ function create(version: string) { void perform({ path: '/api/exercises', body: 
 function change(kind: 'start' | 'preparation-retry' | 'abandon') {
   if (exercise.value) void perform({ path: `/api/exercises/${encodeURIComponent(exercise.value.exerciseId)}/${kind}`, body: {}, key: globalThis.crypto.randomUUID() });
 }
+async function takeControl(kind: 'acquire' | 'takeover') {
+  if (!exercise.value || pending.value) return;
+  const started = generation;
+  const id = exercise.value.exerciseId;
+  pending.value = true;
+  error.value = '';
+  try {
+    const result = await api.control(id, kind, controller.signal, globalThis.crypto.randomUUID());
+    if (disposed || started !== generation || exercise.value?.exerciseId !== id) return;
+    client.setQueryData(['workspace', owner.value, 'control', id], result);
+    credentialGeneration.value = result.generation;
+    credential.value = result.credential ?? '';
+    if (!result.credential) error.value = '操作权转换尚未完成或凭证未交付。请刷新确认后显式接管。';
+  } catch (failure) { if (!disposed && started === generation) error.value = api.message(failure); }
+  finally { if (!disposed && started === generation) pending.value = false; }
+}
+async function refreshWorkspace() {
+  await client.invalidateQueries({ queryKey: ['workspace', owner.value, 'current'] });
+}
 const failureReasons: Record<string, string> = {
   INVALID_PREPARATION_REQUEST: '准备请求不符合执行服务契约，请联系维护者。',
   PREPARATION_PRECONDITION_FAILED: '题目未在执行服务发布，或工作区准备条件已失效，请联系维护者核对。',
@@ -73,7 +104,7 @@ const failureReasons: Record<string, string> = {
   AUTHORIZATION_REVOKED: '发起准备的登录已撤销，请重新登录后重试。',
 };
 const labels: Record<string, string> = { PREPARING: '正在准备，结果未确认', READY: '已准备，仅可浏览', PREPARATION_FAILED: '准备失败，旧实例已封存',
-  ACTIVE: '已开始，当前版本仍仅支持浏览', CLOSING: '正在收尾', FINAL_TESTING: '正在最终验收', ENDED: '已结束' };
+  ACTIVE: '已开始，请显式保存修改', CLOSING: '正在收尾', FINAL_TESTING: '正在最终验收', ENDED: '已结束' };
 </script>
 
 <template>
@@ -84,7 +115,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
     <header>
       <RouterLink :to="{ name: 'account' }">账号与登录</RouterLink>
       <h1>题目与工作区</h1>
-      <p>工程底座：编辑、测试、模型检查与面试对话尚未接入，不代表完整面试流程。</p>
+      <p>工程底座：支持编辑与显式保存；测试、模型检查与面试对话尚未接入，不代表完整面试流程。</p>
     </header>
     <p
       v-if="account.isPending.value"
@@ -101,7 +132,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
     <p v-else-if="!allowed">
       请先登录并完成临时密码修改。
     </p>
-    <template v-else>
+    <template v-if="allowed">
       <p
         v-if="error"
         role="alert"
@@ -123,9 +154,15 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
       >
         {{ api.message(catalogue.error.value ?? active.error.value) }} 先前数据不代表当前状态。
       </p>
+      <p
+        v-if="controlState.isError.value"
+        role="alert"
+      >
+        无法确认操作权，已暂停写入。{{ api.message(controlState.error.value) }}
+      </p>
       <NButton
         :disabled="pending || active.isFetching.value"
-        @click="catalogue.refetch(); active.refetch()"
+        @click="catalogue.refetch(); active.refetch(); exercise && controlState.refetch()"
       >
         刷新查询
       </NButton>
@@ -135,7 +172,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
       >
         正在读取题目与当前演练…
       </p>
-      <template v-else-if="!catalogue.isError.value && !active.isError.value">
+      <template v-else-if="exercise || (!catalogue.isError.value && !active.isError.value)">
         <template v-if="!exercise">
           <p v-if="!catalogue.data.value?.length">
             尚无已发布题目，请联系维护者。
@@ -147,7 +184,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
           >
             <h2>{{ item.title }} <small>{{ item.version }}</small></h2>
             <pre class="requirements">{{ item.requirements }}</pre>
-            <p>允许编辑范围：{{ item.editableRoots.join('、') }}。本期仅展示文件。</p>
+            <p>允许编辑范围：{{ item.editableRoots.join('、') }}。开始计时后可保存。</p>
             <p>开始后时长 {{ item.durationSeconds / 60 }} 分钟；准备阶段不计时。</p>
             <NButton
               type="primary"
@@ -183,9 +220,22 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             <p v-if="exercise.state === 'PREPARING'">
               后台正在核对准备结果。结果未知时不能另开重试或放弃请求。
             </p>
+            <p
+              v-if="['READY', 'ACTIVE'].includes(exercise.state)"
+              role="status"
+            >
+              {{ credential ? '当前页面持有操作权' : '当前页面只读，可保留本地草稿' }}
+            </p>
+            <NButton
+              v-if="!credential && ['READY', 'ACTIVE'].includes(exercise.state)"
+              :disabled="pending || controlState.data.value?.state === 'PENDING'"
+              @click="takeControl(controlState.data.value?.held ? 'takeover' : 'acquire')"
+            >
+              {{ controlState.data.value?.held ? '接管操作权' : '申请操作权' }}
+            </NButton>
             <NButton
               v-if="exercise.state === 'READY'"
-              :disabled="pending || !!unresolved"
+              :disabled="pending || !!unresolved || !credential"
               @click="change('start')"
             >
               确认开始计时
@@ -209,7 +259,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             <section aria-label="题目与文件">
               <h2>题目要求</h2>
               <pre class="requirements">{{ problem?.requirements }}</pre>
-              <p>允许编辑范围：{{ problem?.editableRoots.join('、') }}；当前只读。</p>
+              <p>允许编辑范围：{{ problem?.editableRoots.join('、') }}；pom.xml 与验收测试受保护。</p>
               <h2>工作区文件</h2>
               <p v-if="!exercise.paths.length">
                 尚无已确认文件。
@@ -237,7 +287,40 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                 <pre class="requirements">{{ content }}</pre>
               </details>
             </section>
-            <section aria-label="只读源码">
+            <p
+              v-if="source.isFetching.value"
+              role="status"
+            >
+              正在读取文件…
+            </p>
+            <p
+              v-if="source.isError.value"
+              role="alert"
+            >
+              {{ api.message(source.error.value) }}
+            </p>
+            <NButton
+              v-if="source.isError.value"
+              @click="source.refetch()"
+            >
+              重试文件读取
+            </NButton>
+            <WorkspaceEditor
+              v-if="exercise.state === 'ACTIVE'"
+              :key="owner + exercise.workspaceInstanceId"
+              :owner="owner"
+              :exercise="exercise"
+              :file="source.data.value"
+              :selected="selected"
+              :credential="writable ? credential : ''"
+              @saved="refreshWorkspace"
+              @select="selected = $event"
+              @stale-control="credential = ''"
+            />
+            <section
+              v-else
+              aria-label="只读源码"
+            >
               <h2>{{ selected || '选择文件查看源码' }}</h2>
               <p
                 v-if="selected && source.isPending.value"

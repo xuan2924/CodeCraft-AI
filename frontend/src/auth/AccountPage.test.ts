@@ -4,6 +4,8 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import AccountPage from './AccountPage.vue';
 import { validPassword, validUsername } from './api';
+import { clearDrafts } from '../workspace/drafts';
+vi.mock('../workspace/drafts', () => ({ clearDrafts: vi.fn(async () => {}), resumeDrafts: vi.fn(async () => {}) }));
 
 const fixtures = {
   user: { id: 'fixture-user', username: 'invited', role: 'USER', passwordChangeRequired: false, expiresAt: '2026-12-01T00:00:00Z' },
@@ -28,6 +30,23 @@ afterEach(() => {
   for (const page of pages.splice(0)) page.unmount();
   for (const client of clients.splice(0)) client.clear();
   vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
+
+it('clears account drafts only after confirmed logout', async () => {
+  const { page } = await render(vi.fn<typeof fetch>(async (input) => {
+    if (String(input) === '/api/auth/session') return ok(fixtures.user);
+    if (String(input) === '/api/auth/csrf') return ok({ token: 'fixture' });
+    return ok(null);
+  }));
+  expect(clearDrafts).not.toHaveBeenCalled();
+  await page.get('.logout-button').trigger('click');
+  await flushPromises();
+  expect(clearDrafts).not.toHaveBeenCalled();
+  expect(page.get('[role="dialog"]').text()).toContain('返回工作区保存');
+  await page.findAll('button').find((button) => button.text() === '丢弃账号草稿并退出')!.trigger('click');
+  await flushPromises();
+  expect(clearDrafts).toHaveBeenCalledWith('fixture-user');
 });
 
 describe('identity form boundaries', () => {
@@ -155,6 +174,9 @@ describe('identity form boundaries', () => {
     const { page } = await render(fetcher);
     await page.get('.logout-button').trigger('click');
     await flushPromises();
+    await page.findAll('button').find((button) => button.text() === '丢弃账号草稿并退出')!.trigger('click');
+    await flushPromises();
+    expect(clearDrafts).not.toHaveBeenCalled();
     expect(page.text()).toContain('账号已就绪');
     expect(page.get('[role="alert"]').text()).toContain('操作结果尚未确认');
   });

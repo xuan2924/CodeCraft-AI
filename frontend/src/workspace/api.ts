@@ -50,13 +50,44 @@ export async function file(exercise: Exercise, path: string, signal: AbortSignal
   return { workspaceInstanceId: exercise.workspaceInstanceId, revision: String(value.revision), path, content: value.content };
 }
 export interface Action { path: string; body: Record<string, string>; key: string }
-export async function act(action: Action, signal: AbortSignal): Promise<void> {
-  const value = await post(action.path, action.body, signal, action.key);
+export async function act(action: Action, signal: AbortSignal, credential?: string): Promise<void> {
+  const value = await post(action.path, action.body, signal, action.key, credential);
   if (!object(value) || typeof value.exerciseId !== 'string' || typeof value.state !== 'string') return invalid();
 }
+export interface Control { exerciseId: string; operationId: string | null; state: string; generation: string; held: boolean; credential: string | null }
+export async function control(exercise: string, kind: 'acquire' | 'takeover' | 'release' | null, signal: AbortSignal, key?: string, credential?: string): Promise<Control> {
+  const path = `/api/exercises/${encodeURIComponent(exercise)}/control`;
+  const value = kind ? await post(`${path}/${kind}`, {}, signal, key, credential) : await request(path, signal);
+  if (!object(value) || value.exerciseId !== exercise || !['SUCCEEDED', 'PENDING'].includes(String(value.state))
+    || typeof value.generation !== 'string' || !/^\d+$/.test(value.generation) || typeof value.held !== 'boolean'
+    || (value.operationId !== null && typeof value.operationId !== 'string')
+    || (value.credential !== null && (typeof value.credential !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value.credential)))) return invalid();
+  return { exerciseId: exercise, operationId: value.operationId, state: String(value.state), generation: value.generation, held: value.held, credential: value.credential };
+}
+export interface FileChange { path: string; kind: 'CREATE' | 'UPDATE' | 'DELETE'; content: string }
+export interface Mutation { operationId: string; exerciseId: string; state: string; revision: string | null; changed: boolean | null; failureCode: string | null }
+function mutation(value: unknown): Mutation {
+  if (!object(value) || typeof value.operationId !== 'string' || typeof value.exerciseId !== 'string'
+    || !['PENDING', 'PENDING_RECONCILIATION', 'SUCCEEDED', 'REJECTED'].includes(String(value.state))
+    || (value.revision !== null && (typeof value.revision !== 'string' || !/^\d+$/.test(value.revision)))
+    || (value.changed !== null && typeof value.changed !== 'boolean')
+    || (value.failureCode !== null && typeof value.failureCode !== 'string')) return invalid();
+  return { operationId: value.operationId, exerciseId: value.exerciseId, state: String(value.state), revision: value.revision,
+    changed: value.changed, failureCode: value.failureCode };
+}
+export async function save(exercise: string, revision: string, changes: FileChange[], key: string, credential: string, signal: AbortSignal): Promise<Mutation> {
+  return mutation(await post(`/api/exercises/${encodeURIComponent(exercise)}/file-batches`, { expectedRevision: revision, changes }, signal, key, credential));
+}
+export async function operation(id: string, signal: AbortSignal): Promise<Mutation> { return mutation(await request(`/api/operations/${encodeURIComponent(id)}`, signal)); }
 export function message(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401 || error.code === 'PASSWORD_CHANGE_REQUIRED') return '登录已失效或需要改密，请前往账号页面。';
+    if (error.code === 'REVISION_CONFLICT') return '工作区版本已变化。草稿已保留，请比较服务端内容后再保存。';
+    if (error.code === 'STALE_CONTROL' || error.code === 'CONTROL_HELD') return '当前页面没有操作权，请显式接管；草稿不会自动清除。';
+    if (error.code === 'EXERCISE_EXPIRED') return '作答已到期，本地内容不会自动提交。';
+    if (error.code === 'WORKSPACE_CAPACITY') return '工作区容量不足，本批次未保存，草稿已保留。';
+    if (error.code === 'WRITE_NOT_COMMITTED') return '已核对原操作未提交。请检查当前版本后显式重新保存。';
+    if (error.code === 'FILE_EXISTS') return '目标文件已存在，本批次未应用。';
     if (error.code === 'ACTIVE_EXERCISE_EXISTS') return '已有未结束演练，请刷新查看。';
     if (error.status === 409) return '状态已变化，请刷新核对；不要自动创建新的请求。';
   }

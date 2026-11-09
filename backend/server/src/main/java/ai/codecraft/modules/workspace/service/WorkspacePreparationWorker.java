@@ -22,16 +22,18 @@ public class WorkspacePreparationWorker {
     private final ObjectMapper json;
     private final WorkspaceRevocationBarrier revocations;
     private final PreparationReceiptValidator receipts;
+    private final WorkspaceWriteCoordinator writes;
 
     public WorkspacePreparationWorker(ExerciseTransactionService exercises, ProblemTransactionService problems,
                                       SandboxWorkspaceGateway sandbox, ObjectMapper json, WorkspaceRevocationBarrier revocations,
-                                      PreparationReceiptValidator receipts) {
+                                      PreparationReceiptValidator receipts, WorkspaceWriteCoordinator writes) {
         this.exercises = exercises;
         this.problems = problems;
         this.sandbox = sandbox;
         this.json = json;
         this.revocations = revocations;
         this.receipts = receipts;
+        this.writes = writes;
     }
 
     @Scheduled(fixedDelay = 1000)
@@ -41,6 +43,7 @@ public class WorkspacePreparationWorker {
                 // Persist rotation before RPC or any early exit; broken old instances cannot monopolize the batch.
                 exercises.attempted(operation.id());
                 if (operation.kind().equals("ABANDON")) {
+                    writes.drive(operation.id());
                     WorkspaceSnapshot cancelled = sandbox.cancel(operation.workspaceInstanceId(), operation.id());
                     if (!cancelled.getCancelled() || !cancelled.getWorkspaceInstanceId().equals(operation.workspaceInstanceId())) {
                         throw new IllegalStateException("Cancellation receipt mismatch");

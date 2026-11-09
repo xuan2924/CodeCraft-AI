@@ -3,6 +3,9 @@ package ai.codecraft.modules.workspace.gateway;
 import ai.codecraft.modules.workspace.config.WorkspaceProperties;
 import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
+import ai.codecraft.workspace.v1.ApplyBatchRequest;
+import ai.codecraft.workspace.v1.MutationReceipt;
+import ai.codecraft.workspace.v1.QueryMutationRequest;
 import ai.codecraft.workspace.v1.CancelPreparationRequest;
 import ai.codecraft.workspace.v1.CloseGateRequest;
 import ai.codecraft.workspace.v1.GateResponse;
@@ -57,6 +60,31 @@ public class SandboxWorkspaceGateway {
         if (!gate.getWorkspaceInstanceId().equals(instance) || !gate.getTransitionId().equals(transition)
             || gate.getEpoch() != 1 || !gate.getState().equals("CLOSED")) {
             throw new IllegalStateException("Invalid revocation fence receipt");
+        }
+    }
+
+    public GateResponse gate(String instance) {
+        return client().queryGate(QueryWorkspaceRequest.newBuilder().setWorkspaceInstanceId(instance).build());
+    }
+
+    public GateResponse closeGate(String instance, String transition, long epoch) {
+        return client().closeGate(CloseGateRequest.newBuilder().setWorkspaceInstanceId(instance)
+            .setTransitionId(transition).setExpectedEpoch(epoch).build());
+    }
+
+    public GateResponse openGate(String instance, String transition, long epoch) {
+        return client().openGate(CloseGateRequest.newBuilder().setWorkspaceInstanceId(instance)
+            .setTransitionId(transition).setExpectedEpoch(epoch).build());
+    }
+
+    public MutationReceipt apply(ApplyBatchRequest request) { return client().applyBatch(request); }
+
+    public MutationReceipt mutation(String instance, String request) {
+        try {
+            return client().queryMutation(QueryMutationRequest.newBuilder().setWorkspaceInstanceId(instance).setRequestId(request).build());
+        } catch (StatusRuntimeException error) {
+            if (error.getStatus().getCode() == Status.Code.NOT_FOUND) return null;
+            throw error;
         }
     }
 

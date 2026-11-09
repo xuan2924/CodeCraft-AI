@@ -1,6 +1,7 @@
 import { computed, nextTick, onScopeDispose, ref } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import * as api from './api';
+import { clearDrafts, resumeDrafts } from '../workspace/drafts';
 
 const sessionKey = ['identity-session'] as const;
 export function useAccount() {
@@ -49,12 +50,19 @@ export function useAccount() {
       const result = await api.login(username, password, controller.signal);
       if (disposed) return;
       await client.cancelQueries({ queryKey: sessionKey });
+      try { await resumeDrafts(result.id); }
+      catch { if (!disposed) notice.value = '登录成功，但本地草稿存储不可用，请及时保存或复制内容。'; }
       if (!disposed) client.setQueryData(sessionKey, result);
     });
   }
   async function signOut() {
     await action(async () => {
+      const owner = identity.value?.id;
       await api.logout(controller.signal);
+      if (owner) {
+        try { await clearDrafts(owner); }
+        catch { if (!disposed) error.value = '已退出登录，但本地草稿清理失败。请重新登录后重试退出，或清除本站浏览器数据。'; }
+      }
       if (disposed) return;
       await forgetIdentity();
       notice.value = '已退出登录。';

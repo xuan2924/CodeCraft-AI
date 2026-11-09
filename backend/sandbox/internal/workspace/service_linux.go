@@ -224,8 +224,9 @@ func (s *Service) CancelPreparation(ctx context.Context, request *rpc.CancelPrep
 			}
 			return previous.Snapshot, nil
 		}
-		// Preparation cancellation must never discard write receipts or an activated
-		// workspace. Ended-workspace deletion needs the separate reconciliation flow.
+		// Preparation cancellation must never discard write receipts or an open
+		// workspace. READY abandonment first closes its control gate. Ended-workspace
+		// deletion with mutations needs the separate reconciliation flow.
 		gates, gateErr := gateRecords(fd, request.WorkspaceInstanceId)
 		if gateErr != nil {
 			return nil, storageError(gateErr)
@@ -233,10 +234,8 @@ func (s *Service) CancelPreparation(ctx context.Context, request *rpc.CancelPrep
 		if len(previous.Mutations) != 0 {
 			return nil, status.Error(codes.FailedPrecondition, "workspace has mutations")
 		}
-		for _, gate := range gates {
-			if gate.State == "OPEN" {
-				return nil, status.Error(codes.FailedPrecondition, "workspace already activated")
-			}
+		if len(gates) > 0 && gates[len(gates)-1].State != "CLOSED" {
+			return nil, status.Error(codes.FailedPrecondition, "workspace gate must be closed")
 		}
 		sequence, err = strconv.ParseUint(commit[7:], 10, 64)
 		if err != nil || sequence == ^uint64(0) {

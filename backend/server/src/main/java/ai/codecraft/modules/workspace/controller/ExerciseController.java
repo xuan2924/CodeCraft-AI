@@ -33,8 +33,9 @@ public class ExerciseController {
 
     @PostMapping("/api/exercises/{id}/start")
     public ApiResponse<ExerciseResponse> start(@PathVariable UUID id,
-        @RequestHeader(value = "Idempotency-Key", required = false) String key, HttpServletRequest request) {
-        return ApiResponse.success(exercises.start(IdentityHttp.sessionHash(request), id.toString(), key));
+        @RequestHeader(value = "Idempotency-Key", required = false) String key,
+        @RequestHeader(value = "X-Operation-Credential", required = false) String credential, HttpServletRequest request) {
+        return ApiResponse.success(exercises.start(IdentityHttp.sessionHash(request), id.toString(), key, credential));
     }
 
     @PostMapping("/api/exercises/{id}/preparation-retry")

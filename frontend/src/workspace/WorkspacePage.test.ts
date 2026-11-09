@@ -4,6 +4,9 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import WorkspacePage from './WorkspacePage.vue';
 
+vi.mock('./WorkspaceEditor.vue', () => ({ __esModule: true, default: { props: ['credential'], data: () => ({ draft: '' }),
+  template: '<textarea aria-label="草稿夹具" v-model="draft" :data-can-write="!!credential" />' } }));
+
 const ok = (data: unknown) => new Response(JSON.stringify({ code: 'OK', data }), { status: 200 });
 const rejected = (status: number) => new Response(JSON.stringify({ code: 'RESOURCE_NOT_FOUND', data: null }), { status });
 let page: VueWrapper | undefined;
@@ -131,4 +134,40 @@ it('selects a published version and displays only confirmed workspace files', as
   await flushPromises();
   expect(page.get('pre[data-testid="source"]').text()).toContain('public class CartTotal');
   expect(page.find('textarea').exists()).toBe(false);
+});
+
+it('retains the mounted active editor on background failures and exposes file retry errors', async () => {
+  let offline = false;
+  let controlOffline = false;
+  const view = await render(vi.fn<typeof fetch>(async (input) => {
+    const path = String(input);
+    if (path === '/api/auth/session') return ok({ id: 'owner', username: 'invited', role: 'USER', passwordChangeRequired: false, expiresAt: '2026-12-01T00:00:00Z' });
+    if (path === '/api/problems') return ok([]);
+    if (path === '/api/exercises/current') {
+      if (offline) throw new TypeError('offline');
+      return ok({ exerciseId: 'ex1', problemVersionId: 'v1', workspaceInstanceId: 'ws1', state: 'ACTIVE', revision: '0', paths: ['src/main/java/Main.java'], deadlineAt: null, preparationFailureReason: null, cleanupState: null });
+    }
+    if (path.endsWith('/control') && controlOffline) throw new TypeError('control offline');
+    if (path.endsWith('/control')) return ok({ exerciseId: 'ex1', operationId: null, state: 'SUCCEEDED', generation: '0', held: false, credential: null });
+    if (path.includes('/files?')) return rejected(503);
+    throw new Error('Unexpected request');
+  }));
+  await flushPromises();
+  await view.get('textarea').setValue('unsaved without IndexedDB');
+  await view.get('[data-testid="workspace-file"]').trigger('click');
+  await flushPromises();
+  expect(view.text()).toContain('重试文件读取');
+  controlOffline = true;
+  await client?.invalidateQueries({ queryKey: ['workspace', 'owner', 'control'] });
+  await flushPromises();
+  expect(view.text()).toContain('无法确认操作权，已暂停写入');
+  controlOffline = false;
+  await view.findAll('button').find((button) => button.text() === '刷新查询')!.trigger('click');
+  await flushPromises();
+  expect(view.text()).not.toContain('无法确认操作权，已暂停写入');
+  offline = true;
+  await client?.invalidateQueries({ queryKey: ['workspace', 'owner', 'current'] });
+  await flushPromises();
+  expect(view.get('textarea').element.value).toBe('unsaved without IndexedDB');
+  expect(view.get('textarea').attributes('data-can-write')).toBe('false');
 });

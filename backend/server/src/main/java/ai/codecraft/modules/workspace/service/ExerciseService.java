@@ -25,13 +25,15 @@ public class ExerciseService {
     private final ObjectMapper json;
     private final ProblemService problems;
     private final IdentityTransactionService identity;
+    private final WorkspaceWriteTransactionService writes;
 
-    public ExerciseService(ExerciseTransactionService store, SandboxWorkspaceGateway sandbox, ObjectMapper json, ProblemService problems, IdentityTransactionService identity) {
+    public ExerciseService(ExerciseTransactionService store, SandboxWorkspaceGateway sandbox, ObjectMapper json, ProblemService problems, IdentityTransactionService identity, WorkspaceWriteTransactionService writes) {
         this.store = store;
         this.sandbox = sandbox;
         this.json = json;
         this.problems = problems;
         this.identity = identity;
+        this.writes = writes;
     }
 
     public WorkspaceOperationResponse create(String session, String version, String key) {
@@ -44,15 +46,15 @@ public class ExerciseService {
             String state = revocation.state().equals("FENCED") ? "PENDING" : revocation.state();
             return new WorkspaceOperationResponse(id, null, state, "/api/operations/" + id);
         }
-        return describe(store.operation(session, id));
+        return writes.result(session, id);
     }
     public ExerciseResponse find(String session, String id) { return describe(store.find(session, id)); }
     public ExerciseResponse current(String session) { return describe(store.current(session)); }
 
-    public ExerciseResponse start(String session, String id, String key) {
+    public ExerciseResponse start(String session, String id, String key, String credential) {
         ExerciseEntity exercise = store.find(session, id);
         int duration = problems.describe(exercise.problemVersionId()).durationSeconds();
-        return describe(store.start(session, id, key, duration));
+        return describe(store.start(session, id, key, duration, credential));
     }
 
     public WorkspaceOperationResponse retry(String session, String id, String key) {

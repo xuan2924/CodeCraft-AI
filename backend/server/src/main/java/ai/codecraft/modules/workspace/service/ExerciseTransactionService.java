@@ -25,14 +25,16 @@ public class ExerciseTransactionService {
     private final ProblemTransactionService problems;
     private final Clock clock;
     private final IdentitySecrets secrets;
+    private final WorkspaceCoordinationStore coordination;
 
     public ExerciseTransactionService(ExerciseRepository repository, IdentityTransactionService identity,
-                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets) {
+                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination) {
         this.repository = repository;
         this.identity = identity;
         this.problems = problems;
         this.clock = clock;
         this.secrets = secrets;
+        this.coordination = coordination;
     }
 
     @Transactional
@@ -63,11 +65,12 @@ public class ExerciseTransactionService {
     }
 
     @Transactional
-    public ExerciseEntity start(String session, String id, String key, int durationSeconds) {
+    public ExerciseEntity start(String session, String id, String key, int durationSeconds, String credential) {
         String user = identity.authorizeMutation(session).userId();
         ExerciseEntity exercise = repository.find(id);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
+        coordination.checkControl(id, IdentitySecrets.digest(credential));
         if (repository.receipt(user, "START", id, key) != null) return exercise;
         if (!exercise.state().equals("READY")) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
         Instant started = clock.instant();
@@ -111,6 +114,7 @@ public class ExerciseTransactionService {
         WorkspaceOperationEntity operation = new WorkspaceOperationEntity(UUID.randomUUID().toString(), user, id,
             exercise.workspaceInstanceId(), "ABANDON", id, key, secrets.fingerprint("ABANDON"), "PENDING", clock.instant());
         repository.insertOperation(operation);
+        coordination.fenceForAbandon(id, operation.id());
         return operation;
     }
 
