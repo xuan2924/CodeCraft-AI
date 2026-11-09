@@ -51,3 +51,22 @@
 - #13–#16 未实现：受限题目测试容器、流式日志/停止恢复、冻结与最终验收、删除/保留/跨存储配额。
 - 512 MiB 计量、引用回收、收尾预留、真实 ENOSPC 仍未交付；现有全树复制/累计回执不具备长期生产容量保证。
 - 前端复杂草稿逻辑仍需后续文件生命周期/删除联动组合验收；单场/账号删除不能由普通 404 推导。未运行 race detector。
+
+## 前置门槛复查（基线 `7c3427f`）
+
+本轮尚未修复授权过期问题，也未交付 Java 回执落库前 Kill 用例或 #13–#16。
+
+- 串行执行 `node scripts/test-tracer.mjs --workspace --boundary-only`，前 3 次通过，第 4 次原样复现 `expiredPreparationAuthorityCannotCreateFilesAfterSandboxRecovery`：预期 `PREPARATION_FAILED`，实际 `READY`。因此“两套 tracer 并行”不是复现的必要条件；仍不能据此判断产品逻辑或测试时钟谁有问题。
+- 新增仅用于诊断的单方法筛选：`node scripts/test-tracer.mjs --workspace --boundary-only --workspace-test=expiredPreparationAuthorityCannotCreateFilesAfterSandboxRecovery`。仍启动独立 PostgreSQL 和真实 Go 容器，未替换 RPC、放宽断言或改变 sleep。连续 4 次单方法通过，不代表偶发问题已解决；尚未得到稳定的最小复现。
+- 临时记录 Java 受理时间、持久化授权期限和容器恢复前时间，4 次完整边界运行均通过；这些成功样本不能解释原失败，也未测量 Go 时钟偏差。诊断输出已从源码删除，未改产品逻辑。
+- 另一次重复运行在基础设施启动阶段超出命令预算，未得到测试结果；仅清理了该次自建 Compose 项目 `cc-tracer-37100-5c84a6a3` 的容器、网络和卷，没有清理其他项目。
+- 本地未跟踪证据：`.runtime/prerequisite-boundary.log`、`prerequisite-repeat-{1,2,3}.log`、`prerequisite-isolated-{1,2,3,4}.log`、`prerequisite-instrumented*.log`。日志可能含环境信息，不作为可公开附件。
+
+### 本轮检查与评审
+
+- `node --check scripts/test-tracer.mjs`、`git diff --check` 通过；错误模式、空方法名、含 `=` 的方法名均在启动基础设施前拒绝（3 项 CLI 检查）。
+- `node scripts/verify.mjs` 已执行但未全量通过：脚本契约测试、Maven verify（18 项单元测试，真实集成因环境开关跳过）及 Go 模块校验通过，随后在基线已有的 `internal/workspace/mutation_linux_test.go` gofmt 检查停止。本轮未修改该文件；后续 Go vet/test/race 和 Linux 存储测试未由该命令执行。
+- 单独执行前端 lint、typecheck、test:unit、build 均通过（35 项测试）；仍有既有 Monaco 大块构建警告。本轮未运行浏览器端到端或身份集成。
+- 独立 Standards / Spec 双轴评审对两文件诊断差异未发现缺陷；Spec 明确前置修复和 #13–#16 仍缺失。评审工具只展示启动时 HEAD 差异，主代理另核对 HEAD 正是 `7c3427fd0262756736e989860a8a29aa43d1323a`，差异仅含本记录及筛选脚本。此评审不等于业务验收通过。
+
+下一步需在失败运行同时捕获 Java/Go 的实际时钟、固定派发期限和准备提交时点，区分期限延长、跨运行时时钟偏差及恢复对账路径；不能以更多成功重跑关闭问题。

@@ -14,6 +14,11 @@ const identityMode = process.argv.includes('--identity');
 const workspaceMode = process.argv.includes('--workspace');
 const boundaryOnly = process.argv.includes('--boundary-only');
 if (boundaryOnly && !workspaceMode) throw new Error('--boundary-only requires --workspace');
+const workspaceTestOption = process.argv.find((argument) => argument.startsWith('--workspace-test='));
+const workspaceTest = workspaceTestOption?.slice('--workspace-test='.length);
+if (workspaceTestOption !== undefined && (!boundaryOnly || !/^[A-Za-z][A-Za-z0-9]*$/.test(workspaceTest))) {
+  throw new Error('--workspace-test requires --workspace --boundary-only and one test method name');
+}
 const updatedIdentityPassword = randomBytes(32).toString('hex');
 // Never consumes the development .env, database, volume, or running services.
 const project = `cc-tracer-${process.pid}-${randomBytes(4).toString('hex')}`;
@@ -153,7 +158,8 @@ try {
   if (workspaceMode) {
     compose(['exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB,
       '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE DATABASE workspace_boundary']);
-    maven(['failsafe:integration-test', 'failsafe:verify'], { env: { ...serviceEnv(values, 'java'),
+    maven([...(workspaceTest ? [`-Dit.test=WorkspaceIT#${workspaceTest}`] : []),
+      'failsafe:integration-test', 'failsafe:verify'], { env: { ...serviceEnv(values, 'java'),
       WORKSPACE_IT_RUN: 'disposable', SANDBOX_TEST_CONTAINER: sandboxId(), SPRING_DATASOURCE_URL: `jdbc:postgresql://127.0.0.1:${values.POSTGRES_PORT}/workspace_boundary`,
       SPRING_DATASOURCE_USERNAME: values.POSTGRES_USER, SPRING_DATASOURCE_PASSWORD: values.POSTGRES_PASSWORD } });
   }
