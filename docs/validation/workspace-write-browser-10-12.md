@@ -228,7 +228,7 @@ Standards 与 Spec 两轴并行审查均未发现本切片阻断问题，结论�
 ### 尚待逐项收口
 
 - #10 此处原缺口已由下方“#10 逐票验收收口”补齐；#15 结束冻结与状态转换仍不在 #10 验收范围内。
-- #11 仍需完整对应非法/冲突批次的 REST 组合证据、未决重命名的编辑锁验证；既有 Go 原子失败证据不丢弃也不重复宣称。
+- #11 此处原缺口的补测见下方“#11 逐票验收收口”；既有 Go 原子失败证据保留，另扩展重命名实际子进程故障。
 - #12 登录过期后同账号草稿恢复、账号切换中的延迟草稿回调、冲突采用基线后再次变化、文件切换与 Monaco 资源释放仍须补齐组合证据。当前退出入口是返回工作区保存/丢弃/取消，尚不将它等同直接“保存后退出”的完整验收。
 - #13–#16 尚未开始；本轮修复的真实数据丢失问题属于其前置任务，不用时钟专项风险扩大阻塞。
 
@@ -263,6 +263,30 @@ Standards 与 Spec 两轴并行审查均未发现本切片阻断问题，结论�
 - 独立复核完成：Standards 0 项发现；Spec 0 项发现，原 P1 已解除，并确认 #10 七项验收可全部勾选。Standards 为源码只读审查，Spec 同时核对负对照与最终日志；两者未自行重跑测试。本票已完成验收。
 
 #11–#16 不随 #10 收口而视为完成。正常截止准入与只读拒绝已验证；自动收尾、冻结、最终验收、删除和保留仍按后续票顺序实施。专项时钟异常保护仍按 ADR 0003 排除。
+
+## #11 逐票验收收口（基线 `33be869`）
+
+本票只改测试与验收记录，未改生产逻辑。新验收测试首次即通过，不把正常覆盖写成缺陷红绿修复。Go 测试的子进程故障是明确期望的失败，不是宿主测试失败。
+
+| #11 验收项 | 实际证据 |
+|---|---|
+| 创建/删除/重命名与文件树同步 | 真实浏览器文件操作及 REST `savesAtomicBatchesWithControlAndPersistentReceipts`，每次成功后 UI 与正式路径一致 |
+| 重命名整批推进一次修订 | 上述 REST 新增+删除批次从1到2；浏览器从4到5；Go `TestAtomicRenameAndBatchFailure` |
+| 路径、链接、跨演练、保护与文本边界 | 新增 `unsafePathsAndBinaryContentCannotChangeWorkspaceFiles` 对遍历/绝对/反斜杠路径、NUL内容返回 INVALID_REQUEST，正式原文件和revision不变；既有 pom.xml PATH_FORBIDDEN 与跨用户 exercise 写入404；Go `TestMutationRejectsDamagedOrLinkedSource` 验证符号链接、目录链接、硬链接、FIFO拒绝；无二进制上传入口 |
+| 冲突不得覆盖，同名/缺失明确 | 新增 `failedAndStaleRenameBatchesLeaveTheOriginalTreeIntact`：同名 FILE_EXISTS、缺失 FILE_NOT_FOUND；三项批次失败无半重命名、旧基线 REVISION_CONFLICT 保留最新源内容及revision且目标不存在；#10并发保存及浏览器冲突证据保留 |
+| 未保存文件不得静默丢弃 | 真实浏览器脏文件时重命名/删除禁用且明确先保存或丢弃；组件新增未决重命名成功前源buffer不变、输入和草稿恢复锁定、只查询原operation，确认后才切目标；拒绝后解锁且源buffer/草稿保留 |
+| 故障、丢回执、重启一致性 | 扩展 `TestMutationProcessFailureRecovery` 为 update/rename × lost-response/write-failure：真实 gRPC 子进程发布后退出86，或RLIMIT_FSIZE触发EFBIG暂存失败后退出87；父进程观察传输未知，重建服务只查询/读取，rename成功只有目标+revision1、失败只有源+revision0，无半应用；Java精确崩溃恢复沿用已验证入口 |
+| 浏览器与 Go 故障回归 | 本轮完整 verify Linux工作区测试及 workspace tracer 浏览器通过，非只复用历史结果 |
+
+执行：
+
+- 定向 REST 方法各1项实际执行、无失败/跳过：`.runtime/ticket11-invalid.log`、`ticket11-conflict.log`。
+- 组件单文件两次及 vue-tsc 通过：`.runtime/ticket11-editor.log`、`ticket11-editor-final.log`。
+- Go 故障定向4子场景通过：`.runtime/ticket11-rename-crash.log`。
+- 完整 verify：使用 README 指定的当前终端 CC，脚本/Java18单测/Go本地及race/Linux工作区/前端lint+vue-tsc+42单测+build+audit通过；Windows集成35项明确跳过不计入通过。日志 `.runtime/ticket11-verify.log`。
+- 完整 workspace tracer：20 WorkspaceIT + 1精确JVM崩溃恢复 + 1 StatusIT实际执行、无跳过，浏览器编辑/草稿/文件操作及重启/依赖恢复通过。日志 `.runtime/ticket11-workspace.log`，资源目录 `.runtime/cc-tracer-36288-5f8c3b05`。
+
+不声称覆盖真实 ENOSPC、掉电或目标部署持久卷；本票EFBIG故障明确来自暂存写入。#12完整草稿生命周期及#16跨存储计量/删除仍单独交付。独立评审完成：Standards 0 项发现；Spec 0 项发现且确认七项验收全部满足。Spec 核对执行日志，双方未自行重跑测试。#11 已完成验收。
 
 ## 首期时钟风险取舍（后续确认）
 

@@ -116,6 +116,72 @@ class WorkspaceIT {
     }
 
     @Test
+    void unsafePathsAndBinaryContentCannotChangeWorkspaceFiles() throws Exception {
+        String exercise = readyExercise("invalid-file-batches");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "control", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "start", 200, credential);
+        String path = "src/main/java/interview/CartTotal.java";
+        JsonNode original = request("GET", base + "/files?path=" + path, null, null, 200).path("data");
+        for (String invalidPath : List.of("../outside.java", "src/main/java/../outside.java", "/src/main/java/Absolute.java", "src\\main\\java\\Escape.java")) {
+            Object batch = Map.of("expectedRevision", "0", "changes", List.of(
+                Map.of("path", invalidPath, "kind", "CREATE", "content", "must not be published")));
+            assertThat(request("POST", base + "/file-batches", batch, UUID.randomUUID().toString(), 400, credential)
+                .path("code").asText()).isEqualTo("INVALID_REQUEST");
+        }
+        Object binary = Map.of("expectedRevision", "0", "changes", List.of(
+            Map.of("path", path, "kind", "UPDATE", "content", "binary\u0000content")));
+        assertThat(request("POST", base + "/file-batches", binary, "binary-content", 400, credential)
+            .path("code").asText()).isEqualTo("INVALID_REQUEST");
+        assertThat(request("GET", base + "/files?path=" + path, null, null, 200).path("data")).isEqualTo(original);
+        assertThat(request("GET", base, null, null, 200).path("data").path("revision").asText()).isEqualTo("0");
+    }
+
+    @Test
+    void failedAndStaleRenameBatchesLeaveTheOriginalTreeIntact() throws Exception {
+        String exercise = readyExercise("atomic-file-conflicts");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "control", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "start", 200, credential);
+        String source = "src/main/java/interview/CartTotal.java";
+        String target = "src/main/java/interview/Renamed.java";
+        String missing = "src/test/java/Missing.java";
+        JsonNode original = request("GET", base + "/files?path=" + source, null, null, 200).path("data");
+        String content = original.path("content").asText();
+        Object duplicate = Map.of("expectedRevision", "0", "changes", List.of(
+            Map.of("path", source, "kind", "CREATE", "content", "must not replace source")));
+        assertThat(request("POST", base + "/file-batches", duplicate, "duplicate-file", 409, credential)
+            .path("code").asText()).isEqualTo("FILE_EXISTS");
+        Object absent = Map.of("expectedRevision", "0", "changes", List.of(
+            Map.of("path", missing, "kind", "DELETE", "content", "")));
+        assertThat(request("POST", base + "/file-batches", absent, "missing-file", 404, credential)
+            .path("code").asText()).isEqualTo("FILE_NOT_FOUND");
+        Object partial = Map.of("expectedRevision", "0", "changes", List.of(
+            Map.of("path", source, "kind", "DELETE", "content", ""),
+            Map.of("path", target, "kind", "CREATE", "content", content),
+            Map.of("path", missing, "kind", "DELETE", "content", "")));
+        assertThat(request("POST", base + "/file-batches", partial, "failed-rename", 404, credential)
+            .path("code").asText()).isEqualTo("FILE_NOT_FOUND");
+        assertThat(request("GET", base + "/files?path=" + source, null, null, 200).path("data")).isEqualTo(original);
+        request("GET", base + "/files?path=" + target, null, null, 404);
+        assertThat(request("GET", base, null, null, 200).path("data").path("revision").asText()).isEqualTo("0");
+        Object advance = Map.of("expectedRevision", "0", "changes", List.of(
+            Map.of("path", source, "kind", "UPDATE", "content", content + "\n// newer version\n")));
+        assertThat(request("POST", base + "/file-batches", advance, "advance-baseline", 200, credential)
+            .path("data").path("revision").asText()).isEqualTo("1");
+        Object stale = Map.of("expectedRevision", "0", "changes", List.of(
+            Map.of("path", source, "kind", "DELETE", "content", ""),
+            Map.of("path", target, "kind", "CREATE", "content", content)));
+        assertThat(request("POST", base + "/file-batches", stale, "stale-rename", 409, credential)
+            .path("code").asText()).isEqualTo("REVISION_CONFLICT");
+        JsonNode preserved = request("GET", base + "/files?path=" + source, null, null, 200).path("data");
+        assertThat(preserved.path("content").asText()).isEqualTo(content + "\n// newer version\n");
+        assertThat(preserved.path("revision").asText()).isEqualTo("1");
+        request("GET", base + "/files?path=" + target, null, null, 404);
+        assertThat(request("GET", base, null, null, 200).path("data").path("revision").asText()).isEqualTo("1");
+    }
+
+    @Test
     void concurrentSavesFromOneBaselinePublishExactlyOneVersion() throws Exception {
         String exercise = readyExercise("concurrent-save");
         String base = "/api/exercises/" + exercise;

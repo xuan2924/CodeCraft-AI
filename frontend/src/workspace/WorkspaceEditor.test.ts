@@ -72,6 +72,51 @@ it('locks the affected editor while deletion is unresolved so new typing cannot 
     expect(page.get('textarea').element.readOnly).toBe(true);
   } finally { confirmation.mockRestore(); }
 });
+it('locks a pending rename until its original receipt confirms the new path', async () => {
+  const confirmation = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+  vi.mocked(drafts.listDrafts).mockResolvedValueOnce([{ owner: 'owner', exercise: 'exercise', path: file.path, id: 'other-page', revision: '0', baseContent: 'base', content: 'recoverable draft', updatedAt: 1 }]);
+  vi.mocked(api.save).mockResolvedValueOnce({ exerciseId: 'exercise', operationId: 'rename-operation', state: 'PENDING', revision: null, changed: null, failureCode: null });
+  vi.mocked(api.operation).mockResolvedValueOnce({ exerciseId: 'exercise', operationId: 'rename-operation', state: 'SUCCEEDED', revision: '1', changed: true, failureCode: null });
+  try {
+    const page = render(); await flushPromises();
+    await page.get('#file-destination').setValue('src/main/java/Renamed.java');
+    await page.findAll('button').find((button) => button.text() === '重命名文件')!.trigger('click');
+    await flushPromises();
+    expect(page.get('textarea').element.readOnly).toBe(true);
+    expect(page.get('textarea').element.value).toBe('base');
+    expect(page.findAll('button').find((button) => button.text() === '恢复此草稿')!.attributes('disabled')).toBeDefined();
+    expect(page.emitted('select')).toBeUndefined();
+    expect(drafts.removeDraft).not.toHaveBeenCalled();
+    await page.findAll('button').find((button) => button.text() === '核对原保存')!.trigger('click');
+    await flushPromises();
+    expect(api.save).toHaveBeenCalledTimes(1);
+    expect(api.operation).toHaveBeenCalledWith('rename-operation', expect.any(AbortSignal));
+    expect(page.emitted('select')).toEqual([['src/main/java/Renamed.java']]);
+    expect(page.text()).toContain('已保存到工作区，修订 1');
+  } finally { confirmation.mockRestore(); }
+});
+
+it('preserves the source buffer and unlocks it after a rejected rename receipt', async () => {
+  const confirmation = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+  vi.mocked(api.save).mockResolvedValueOnce({ exerciseId: 'exercise', operationId: 'rename-operation', state: 'PENDING', revision: null, changed: null, failureCode: null });
+  vi.mocked(api.operation).mockResolvedValueOnce({ exerciseId: 'exercise', operationId: 'rename-operation', state: 'REJECTED', revision: null, changed: null, failureCode: 'FILE_EXISTS' });
+  try {
+    const page = render(); await flushPromises();
+    await page.get('#file-destination').setValue('src/main/java/Existing.java');
+    await page.findAll('button').find((button) => button.text() === '重命名文件')!.trigger('click');
+    await flushPromises();
+    expect(page.get('textarea').element.readOnly).toBe(true);
+    await page.findAll('button').find((button) => button.text() === '核对原保存')!.trigger('click');
+    await flushPromises();
+    expect(page.get('textarea').element.readOnly).toBe(false);
+    expect(page.get('textarea').element.value).toBe('base');
+    expect(page.emitted('select')).toBeUndefined();
+    expect(drafts.removeDraft).not.toHaveBeenCalled();
+    expect(api.save).toHaveBeenCalledTimes(1);
+    expect(page.get('[role="alert"]').text()).toContain('已存在');
+  } finally { confirmation.mockRestore(); }
+});
+
 it('cancels the scheduled query when manual reconciliation already confirmed the result', async () => {
   vi.mocked(api.save).mockResolvedValueOnce({ exerciseId: 'exercise', operationId: 'operation', state: 'PENDING', revision: null, changed: null, failureCode: null });
   vi.mocked(api.operation).mockResolvedValue({ exerciseId: 'exercise', operationId: 'operation', state: 'SUCCEEDED', revision: '1', changed: true, failureCode: null });
