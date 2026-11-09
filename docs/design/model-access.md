@@ -7,10 +7,17 @@
 - 提供 DeepSeek、GLM、Kimi、OpenAI 预设；支持用户自定义 Base URL、API Key、模型 ID。
 - 显式选择 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 协议，不静默试探切换协议。供应商与协议不是一对一关系。
 - 用户连接供 Copilot 及摘要使用；平台连接供面试官、评测官使用，配置权和费用归属见 [架构](architecture.md#配置权隐私与费用)。
-- Java 调用供应商。凭证加密存储，解密密钥由部署环境安全注入；不回显完整 Key，不进入日志、模型上下文或 Go 沙箱。
+- Java 调用供应商。凭证加密存储，解密密钥由部署环境安全注入；不回显完整 Key，不进入日志、模型上下文或 Go 沙箱。个人模型连接独立于演练保留，删除演练不删除该连接；Key 不复制进对话、协议消息、工具结果或 Skill 快照。
 - 演练固定地址、协议和模型；允许在演练中验证并替换同一连接的 Key。失败保留旧配置，成功仅对后续请求生效，不自动重放失败请求，不改变代码、对话、审批和倒计时。
 - 同地址不同 Key 可能权限不同，必须验证。Key 不可用只影响 Copilot，用户仍可手动编辑/测试、与面试官交流及获取平台报告。
 - 平台模型/规则按演练固定；允许更换失效凭证，但不因此改变规则或模型版本，见 [Skill 配置](skills.md)。
+
+## 第二阶段交付与验证边界
+
+- [第二阶段规格](../../.scratch/copilot-loop/spec.md)已确认以真实 DeepSeek 非思考模式打通首条读取—审批修改—测试—回复链路，再验收思考模式；两种模式都属于本阶段交付，不以非思考通过代替思考兼容性。
+- 三种协议、四家预设和自定义连接是本阶段结束目标；按官方核验及真实验证声明支持矩阵，不承诺每个供应商支持全部协议。协议、流式工具参数、推理字段、消息回填和 usage 必须结合正式 SDK 核实，发现缺口先请求确认，不静默降级。
+- 真实模型验收显式触发并提示费用，自动回归使用可控替身；替身成功不能声明供应商兼容。首条联调可显式读取环境变量中的 DeepSeek Key，但不能将测试配置变成产品的隐式凭证回退，不能展示或提交秘密。
+- 阶段性入口仍需真实完成模型检查，不冒充完整面试；面试官、评测及平台 Agent 配置留到第三阶段。
 
 ## 实现组织
 
@@ -64,6 +71,7 @@
 文档说明协议存在不等于本项目 SDK 已适配，实现前重新核验：
 
 - [DeepSeek 工具调用](https://api-docs.deepseek.com/guides/tool_calls)
+- [DeepSeek 思考模式](https://api-docs.deepseek.com/guides/thinking_mode)
 - [DeepSeek Responses](https://api-docs.deepseek.com/guides/responses_api)
 - [DeepSeek Anthropic 格式](https://api-docs.deepseek.com/guides/anthropic_api)
 - [OpenAI Responses 迁移](https://platform.openai.com/docs/guides/migrate-to-responses)
