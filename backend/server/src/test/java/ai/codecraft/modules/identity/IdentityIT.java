@@ -88,7 +88,7 @@ class IdentityIT {
         clock.at(START);
         notifications.events.clear();
         notifications.fail = false;
-        jdbc.execute("TRUNCATE identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
+        jdbc.execute("TRUNCATE workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
         store.bootstrap("admin_test", secrets.hash(PASSWORD));
     }
 
@@ -263,7 +263,7 @@ class IdentityIT {
 
     @Test
     void emptyDatabaseBootstrapIsSerializedAndMissingCredentialsFailClosed() {
-        jdbc.execute("TRUNCATE identity_receipt, identity_session, identity_user");
+        jdbc.execute("TRUNCATE workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_user");
         IdentitySettings missing = new IdentitySettings("http://localhost:5173", "01".repeat(32), "", "");
         IdentityBootstrap bootstrap = new IdentityBootstrap(store, secrets, missing);
         assertThatThrownBy(() -> bootstrap.run(new DefaultApplicationArguments()))

@@ -47,8 +47,12 @@ async function submitPassword() {
         CodeCraft / 工程底座
       </p>
       <h1>{{ identity ? '账号' : '受邀账号登录' }}</h1>
-      <p>内部工程验证入口。AI、工作区和完整演练尚未接入。</p>
+      <p>内部工程验证入口。AI 与完整面试流程尚未接入。</p>
       <RouterLink to="/">查看服务链路</RouterLink>
+      <RouterLink
+        v-if="identity && !identity.passwordChangeRequired"
+        :to="{ name: 'workspace' }"
+      >题目与工作区</RouterLink>
     </header>
     <section
       aria-label="账号操作"
@@ -191,7 +195,7 @@ async function submitPassword() {
             </NButton>
           </form>
           <p v-else>
-            账号已就绪。题目与工作区功能尚未接入。
+            账号已就绪，可进入题目与工作区工程底座。
           </p>
           <form
             v-if="identity.role === 'ADMIN'"
@@ -201,7 +205,9 @@ async function submitPassword() {
           >
             <h2>重置账号密码</h2>
             <p>撤销目标全部旧登录并强制改密，不停止演练任务。重置自己会立即退出登录。</p>
-            <p v-if="createdUserId">最近操作的用户标识：{{ createdUserId }}</p>
+            <p v-if="createdUserId">
+              最近操作的用户标识：{{ createdUserId }}
+            </p>
             <label for="reset-target">目标用户标识</label>
             <input
               id="reset-target"

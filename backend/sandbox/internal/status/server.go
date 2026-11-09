@@ -21,7 +21,7 @@ func (service) Check(ctx context.Context, _ *statusv1.CheckRequest) (*statusv1.C
 
 // NewServer creates a bounded gRPC server; the caller owns Serve and Stop.
 func NewServer() *grpc.Server {
-	server := grpc.NewServer(grpc.MaxConcurrentStreams(32), grpc.MaxRecvMsgSize(1024))
+	server := grpc.NewServer(grpc.MaxConcurrentStreams(32), grpc.MaxRecvMsgSize(16*1024))
 	statusv1.RegisterSandboxStatusServer(server, service{})
 	return server
 }

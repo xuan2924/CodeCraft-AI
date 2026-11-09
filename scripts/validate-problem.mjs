@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validatePackage } from './problem-contract.mjs';
+import { publicationInputsSha256, readPublicationInputs } from './publication-inputs.mjs';
 
 const packageDirectory = fileURLToPath(new URL('../problems/cart-total/1.0.0/', import.meta.url));
 const output = fileURLToPath(new URL('../problems/.validation/', import.meta.url));
@@ -153,10 +154,12 @@ exit "$status"`, source);
     const deadline = await run('deadline', 'sleep 60 & wait', null, 2);
     assert(deadline.timedOut && deadline.exitCode === 137 && !deadline.oomKilled);
     assert.equal(docker(['ps', '-aq', '--filter', `label=codecraft.validation=${runId}`]), '');
+    assert.equal((await validatePackage(snapshot)).packageSha256, packageSha256, 'Validation snapshot changed');
     receipt = {
+        publicationInputsSha256: publicationInputsSha256(await readPublicationInputs(snapshot)),
         validatedAt: new Date().toISOString(), packageSha256, imageId,
         platform: limits.platform, limits,
-        environment: { serverVersion: environment.ServerVersion, kernel: environment.KernelVersion,
+        environment: { daemonId: environment.ID, serverVersion: environment.ServerVersion, kernel: environment.KernelVersion,
             cpus: environment.NCPU, memoryBytes: environment.MemTotal, driver: environment.Driver },
         results, verdict: 'local-contract-validation-passed',
     };

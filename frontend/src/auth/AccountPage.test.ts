@@ -17,7 +17,7 @@ async function render(fetcher: typeof fetch) {
   vi.stubGlobal('fetch', fetcher);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   clients.push(client);
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: AccountPage }] });
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: AccountPage }, { path: '/workspace', name: 'workspace', component: { template: '<div />' } }] });
   await router.push('/');
   const page = mount(AccountPage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
   pages.push(page);

@@ -1,0 +1,44 @@
+import { expect, test } from '@playwright/test';
+
+test.skip(process.env.WORKSPACE_E2E !== 'true', 'Use node scripts/test-tracer.mjs --workspace');
+
+test('published problem, persistent read-only files, abandon and authorized start', async ({ page }) => {
+  const username = process.env.IDENTITY_TEST_ADMIN ?? '';
+  const initial = process.env.IDENTITY_TEST_PASSWORD ?? '';
+  const password = process.env.IDENTITY_TEST_NEW_PASSWORD ?? '';
+  await page.goto('/account');
+  await page.getByLabel('账号名', { exact: true }).fill(username);
+  await page.getByLabel('密码', { exact: true }).fill(initial);
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '先修改临时密码' })).toBeVisible();
+  await page.getByLabel('当前密码', { exact: true }).fill(initial);
+  await page.getByLabel('新密码', { exact: true }).fill(password);
+  await page.getByRole('button', { name: '修改密码并重新登录' }).click();
+  await expect(page.getByRole('heading', { name: '受邀账号登录' })).toBeVisible();
+  await page.getByLabel('账号名', { exact: true }).fill(username);
+  await page.getByLabel('密码', { exact: true }).fill(password);
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.getByRole('link', { name: '题目与工作区', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '题目与工作区', exact: true })).toBeVisible();
+  await expect(page.getByText('工程底座：', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '创建独立工作区' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('已准备，仅可浏览', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'src/main/java/interview/CartTotal.java', exact: true }).click();
+  await expect(page.getByTestId('source')).toContainText('class CartTotal');
+  await expect(page.locator('textarea')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByText('已准备，仅可浏览', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'src/main/java/interview/CartTotal.java', exact: true }).click();
+  await expect(page.getByTestId('source')).toContainText('class CartTotal');
+  await page.setViewportSize({ width: 375, height: 720 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole('button', { name: '放弃本次演练' }).click();
+  await expect(page.getByRole('button', { name: '创建独立工作区' })).toBeVisible();
+  await page.getByRole('button', { name: '创建独立工作区' }).click();
+  await expect(page.getByText('已准备，仅可浏览', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '确认开始计时' }).click();
+  await expect(page.getByText('已开始，当前版本仍仅支持浏览', { exact: false })).toBeVisible();
+  await expect(page.getByText('服务器截止时间：', { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+});

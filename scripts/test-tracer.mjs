@@ -11,6 +11,7 @@ import { serviceEnv } from './local-config.mjs';
 import { buildSandboxImage } from './build-sandbox.mjs';
 
 const identityMode = process.argv.includes('--identity');
+const workspaceMode = process.argv.includes('--workspace');
 const updatedIdentityPassword = randomBytes(32).toString('hex');
 // Never consumes the development .env, database, volume, or running services.
 const project = `cc-tracer-${process.pid}-${randomBytes(4).toString('hex')}`;
@@ -29,6 +30,8 @@ const values = {
   POSTGRES_PASSWORD: randomBytes(32).toString('hex'),
   BOOTSTRAP_ADMIN_USERNAME: 'tracer_admin', BOOTSTRAP_ADMIN_PASSWORD: randomBytes(32).toString('hex'),
   IDENTITY_FINGERPRINT_KEY: randomBytes(32).toString('hex'),
+  ...(workspaceMode ? { SANDBOX_RPC_KEY: randomBytes(32).toString('hex'),
+    PROBLEM_PUBLICATION_FILE: join(root, '.runtime', 'problem-publication.json') } : {}),
   POSTGRES_PORT: await reservePort(), JAVA_PORT: await reservePort(),
   SANDBOX_PORT: await reservePort(), WEB_PORT: await reservePort(),
 };
@@ -87,7 +90,7 @@ async function waitFor(url, expectedStatus, child) {
   throw new Error(`Readiness timed out; inspect ${directory}`);
 }
 const javaUrl = `http://127.0.0.1:${values.JAVA_PORT}`;
-const webUrl = `http://${identityMode ? 'localhost' : '127.0.0.1'}:${values.WEB_PORT}`;
+const webUrl = `http://${identityMode || workspaceMode ? 'localhost' : '127.0.0.1'}:${values.WEB_PORT}`;
 function sandbox() {
   const child = start('sandbox', 'docker', [...composeArgs, 'up', '--no-deps', 'sandbox'], composeEnv);
   child.sandboxContainer = true;
@@ -128,9 +131,10 @@ function inspectSandbox() {
   return id;
 }
 let failure;
+let workspaceProbe;
 try {
   run('docker', ['info'], { stdio: 'ignore' });
-  composeEnv.SANDBOX_IMAGE = await buildSandboxImage();
+  composeEnv.SANDBOX_IMAGE = await buildSandboxImage(values.PROBLEM_PUBLICATION_FILE);
   composeEnv.SANDBOX_PORT = values.SANDBOX_PORT;
   // Fail fast if built artifacts or matching browser are missing; see README setup.
   compose(['up', '-d', '--wait', 'postgres']);
@@ -144,6 +148,13 @@ try {
   let goProcess = sandbox();
   let javaProcess = java();
   await waitFor(`${javaUrl}/api/internal/status`, 200, javaProcess);
+  if (workspaceMode) {
+    compose(['exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB,
+      '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE DATABASE workspace_boundary']);
+    maven(['failsafe:integration-test', 'failsafe:verify'], { env: { ...serviceEnv(values, 'java'),
+      WORKSPACE_IT_RUN: 'disposable', SANDBOX_TEST_CONTAINER: sandboxId(), SPRING_DATASOURCE_URL: `jdbc:postgresql://127.0.0.1:${values.POSTGRES_PORT}/workspace_boundary`,
+      SPRING_DATASOURCE_USERNAME: values.POSTGRES_USER, SPRING_DATASOURCE_PASSWORD: values.POSTGRES_PASSWORD } });
+  }
   const initialSandbox = inspectSandbox();
   const marker = join(directory, 'volume-marker.txt');
   await writeFile(marker, project);
@@ -156,6 +167,36 @@ try {
   await waitFor(webUrl, 200, webProcess);
   console.log('Browser: all dependencies available');
   browser();
+  if (workspaceMode) {
+    run(process.execPath, [join(root, 'frontend/node_modules/@playwright/test/cli.js'), 'test', 'workspace.spec.ts'], {
+      cwd: join(root, 'frontend'),
+      env: { ...serviceEnv(values, 'web'), TRACER_WEB_URL: webUrl, WORKSPACE_E2E: 'true', IDENTITY_E2E: 'true',
+        IDENTITY_TEST_ADMIN: values.BOOTSTRAP_ADMIN_USERNAME, IDENTITY_TEST_PASSWORD: values.BOOTSTRAP_ADMIN_PASSWORD,
+        IDENTITY_TEST_NEW_PASSWORD: updatedIdentityPassword },
+    });
+    const csrfResponse = await fetch(`${webUrl}/api/auth/csrf`);
+    const csrfBody = await csrfResponse.json();
+    const anonymousCookie = csrfResponse.headers.getSetCookie().map((value) => value.split(';')[0]).join('; ');
+    const loginResponse = await fetch(`${webUrl}/api/auth/login`, { method: 'POST',
+      headers: { Origin: webUrl, Cookie: anonymousCookie, 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfBody.data.token },
+      body: JSON.stringify({ username: values.BOOTSTRAP_ADMIN_USERNAME, password: updatedIdentityPassword }) });
+    assert.equal(loginResponse.status, 200, 'Workspace restart probe authentication failed');
+    const cookie = loginResponse.headers.getSetCookie().find((value) => value.startsWith('codecraft_session='))?.split(';')[0];
+    assert(cookie, 'Workspace restart probe session missing');
+    const snapshotResponse = await fetch(`${webUrl}/api/exercises/current`, { headers: { Cookie: cookie } });
+    assert.equal(snapshotResponse.status, 200);
+    const snapshot = (await snapshotResponse.json()).data;
+    workspaceProbe = async () => {
+      const response = await fetch(`${webUrl}/api/exercises/${snapshot.exerciseId}/files?path=src/main/java/interview/CartTotal.java`,
+        { headers: { Cookie: cookie }, signal: AbortSignal.timeout(10000) });
+      assert.equal(response.status, 200, 'Workspace file must remain readable after restart');
+      const file = (await response.json()).data;
+      assert.equal(file.workspaceInstanceId, snapshot.workspaceInstanceId);
+      assert.equal(file.revision, '0');
+      assert(file.content.includes('class CartTotal'));
+    };
+    await workspaceProbe();
+  }
   if (identityMode) {
     const csrfResponse = await fetch(`${webUrl}/api/auth/csrf`);
     const csrfBody = await csrfResponse.json();
@@ -188,6 +229,10 @@ try {
   run('docker', ['cp', `${recreatedSandbox}:/var/lib/codecraft/volume-marker.txt`, recoveredMarker]);
   assert.equal(await readFile(recoveredMarker, 'utf8'), project);
   console.log('Sandbox: Linux ownership checks and persistent volume survived container recreation');
+  if (workspaceProbe) {
+    await workspaceProbe();
+    console.log('Workspace: same instance and file survived Go container recreation');
+  }
   compose(['stop', 'postgres']);
   await waitFor(`${javaUrl}/api/internal/status`, 503, javaProcess);
   console.log('Browser: database stopped');
@@ -197,6 +242,10 @@ try {
   await stop(javaProcess);
   javaProcess = java();
   await waitFor(`${javaUrl}/api/internal/status`, 200, javaProcess);
+  if (workspaceProbe) {
+    await workspaceProbe();
+    console.log('Workspace: same instance and file survived Java restart');
+  }
   console.log('Browser: restart and migration revalidation');
   browser();
   await stop(javaProcess);

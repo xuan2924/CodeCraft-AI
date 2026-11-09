@@ -95,7 +95,10 @@ public class IdentitySecurity {
                 String path = request.getServletPath();
                 if (!List.of("/api/internal/status", "/api/auth/csrf", "/api/auth/login", "/api/auth/logout", "/error").contains(path)) {
                     AuthenticatedIdentityDTO auth = store.authenticate(IdentityHttp.sessionHash(request));
-                    if (auth.user().passwordChangeRequired()
+                    boolean ownRevocation = auth.user().passwordChangeRequired() && request.getMethod().equals("GET")
+                        && path.matches("/api/operations/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
+                        && store.revocation(IdentityHttp.sessionHash(request), path.substring("/api/operations/".length())) != null;
+                    if (auth.user().passwordChangeRequired() && !ownRevocation
                         && !List.of("/api/auth/session", "/api/auth/password").contains(path)) {
                         throw new IdentityFailure(IdentityErrorCode.PASSWORD_CHANGE_REQUIRED);
                     }

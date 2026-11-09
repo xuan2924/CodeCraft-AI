@@ -19,7 +19,8 @@ switch (service) {
   case 'sandbox':
     run('docker', ['compose', 'up', '--no-deps', 'sandbox'], {
       env: { ...serviceEnv(values, 'postgres'), SANDBOX_PORT: values.SANDBOX_PORT,
-        SANDBOX_IMAGE: await buildSandboxImage() },
+        SANDBOX_RPC_KEY: values.SANDBOX_RPC_KEY ?? '',
+        SANDBOX_IMAGE: await buildSandboxImage(values.PROBLEM_PUBLICATION_FILE) },
     });
     break;
   case 'web':

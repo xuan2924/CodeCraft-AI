@@ -48,7 +48,13 @@ func run(containerMode bool) error {
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
+	defer listener.Close()
 	server := status.NewServer()
+	if containerMode {
+		if err := registerWorkspace(server, os.Getenv("SANDBOX_RPC_KEY")); err != nil {
+			return err
+		}
+	}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)

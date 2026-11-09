@@ -49,7 +49,7 @@ test('invitation, mandatory password change, administrator reset and old-browser
     await expect(userPage.getByRole('heading', { name: '受邀账号登录' })).toBeVisible();
     await userPage.getByLabel('密码', { exact: true }).fill('😀'.repeat(8));
     await userPage.getByRole('button', { name: '登录', exact: true }).click();
-    await expect(userPage.getByText('账号已就绪。题目与工作区功能尚未接入。')).toBeVisible();
+    await expect(userPage.getByText('账号已就绪，可进入题目与工作区工程底座。')).toBeVisible();
     await expect(userPage.getByRole('heading', { name: '重置账号密码' })).toHaveCount(0);
     expect((await userContext.cookies()).some((cookie) => cookie.name === 'codecraft_session'
       && cookie.httpOnly && cookie.sameSite === 'Lax')).toBe(true);

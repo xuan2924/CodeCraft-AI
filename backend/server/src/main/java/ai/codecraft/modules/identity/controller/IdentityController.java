@@ -63,7 +63,7 @@ public class IdentityController {
 
     @PostMapping("/api/auth/logout")
     public ResponseEntity<Void> logout(HttpServletRequest request, HttpServletResponse response) {
-        store.logout(IdentityHttp.sessionHash(request), IdentityHttp.anonymousHash(request));
+        service.logout(IdentityHttp.sessionHash(request), IdentityHttp.anonymousHash(request));
         clearCookies(response);
         return ResponseEntity.noContent().build();
     }

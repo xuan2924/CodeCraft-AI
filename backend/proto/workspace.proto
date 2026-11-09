@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package codecraft.workspace.v1;
+option java_package = "ai.codecraft.workspace.v1";
+option java_multiple_files = true;
+option go_package = "codecraft.local/sandbox/internal/gen;statusv1";
+
+// Trusted Java-to-Go calls only. Public browser authorization belongs to Java.
+service WorkspaceStorage {
+  rpc PrepareWorkspace(PrepareWorkspaceRequest) returns (WorkspaceSnapshot);
+  rpc QueryWorkspace(QueryWorkspaceRequest) returns (WorkspaceSnapshot);
+  rpc ReadWorkspaceFile(ReadWorkspaceFileRequest) returns (ReadWorkspaceFileResponse);
+  rpc CancelPreparation(CancelPreparationRequest) returns (WorkspaceSnapshot);
+  rpc CloseGate(CloseGateRequest) returns (GateResponse);
+  rpc QueryGate(QueryWorkspaceRequest) returns (GateResponse);
+}
+
+message ProblemIdentity {
+  string problem_id = 1;
+  string version = 2;
+  string package_sha256 = 3;
+  string execution_image_digest = 4;
+  string platform = 5;
+}
+message PrepareWorkspaceRequest {
+  string workspace_instance_id = 1;
+  string operation_id = 2;
+  ProblemIdentity problem = 3;
+  // Conservative initiating-session deadline; Java also rechecks authoritative identity state.
+  int64 not_after_unix_millis = 4;
+}
+message QueryWorkspaceRequest { string workspace_instance_id = 1; }
+message ReadWorkspaceFileRequest {
+  string workspace_instance_id = 1;
+  string path = 2;
+  uint64 expected_revision = 3;
+}
+message ReadWorkspaceFileResponse {
+  string workspace_instance_id = 1;
+  uint64 revision = 2;
+  string path = 3;
+  string content = 4;
+}
+message CancelPreparationRequest {
+  string workspace_instance_id = 1;
+  string operation_id = 2;
+}
+message CloseGateRequest {
+  string workspace_instance_id = 1;
+  string transition_id = 2;
+  uint64 expected_epoch = 3;
+}
+message GateResponse {
+  string workspace_instance_id = 1;
+  string transition_id = 2;
+  uint64 epoch = 3;
+  string state = 4;
+}
+message WorkspaceSnapshot {
+  string workspace_instance_id = 1;
+  string operation_id = 2;
+  ProblemIdentity problem = 3;
+  uint64 revision = 4;
+  bool prepared = 5;
+  bool cancelled = 6;
+  repeated string paths = 7;
+}

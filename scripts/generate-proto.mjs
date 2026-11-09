@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { root, run, maven, windows } from './process.mjs';
 
@@ -35,6 +35,7 @@ run(protoc, [
   `--plugin=protoc-gen-go-grpc=${join(tools, `protoc-gen-go-grpc${windows ? '.exe' : ''}`)}`,
   `--go_out=${output}`, '--go_opt=paths=source_relative',
   `--go-grpc_out=${output}`, '--go-grpc_opt=paths=source_relative',
-  join(root, 'backend/proto/status.proto'),
+  ...(await readdir(join(root, 'backend/proto'))).filter((name) => name.endsWith('.proto')).sort()
+    .map((name) => join(root, 'backend/proto', name)),
 ]);
 maven(['generate-sources']);

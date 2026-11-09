@@ -1,6 +1,6 @@
 # CodeCraft-AI
 
-AI 结对编程面试平台。目前正式工程提供 **本机内部服务链路检查与受邀账号闭环**：浏览器 → Java → PostgreSQL / Go，以及管理员初始化、强制改密、创建账号、密码重置、登录和退出。AI、工作区及沙箱执行尚未接入；Go 在线不代表 Docker 或执行环境已就绪。
+AI 结对编程面试平台。目前提供 **本机工程底座**：服务状态、受邀账号闭环，以及经过验证的首题发布、独立工作区准备/只读浏览、开始与准备放弃。编辑、测试任务、AI 和完整面试流程尚未接入；Go 在线不代表执行环境已就绪。
 
 ## 环境
 
@@ -8,7 +8,7 @@ AI 结对编程面试平台。目前正式工程提供 **本机内部服务链�
 - Maven **3.9.15** 由已提交 Wrapper 下载并校验，不要求全局 Maven。
 - Docker Engine / Docker Desktop（Linux containers）及 Docker Compose；无需安装 PostgreSQL。
 - 自动生成入口支持 Windows x64、Linux x64。其他平台须先核对 protoc 二进制和 SHA-256，不从 PATH 随意选用 protoc。
-- 全部下载发生在开发/构建阶段；本票不运行题目代码。
+- 全部下载发生在开发/构建阶段；维护者发布验证会运行首题代码，浏览器工作区尚不提供执行入口。
 
 ## 初始化与本地启动
 
@@ -43,7 +43,7 @@ node scripts/dev.mjs web
 
 访问 **http://localhost:5173**（若修改 `WEB_PORT`，使用对应端口）。浏览器只通过 Vite 代理访问 Java。Java、Vite 及 Go/PostgreSQL 的宿主映射端口均绑定 `127.0.0.1`，**不得改为公网/局域网入口或为其配置公开反向代理**。此页面免登录的前提仅是本机可信联调，不是未来产品鉴权方案。
 
-- Go 启动脚本构建 Linux 静态二进制与本地镜像，通过 Compose 启动非 root 服务。私有数据使用 `sandbox-data` 具名卷；新容器可重新挂载，进程锁拒绝同时启动第二个存储所有者。当前仍只有在线查询，不代表工作区业务已经交付。
+- Go 启动脚本构建 Linux 静态二进制与本地镜像，通过 Compose 启动非 root 服务。私有数据使用 `sandbox-data` 具名卷；新容器可重新挂载，进程锁拒绝同时启动第二个存储所有者。未配置题目发布产物时仅提供在线查询；配置后提供初始工作区存储，不宣称测试执行服务已交付。
 - 启动脚本显式读取根目录 `.env`，只按服务传递白名单键；前端与 Go 不接收数据库/管理员凭证，不打印配置值。Spring Boot、Go 本身不会自动读取 `.env`。
 - Java 启动时 Flyway 在空库创建 `codecraft` schema；重复启动校验已发布迁移。数据库不可达、迁移失败或校验失败会阻止启动。不 baseline、clean 或忽略校验。
 - 状态查询通过 MyBatis 实际检查数据库中的 schema，并通过有 1 秒 deadline 的真实 gRPC 检查 Go。数据库查询/连接也有超时；无后台自动重试。
@@ -53,6 +53,16 @@ node scripts/dev.mjs web
 - HMAC 密钥应在本机用安全随机生成器生成并直接写入未跟踪 `.env`，不要粘贴到对话、提交或命令参数。公开部署尚未验收；HTTPS 源配置会强制 Secure Cookie，但不能因此把本机状态接口暴露到公网。
 - 停止应用使用各终端 Ctrl+C；数据库使用 `docker compose stop postgres`。开发数据使用具名卷保留；**不要执行 `down -v` 来修复启动问题**。改变 `.env` 密码不会自动改变已有卷中的数据库密码。
 - 单独执行 `./mvnw spring-boot:run`（Windows `./mvnw.cmd`）需自行显式提供环境变量。原生 `go run ./cmd/sandbox` 仅保留在线查询兼容入口；工作区运行方式固定为上述 Linux 容器，不将 Windows 文件系统当作原子发布后端。
+
+## 本机首题发布与工作区
+
+维护者执行 `node scripts/publish-problem.mjs`：重新验证 `problems/cart-total/1.0.0` 的初始工程、参考解及容器约束，再生成未跟踪的 `.runtime/problem-publication.json`。产物绑定输入摘要、Docker daemon 和不可变本地镜像 ID，不是跨主机镜像发布或签名分发方案。
+
+在未跟踪 `.env` 中按 `.env.example` 设置 `PROBLEM_PUBLICATION_FILE` 和随机 `SANDBOX_RPC_KEY`，重新启动 Go/Java。密钥只用于内部 RPC，不打印或发送给浏览器。发布产物不能手工改内容后沿用旧验证回执；修改题目需重新验证、发布新版本。
+
+登录并完成强制改密后访问 `/workspace`：选题、等待准备、查看需求与只读文件；开始时由服务器固定截止时间。准备失败可用新实例重试或放弃，READY 也可放弃。开始后的收尾留给后续任务，不伪造 AI 检查、编辑或测试成功。
+
+密码重置、改密或退出遇到未确认准备时，先持久化撤销意图、关闭新副作用准入，再在数据库事务外确认 Go 栅栏。Go 不可用返回 202 和可查询操作；页面提示尚未完成，使用原操作重试，不自动重放密码请求。已完成文件保留；过期准备不再发布新文件。
 
 ## 验证
 
@@ -86,7 +96,7 @@ npm run build
 node scripts/verify.mjs
 ```
 
-执行已有题目脚本测试、Java `verify`（Checkstyle、lint 编译、JUnit、Failsafe）、Go 格式/vet/普通测试/race/构建、Vue lint/类型/组件测试/生产构建及 npm audit。独立运行 Java `verify` 时 `StatusIT`、`IdentityIT` **明确跳过**；真实依赖集成必须运行下一节，不能将跳过称为通过。历史一次性 `backend/prototypes/` 不属于正式套件。
+执行已有题目脚本测试、Java `verify`（Checkstyle、lint 编译、JUnit、Failsafe）、Go 格式/vet/普通测试/race/构建、Vue lint/类型/组件测试/生产构建及 npm audit。独立运行 Java `verify` 时 `StatusIT`、`IdentityIT`、`WorkspaceIT` **明确跳过**；真实依赖集成必须运行下一节，不能将跳过称为通过。历史一次性 `backend/prototypes/` 不属于正式套件。
 
 **Windows race 准备**：按 [工具链设计](docs/design/engineering-toolchain.md#windows-race-的-c-工具链) 下载 LLVM-MinGW **20261104 UCRT x86_64**，验证 ZIP SHA-256 为 `552191b5754c49a5a20723276a6fc56541ea1922c4c50b7b669022333fc1b40f`，解压到自己的工具目录。只为当前终端设置：
 
@@ -109,6 +119,8 @@ cd ..
 node scripts/test-tracer.mjs
 # 账号 REST/PostgreSQL 边界、真实浏览器闭环及会话跨重启
 node scripts/test-tracer.mjs --identity
+# 工作区 REST、真实浏览器、Go/Java 重启、撤销及故障恢复
+node scripts/test-tracer.mjs --workspace
 ```
 
 该脚本不读取开发 `.env`：生成随机凭证、独立 Compose 项目/具名卷和独立端口，启动实际进程及 **Vite preview 的生产构建**，执行 Java Failsafe 集成测试及 Playwright：
@@ -122,7 +134,7 @@ node scripts/test-tracer.mjs --identity
 
 脚本还检查 Go 非 root、只读根、私有具名卷、宿主 loopback 端口与无数据库/管理员凭证。浏览器同时检查响应形状、HTTP 200/503、`no-store`、键盘重试和窄屏。没有替换浏览器 API。清理仅针对该次随机项目的进程、容器和卷；删除临时凭证文件，日志保存在忽略的 `.runtime/`。Docker/浏览器/依赖缺失均非零失败，不能算作通过。若终端被强制关闭，检查 `.runtime/cc-tracer-*` 对应的测试项目并只清理该项目，勿清理开发资源。
 
-`--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器实际完成管理员改密、创建用户、用户改密、越权拒绝和退出，并验证 Java 重启后数据库会话仍可用。该模式禁用 trace、截图和视频，避免记录一次性凭证。两个模式顺序运行（Maven/Playwright 的输出目录共用），不能把跳过的测试算作通过。
+`--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器实际完成管理员改密、创建用户、用户改密、越权拒绝和退出，并验证 Java 重启后数据库会话仍可用。该模式禁用 trace、截图和视频，避免记录一次性凭证。各模式顺序运行（Maven/Playwright 的输出目录共用），不能把跳过的测试算作通过。`--workspace` 还覆盖选题/准备/只读浏览/开始/放弃、跨用户拒绝、Go 暂停期间的撤销与授权过期，以及 16 个损坏清理实例不阻塞新准备。验证边界见 [#09 记录](docs/validation/problem-workspace-09.md)。
 
 已有独立服务时，可在 `frontend/` 设置 `TRACER_WEB_URL=http://127.0.0.1:<端口>` 后执行 `npm run test:e2e -- e2e/status.spec.ts`；默认断言两项依赖可用。普通 `npm run test:e2e` 不会偷偷启动假服务。
 

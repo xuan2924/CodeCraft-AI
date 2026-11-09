@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { root } from './process.mjs';
 
 const defaults = {
@@ -7,7 +7,7 @@ const defaults = {
   SANDBOX_PORT: '9090', WEB_PORT: '5173',
 };
 const allowed = new Set([...Object.keys(defaults), 'POSTGRES_USER', 'POSTGRES_PASSWORD',
-  'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN']);
+  'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN', 'SANDBOX_RPC_KEY', 'PROBLEM_PUBLICATION_FILE']);
 
 // Deliberately a literal subset, not a shell/dotenv evaluator. Never log values.
 export function parseConfig(text) {
@@ -45,19 +45,25 @@ export function parseConfig(text) {
   if (new Set(['POSTGRES_PORT', 'JAVA_PORT', 'SANDBOX_PORT', 'WEB_PORT'].map((key) => Number(values[key]))).size !== 4) {
     throw new Error('Service ports must be distinct');
   }
+  if (values.PROBLEM_PUBLICATION_FILE && !/^[0-9a-f]{64}$/.test(values.SANDBOX_RPC_KEY ?? '')) {
+    throw new Error('Published workspaces require a 32-byte lowercase hex SANDBOX_RPC_KEY');
+  }
   return values;
 }
 
 export async function loadConfig() {
-  return parseConfig(await readFile(join(root, '.env'), 'utf8'));
+  const values = parseConfig(await readFile(join(root, '.env'), 'utf8'));
+  if (values.PROBLEM_PUBLICATION_FILE) values.PROBLEM_PUBLICATION_FILE = resolve(root, values.PROBLEM_PUBLICATION_FILE);
+  return values;
 }
 
 // Only these .env values reach each service. Frontend never receives DB/admin secrets.
 export function serviceEnv(values, service) {
   const keys = {
     java: ['POSTGRES_DB', 'POSTGRES_PORT', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'JAVA_PORT', 'SANDBOX_PORT',
-      'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN'],
-    sandbox: ['SANDBOX_PORT'], web: ['JAVA_PORT', 'WEB_PORT'],
+      'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN',
+      'SANDBOX_RPC_KEY', 'PROBLEM_PUBLICATION_FILE'],
+    sandbox: ['SANDBOX_PORT', 'SANDBOX_RPC_KEY'], web: ['JAVA_PORT', 'WEB_PORT'],
     postgres: ['POSTGRES_DB', 'POSTGRES_PORT', 'POSTGRES_USER', 'POSTGRES_PASSWORD'],
   }[service];
   if (!keys) throw new Error('Unknown service');

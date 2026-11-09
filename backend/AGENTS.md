@@ -14,8 +14,10 @@
 
 ### 分层与命名
 
-- 业务模块集中在 `ai.codecraft.modules`，模块内按实际职责建立 `config`、`controller`、`service`、`repository`/`mapper`、`model`、`security`；启动类留在根包，测试包对应被测模块。按需建包，不预建空层或为单一实现机械增加接口。
+- 业务模块集中在 `ai.codecraft.modules`，先按业务归属聚集代码，再按实际职责分层；启动类留在根包，测试包对应被测模块。按需建包。
 - Controller 负责 HTTP 路由、参数校验及协议转换，委托 Service 执行业务；Service 编排业务、授权与事务；Repository/Mapper 只做数据访问。依赖沿此方向流动，Controller 不直接访问数据层或返回 Entity。
+- Service 与内部协作者默认使用具体类。出现多实现替换需求，或调用方确需隔离实现细节的稳定契约时，再提取接口；拆分前说明具体需求，跨模块调用本身不要求增加 `Impl`。接口只声明调用方需要的业务能力，不依赖 Controller 类型。
+- 复杂校验、解析和 RPC 适配由职责明确的协作者承担，按用途命名；职责拆分与接口提取分别判断。
 - 数据访问沿用 MyBatis；SQL Mapper 本身可作为 Repository 接口，不叠加纯透传包装。对象转换使用显式字段映射，重复转换再提取专用 mapper；引入 JPA、MapStruct、Lombok 或其他依赖前先说明理由并确认。
 - 请求/响应命名为 `XxxRequest` / `XxxResponse`，跨层内部数据为 `XxxDTO`，持久化模型为 `XxxEntity`；不可变载体优先 `record`，放在模块 `model` 的对应子包，不嵌入 Controller、Service 或 Mapper。携带凭证的类型隐藏 `toString()` 中的秘密。
 - `common` 承载通用契约、配置、异常和响应；`infrastructure` 按需承载跨模块复用的技术适配，两者均不反向依赖 `modules`。业务专属配置、安全策略、数据访问与适配器留在模块内；模块错误码与通用异常基类分开。
@@ -28,7 +30,7 @@
 - 业务失败使用 `BusinessException` 及模块错误码（可有模块子类），已有业务异常原样传播；技术异常转换时保留原因链。HTTP 异常在边界统一映射为约定的错误状态码与响应结构，响应不含内部堆栈。
 - 日志使用 SLF4J 参数化消息，异常对象放最后一个参数并在处理边界记录一次。可能携带密码、Cookie 或 SQL 敏感行的异常只记录脱敏类型与安全上下文，不输出原始异常消息。
 - 资源使用 try-with-resources 或明确的 finally 清理；finally 不返回结果或掩盖原异常。
-- `@Transactional` 只放 Service 的 public 方法，通过 Spring 代理调用；需要独立事务时拆分 Service，避免同类自调用失效。只读查询使用 `readOnly = true`；明确并测试回滚规则，事务内不调用模型、对象存储、外部 HTTP 或执行耗时解析。
+- `@Transactional` 只放 Service 的 public 方法，通过 Spring 代理调用；需要独立事务时拆分 Service，避免同类自调用失效。只读查询使用 `readOnly = true`；明确并测试回滚规则，事务内不调用模型、对象存储、外部 HTTP/gRPC 或执行耗时解析。
 - 共享可变状态明确同步策略；线程池显式配置 `ThreadPoolExecutor` 的容量、有界队列、拒绝与关闭策略，外部资源并发也设上限。采用虚拟线程也不省略资源限流。
 - 捕获 `InterruptedException` 后向上传递或恢复中断标记并退出当前操作；自行设置的 ThreadLocal 在作用域结束时清理。
 

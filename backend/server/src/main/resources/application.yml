@@ -31,6 +31,10 @@ mybatis:
   configuration:
     default-statement-timeout: 2
     local-cache-scope: STATEMENT
+workspace:
+  sandbox-port: ${SANDBOX_PORT:9090}
+  publication-file: ${PROBLEM_PUBLICATION_FILE:}
+  rpc-key: ${SANDBOX_RPC_KEY:}
 tracer:
   sandbox-port: ${SANDBOX_PORT:9090}
 identity:

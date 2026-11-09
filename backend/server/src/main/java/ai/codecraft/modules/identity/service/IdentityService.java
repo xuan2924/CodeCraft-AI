@@ -15,10 +15,12 @@ import org.springframework.stereotype.Service;
 public final class IdentityService {
     private final IdentityTransactionService store;
     private final IdentitySecrets secrets;
+    private final IdentityRevocationCoordinator revocations;
 
-    public IdentityService(IdentityTransactionService store, IdentitySecrets secrets) {
+    public IdentityService(IdentityTransactionService store, IdentitySecrets secrets, IdentityRevocationCoordinator revocations) {
         this.store = store;
         this.secrets = secrets;
+        this.revocations = revocations;
     }
 
     public LoginResultDTO login(String usernameInput, String password, String address, String anonymousHash,
@@ -49,8 +51,9 @@ public final class IdentityService {
         if (!secrets.matches(currentPassword, auth.user().passwordHash())) {
             throw new IdentityFailure(IdentityErrorCode.INVALID_CURRENT_PASSWORD);
         }
-        store.changePassword(sessionHash, auth.user(), secrets.hash(newPassword), key,
-            secrets.fingerprint(currentPassword, newPassword));
+        String fingerprint = secrets.fingerprint(currentPassword, newPassword);
+        revocations.prepare(sessionHash, auth.user().id(), "CHANGE_PASSWORD", key, fingerprint);
+        store.changePassword(sessionHash, auth.user(), secrets.hash(newPassword), key, fingerprint);
     }
 
     public CreatedAccountResponse createUser(String sessionHash, String usernameInput, String key) {
@@ -65,9 +68,22 @@ public final class IdentityService {
         AuthenticatedIdentityDTO auth = store.authenticate(sessionHash);
         if (auth.user().passwordChangeRequired()) throw new IdentityFailure(IdentityErrorCode.PASSWORD_CHANGE_REQUIRED);
         if (!"ADMIN".equals(auth.user().role())) throw new IdentityFailure(IdentityErrorCode.FORBIDDEN);
+        String fingerprint = secrets.fingerprint("RESET_PASSWORD", targetId);
+        revocations.prepare(sessionHash, targetId, "RESET_PASSWORD", key, fingerprint);
         String password = secrets.token();
-        return store.resetPassword(sessionHash, targetId, password, secrets.hash(password), key,
-            secrets.fingerprint("RESET_PASSWORD", targetId));
+        return store.resetPassword(sessionHash, targetId, password, secrets.hash(password), key, fingerprint);
+    }
+
+    public void logout(String sessionHash, String anonymousHash) {
+        if (sessionHash != null) {
+            try {
+                store.authenticate(sessionHash);
+                revocations.prepare(sessionHash, null, "LOGOUT", sessionHash, secrets.fingerprint("LOGOUT", sessionHash));
+            } catch (IdentityFailure failure) {
+                if (failure.errorCode() != IdentityErrorCode.UNAUTHENTICATED) throw failure;
+            }
+        }
+        store.logout(sessionHash, anonymousHash);
     }
 
     private void rate(String action, String account, String address) {

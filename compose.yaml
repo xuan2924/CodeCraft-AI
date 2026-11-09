@@ -9,6 +9,7 @@ services:
     security_opt: [no-new-privileges:true]
     environment:
       SANDBOX_PORT: "9090"
+      SANDBOX_RPC_KEY: ${SANDBOX_RPC_KEY:-}
     ports:
       - "127.0.0.1:${SANDBOX_PORT:-9090}:9090"
     volumes:
