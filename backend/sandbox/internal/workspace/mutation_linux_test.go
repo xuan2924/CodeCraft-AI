@@ -376,12 +376,22 @@ func TestWorkspaceContentLimitsRejectWholeBatch(t *testing.T) {
 }
 
 func TestReadyCancellationRequiresClosedGateAndRejectsLateOpen(t *testing.T) {
- client,close:=connect(t,t.TempDir());defer close();epoch:=writable(t,client)
- request:=&rpc.CancelPreparationRequest{WorkspaceInstanceId:instance,OperationId:operation}
- if _,err:=client.CancelPreparation(authorized(t),request);status.Code(err)!=codes.FailedPrecondition {t.Fatalf("open cancellation accepted: %v",err)}
- if _,err:=client.CloseGate(authorized(t),&rpc.CloseGateRequest{WorkspaceInstanceId:instance,TransitionId:nextTransition,ExpectedEpoch:epoch});err!=nil {t.Fatal(err)}
- if view,err:=client.CancelPreparation(authorized(t),request);err!=nil || !view.GetCancelled() {t.Fatalf("closed READY cancellation failed: %v",err)}
- if _,err:=client.OpenGate(authorized(t),&rpc.CloseGateRequest{WorkspaceInstanceId:instance,TransitionId:transition,ExpectedEpoch:1});status.Code(err)!=codes.FailedPrecondition {t.Fatalf("late open revived cancelled workspace: %v",err)}
+	client, close := connect(t, t.TempDir())
+	defer close()
+	epoch := writable(t, client)
+	request := &rpc.CancelPreparationRequest{WorkspaceInstanceId: instance, OperationId: operation}
+	if _, err := client.CancelPreparation(authorized(t), request); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("open cancellation accepted: %v", err)
+	}
+	if _, err := client.CloseGate(authorized(t), &rpc.CloseGateRequest{WorkspaceInstanceId: instance, TransitionId: nextTransition, ExpectedEpoch: epoch}); err != nil {
+		t.Fatal(err)
+	}
+	if view, err := client.CancelPreparation(authorized(t), request); err != nil || !view.GetCancelled() {
+		t.Fatalf("closed READY cancellation failed: %v", err)
+	}
+	if _, err := client.OpenGate(authorized(t), &rpc.CloseGateRequest{WorkspaceInstanceId: instance, TransitionId: transition, ExpectedEpoch: 1}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("late open revived cancelled workspace: %v", err)
+	}
 }
 
 func TestPreparationCancellationCannotEraseMutationEvidence(t *testing.T) {
