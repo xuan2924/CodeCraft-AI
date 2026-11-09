@@ -67,11 +67,16 @@ function flushBackup(): Promise<void> {
   backupTimer = undefined;
   const drafts = [...buffers.values()].filter(dirty).map((value): Draft => ({ owner, exercise, id: pageId,
     path: value.path, content: value.content, baseContent: value.baseContent, revision: value.revision, updatedAt: Date.now() }));
+  const cleanPaths = [...buffers.values()].filter((value) => !dirty(value)).map((value) => value.path);
   backupQueue = backupQueue.then(async () => {
     const epoch = await writerEpoch;
     if (drafts.length && epoch === null) throw new Error('Local draft session unavailable');
     for (const draft of drafts) { await putDraft(draft, epoch!); persisted.set(draft.path, draft); }
-    if (!disposed && drafts.length) backup.value = '本地草稿已更新；不等于已保存到工作区，仅限此浏览器。';
+    for (const path of cleanPaths) {
+      const previous = persisted.get(path);
+      if (previous) { await removeDraft(previous); persisted.delete(path); }
+    }
+    if (!disposed) backup.value = drafts.length ? '本地草稿已更新；不等于已保存到工作区，仅限此浏览器。' : '当前页面没有未保存修改；其他页面的草稿不受影响。';
   }).catch(() => { if (!disposed) backup.value = '本地草稿更新失败，请及时保存或复制内容。'; });
   return backupQueue;
 }
@@ -101,12 +106,16 @@ async function cleanMatching(path: string, submitted: string, includeRecovered =
 }
 async function discard(value: Buffer) {
   if (!globalThis.confirm(`丢弃 ${value.path} 的当前草稿？其他页面的草稿不受影响。`)) return;
-  await flushBackup();
   const text = value.content;
+  await flushBackup();
+  if (disposed) return;
+  if (value.content !== text) { error.value = '丢弃期间产生了新输入，请重新确认。'; return; }
+  try { await cleanMatching(value.path, text, false); }
+  catch { backup.value = '草稿清理失败，刷新时可能仍看到旧备份。'; return; }
+  if (disposed) return;
+  if (value.content !== text) { error.value = '丢弃期间产生了新输入，请重新确认。'; return; }
   value.content = value.remote?.content ?? value.baseContent;
   useLatestBaseline(value);
-  try { await cleanMatching(value.path, text, false); }
-  catch { backup.value = '草稿清理失败，刷新时可能仍看到旧备份。'; }
 }
 async function submit(pending: Pending, polling = false): Promise<boolean> {
   if (busy.value || disposed || (polling && unresolved.value?.key !== pending.key)) return false;
@@ -190,12 +199,21 @@ async function leave(choice: 'save' | 'discard' | 'cancel') {
     if (edited.value) { error.value = '保存期间产生了新输入，请处理后再离开。'; return; }
   }
   if (choice === 'discard') {
+    const confirmed = new Map([...buffers.values()].map((value) => [value.path, value.content]));
     await flushBackup();
     try {
-      for (const value of buffers.values()) { await cleanMatching(value.path, value.content, false); value.content = value.baseContent; }
+      for (const [path, text] of confirmed) await cleanMatching(path, text, false);
     } catch { error.value = '本地草稿未能清理，请重试或取消离开。'; return; }
+    await backupQueue;
+    if (disposed) return;
+    if ([...buffers.values()].some((value) => value.content !== confirmed.get(value.path))) {
+      error.value = '丢弃期间产生了新输入，请处理后再离开。'; return;
+    }
+    for (const value of buffers.values()) { value.content = value.remote?.content ?? value.baseContent; useLatestBaseline(value); }
+  } else {
+    await backupQueue;
+    if (disposed || edited.value) { error.value = '保存期间产生了新输入，请处理后再离开。'; return; }
   }
-  await backupQueue;
   finishLeave?.(true); finishLeave = undefined; leaving.value = false;
 }
 onScopeDispose(() => {

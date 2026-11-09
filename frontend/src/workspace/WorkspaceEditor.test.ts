@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import WorkspaceEditor from './WorkspaceEditor.vue';
 import * as api from './api';
 import * as drafts from './drafts';
+import { ApiError } from '../api/request';
 
 const navigation = vi.hoisted(() => ({ guard: (): boolean | Promise<boolean> => true }));
 vi.mock('vue-router', () => ({ onBeforeRouteLeave: (guard: () => boolean | Promise<boolean>) => { navigation.guard = guard; } }));
@@ -100,6 +101,82 @@ it('keeps the page open when typing continues during save then leave', async () 
   await page.findAll('button').find((button) => button.text() === '取消离开')!.trigger('click');
   expect(await departure).toBe(false);
 });
+it('preserves input entered while discard waits for local storage', async () => {
+  const confirmation = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+  let finish!: () => void;
+  vi.mocked(drafts.putDraft).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  try {
+    const page = render(); await flushPromises();
+    await page.get('textarea').setValue('confirmed discard');
+    await page.findAll('button').find((button) => button.text() === '丢弃当前草稿')!.trigger('click');
+    await flushPromises();
+    await page.get('textarea').setValue('new input after confirmation');
+    finish(); await flushPromises();
+    expect(page.get('textarea').element.value).toBe('new input after confirmation');
+    expect(page.text()).toContain('丢弃期间产生了新输入');
+  } finally { confirmation.mockRestore(); }
+});
+
+it('does not leave when input changes while discard waits for local storage', async () => {
+  let finish!: () => void;
+  vi.mocked(drafts.putDraft).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('confirmed discard');
+  const departure = navigation.guard(); await flushPromises();
+  await page.findAll('button').find((button) => button.text() === '丢弃并离开')!.trigger('click');
+  await flushPromises();
+  await page.get('textarea').setValue('new input after confirmation');
+  finish(); await flushPromises();
+  expect(page.get('textarea').element.value).toBe('new input after confirmation');
+  expect(page.find('[role="dialog"]').exists()).toBe(true);
+  await page.findAll('button').find((button) => button.text() === '取消离开')!.trigger('click');
+  expect(await departure).toBe(false);
+});
+
+it('removes its obsolete backup when editing returns to the baseline', async () => {
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('obsolete local draft');
+  await vi.advanceTimersByTimeAsync(350);
+  const savedDraft = vi.mocked(drafts.putDraft).mock.calls[0]![0];
+  await page.get('textarea').setValue('base');
+  await vi.advanceTimersByTimeAsync(350);
+  expect(drafts.removeDraft).toHaveBeenCalledWith(savedDraft);
+  expect(page.get('textarea').element.value).toBe('base');
+});
+
+it('keeps drafts and the route open when save before leaving fails', async () => {
+  vi.mocked(api.save).mockRejectedValueOnce(new ApiError(409, 'REVISION_CONFLICT'));
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('keep this draft');
+  const departure = navigation.guard(); await flushPromises();
+  await page.findAll('button').find((button) => button.text() === '保存后离开')!.trigger('click');
+  await flushPromises();
+  expect(page.get('textarea').element.value).toBe('keep this draft');
+  expect(page.find('[role="dialog"]').exists()).toBe(true);
+  expect(drafts.removeDraft).not.toHaveBeenCalled();
+  await page.findAll('button').find((button) => button.text() === '取消离开')!.trigger('click');
+  expect(await departure).toBe(false);
+});
+
+it('guards refresh for dirty or unresolved changes and releases the listener on disposal', async () => {
+  vi.mocked(api.save).mockResolvedValueOnce({ exerciseId: 'exercise', operationId: 'operation', state: 'PENDING', revision: null, changed: null, failureCode: null });
+  const page = render(); await flushPromises();
+  const refresh = () => {
+    const event = new Event('beforeunload', { cancelable: true });
+    globalThis.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  expect(refresh()).toBe(false);
+  await page.get('textarea').setValue('local');
+  expect(refresh()).toBe(true);
+  await page.findAll('button').find((button) => button.text() === '保存文件')!.trigger('click');
+  await flushPromises();
+  await page.get('textarea').setValue('base');
+  expect(refresh()).toBe(true);
+  page.unmount(); view = undefined;
+  expect(refresh()).toBe(false);
+});
+
 it('does not erase another page draft when discarding a recovered local copy', async () => {
   const confirmation = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
   vi.mocked(drafts.listDrafts).mockResolvedValueOnce([{ owner: 'owner', exercise: 'exercise', path: file.path, id: 'other-page', revision: '0', baseContent: 'base', content: 'local draft', updatedAt: 1 }]);
