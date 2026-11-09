@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import ai.codecraft.modules.identity.config.IdentityBootstrap;
 import ai.codecraft.modules.identity.config.IdentitySettings;
 import ai.codecraft.modules.identity.model.dto.CreatedAccountResponse;
+import ai.codecraft.modules.identity.model.dto.PasswordResetResponse;
+import ai.codecraft.modules.identity.model.dto.IdentityRevokedEventDTO;
 import ai.codecraft.modules.identity.model.entity.UserEntity;
 import ai.codecraft.modules.identity.model.exception.IdentityFailure;
 import ai.codecraft.modules.identity.security.IdentityHttp;
@@ -28,6 +30,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +42,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 // scripts/test-identity.mjs supplies a fresh disposable PostgreSQL; never use the development database.
@@ -56,10 +60,20 @@ class IdentityIT {
     @Autowired private IdentityTransactionService store;
     @Autowired private IdentitySecrets secrets;
     @Autowired private MutableClock clock;
+    @Autowired private RevocationProbe notifications;
 
     @TestConfiguration
     static class TimeFixture {
         @Bean @Primary MutableClock controlledClock() { return new MutableClock(); }
+        @Bean RevocationProbe revocationProbe() { return new RevocationProbe(); }
+    }
+    static final class RevocationProbe {
+        final CopyOnWriteArrayList<IdentityRevokedEventDTO> events = new CopyOnWriteArrayList<>();
+        volatile boolean fail;
+        @EventListener public void revoked(IdentityRevokedEventDTO event) {
+            events.add(event);
+            if (fail) throw new IllegalStateException("notification fault fixture");
+        }
     }
     static final class MutableClock extends Clock {
         private final AtomicReference<Instant> now = new AtomicReference<>(START);
@@ -72,6 +86,8 @@ class IdentityIT {
     @BeforeEach
     void resetDisposableFixture() {
         clock.at(START);
+        notifications.events.clear();
+        notifications.fail = false;
         jdbc.execute("TRUNCATE identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
         store.bootstrap("admin_test", secrets.hash(PASSWORD));
     }
@@ -273,6 +289,98 @@ class IdentityIT {
                 "x".repeat(129), secrets.fingerprint(PASSWORD, NEW_PASSWORD))).isInstanceOf(RuntimeException.class);
             assertThat(store.findUser("admin_test").passwordHash()).isEqualTo(before.passwordHash());
             browser.get("/api/auth/session", 200);
+        }
+    }
+
+    @Test
+    void administratorResetRevokesEveryBrowserAndReplayNeverDeliversSecrets() throws Exception {
+        try (Browser admin = administrator(); Browser first = new Browser(); Browser second = new Browser()) {
+            admin.post("/api/admin/users", Map.of("username", "reset_target"), "create-reset-0001", 201);
+            String target = admin.body.path("data").path("userId").asText();
+            String oldPassword = admin.body.path("data").path("temporaryPassword").asText();
+            first.login("reset_target", oldPassword, 200);
+            second.login("reset_target", oldPassword, 200);
+            String path = "/api/admin/users/" + target + "/password-reset";
+            UserEntity before = store.findUser("reset_target");
+            admin.post(path, Map.of(), "reset-key-0001", 200);
+            String replacement = admin.body.path("data").path("temporaryPassword").asText();
+            String operation = admin.body.path("data").path("operationId").asText();
+            assertThat(replacement.length() == 43).isTrue();
+            first.get("/api/auth/session", 401);
+            second.get("/api/auth/session", 401);
+            admin.post(path, Map.of(), "reset-key-0001", 200);
+            assertThat(admin.body.path("data").path("credentialDelivered").asBoolean()).isFalse();
+            assertThat(admin.body.path("data").path("temporaryPassword").isNull()).isTrue();
+            assertThat(admin.body.path("data").path("operationId").asText()).isEqualTo(operation);
+            assertThat(store.findUser("reset_target").authVersion()).isEqualTo(before.authVersion() + 1);
+            clock.at(START.plusSeconds(61));
+            first.login("reset_target", oldPassword, 401);
+            first.login("reset_target", replacement, 200);
+            assertThat(first.body.path("data").path("passwordChangeRequired").asBoolean()).isTrue();
+            first.password(replacement, NEW_PASSWORD);
+            first.login("reset_target", NEW_PASSWORD, 200);
+            first.csrf();
+            first.post(path, Map.of(), "denied-reset-0001", 403);
+            admin.post("/api/admin/users/" + UUID.randomUUID() + "/password-reset", Map.of(), "missing-reset-0001", 404);
+            admin.post("/api/admin/users/not-a-uuid/password-reset", Map.of(), "invalid-reset-0001", 400);
+        }
+    }
+
+    @Test
+    void selfResetClearsCurrentCookieAndRequiresNewLogin() throws Exception {
+        try (Browser admin = administrator(); Browser second = new Browser()) {
+            second.login("admin_test", NEW_PASSWORD, 200);
+            String id = store.findUser("admin_test").id();
+            admin.post("/api/admin/users/" + id + "/password-reset", Map.of(), "self-reset-0001", 200);
+            assertThat(admin.body.path("data").path("currentSessionRevoked").asBoolean()).isTrue();
+            assertThat(admin.cookies).doesNotContainKey(IdentityHttp.SESSION_COOKIE);
+            second.get("/api/auth/session", 401);
+            admin.get("/api/auth/session", 401);
+        }
+    }
+
+    @Test
+    void concurrentResetsShareOneReceiptAndFailedResetRollsBack() throws Exception {
+        try (Browser admin = administrator(); Browser user = new Browser()) {
+            admin.post("/api/admin/users", Map.of("username", "reset_race"), "create-race-0001", 201);
+            String target = admin.body.path("data").path("userId").asText();
+            String password = admin.body.path("data").path("temporaryPassword").asText();
+            user.login("reset_race", password, 200);
+            String sessionHash = IdentitySecrets.digest(admin.cookies.get(IdentityHttp.SESSION_COOKIE));
+            UserEntity before = store.findUser("reset_race");
+            String userSession = IdentitySecrets.digest(user.cookies.get(IdentityHttp.SESSION_COOKIE));
+            assertThat(store.authorization(userSession).authVersion()).isEqualTo(before.authVersion());
+            notifications.events.clear();
+            String encoded = secrets.hash(NEW_PASSWORD);
+            String fingerprint = secrets.fingerprint("RESET_PASSWORD", target);
+            assertThatThrownBy(() -> store.resetPassword(sessionHash, target, NEW_PASSWORD, encoded,
+                "x".repeat(129), fingerprint)).isInstanceOf(RuntimeException.class);
+            assertThat(store.findUser("reset_race")).isEqualTo(before);
+            assertThat(notifications.events).isEmpty();
+            notifications.fail = true;
+            user.get("/api/auth/session", 200);
+            CompletableFuture<PasswordResetResponse> first = CompletableFuture.supplyAsync(() -> store.resetPassword(
+                sessionHash, target, NEW_PASSWORD, encoded, "reset-race-0001", fingerprint));
+            CompletableFuture<PasswordResetResponse> second = CompletableFuture.supplyAsync(() -> store.resetPassword(
+                sessionHash, target, NEW_PASSWORD, encoded, "reset-race-0001", fingerprint));
+            assertThat(first.join().credentialDelivered() ^ second.join().credentialDelivered()).isTrue();
+            assertThat(first.join().operationId()).isEqualTo(second.join().operationId());
+            assertThat(notifications.events).hasSize(1);
+            assertThat(notifications.events.getFirst().userId()).isEqualTo(target);
+            assertThat(notifications.events.getFirst().sessionHash()).isNull();
+            assertThatThrownBy(() -> store.authorization(userSession)).isInstanceOf(IdentityFailure.class)
+                .hasMessage("UNAUTHENTICATED");
+            assertThat(store.findUser("reset_race").authVersion()).isEqualTo(before.authVersion() + 1);
+            user.get("/api/auth/session", 401);
+            assertThatThrownBy(() -> store.login(before, IdentitySecrets.digest(secrets.token()), secrets.token(), null, null, null))
+                .isInstanceOf(IdentityFailure.class).hasMessage("INVALID_CREDENTIALS");
+            CompletableFuture<PasswordResetResponse> next = CompletableFuture.supplyAsync(() -> store.resetPassword(
+                sessionHash, target, NEW_PASSWORD, encoded, "reset-next-0001", fingerprint));
+            CompletableFuture<PasswordResetResponse> last = CompletableFuture.supplyAsync(() -> store.resetPassword(
+                sessionHash, target, NEW_PASSWORD, encoded, "reset-next-0002", fingerprint));
+            assertThat(next.join().credentialDelivered() && last.join().credentialDelivered()).isTrue();
+            assertThat(store.findUser("reset_race").authVersion()).isEqualTo(before.authVersion() + 3);
+            assertThat(notifications.events).hasSize(3);
         }
     }
 

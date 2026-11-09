@@ -11,6 +11,7 @@ export interface CreatedAccount {
   credentialDelivered: boolean;
   temporaryPassword: string | null;
 }
+export interface PasswordReset extends CreatedAccount { currentSessionRevoked: boolean }
 export class ApiError extends Error {
   constructor(readonly status: number, readonly code: string) { super(code); }
 }
@@ -54,7 +55,14 @@ export async function changePassword(currentPassword: string, newPassword: strin
   await post('/api/auth/password', { currentPassword, newPassword }, signal, key);
 }
 export async function createAccount(username: string, key: string, signal: AbortSignal): Promise<CreatedAccount> {
-  const value = await post('/api/admin/users', { username }, signal, key);
+  return credential(await post('/api/admin/users', { username }, signal, key));
+}
+export async function resetPassword(userId: string, key: string, signal: AbortSignal): Promise<PasswordReset> {
+  const value = await post(`/api/admin/users/${encodeURIComponent(userId)}/password-reset`, {}, signal, key);
+  if (!object(value) || typeof value.currentSessionRevoked !== 'boolean') throw new ApiError(502, 'INVALID_RESPONSE');
+  return { ...credential(value), currentSessionRevoked: value.currentSessionRevoked };
+}
+function credential(value: unknown): CreatedAccount {
   if (!object(value) || typeof value.userId !== 'string' || typeof value.operationId !== 'string'
     || typeof value.credentialDelivered !== 'boolean'
     || (value.credentialDelivered ? typeof value.temporaryPassword !== 'string' : value.temporaryPassword !== null)) {
@@ -76,6 +84,8 @@ export function errorMessage(error: unknown): string {
     INVALID_USERNAME: '账号名需为 3–32 位字母、数字、下划线或连字符。',
     INVALID_PASSWORD: '密码需为 8–128 个 Unicode 码点，不去除空格。',
     USERNAME_EXISTS: '账号名已存在，请换一个账号名。',
+    USER_NOT_FOUND: '目标账号不存在，请核对用户标识。',
+    INVALID_REQUEST: '请求格式不正确，请核对输入。',
     IDEMPOTENCY_CONFLICT: '这次请求的内容与原请求不同。请恢复原内容后核对，不要重复建号。',
     UNAUTHENTICATED: '登录已过期或被撤销，请重新登录。',
     PASSWORD_CHANGE_REQUIRED: '请先修改临时密码。', FORBIDDEN: '当前账号没有管理员权限。',

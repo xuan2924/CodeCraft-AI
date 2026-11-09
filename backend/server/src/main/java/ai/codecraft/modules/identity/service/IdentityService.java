@@ -3,6 +3,7 @@ package ai.codecraft.modules.identity.service;
 import ai.codecraft.modules.identity.model.dto.AuthenticatedIdentityDTO;
 import ai.codecraft.modules.identity.model.dto.CreatedAccountResponse;
 import ai.codecraft.modules.identity.model.dto.LoginResultDTO;
+import ai.codecraft.modules.identity.model.dto.PasswordResetResponse;
 import ai.codecraft.modules.identity.model.dto.SessionResponse;
 import ai.codecraft.modules.identity.model.entity.UserEntity;
 import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
@@ -57,6 +58,16 @@ public final class IdentityService {
         IdentityPolicy.idempotencyKey(key);
         String password = secrets.token();
         return store.createUser(sessionHash, username, password, secrets.hash(password), key, secrets.fingerprint(username));
+    }
+
+    public PasswordResetResponse resetPassword(String sessionHash, String targetId, String key) {
+        IdentityPolicy.idempotencyKey(key);
+        AuthenticatedIdentityDTO auth = store.authenticate(sessionHash);
+        if (auth.user().passwordChangeRequired()) throw new IdentityFailure(IdentityErrorCode.PASSWORD_CHANGE_REQUIRED);
+        if (!"ADMIN".equals(auth.user().role())) throw new IdentityFailure(IdentityErrorCode.FORBIDDEN);
+        String password = secrets.token();
+        return store.resetPassword(sessionHash, targetId, password, secrets.hash(password), key,
+            secrets.fingerprint("RESET_PASSWORD", targetId));
     }
 
     private void rate(String action, String account, String address) {

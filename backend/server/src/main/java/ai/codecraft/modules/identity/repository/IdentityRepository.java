@@ -6,6 +6,7 @@ import ai.codecraft.modules.identity.model.entity.SessionEntity;
 import ai.codecraft.modules.identity.model.entity.UserEntity;
 
 import java.time.Instant;
+import java.util.List;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -27,6 +28,10 @@ public interface IdentityRepository {
     @Select("SELECT id::text, username, password_hash, role, password_change_required, auth_version "
         + "FROM identity_user WHERE id = CAST(#{id} AS uuid) FOR UPDATE")
     UserEntity lockUser(String id);
+
+    @Select("SELECT id::text, username, password_hash, role, password_change_required, auth_version "
+        + "FROM identity_user WHERE id IN (CAST(#{actor} AS uuid), CAST(#{target} AS uuid)) ORDER BY id FOR UPDATE")
+    List<UserEntity> lockUsers(String actor, String target);
 
     @Insert("INSERT INTO identity_user(id, username, password_hash, role) "
         + "VALUES(CAST(#{id} AS uuid), #{username}, #{hash}, #{role}) ON CONFLICT (username) DO NOTHING")

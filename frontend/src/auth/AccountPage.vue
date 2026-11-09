@@ -6,14 +6,16 @@ import { validPassword, validUsername } from './api';
 import { useAccount } from './useAccount';
 
 const theme = useThemeVars();
-const { query, identity, pending, error, notice, temporaryPassword, createdUsername, unresolvedCreate,
-  signIn, signOut, password, create } = useAccount();
+const { query, identity, pending, error, notice, temporaryPassword, createdUsername, createdUserId, unresolvedCreate,
+  unresolvedReset, signIn, signOut, password, create, reset } = useAccount();
 const username = ref('');
 const loginPassword = ref('');
 const currentPassword = ref('');
 const newPassword = ref('');
 const invitedUsername = ref('');
 const changingPassword = ref(false);
+const resetTarget = ref('');
+const resetValid = computed(() => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resetTarget.value));
 const showPasswordForm = computed(() => identity.value?.passwordChangeRequired || changingPassword.value);
 const loginValid = computed(() => validUsername(username.value) && validPassword(loginPassword.value));
 const passwordValid = computed(() => validPassword(currentPassword.value) && validPassword(newPassword.value));
@@ -191,26 +193,31 @@ async function submitPassword() {
           <p v-else>
             账号已就绪。题目与工作区功能尚未接入。
           </p>
-          <div
-            v-if="temporaryPassword"
-            class="credential-delivery"
-            role="status"
+          <form
+            v-if="identity.role === 'ADMIN'"
+            id="password-reset-form"
+            class="account-form"
+            @submit.prevent="reset(resetTarget)"
           >
-            <h2>临时凭证只展示这一次</h2>
-            <p>账号：{{ createdUsername }}</p>
-            <p>请先通过可信渠道交付，再关闭此区域。刷新或退出后不能找回明文。</p>
-            <label for="temporary-password">临时密码</label>
+            <h2>重置账号密码</h2>
+            <p>撤销目标全部旧登录并强制改密，不停止演练任务。重置自己会立即退出登录。</p>
+            <p v-if="createdUserId">最近操作的用户标识：{{ createdUserId }}</p>
+            <label for="reset-target">目标用户标识</label>
             <input
-              id="temporary-password"
-              :value="temporaryPassword"
-              readonly
+              id="reset-target"
+              v-model="resetTarget"
               autocomplete="off"
-              spellcheck="false"
+              :disabled="pending || unresolvedReset"
             >
-            <NButton @click="temporaryPassword = null">
-              已交付，清除显示
+            <NButton
+              attr-type="submit"
+              type="warning"
+              :disabled="pending || (!unresolvedReset && !resetValid)"
+              :loading="pending"
+            >
+              {{ unresolvedReset ? '用原请求核对重置' : '确认重置密码' }}
             </NButton>
-          </div>
+          </form>
           <NButton
             :disabled="pending"
             @click="changingPassword = true"
@@ -226,6 +233,27 @@ async function submitPassword() {
           退出登录
         </NButton>
       </template>
+      <div
+        v-if="temporaryPassword"
+        class="credential-delivery"
+        role="status"
+      >
+        <h2>临时凭证只展示这一次</h2>
+        <p>账号：{{ createdUsername }}</p>
+        <p>用户标识：{{ createdUserId }}</p>
+        <p>请先通过可信渠道交付，再关闭此区域。刷新或退出后不能找回明文。</p>
+        <label for="temporary-password">临时密码</label>
+        <input
+          id="temporary-password"
+          :value="temporaryPassword"
+          readonly
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <NButton @click="temporaryPassword = null">
+          已交付，清除显示
+        </NButton>
+      </div>
     </section>
     <footer>登录只确认身份，不代表测试容器、模型或完整演练已准备完成。</footer>
   </main>

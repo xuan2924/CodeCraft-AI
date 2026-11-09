@@ -109,6 +109,46 @@ describe('identity form boundaries', () => {
     expect(client.getMutationCache().getAll()).toHaveLength(0);
   });
 
+  it('self reset signs out but retains the one-time delivery outside authenticated controls', async () => {
+    const target = '00000000-0000-0000-0000-000000000001';
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(ok({ ...fixtures.admin, id: target }))
+      .mockResolvedValueOnce(ok({ token: 'fixture-csrf' }))
+      .mockResolvedValueOnce(ok({ userId: target, operationId: 'reset', credentialDelivered: true,
+        temporaryPassword: 'reset-fixture-password', currentSessionRevoked: true }));
+    const { page, client } = await render(fetcher);
+    await page.get('#reset-target').setValue(target);
+    await page.get('#password-reset-form').trigger('submit');
+    await flushPromises();
+    expect(page.find('#login-password').exists()).toBe(true);
+    expect(page.find('#password-reset-form').exists()).toBe(false);
+    expect((page.get('#temporary-password').element as HTMLInputElement).value).toBe('reset-fixture-password');
+    expect(JSON.stringify(client.getQueryCache().getAll().map((query) => query.state.data))).not.toContain('reset-fixture-password');
+    expect(client.getMutationCache().getAll()).toHaveLength(0);
+  });
+
+  it('unknown reset results retain the target/key and replay cannot disclose a credential', async () => {
+    const target = '00000000-0000-0000-0000-000000000001';
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(ok(fixtures.admin))
+      .mockResolvedValueOnce(ok({ token: 'fixture-csrf' })).mockRejectedValueOnce(new TypeError('offline'))
+      .mockResolvedValueOnce(ok({ token: 'fixture-csrf' }))
+      .mockResolvedValueOnce(ok({ userId: target, operationId: 'reset', credentialDelivered: false,
+        temporaryPassword: null, currentSessionRevoked: false }));
+    const { page } = await render(fetcher);
+    await page.get('#reset-target').setValue(target);
+    await page.get('#password-reset-form').trigger('submit');
+    await flushPromises();
+    expect(page.get('#reset-target').attributes('disabled')).toBeDefined();
+    await page.get('#password-reset-form').trigger('submit');
+    await flushPromises();
+    const attempts = fetcher.mock.calls.filter(([url]) => String(url).endsWith('/password-reset'));
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]?.[0]).toBe(attempts[1]?.[0]);
+    expect(new Headers(attempts[0]?.[1]?.headers).get('Idempotency-Key'))
+      .toBe(new Headers(attempts[1]?.[1]?.headers).get('Idempotency-Key'));
+    expect(page.find('#temporary-password').exists()).toBe(false);
+    expect(page.text()).toContain('原请求不会再次改变密码或交付凭证');
+  });
+
   it('does not sign out or report success when logout fails', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(ok(fixtures.user))
       .mockResolvedValueOnce(ok({ token: 'fixture-csrf' })).mockRejectedValueOnce(new TypeError('offline'));

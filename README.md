@@ -1,6 +1,6 @@
 # CodeCraft-AI
 
-AI 结对编程面试平台。目前正式工程提供 **本机内部服务链路检查与受邀账号闭环**：浏览器 → Java → PostgreSQL / Go，以及管理员初始化、强制改密、创建账号、登录和退出。AI、工作区及沙箱执行尚未接入；Go 在线不代表 Docker 或执行环境已就绪。
+AI 结对编程面试平台。目前正式工程提供 **本机内部服务链路检查与受邀账号闭环**：浏览器 → Java → PostgreSQL / Go，以及管理员初始化、强制改密、创建账号、密码重置、登录和退出。AI、工作区及沙箱执行尚未接入；Go 在线不代表 Docker 或执行环境已就绪。
 
 ## 环境
 
@@ -47,7 +47,7 @@ node scripts/dev.mjs web
 - Java 启动时 Flyway 在空库创建 `codecraft` schema；重复启动校验已发布迁移。数据库不可达、迁移失败或校验失败会阻止启动。不 baseline、clean 或忽略校验。
 - 状态查询通过 MyBatis 实际检查数据库中的 schema，并通过有 1 秒 deadline 的真实 gRPC 检查 Go。数据库查询/连接也有超时；无后台自动重试。
 - 首次启动在数据库事务中建立唯一初始管理员；缺少合法初始凭证时失败关闭。已有管理员则跳过，重启或改 `.env` 不能重置密码。初始化成功后可移除初始密码，但必须保留稳定的 `IDENTITY_FINGERPRINT_KEY`（密码变更幂等指纹使用的随机 HMAC 密钥，不入库）。
-- **http://localhost:5173/account** 提供账号入口：首次登录必须改密并重新登录，管理员才能创建受邀账号。临时密码只在创建成功时展示一次，需人工可信交付；未知结果使用原请求核对，重放不会重新交付密码。密码重置属于后续 #08，本次还没有重置入口。
+- **http://localhost:5173/account** 提供账号入口：首次登录必须改密并重新登录，管理员才能创建受邀账号。临时密码只在创建或重置成功时展示一次，需人工可信交付；未知结果使用原请求核对，重放不会重新交付密码。管理员按用户标识重置密码（建号成功时展示标识），撤销目标全部旧登录并强制首次改密；重置自己也会退出当前登录。
 - 输入、会话、CSRF 和限流规则见[身份契约](docs/design/api-events.md#账号与登录契约任务-02)。本机代理下请求共享 loopback 限额；浏览器固定使用 `localhost` 和 Vite 入口，避免跨源或混用主机名导致拒绝。
 - HMAC 密钥应在本机用安全随机生成器生成并直接写入未跟踪 `.env`，不要粘贴到对话、提交或命令参数。公开部署尚未验收；HTTPS 源配置会强制 Secure Cookie，但不能因此把本机状态接口暴露到公网。
 - 停止应用使用各终端 Ctrl+C；数据库使用 `docker compose stop postgres`。开发数据使用具名卷保留；**不要执行 `down -v` 来修复启动问题**。改变 `.env` 密码不会自动改变已有卷中的数据库密码。
@@ -140,4 +140,4 @@ scripts/                        初始化、生成、检查与真实链路测试
 
 Go 生成文件提交，Java 生成文件仅在 `target/`。生成脚本固定插件版本、下载校验 protoc；Wrapper 分发也校验 SHA-256。CI 重新生成后检查 Go 契约漂移，并运行 Linux race 与真实服务链路；**添加了 CI 配置不代表远程 CI 已通过**。
 
-具体决策见 [工程工具链](docs/design/engineering-toolchain.md) 和 [身份契约](docs/design/api-events.md)，执行证据见 [任务 06 验证记录](docs/validation/service-tracer-06.md) 与 [任务 07 验证记录](docs/validation/account-login-07.md)。
+具体决策见 [工程工具链](docs/design/engineering-toolchain.md) 和 [身份契约](docs/design/api-events.md)，执行证据见 [任务 06 验证记录](docs/validation/service-tracer-06.md) 、[任务 07 验证记录](docs/validation/account-login-07.md)和[任务 08 验证记录](docs/validation/password-revocation-08.md)。

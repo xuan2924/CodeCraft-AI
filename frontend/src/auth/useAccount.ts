@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref } from 'vue';
+import { computed, nextTick, onScopeDispose, ref } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import * as api from './api';
 
@@ -16,6 +16,10 @@ export function useAccount() {
   const temporaryPassword = ref<string | null>(null);
   const createdUsername = ref('');
   const unresolvedCreate = ref(false);
+  const createdUserId = ref('');
+  const unresolvedReset = ref(false);
+  let resetKey = crypto.randomUUID();
+  let attemptedTarget = '';
   let createKey = crypto.randomUUID();
   let attemptedUsername = '';
   let passwordKey = crypto.randomUUID();
@@ -82,6 +86,7 @@ export function useAccount() {
       }
       if (disposed) return;
       createdUsername.value = attemptedUsername.toLowerCase();
+      createdUserId.value = result.userId;
       temporaryPassword.value = result.temporaryPassword;
       notice.value = result.credentialDelivered ? '账号已创建。请通过可信渠道交付临时密码。'
         : '账号已创建，但本次重试不会再次交付临时密码。需要管理员显式重置密码后交付。';
@@ -90,6 +95,36 @@ export function useAccount() {
       await client.invalidateQueries({ queryKey: sessionKey });
     });
   }
-  return { query, identity, pending, error, notice, temporaryPassword, createdUsername, unresolvedCreate,
-    signIn, signOut, password, create };
+  async function reset(userId: string) {
+    await action(async () => {
+      const wasUnresolved = unresolvedReset.value;
+      if (!wasUnresolved) attemptedTarget = userId;
+      unresolvedReset.value = true;
+      temporaryPassword.value = null;
+      let result: api.PasswordReset;
+      try { result = await api.resetPassword(attemptedTarget, resetKey, controller.signal); }
+      catch (failure) {
+        if (!wasUnresolved && failure instanceof api.ApiError && [400, 403, 404, 429].includes(failure.status)) {
+          unresolvedReset.value = false;
+          resetKey = crypto.randomUUID();
+        }
+        throw failure;
+      }
+      if (disposed) return;
+      if (result.currentSessionRevoked) {
+        await forgetIdentity();
+        await nextTick();
+      }
+      if (disposed) return;
+      createdUsername.value = '用户标识 ' + result.userId;
+      createdUserId.value = result.userId;
+      temporaryPassword.value = result.temporaryPassword;
+      notice.value = result.credentialDelivered ? '密码已重置，全部旧登录已撤销。请交付临时密码并要求首次改密。'
+        : '重置已完成；原请求不会再次改变密码或交付凭证。凭证丢失时请显式再次重置。';
+      resetKey = crypto.randomUUID();
+      unresolvedReset.value = false;
+    });
+  }
+  return { query, identity, pending, error, notice, temporaryPassword, createdUsername, createdUserId,
+    unresolvedCreate, unresolvedReset, signIn, signOut, password, create, reset };
 }

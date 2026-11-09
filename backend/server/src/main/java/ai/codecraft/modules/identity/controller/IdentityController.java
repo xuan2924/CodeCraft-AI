@@ -8,6 +8,7 @@ import ai.codecraft.modules.identity.model.dto.CsrfResponse;
 import ai.codecraft.modules.identity.model.dto.LoginRequest;
 import ai.codecraft.modules.identity.model.dto.LoginResultDTO;
 import ai.codecraft.modules.identity.model.dto.PasswordRequest;
+import ai.codecraft.modules.identity.model.dto.PasswordResetResponse;
 import ai.codecraft.modules.identity.model.dto.SessionResponse;
 import ai.codecraft.modules.identity.security.IdentityHttp;
 import ai.codecraft.modules.identity.service.IdentityService;
@@ -16,10 +17,12 @@ import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.time.Clock;
+import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
@@ -80,10 +83,24 @@ public class IdentityController {
                                                        @RequestHeader(value = "Idempotency-Key", required = false) String key,
                                                        HttpServletRequest request, HttpServletResponse response) {
         CreatedAccountResponse created = service.createUser(IdentityHttp.sessionHash(request), input.username(), key);
+        refreshCookie(request, response);
+        return ResponseEntity.status(created.credentialDelivered() ? 201 : 200).body(ApiResponse.success(created));
+    }
+
+    @PostMapping("/api/admin/users/{id}/password-reset")
+    public ApiResponse<PasswordResetResponse> reset(@PathVariable UUID id,
+                                                   @RequestHeader(value = "Idempotency-Key", required = false) String key,
+                                                   HttpServletRequest request, HttpServletResponse response) {
+        PasswordResetResponse result = service.resetPassword(IdentityHttp.sessionHash(request), id.toString(), key);
+        if (result.currentSessionRevoked()) clearCookies(response);
+        else refreshCookie(request, response);
+        return ApiResponse.success(result);
+    }
+
+    private void refreshCookie(HttpServletRequest request, HttpServletResponse response) {
         SessionResponse identity = store.authenticate(IdentityHttp.sessionHash(request)).identity();
         IdentityHttp.sessionCookie(response, settings, IdentityHttp.cookie(request, IdentityHttp.SESSION_COOKIE),
             clock.instant(), identity.expiresAt());
-        return ResponseEntity.status(created.credentialDelivered() ? 201 : 200).body(ApiResponse.success(created));
     }
 
     private void clearCookies(HttpServletResponse response) {

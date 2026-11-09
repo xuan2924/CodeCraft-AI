@@ -12,6 +12,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice(assignableTypes = IdentityController.class)
 public class IdentityErrors {
@@ -20,7 +21,7 @@ public class IdentityErrors {
 
     public IdentityErrors(ObjectMapper json) { this.json = json; }
 
-    @ExceptionHandler(HttpMessageNotReadableException.class)
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
     public void malformed(HttpServletResponse response) throws IOException {
         ApiErrorWriter.write(response, json, IdentityErrorCode.INVALID_REQUEST);
     }

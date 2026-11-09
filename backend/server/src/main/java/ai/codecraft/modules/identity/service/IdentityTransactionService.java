@@ -2,7 +2,9 @@ package ai.codecraft.modules.identity.service;
 
 import ai.codecraft.modules.identity.model.dto.AuthenticatedIdentityDTO;
 import ai.codecraft.modules.identity.model.dto.CreatedAccountResponse;
+import ai.codecraft.modules.identity.model.dto.PasswordResetResponse;
 import ai.codecraft.modules.identity.model.dto.SessionResponse;
+import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.model.entity.AnonymousCsrfEntity;
 import ai.codecraft.modules.identity.model.entity.OperationReceiptEntity;
 import ai.codecraft.modules.identity.model.entity.SessionEntity;
@@ -22,10 +24,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class IdentityTransactionService {
     private final IdentityRepository mapper;
     private final Clock clock;
+    private final IdentityRevocationNotifier revocations;
 
-    public IdentityTransactionService(IdentityRepository mapper, Clock clock) {
+    public IdentityTransactionService(IdentityRepository mapper, Clock clock, IdentityRevocationNotifier revocations) {
         this.mapper = mapper;
         this.clock = clock;
+        this.revocations = revocations;
     }
 
     @Transactional(readOnly = true)
@@ -45,6 +49,13 @@ public class IdentityTransactionService {
 
     @Transactional(readOnly = true)
     public AuthenticatedIdentityDTO authenticate(String sessionHash) { return authenticateInside(sessionHash, false); }
+
+    @Transactional(readOnly = true)
+    public SessionAuthorizationDTO authorization(String sessionHash) {
+        AuthenticatedIdentityDTO auth = authenticateInside(sessionHash, false);
+        return new SessionAuthorizationDTO(auth.user().id(), auth.user().role(), auth.user().passwordChangeRequired(),
+            auth.user().authVersion(), auth.identity().expiresAt());
+    }
 
     private AuthenticatedIdentityDTO authenticateInside(String sessionHash, boolean lock) {
         if (sessionHash == null) throw new IdentityFailure(IdentityErrorCode.UNAUTHENTICATED);
@@ -143,6 +154,33 @@ public class IdentityTransactionService {
     }
 
     @Transactional
+    public PasswordResetResponse resetPassword(String sessionHash, String targetId, String password,
+                                               String passwordHash, String key, String fingerprint) {
+        SessionEntity initial = sessionHash == null ? null : mapper.session(sessionHash);
+        if (initial == null) throw new IdentityFailure(IdentityErrorCode.UNAUTHENTICATED);
+        // All two-user operations lock in UUID order, including administrators resetting each other.
+        mapper.lockUsers(initial.userId(), targetId);
+        AuthenticatedIdentityDTO auth = authenticateInside(sessionHash, false);
+        requireAdministrator(auth);
+        if (mapper.user(targetId) == null) throw new IdentityFailure(IdentityErrorCode.USER_NOT_FOUND);
+        OperationReceiptEntity previous = mapper.receipt(auth.user().id(), "RESET_PASSWORD", targetId, key);
+        if (previous != null) {
+            checkFingerprint(previous, fingerprint);
+            renew(auth);
+            return new PasswordResetResponse(targetId, previous.operationId(), false, null, false);
+        }
+        mapper.password(targetId, passwordHash, true);
+        mapper.revokeAll(targetId);
+        String operation = UUID.randomUUID().toString();
+        mapper.receiptInsert(auth.user().id(), "RESET_PASSWORD", targetId, key, fingerprint,
+            operation, targetId, clock.instant());
+        boolean self = auth.user().id().equals(targetId);
+        if (!self) renew(auth);
+        revocations.afterCommit(targetId, null);
+        return new PasswordResetResponse(targetId, operation, true, password, self);
+    }
+
+    @Transactional
     public void changePassword(String sessionHash, UserEntity verified, String passwordHash,
                                String key, String fingerprint) {
         AuthenticatedIdentityDTO auth = authenticateInside(sessionHash, true);
@@ -159,6 +197,7 @@ public class IdentityTransactionService {
         mapper.revokeAll(auth.user().id());
         mapper.receiptInsert(auth.user().id(), "CHANGE_PASSWORD", auth.user().id(), key, fingerprint,
             UUID.randomUUID().toString(), auth.user().id(), clock.instant());
+        revocations.afterCommit(auth.user().id(), null);
     }
 
     @Transactional
@@ -179,6 +218,7 @@ public class IdentityTransactionService {
             SessionEntity session = mapper.session(sessionHash);
             mapper.lockUser(session.userId());
             mapper.revokeSession(sessionHash);
+            revocations.afterCommit(session.userId(), sessionHash);
         }
         mapper.deleteAnonymous(anonymousHash);
     }

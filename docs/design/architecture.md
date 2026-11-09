@@ -1,6 +1,6 @@
 # 架构与首期范围
 
-状态：本文件及关联专题记录用户已确认的设计；各文件的“待决与实现验证”不是已批准方案。任务 06 已实现仅本机访问的内部状态链路，见 [运行入口](../../README.md)；账号、工作区与执行等产品能力尚未实现，设计、研究与一次性 PoC 不代表生产能力。
+状态：本文件及关联专题记录用户已确认的设计；各文件的“待决与实现验证”不是已批准方案。内部状态链路及账号登录/密码重置已实现，见 [运行入口](../../README.md)、[账号验证](../validation/account-login-07.md)和[重置验证](../validation/password-revocation-08.md)。工作区与执行尚未实现，设计、研究与一次性 PoC 不代表生产能力。
 
 ## 技术路线与职责
 
@@ -58,7 +58,7 @@
 
 ## 待决与实现验证
 
-- 工程目录已随任务 06 初始化为 `backend/server/`、`backend/sandbox/`、`backend/proto/` 和 `frontend/`。当前只有内部依赖状态查询；后续业务模块与 feature 边界按功能建立，不提前搭建无用途框架。
+- 工程目录已随任务 06 初始化为 `backend/server/`、`backend/sandbox/`、`backend/proto/` 和 `frontend/`。当前已交付内部状态与身份模块；后续业务模块与 feature 边界按功能建立，不提前搭建无用途框架。
 - 已确认 Maven Wrapper、npm + package-lock.json、Vitest + Vue Test Utils、Playwright；暂不引入 MapStruct、不启用虚拟线程，按实际需求再评估。
 - 日常开发采用本机 Java/Go/Vite + Docker PostgreSQL/题目测试容器；无需本机安装 PostgreSQL。任务 06 已建立正式启动与生成脚本，真实状态链路不能替代题目执行与业务验收。
 - 工具链决定票已验收：前端以精确依赖覆盖清除本次审计告警，Windows Go race 显式使用兼容 C 工具链。任务 06 已交付正式清单/脚本与 Linux CI 配置；远程 CI、Linux 隔离及完整业务链路仍待验证。精确版本、覆盖策略与证据见 [工程工具链](engineering-toolchain.md)。
