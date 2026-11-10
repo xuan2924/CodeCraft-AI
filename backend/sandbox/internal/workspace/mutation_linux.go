@@ -149,7 +149,7 @@ func (s *Service) ApplyBatch(ctx context.Context, request *rpc.ApplyBatchRequest
 	if len(encoded) > fileLimit {
 		return nil, status.Error(codes.ResourceExhausted, "workspace receipt capacity exhausted")
 	}
-	if err = publish(ctx, fd, sequence+1, r, files, s.beforeMutationPublish, s.now); err != nil {
+	if err = publish(ctx, fd, sequence+1, r, files, s.beforeMutationPublish, s.now, deadline); err != nil {
 		return nil, storageError(err)
 	}
 	return receipt, nil

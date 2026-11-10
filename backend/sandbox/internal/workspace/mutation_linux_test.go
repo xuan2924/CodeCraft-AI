@@ -50,17 +50,17 @@ func TestMutationExpiresAfterStagingBeforePublication(t *testing.T) {
 	root := t.TempDir()
 	stagedWhileAuthorized := make(chan bool, 1)
 	now := time.Now()
+	expiresAt := now.Add(time.Minute)
 	client, close := connect(t, root, func(service *workspace.Service) {
 		workspace.ClockForTest(service, func() time.Time { return now })
 		workspace.BeforeMutationPublishForTest(service, func(ctx context.Context) {
-			deadline, ok := ctx.Deadline()
-			stagedWhileAuthorized <- ok && now.Before(deadline) && ctx.Err() == nil
-			// Advance business authority at the exact post-fsync boundary, not wall time.
-			now = deadline
+			stagedWhileAuthorized <- now.Before(expiresAt) && ctx.Err() == nil
+			// Advance only business authority; transport/process time stays real.
+			now = expiresAt
 		})
 	})
 	request := update(writable(t, client))
-	request.NotAfterUnixMillis = now.Add(time.Minute).UnixMilli()
+	request.NotAfterUnixMillis = expiresAt.UnixMilli()
 	_, err := client.ApplyBatch(authorized(t), request)
 	close()
 	select {

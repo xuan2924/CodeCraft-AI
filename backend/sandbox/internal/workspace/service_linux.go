@@ -212,7 +212,7 @@ func (s *Service) PrepareWorkspace(ctx context.Context, request *rpc.PrepareWork
 		r.Hashes[path] = sum([]byte(content))
 	}
 	sort.Strings(view.Paths)
-	if err = publish(ctx, fd, 0, r, publication.InitialFiles, nil, s.now); err != nil {
+	if err = publish(ctx, fd, 0, r, publication.InitialFiles, nil, s.now, deadline); err != nil {
 		return nil, storageError(err)
 	}
 	return view, nil
@@ -278,7 +278,7 @@ func (s *Service) CancelPreparation(ctx context.Context, request *rpc.CancelPrep
 		sequence++
 		view.Problem = previous.Snapshot.Problem
 	}
-	if err = publish(ctx, fd, sequence, &record{Snapshot: view, Hashes: map[string]string{}}, nil, nil, s.now); err != nil {
+	if err = publish(ctx, fd, sequence, &record{Snapshot: view, Hashes: map[string]string{}}, nil, nil, s.now, time.Time{}); err != nil {
 		return nil, storageError(err)
 	}
 	if err = cleanupPreparation(ctx, fd, fmt.Sprintf("commit-%020d", sequence), true); err != nil {
@@ -541,7 +541,7 @@ func latest(parent int, expectedID string) (*record, string, error) {
 	}
 	return &r, name, nil
 }
-func publish(ctx context.Context, parent int, sequence uint64, r *record, files map[string]string, beforePublish func(context.Context), now func() time.Time) (result error) {
+func publish(ctx context.Context, parent int, sequence uint64, r *record, files map[string]string, beforePublish func(context.Context), now func() time.Time, authorityUntil time.Time) (result error) {
 	// Pin cleanup to the already-open directory, not a mutable absolute path.
 	owned, err := os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", parent))
 	if err != nil {
@@ -583,7 +583,12 @@ func publish(ctx context.Context, parent int, sequence uint64, r *record, files 
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	if deadline, ok := ctx.Deadline(); ok && !now().Before(deadline) {
+	// Business authority uses its own clock; never advance a transport deadline
+	// using simulated business time. Cleanup publication has no business authority.
+	if !authorityUntil.IsZero() && !now().Before(authorityUntil) {
+		return context.DeadlineExceeded
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
 		return context.DeadlineExceeded
 	}
 	if err = syscall.Renameat(parent, stage, parent, fmt.Sprintf("commit-%020d", sequence)); err != nil {

@@ -20,7 +20,7 @@
 | 关联由应用校验，数据库不再建立硬外键 | 最新迁移/身份夹具清理 | LogicalReferencesTest；真实新库 IdentityIT 元数据检查与全套身份边界 |
 | 失效授权不能提交准备结果，也不能卡死清理事务 | 身份服务事务代理；捕获异常后 rollback-only | PreparationAuthorizationTest、RecoveryAuthorizationTest；撤销恢复 IT |
 | 保存不改变运行中的稳定输入 | 副本发布与正式保存；跨文件混版 | Go 双文件竞争；候选代码 OLD 标记后阻塞，保存 NEW 后显式释放，最终只能输出 OLD |
-| 时间策略不靠真实等待 | 业务授权到期与发布前复核 | Go 注入业务 Clock；Java MutableClock；前端批处理/重试 fake timers |
+| 时间策略不靠真实等待 | 业务授权到期与发布前复核 | Go 注入业务 Clock，发布前分别检查业务授权与真实传输 deadline；Java MutableClock；前端批处理/重试 fake timers |
 | 系统进程期限不被重新授予 | 原执行 StartedAt 与期限 | 精确按配置期限轮询，不再固定等 17 秒；真实超时/清理集成样本 |
 | 退出不误删新草稿 | IndexedDB 单事务游标、epoch | 真实浏览器本地集成；无后端，无 E2E 数据库 hack |
 | 清理失败不掩盖原始错误 | Node finally | 聚合原始错误及清理错误；Docker 用例使用独立临时证据目录 |
@@ -37,7 +37,7 @@
 
 | 入口 | 结果 |
 |---|---|
-| `node scripts/verify.mjs --quick` | 通过，23.08 秒；Node 8、Java 22、前端 66 项通过；含 Vue 类型/Lint、Linux Go 编译/vet、Go 快速行为 |
+| `node scripts/verify.mjs --quick` | 通过，26.59 秒；Node 8、Java 22、前端 66 项通过；含 Vue 类型/Lint、Linux Go 编译/vet、Go 快速行为 |
 | `npm --prefix frontend run test:integration` | 7/7，4.7 秒；真实 IndexedDB，无后端 |
 | `test-tracer --smoke --identity --workspace` | 3/3，3 workers，浏览器阶段 19.0 秒 |
 | `test-tracer --smoke --workspace --browser-test="save and run"` | 单独 1/1，15.7 秒，无前置浏览器用例 |
