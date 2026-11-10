@@ -14,6 +14,9 @@ public interface ProblemRepository {
     @Select("SELECT id::text, problem_id, version, package_sha256, execution_image_digest, platform, artifact::text FROM problem_version WHERE id = #{id}::uuid")
     ProblemVersionEntity find(String id);
 
+    @Select("SELECT coalesce(jsonb_typeof(artifact->'manifest'->'execution') = 'object', false) FROM problem_version WHERE id = #{id}::uuid")
+    boolean executionAvailable(String id);
+
     @Insert("""
         INSERT INTO problem_version(id, problem_id, version, package_sha256, execution_image_digest, platform, artifact)
         VALUES (#{id}::uuid, #{problemId}, #{version}, #{packageSha256}, #{executionImageDigest}, #{platform}, #{artifact}::jsonb)

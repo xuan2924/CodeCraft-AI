@@ -15,7 +15,10 @@ export async function buildSandboxImage(publicationFile = null) {
     const publication = publicationFile ? JSON.parse(await readFile(publicationFile, 'utf8')) : null;
     if (publication) verifyPublicationInputs(publication);
     // Whitelist only initial inputs; neither credentials nor reference solutions enter the image.
-    const inputs = publication ? [{ identity: publication.identity, initialFiles: publication.initialFiles }] : [];
+    const { globalConcurrency: _globalConcurrency, platform: _platform, ...limits } = publication?.manifest.runtime ?? {};
+    const execution = publication?.manifest.execution
+      ? { limits, suite: publication.manifest.execution.suite, tests: publication.manifest.execution.tests } : undefined;
+    const inputs = publication ? [{ identity: publication.identity, initialFiles: publication.initialFiles, execution }] : [];
     await writeFile(join(directory, 'publications.json'), JSON.stringify(inputs));
     await copyFile(join(root, 'backend/sandbox/Dockerfile'), join(directory, 'Dockerfile'));
     run('go', ['build', '-trimpath', '-o', join(directory, 'sandbox'), './cmd/sandbox'], {

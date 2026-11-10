@@ -11,6 +11,10 @@
   "editableRoots": ["src/main/java", "src/test/java"],
   "symlinks": "forbidden",
   "targets": ["base"],
+  "execution": {
+    "suite": "interview.CartTotalTest",
+    "tests": ["emptyCartIsFree", "sumsPriceTimesQuantityInCents", "allowsZeroPriceAndZeroQuantity", "rejectsNegativePrice", "rejectsNegativeQuantity", "rejectsNullCartAndItem", "detectsMultiplicationOverflow", "detectsAdditionOverflow"]
+  },
   "expectedInitial": {"tests": 8, "failures": 6, "errors": 0, "skipped": 0},
   "expectedReference": {"tests": 8, "failures": 0, "errors": 0, "skipped": 0},
   "runtime": {

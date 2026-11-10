@@ -2,18 +2,73 @@ package execution
 
 import (
 	"bytes"
+	cryptoSHA256 "crypto/sha256"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"strings"
 	"sync"
 )
 
 const reportLimit = 2 * 1024 * 1024
+const compilationReportLimit = 16 * 1024
+
+var compilationCode = regexp.MustCompile(`^compiler\.err\.[a-zA-Z0-9_.]{1,100}$`)
 
 func validCompilationReport(data []byte) bool {
-	return bytes.Equal(data, []byte("compiler-failure-v1\ncompile\n")) ||
-		bytes.Equal(data, []byte("compiler-failure-v1\ntestCompile\n"))
+	// Previously persisted fixed-image v1 evidence remains readable.
+	if bytes.Equal(data, []byte("compiler-failure-v1\ncompile\n")) || bytes.Equal(data, []byte("compiler-failure-v1\ntestCompile\n")) {
+		return true
+	}
+	if len(data) > compilationReportLimit || !bytes.HasSuffix(data, []byte("\n")) {
+		return false
+	}
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if len(lines) < 2 || len(lines) > 129 || lines[0] != "compiler-source-errors-v2" {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, code := range lines[1:] {
+		if !compilationCode.MatchString(code) || seen[code] || strings.HasPrefix(code, "compiler.err.locn.") || strings.HasPrefix(code, "compiler.err.proc.") {
+			return false
+		}
+		switch code {
+		case "compiler.err.class.cant.write", "compiler.err.error.writing.file", "compiler.err.error.reading.file", "compiler.err.io.exception", "compiler.err.cant.read.file", "compiler.err.cant.access", "compiler.err.unsupported.encoding", "compiler.err.no.java.lang":
+			return false
+		}
+		seen[code] = true
+	}
+	return true
+}
+
+// Evidence identifies retained authoritative bytes, not untrusted console text.
+// The execution identity plus Kind locates the artifact in the durable result.
+type Evidence struct {
+	Kind, SHA256 string
+	Bytes        uint64
+}
+
+// Evidence returns bounded metadata only for a validated grading artifact.
+func (r Result) Evidence() *Evidence {
+	var kind string
+	var data []byte
+	if r.State == "FAILED" && r.Reason == "compilation_failed" && validCompilationReport(r.CompilationReport) {
+		kind, data = "COMPILATION_DIAGNOSTICS", r.CompilationReport
+	} else if r.State == "PASSED" || r.State == "FAILED" {
+		if r.ExitCode == nil {
+			return nil
+		}
+		state, err := classifyReport(r.Report, r.Input, *r.ExitCode)
+		if err != nil || state != r.State {
+			return nil
+		}
+		kind, data = "SUREFIRE_XML", r.Report
+	} else {
+		return nil
+	}
+	return &Evidence{Kind: kind, SHA256: fmt.Sprintf("%x", cryptoSHA256.Sum256(data)), Bytes: uint64(len(data))}
 }
 
 type tailLog struct {

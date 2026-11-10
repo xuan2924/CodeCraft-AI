@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strconv"
 	"time"
@@ -20,7 +21,7 @@ import (
 )
 
 const command = `cp -R /input/src /work/src || exit 90
-mvn -o -B -ntp -f /opt/contract/pom.xml -Dmaven.repo.local=/opt/maven-repository -Dcandidate.sources=/work/src/main/java -Dacceptance.sources=/opt/acceptance -Dbuild.output=/work/target -Dcodecraft.compilationResult=/work/compilation-result test
+mvn -o -B -ntp -f /opt/contract/pom.xml -Dmaven.repo.local=/opt/maven-repository -Dcandidate.sources=/work/src/main/java -Dacceptance.sources=/opt/acceptance -Dbuild.output=/work/target test
 status=$?
 printf '%s' "$status" > /work/.result-status.tmp || exit 91
 mv /work/.result-status.tmp /work/result-status || exit 92
@@ -30,53 +31,137 @@ while :; do sleep 1; done`
 // not a browser/RPC context. Every Docker side effect follows durable registration.
 // Replays return the original record; unresolved work never starts a second run.
 func (r *Runner) Run(ctx context.Context, input Input) (Result, error) {
+	record, fresh, err := r.register(ctx, input, nil)
+	if err != nil || !fresh {
+		return record, err
+	}
+	result, runErr := r.execute(ctx, record)
+	r.finished(ctx, result)
+	return result, runErr
+}
+
+// Start durably reserves capacity before returning. The caller supplies its worker
+// lifetime (never the RPC lifetime) and a bounded cleanup callback for the input.
+// Completion stays owned by this runner; Wait must precede Close.
+func (r *Runner) Start(owner context.Context, input Input, prepare func() error, cleanup func(context.Context, Result) error) (Result, error) {
+	record, fresh, err := r.register(owner, input, prepare)
+	if err != nil || !fresh {
+		return record, err
+	}
+	go func() {
+		result, runErr := r.execute(owner, record)
+		if result.Quiescent && cleanup != nil {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(owner), 15*time.Second)
+			// Operational errors can coexist with proven quiescence. Only durable
+			// terminal evidence permits releasing the referenced input.
+			durable, evidenceErr := r.Query(ctx, input.ExecutionID)
+			if evidenceErr == nil && durable.Quiescent && durable.FinishedAt != nil && durable.State == result.State && durable.ContainerID == result.ContainerID {
+				cleanupErr := cleanup(ctx, result)
+				result.CopyCleanup = "SUCCEEDED"
+				if cleanupErr != nil {
+					result.CopyCleanup = "FAILED"
+				}
+				runErr = errors.Join(runErr, cleanupErr, r.persist(result))
+			} else {
+				runErr = errors.Join(runErr, evidenceErr, errors.New("input cleanup lacks durable quiescence evidence"))
+			}
+			cancel()
+		}
+		if runErr != nil {
+			log.Printf("execution worker error: execution=%s reason=%s error_type=%T", input.ExecutionID, result.Reason, runErr)
+		}
+		r.finished(owner, result)
+	}()
+	return record, nil
+}
+
+func (r *Runner) register(ctx context.Context, input Input, prepare func() error) (Result, bool, error) {
 	if err := validateInput(input); err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 	input.Tests = append([]string(nil), input.Tests...)
 	r.mu.Lock()
+	if previous, exists := r.tasks[input.TaskID]; input.TaskID != "" && exists && previous != input.ExecutionID {
+		r.mu.Unlock()
+		return Result{}, false, ErrConflict
+	}
 	previous, err := r.Query(ctx, input.ExecutionID)
 	if err == nil {
 		r.mu.Unlock()
 		a, _ := json.Marshal(previous.Input)
 		b, _ := json.Marshal(input)
 		if !bytes.Equal(a, b) {
-			return Result{}, ErrConflict
+			return Result{}, false, ErrConflict
 		}
-		return previous, nil
+		return previous, false, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		r.mu.Unlock()
-		return Result{}, err
+		return Result{}, false, err
 	}
 	if r.running || r.blocked || r.closed {
 		r.mu.Unlock()
-		return Result{}, ErrBusy
+		return Result{}, false, ErrBusy
 	}
 	if !time.Now().Before(input.NotAfter) {
 		r.mu.Unlock()
-		return Result{}, errors.New("execution authorization expired")
+		return Result{}, false, errors.New("execution authorization expired")
+	}
+	if prepare != nil {
+		if err := prepare(); err != nil {
+			r.mu.Unlock()
+			return Result{}, false, err
+		}
 	}
 	record := Result{Input: input, State: "STARTING", StartedAt: time.Now().UTC(), Cleanup: "PENDING"}
+	if ctx.Err() != nil || !time.Now().Before(input.NotAfter) {
+		// Publication succeeded: retain a durable owner even if authority expired
+		// at this boundary. It owns cleanup only, never container creation.
+		record.State, record.Reason = "INTERRUPTED", "authority_expired_after_input"
+		record.Quiescent, record.Cleanup = true, "SUCCEEDED"
+		now := time.Now().UTC()
+		record.FinishedAt = &now
+	}
+	if input.TaskID != "" {
+		record.CopyCleanup = "PENDING"
+	}
 	if err = r.persist(record); err != nil {
 		r.blocked = true
 		r.mu.Unlock()
-		return Result{}, err
+		return Result{}, false, err
+	}
+	if input.TaskID != "" {
+		r.tasks[input.TaskID] = input.ExecutionID
 	}
 	r.running = true
+	r.done = make(chan struct{})
 	r.mu.Unlock()
-	result, runErr := r.execute(ctx, record)
+	return record, true, nil
+}
+
+func (r *Runner) finished(ctx context.Context, result Result) {
+	durable, err := r.Query(context.WithoutCancel(ctx), result.Input.ExecutionID)
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.running = false
-	if runErr != nil || !result.Quiescent {
+	if err != nil || !result.Quiescent || !durable.Quiescent || durable.Cleanup != "SUCCEEDED" || durable.CopyCleanup == "FAILED" || (durable.Input.TaskID != "" && durable.CopyCleanup != "SUCCEEDED") {
 		r.blocked = true
 	}
-	r.mu.Unlock()
-	return result, runErr
+	close(r.done)
 }
 
 func (r *Runner) execute(ctx context.Context, record Result) (Result, error) {
 	input := record.Input
+	if record.State == "INTERRUPTED" && record.Quiescent {
+		return record, nil
+	}
+	if ctx.Err() != nil || !time.Now().Before(input.NotAfter) {
+		record.State, record.Reason = "INTERRUPTED", "authority_expired_before_create"
+		record.Quiescent, record.Cleanup = true, "SUCCEEDED"
+		now := time.Now().UTC()
+		record.FinishedAt = &now
+		return record, r.persist(record)
+	}
 	config, host := r.containerConfig(input)
 	call, cancel := context.WithTimeout(ctx, 5*time.Second)
 	created, err := r.docker.ContainerCreate(call, config, host, nil, &specs.Platform{OS: "linux", Architecture: "amd64"}, "cc-execution-"+input.ExecutionID)
@@ -173,7 +258,7 @@ func (r *Runner) containerConfig(input Input) (*container.Config, *container.Hos
 		Resources:     container.Resources{CPUPeriod: 100000, CPUQuota: limits.CPUs * 100000, Memory: limits.MemoryMiB * 1024 * 1024, MemorySwap: limits.MemoryMiB * 1024 * 1024, PidsLimit: &pids, Ulimits: []*units.Ulimit{{Name: "core", Soft: 0, Hard: 0}}},
 		ShmSize:       limits.ShmMiB * 1024 * 1024,
 		Tmpfs:         map[string]string{"/work": fmt.Sprintf("rw,nosuid,nodev,noexec,size=%dm,uid=10001,gid=10001", limits.WorkMiB), "/tmp": fmt.Sprintf("rw,nosuid,nodev,noexec,size=%dm,uid=10001,gid=10001", limits.TmpMiB)},
-		Mounts:        []mount.Mount{{Type: mount.TypeVolume, Source: r.volume, Target: "/input", ReadOnly: true, VolumeOptions: &mount.VolumeOptions{NoCopy: true, Subpath: input.Subpath}}},
+		Mounts:        []mount.Mount{{Type: mount.TypeVolume, Source: r.volume, Target: "/input", ReadOnly: true, VolumeOptions: &mount.VolumeOptions{NoCopy: true, Subpath: r.inputPrefix + input.Subpath}}},
 		LogConfig:     container.LogConfig{Type: "local", Config: map[string]string{"max-size": strconv.Itoa(limits.LogBytes), "max-file": "1", "compress": "false"}}}
 	return config, host
 }
@@ -196,7 +281,7 @@ func (r *Runner) observe(ctx context.Context, record *Result) (string, string) {
 			}
 			record.ExitCode = &exit
 			if exit == 1 {
-				compilation, readErr := r.readFile(ctx, record.ContainerID, "/work/compilation-result", 64)
+				compilation, readErr := r.readFile(ctx, record.ContainerID, "/work/compilation-result", compilationReportLimit)
 				if readErr == nil && validCompilationReport(compilation) {
 					record.CompilationReport = compilation
 					return "FAILED", "compilation_failed"

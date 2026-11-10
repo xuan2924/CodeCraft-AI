@@ -57,9 +57,15 @@ func run(containerMode bool) error {
 	}
 	server := status.NewServer(options...)
 	if containerMode {
-		if err := registerWorkspace(server, os.Getenv("SANDBOX_RPC_KEY")); err != nil {
+		closeExecution, err := registerWorkspace(server, os.Getenv("SANDBOX_RPC_KEY"), os.Getenv("SANDBOX_EXECUTION_VOLUME"))
+		if err != nil {
 			return err
 		}
+		defer func() {
+			if err := closeExecution(); err != nil {
+				log.Print("execution shutdown requires reconciliation")
+			}
+		}()
 	}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)

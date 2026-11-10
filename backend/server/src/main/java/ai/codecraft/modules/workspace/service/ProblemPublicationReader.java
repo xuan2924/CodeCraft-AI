@@ -62,7 +62,7 @@ public class ProblemPublicationReader {
             artifact.path("acceptanceFiles").fields().forEachRemaining(entry -> acceptance.put(entry.getKey(), entry.getValue().asText()));
             return new ProblemResponse(version.id(), version.problemId(), version.version(), manifest.path("title").asText(),
                 artifact.path("requirements").asText(), manifest.path("durationSeconds").asInt(), List.copyOf(roots),
-                Map.copyOf(acceptance), version.packageSha256(), version.executionImageDigest(), version.platform(), "LOCAL_DOCKER_IMAGE_ID");
+                Map.copyOf(acceptance), version.packageSha256(), version.executionImageDigest(), version.platform(), "LOCAL_DOCKER_IMAGE_ID", manifest.path("execution").isObject());
         } catch (IOException error) {
             throw new IllegalStateException("Stored publication is invalid", error);
         }
@@ -109,6 +109,17 @@ public class ProblemPublicationReader {
         require(manifest.path("expectedReference").path("failures").asInt(-1) == 0
             && manifest.path("expectedReference").path("errors").asInt(-1) == 0
             && manifest.path("expectedReference").path("skipped").asInt(-1) == 0);
+        if (manifest.has("execution")) {
+            JsonNode execution = manifest.path("execution");
+            require(execution.isObject() && execution.path("suite").asText().matches("[A-Za-z_][A-Za-z_0-9.]{0,254}"));
+            require(execution.path("tests").isArray() && execution.path("tests").size() > 0 && execution.path("tests").size() <= 200
+                && execution.path("tests").size() == manifest.path("expectedReference").path("tests").asInt());
+            List<String> names = new ArrayList<>();
+            for (JsonNode name : execution.path("tests")) {
+                require(name.isTextual() && name.asText().matches("[A-Za-z_][A-Za-z_0-9.]{0,254}") && !names.contains(name.asText()));
+                names.add(name.asText());
+            }
+        }
         require(artifact.path("initialFiles").has("pom.xml") && artifact.path("acceptanceFiles").has("CartTotalTest.java"));
         for (String section : List.of("initialFiles", "acceptanceFiles")) {
             require(artifact.path(section).isObject());

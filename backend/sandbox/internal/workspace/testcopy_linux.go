@@ -34,6 +34,10 @@ func (s *Service) PrepareTestCopy(ctx context.Context, request *rpc.PrepareTestC
 		return nil, err
 	}
 	defer release()
+	return s.prepareTestCopyLocked(ctx, request)
+}
+
+func (s *Service) prepareTestCopyLocked(ctx context.Context, request *rpc.PrepareTestCopyRequest) (*rpc.TestCopyReceipt, error) {
 	if !uuid.MatchString(request.ExecutionInstanceId) {
 		return nil, status.Error(codes.InvalidArgument, "invalid execution instance")
 	}
@@ -134,6 +138,9 @@ func readTestCopy(ctx context.Context, parent int, instanceID, executionID strin
 		return nil, err
 	}
 	defer syscall.Close(fd)
+	if _, err := readPath(fd, "released"); err == nil || !errors.Is(err, syscall.ENOENT) {
+		return nil, fmt.Errorf("test input already released or release unconfirmed")
+	}
 	// Once the committed directory exists, missing metadata/content is corruption,
 	// not absence. Never recreate a damaged input under an existing execution ID.
 	data, err := readPath(fd, "receipt.json")

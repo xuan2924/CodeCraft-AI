@@ -1,9 +1,0 @@
-<component-set>
-  <components>
-    <component>
-      <role>org.apache.maven.eventspy.EventSpy</role>
-      <role-hint>codecraft-compilation-result</role-hint>
-      <implementation>ai.codecraft.execution.CompilationSpy</implementation>
-    </component>
-  </components>
-</component-set>

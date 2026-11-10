@@ -33,15 +33,18 @@ var ErrConflict = errors.New("execution input conflict")
 // Runner exclusively owns one private registry and one Docker namespace. Pending
 // registrations block new work after restart; recovery must not blindly rerun them.
 type Runner struct {
-	docker  *client.Client
-	root    string
-	volume  string
-	owner   string
-	lock    *os.File
-	mu      sync.Mutex
-	blocked bool
-	running bool
-	closed  bool
+	docker      *client.Client
+	root        string
+	volume      string
+	inputPrefix string
+	owner       string
+	lock        *os.File
+	mu          sync.Mutex
+	blocked     bool
+	running     bool
+	closed      bool
+	done        chan struct{}
+	tasks       map[string]string
 }
 
 // New acquires process ownership and checks inventory before admitting work.
@@ -62,12 +65,23 @@ func New(ctx context.Context, docker *client.Client, root, volume, owner string)
 		lock.Close()
 		return nil, fmt.Errorf("execution registry already owned: %w", err)
 	}
-	r := &Runner{docker: docker, root: root, volume: volume, owner: owner, lock: lock}
+	r := &Runner{docker: docker, root: root, volume: volume, owner: owner, lock: lock, tasks: map[string]string{}}
 	if err = r.inventory(ctx); err != nil {
 		lock.Close()
 		return nil, err
 	}
 	return r, nil
+}
+
+// NewWorkspaceRunner uses the production data volume layout, whose workspaces
+// are beneath /workspaces while the execution registry is a sibling directory.
+func NewWorkspaceRunner(ctx context.Context, docker *client.Client, root, volume, owner string) (*Runner, error) {
+	runner, err := New(ctx, docker, root, volume, owner)
+	if err != nil {
+		return nil, err
+	}
+	runner.inputPrefix = "workspaces/"
+	return runner, nil
 }
 
 // Close releases registry ownership only when no Run is still executing. The
@@ -83,6 +97,16 @@ func (r *Runner) Close() error {
 	}
 	r.closed = true
 	return r.lock.Close()
+}
+
+// Wait joins the one owned asynchronous execution before releasing registry storage.
+func (r *Runner) Wait() {
+	r.mu.Lock()
+	done := r.done
+	r.mu.Unlock()
+	if done != nil {
+		<-done
+	}
 }
 
 func (r *Runner) inventory(ctx context.Context) error {
@@ -105,6 +129,12 @@ func (r *Runner) inventory(ctx context.Context) error {
 			return err
 		}
 		records[id] = record.ContainerID
+		if task := record.Input.TaskID; task != "" {
+			if previous, exists := r.tasks[task]; exists && previous != id {
+				return errors.New("task has conflicting execution identities")
+			}
+			r.tasks[task] = id
+		}
 		if !record.Quiescent {
 			r.blocked = true
 		}
@@ -190,6 +220,15 @@ func (r *Runner) Query(ctx context.Context, id string) (Result, error) {
 	default:
 		return Result{}, errors.New("unknown execution state")
 	}
+	if result.CopyCleanup != "" && result.CopyCleanup != "PENDING" && result.CopyCleanup != "SUCCEEDED" && result.CopyCleanup != "FAILED" {
+		return Result{}, errors.New("invalid input cleanup state")
+	}
+	if result.CopyCleanup == "SUCCEEDED" && (!result.Quiescent || result.FinishedAt == nil) {
+		return Result{}, errors.New("input cleaned before confirmed completion")
+	}
+	if result.Input.TaskID != "" && result.CopyCleanup == "" {
+		return Result{}, errors.New("task input cleanup status missing")
+	}
 	if result.Cleanup != "PENDING" && result.Cleanup != "SUCCEEDED" && result.Cleanup != "FAILED" {
 		return Result{}, errors.New("invalid cleanup state")
 	}
@@ -199,7 +238,7 @@ func (r *Runner) Query(ctx context.Context, id string) (Result, error) {
 	if result.ContainerID != "" && !sha256.MatchString(result.ContainerID) {
 		return Result{}, errors.New("invalid recorded container identity")
 	}
-	if len(result.Report) > reportLimit || len(result.CompilationReport) > 64 || len(result.Logs) > 4096 {
+	if len(result.Report) > reportLimit || len(result.CompilationReport) > compilationReportLimit || len(result.Logs) > 4096 {
 		return Result{}, errors.New("recorded evidence exceeds bounds")
 	}
 	retained := 0
@@ -269,6 +308,9 @@ func (r *Runner) persist(result Result) (err error) {
 }
 
 func validateInput(input Input) error {
+	if input.TaskID != "" && (!uuid.MatchString(input.TaskID) || !uuid.MatchString(input.ExerciseID) || input.ProblemID == "" || input.ProblemVersion == "") {
+		return errors.New("invalid task ownership")
+	}
 	limits := input.Limits
 	if !uuid.MatchString(input.ExecutionID) || !uuid.MatchString(input.WorkspaceID) || !strings.HasPrefix(input.Image, "sha256:") || !sha256.MatchString(strings.TrimPrefix(input.Image, "sha256:")) || !sha256.MatchString(input.PackageSHA256) || input.Platform != "linux/amd64" || input.Target != "base" || input.NotAfter.IsZero() {
 		return errors.New("invalid fixed execution input")

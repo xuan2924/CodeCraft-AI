@@ -26,7 +26,7 @@ func TestMutationCrashWorker(t *testing.T) {
 	if root == "" {
 		t.Skip("subprocess-only fault fixture")
 	}
-	service, err := workspace.NewService(root, []workspace.Publication{publication()}, fixtureKey)
+	service, err := workspace.NewService(root, []workspace.Publication{publication()}, fixtureKey, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

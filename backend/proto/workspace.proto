@@ -19,6 +19,8 @@ service WorkspaceStorage {
   // Internal input preparation only; these calls never register or start an execution.
   rpc PrepareTestCopy(PrepareTestCopyRequest) returns (TestCopyReceipt);
   rpc QueryTestCopy(QueryTestCopyRequest) returns (TestCopyReceipt);
+  rpc StartTest(StartTestRequest) returns (TestTaskSnapshot);
+  rpc QueryTask(QueryTaskRequest) returns (TestTaskSnapshot);
 }
 
 message ProblemIdentity {
@@ -109,6 +111,54 @@ message TestCopyReceipt {
   uint64 revision = 3;
   ProblemIdentity problem = 4;
   string relative_path = 5;
+}
+// All IDs and authority originate in Java; runtime configuration comes from publication.
+message StartTestRequest {
+  string exercise_id = 1;
+  string task_id = 2;
+  string execution_instance_id = 3;
+  string workspace_instance_id = 4;
+  uint64 expected_revision = 5;
+  string target = 6;
+  string purpose = 7; // MANUAL in #13; final verification has separate authority in #15.
+  uint64 gate_epoch = 8;
+  int64 not_after_unix_millis = 9;
+}
+message QueryTaskRequest {
+  string exercise_id = 1;
+  string task_id = 2;
+  string execution_instance_id = 3;
+  string workspace_instance_id = 4;
+}
+message TestLogChunk {
+  string channel = 1;
+  bytes data = 2;
+}
+message TestEvidence {
+  string kind = 1;
+  string sha256 = 2;
+  uint64 bytes = 3;
+}
+message TestTaskSnapshot {
+  string exercise_id = 1;
+  string task_id = 2;
+  string execution_instance_id = 3;
+  string workspace_instance_id = 4;
+  uint64 revision = 5;
+  string target = 6;
+  ProblemIdentity problem = 7;
+  string state = 8;
+  string reason = 9;
+  int64 started_at_unix_millis = 10;
+  optional int64 finished_at_unix_millis = 11;
+  optional int32 exit_code = 12;
+  bool quiescent = 13;
+  string cleanup = 14;
+  string copy_cleanup = 15;
+  repeated TestLogChunk logs = 16;
+  uint64 dropped_bytes = 17;
+  bool logs_incomplete = 18;
+  TestEvidence evidence = 19;
 }
 message WorkspaceSnapshot {
   string workspace_instance_id = 1;

@@ -69,6 +69,82 @@ class WorkspaceIT {
     void closeClient() { http.close(); }
 
     @Test
+    void startsOneStableTestWithDurableResultsAndOwnership() throws Exception {
+        String exercise = readyExercise("test-task");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "page", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "begin", 200, credential);
+        Object input = Map.of("expectedRevision", "0", "target", "base");
+        request("POST", base + "/tests", Map.of("expectedRevision", "0", "target", "shell"), "invalid", 400, credential);
+        request("POST", base + "/tests", Map.of("expectedRevision", "1", "target", "base"), "stale", 409, credential);
+        CompletableFuture<JsonNode> first = CompletableFuture.supplyAsync(() -> {
+            try { return request("POST", base + "/tests", input, "same-key", 202, credential).path("data"); }
+            catch (Exception error) { throw new IllegalStateException(error); }
+        });
+        JsonNode accepted = request("POST", base + "/tests", input, "same-key", 202, credential).path("data");
+        assertThat(first.get(10, TimeUnit.SECONDS).path("taskId")).isEqualTo(accepted.path("taskId"));
+        assertThat(request("POST", base + "/tests", input, "different-key", 409, credential).path("code").asText()).isEqualTo("TEST_SLOT_BUSY");
+        assertThat(request("POST", base + "/tests", Map.of("expectedRevision", "1", "target", "base"), "same-key", 409, credential).path("code").asText()).isEqualTo("IDEMPOTENCY_CONFLICT");
+        String source = "src/main/java/interview/CartTotal.java";
+        String code = request("GET", base + "/files?path=" + source, null, null, 200).path("data").path("content").asText();
+        // Observe registration before saving: acceptance itself is asynchronous.
+        String taskUrl = base + "/tasks/" + accepted.path("taskId").asText();
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
+        JsonNode result;
+        do {
+            result = request("GET", taskUrl, null, null, 200).path("data");
+            if (System.nanoTime() >= until) throw new AssertionError("Task did not register: " + result);
+            Thread.sleep(100);
+        } while (result.path("state").asText().equals("ACCEPTED"));
+        assertThat(request("POST", base + "/file-batches", Map.of("expectedRevision", "0", "changes", List.of(
+            Map.of("path", source, "kind", "UPDATE", "content", code + "\n// saved during execution\n"))), "save-running", 200, credential).path("data").path("revision").asText()).isEqualTo("1");
+        String newCredential = request("POST", base + "/control/takeover", Map.of(), "takeover-test", 200).path("data").path("credential").asText();
+        request("POST", base + "/tests", input, "old-page", 409, credential);
+        do {
+            result = request("GET", taskUrl, null, null, 200).path("data");
+            if (System.nanoTime() >= until) throw new AssertionError("Task did not finish: " + result);
+            Thread.sleep(100);
+        } while (!result.path("copyCleanup").asText().equals("SUCCEEDED"));
+        assertThat(result.path("state").asText()).isEqualTo("FAILED");
+        assertThat(result.path("revision").asText()).isEqualTo("0");
+        assertThat(result.path("exitCode").asInt()).isEqualTo(1);
+        assertThat(result.path("problem")).isEqualTo(accepted.path("problem"));
+        assertThat(result.path("problem").path("version").asText()).isEqualTo("1.0.1");
+        assertThat(result.path("evidence").path("kind").asText()).isEqualTo("SUREFIRE_XML");
+        assertThat(result.path("evidence").path("sha256").asText()).matches("[a-f0-9]{64}");
+        assertThat(result.path("evidence").path("bytes").asLong()).isBetween(1L, 2097152L);
+        assertThat(result.path("quiescent").asBoolean()).isTrue();
+        assertThat(result.path("cleanup").asText()).isEqualTo("SUCCEEDED");
+        assertThat(request("POST", base + "/tests", input, "same-key", 202, newCredential).path("data").path("taskId")).isEqualTo(accepted.path("taskId"));
+        assertThat(request("GET", base + "/tasks", null, null, 200).path("data")).hasSize(1);
+        seedDisposableIdentity();
+        request("GET", taskUrl, null, null, 404);
+        request("GET", base + "/tasks", null, null, 404);
+        request("POST", base + "/tests", input, "foreign", 404, newCredential);
+    }
+
+    @Test
+    void rejectsUnconfiguredAndExpiredTestsBeforeReservingCapacity() throws Exception {
+        String exercise = readyExercise("test-policy");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "page", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "begin", 200, credential);
+        String problem = jdbc.queryForObject("SELECT problem_version_id::text FROM workspace_exercise WHERE id = ?::uuid", String.class, exercise);
+        String artifact = jdbc.queryForObject("SELECT artifact::text FROM problem_version WHERE id = ?::uuid", String.class, problem);
+        try {
+            // Isolated deployment-fault fixture, not mutation of a published file/image.
+            jdbc.update("UPDATE problem_version SET artifact = artifact #- '{manifest,execution}' WHERE id = ?::uuid", problem);
+            assertThat(request("POST", base + "/tests", Map.of("expectedRevision", "0", "target", "base"), "unconfigured", 409, credential)
+                .path("code").asText()).isEqualTo("TEST_TARGET_UNAVAILABLE");
+        } finally {
+            jdbc.update("UPDATE problem_version SET artifact = ?::jsonb WHERE id = ?::uuid", artifact, problem);
+        }
+        jdbc.update("UPDATE workspace_exercise SET deadline_at = now() - interval '1 second' WHERE id = ?::uuid", exercise);
+        request("POST", base + "/tests", Map.of("expectedRevision", "0", "target", "base"), "expired", 409, credential);
+        assertThat(request("GET", base + "/tasks", null, null, 200).path("data")).isEmpty();
+    }
+
+    @Test
     void savesAtomicBatchesWithControlAndPersistentReceipts() throws Exception {
         String exercise = readyExercise("write-fixture");
         String base = "/api/exercises/" + exercise;
@@ -516,7 +592,7 @@ class WorkspaceIT {
         jdbc.update("""
             INSERT INTO problem_version(id, problem_id, version, package_sha256, execution_image_digest, platform, artifact)
             SELECT ?::uuid, problem_id, '999.0.0', package_sha256, execution_image_digest, platform, artifact
-            FROM problem_version WHERE version = '1.0.0'
+            FROM problem_version WHERE version <> '999.0.0' ORDER BY version LIMIT 1
             """, missingVersion);
         String exercise = null;
         try {

@@ -44,7 +44,7 @@ const values = {
   BOOTSTRAP_ADMIN_USERNAME: 'tracer_admin', BOOTSTRAP_ADMIN_PASSWORD: randomBytes(32).toString('hex'),
   IDENTITY_FINGERPRINT_KEY: randomBytes(32).toString('hex'),
   ...(workspaceMode ? { SANDBOX_RPC_KEY: randomBytes(32).toString('hex'),
-    PROBLEM_PUBLICATION_FILE: join(root, '.runtime', 'problem-publication.json') } : {}),
+    PROBLEM_PUBLICATION_FILE: join(directory, 'problem-publication.json') } : {}),
   POSTGRES_PORT: await reservePort(), JAVA_PORT: await reservePort(),
   SANDBOX_PORT: await reservePort(), WEB_PORT: await reservePort(),
 };
@@ -153,9 +153,9 @@ function inspectSandbox() {
   assert.equal(info.HostConfig.ReadonlyRootfs, true);
   assert(info.HostConfig.CapDrop.includes('ALL'));
   assert(info.HostConfig.SecurityOpt.some((value) => value.startsWith('no-new-privileges')));
-  assert.equal(info.Mounts.length, 1, 'only the private data volume may be mounted');
-  assert.equal(info.Mounts[0].Type, 'volume');
-  assert.equal(info.Mounts[0].Destination, '/var/lib/codecraft');
+  assert.equal(info.Mounts.length, 2, 'trusted coordinator gets private data and Docker socket only');
+  assert(info.Mounts.some((mount) => mount.Type === 'volume' && mount.Destination === '/var/lib/codecraft'));
+  assert(info.Mounts.some((mount) => mount.Type === 'bind' && mount.Destination === '/docker.sock'));
   assert.equal(info.HostConfig.PortBindings['9090/tcp'][0].HostIp, '127.0.0.1');
   assert(!info.Config.Env.some((value) => /^(POSTGRES_|BOOTSTRAP_|IDENTITY_)/.test(value)));
   const second = spawnSync('docker', ['exec', id, '/sandbox', '--container'], { encoding: 'utf8', timeout: 10000 });
@@ -167,6 +167,8 @@ let failure;
 let workspaceProbe;
 try {
   run('docker', ['info'], { stdio: 'ignore' });
+  if (workspaceMode) run(process.execPath, ['scripts/publish-problem.mjs', 'problems/cart-total/1.0.1',
+    join(directory, 'publication-evidence'), values.PROBLEM_PUBLICATION_FILE]);
   composeEnv.SANDBOX_IMAGE = await buildSandboxImage(values.PROBLEM_PUBLICATION_FILE);
   composeEnv.SANDBOX_PORT = values.SANDBOX_PORT;
   composeEnv.JAVA_IMAGE = await buildJavaImage(values.PROBLEM_PUBLICATION_FILE);
@@ -310,6 +312,12 @@ try {
   for (const child of children.reverse()) {
     try { await stop(child); } catch (error) { failure ??= error; }
   }
+  // A killed test JVM must not leave its exact managed execution containers behind.
+  try {
+    const ids = run('docker', ['ps', '-aq', '--filter', `label=codecraft.execution.volume=${project}_sandbox-data`],
+      { encoding: 'utf8', stdio: 'pipe' }).stdout.trim();
+    if (ids) run('docker', ['rm', '-f', ...ids.split(/\s+/)]);
+  } catch (error) { failure ??= error; }
   try { compose(['down', '--volumes', '--remove-orphans']); } catch (error) { failure ??= error; }
   await rm(envFile, { force: true });
 }

@@ -42,6 +42,13 @@ export async function validatePackage(directory) {
     })) assert.equal(manifest[key], value, key);
     assert.deepEqual(manifest.editableRoots, ['src/main/java', 'src/test/java'], 'editableRoots');
     assert.deepEqual(manifest.targets, ['base']);
+    if (manifest.execution !== undefined) {
+        assert.match(manifest.execution.suite, /^[A-Za-z_][A-Za-z_0-9.]{0,254}$/);
+        assert(Array.isArray(manifest.execution.tests) && manifest.execution.tests.length > 0 && manifest.execution.tests.length <= 200);
+        assert.equal(new Set(manifest.execution.tests).size, manifest.execution.tests.length);
+        for (const test of manifest.execution.tests) assert.match(test, /^[A-Za-z_][A-Za-z_0-9.]{0,254}$/);
+        assert.equal(manifest.execution.tests.length, manifest.expectedReference.tests);
+    }
     assert.equal(manifest.runtime.platform, 'linux/amd64');
     for (const key of ['cpus', 'memoryMiB', 'pids', 'workMiB', 'tmpMiB', 'shmMiB',
         'timeoutSeconds', 'logBytes', 'globalConcurrency']) {

@@ -76,3 +76,19 @@ func TestRestrictedExecutionUnwritableCompilerOutputIsEnvironmentError(t *testin
 		t.Fatalf("fixture failed before reaching javac output write: %s", output.String())
 	}
 }
+
+func TestRestrictedExecutionCompilerResourceFailureIsEnvironmentError(t *testing.T) {
+	source := "package interview; public class CartTotal { Object value = " + strings.Repeat("(", 10000) + "null" + strings.Repeat(")", 10000) + "; }"
+	runner, input, _, _ := fixture(t, source)
+	result, err := runner.Run(context.Background(), input)
+	if err != nil || result.State != "ENVIRONMENT_ERROR" || !result.Quiescent || len(result.CompilationReport) != 0 {
+		t.Fatalf("compiler resource error graded as code failure: state=%s reason=%s error=%v", result.State, result.Reason, err)
+	}
+	var output strings.Builder
+	for _, chunk := range result.Logs {
+		output.Write(chunk.Data)
+	}
+	if !strings.Contains(output.String(), "StackOverflowError") {
+		t.Fatalf("fixture did not exhaust compiler stack: %s", output.String())
+	}
+}

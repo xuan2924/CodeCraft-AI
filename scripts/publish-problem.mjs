@@ -1,24 +1,29 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { root, run } from './process.mjs';
 import { publicationFromSnapshot } from './publication-contract.mjs';
 
+if (process.argv.length !== 2 && process.argv.length !== 5) {
+    throw new Error('Usage: node scripts/publish-problem.mjs [package-directory evidence-directory publication-file]');
+}
+const packageDirectory = process.argv[2] ? resolve(process.argv[2]) : join(root, 'problems/cart-total/1.0.0');
+const evidenceDirectory = process.argv[3] ? resolve(process.argv[3]) : join(root, 'problems/.validation');
+const destination = process.argv[4] ? resolve(process.argv[4]) : join(root, '.runtime', 'problem-publication.json');
 // Revalidation is mandatory; an old receipt or mutable tag is never publication authority.
-run(process.execPath, ['scripts/validate-problem.mjs']);
+run(process.execPath, ['scripts/validate-problem.mjs', packageDirectory, evidenceDirectory]);
 await mkdir(join(root, '.runtime'), { recursive: true });
 const temporary = await mkdtemp(join(root, '.runtime', 'publication-'));
 try {
     const snapshot = join(temporary, 'package');
-    await cp(join(root, 'problems/cart-total/1.0.0'), snapshot, { recursive: true });
-    const receipt = JSON.parse(await readFile(join(root, 'problems/.validation/receipt.json'), 'utf8'));
+    await cp(packageDirectory, snapshot, { recursive: true });
+    const receipt = JSON.parse(await readFile(join(evidenceDirectory, 'receipt.json'), 'utf8'));
     const docker = (args) => execFileSync('docker', args, { encoding: 'utf8', timeout: 15000, maxBuffer: 1048576 }).trim();
     const image = JSON.parse(docker(['image', 'inspect', '--format', '{{json .}}', receipt.imageId]));
     const publication = await publicationFromSnapshot(snapshot, receipt, {
         daemonId: docker(['info', '--format', '{{.ID}}']), imageId: image.Id, platform: `${image.Os}/${image.Architecture}`,
     });
-    const destination = join(root, '.runtime', 'problem-publication.json');
     let existing;
     try { existing = JSON.parse(await readFile(destination, 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }

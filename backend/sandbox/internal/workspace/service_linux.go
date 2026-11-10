@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"codecraft.local/sandbox/internal/execution"
 	rpc "codecraft.local/sandbox/internal/gen"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -41,6 +42,8 @@ type Service struct {
 	key          string
 	publications []Publication
 	gate         chan struct{}
+	executor     *execution.Runner
+	worker       context.Context
 	// Test-only synchronization, configured before serving; never exposed by RPC or configuration.
 	beforeMutationPublish func(context.Context)
 }
@@ -51,8 +54,18 @@ type record struct {
 	Mutations map[string]*rpc.MutationReceipt `json:"mutations,omitempty"`
 }
 
+// ExecutionRuntime binds an executor to its process-owned worker lifetime.
+// A nil runtime constructs a storage-only service.
+type ExecutionRuntime struct {
+	Runner *execution.Runner
+	Worker context.Context
+}
+
 // NewService configures published inputs and private local storage, never a user path.
-func NewService(root string, publications []Publication, key string) (*Service, error) {
+func NewService(root string, publications []Publication, key string, runtime *ExecutionRuntime) (*Service, error) {
+	if runtime != nil && (runtime.Runner == nil || runtime.Worker == nil) {
+		return nil, errors.New("execution requires runner and worker lifetime")
+	}
 	if !digest.MatchString(key) || !filepath.IsAbs(root) {
 		return nil, fmt.Errorf("absolute private root and 32-byte hex RPC key required")
 	}
@@ -65,12 +78,20 @@ func NewService(root string, publications []Publication, key string) (*Service, 
 	}
 	syscall.Close(fd)
 	s := &Service{root: root, key: key, gate: make(chan struct{}, 1)}
+	if runtime != nil {
+		s.executor, s.worker = runtime.Runner, runtime.Worker
+	}
 	s.gate <- struct{}{}
 	for _, publication := range publications {
 		if publication.Identity == nil || len(publication.InitialFiles) == 0 {
 			return nil, fmt.Errorf("publication requires identity and initial files")
 		}
 		copy := Publication{Identity: proto.Clone(publication.Identity).(*rpc.ProblemIdentity), InitialFiles: map[string]string{}}
+		if publication.Execution != nil {
+			policy := *publication.Execution
+			policy.Tests = append([]string(nil), policy.Tests...)
+			copy.Execution = &policy
+		}
 		for path, content := range publication.InitialFiles {
 			if !validPath(path) || !(path == "pom.xml" || strings.HasPrefix(path, "src/main/java/") || strings.HasPrefix(path, "src/test/java/")) ||
 				len(content) > fileLimit || !utf8.ValidString(content) || strings.ContainsRune(content, 0) {

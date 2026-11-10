@@ -3,6 +3,10 @@ package ai.codecraft.modules.workspace.gateway;
 import ai.codecraft.modules.workspace.config.WorkspaceProperties;
 import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
+import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
+import ai.codecraft.workspace.v1.StartTestRequest;
+import ai.codecraft.workspace.v1.QueryTaskRequest;
+import ai.codecraft.workspace.v1.TestTaskSnapshot;
 import ai.codecraft.workspace.v1.ApplyBatchRequest;
 import ai.codecraft.workspace.v1.MutationReceipt;
 import ai.codecraft.workspace.v1.QueryMutationRequest;
@@ -38,6 +42,23 @@ public class SandboxWorkspaceGateway {
         Metadata metadata = new Metadata();
         metadata.put(Metadata.Key.of("x-codecraft-internal-key", Metadata.ASCII_STRING_MARSHALLER), properties.rpcKey());
         stub = WorkspaceStorageGrpc.newBlockingStub(channel).withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
+    }
+
+    public TestTaskSnapshot startTest(TestTaskEntity task) {
+        return client().startTest(StartTestRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+            .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId())
+            .setExpectedRevision(task.revision()).setGateEpoch(task.gateEpoch()).setNotAfterUnixMillis(task.notAfter().toEpochMilli())
+            .setTarget(task.target()).setPurpose("MANUAL").build());
+    }
+
+    public TestTaskSnapshot task(TestTaskEntity task) {
+        try {
+            return client().queryTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+                .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()).build());
+        } catch (StatusRuntimeException error) {
+            if (error.getStatus().getCode() == Status.Code.NOT_FOUND) return null;
+            throw error;
+        }
     }
 
     public WorkspaceSnapshot prepare(WorkspaceOperationEntity operation, ProblemVersionEntity problem, Instant notAfter) {

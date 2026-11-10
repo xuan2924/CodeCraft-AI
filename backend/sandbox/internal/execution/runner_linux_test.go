@@ -102,6 +102,8 @@ func TestRestrictedExecutionCompilationFailure(t *testing.T) {
 	for name, source := range map[string]string{
 		"candidate-syntax":        "package interview; public class CartTotal { syntax error }",
 		"acceptance-api-mismatch": "package interview; public class CartTotal {}",
+		"type-mismatch":           "package interview; public class CartTotal { int value = \"wrong type\"; }",
+		"duplicate-class":         "package interview; public class CartTotal {} class CartTotal {}",
 	} {
 		t.Run(name, func(t *testing.T) { compilationFailure(t, source) })
 	}
@@ -208,61 +210,93 @@ type transportFunc func(*http.Request) (*http.Response, error)
 func (f transportFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 
 func TestRestrictedExecutionFencesDelayedStartAfterLostResponse(t *testing.T) {
-	source, _ := os.ReadFile("/fixture/reference/src/main/java/interview/CartTotal.java")
-	runner, input, docker, root := fixture(t, string(source))
-	if err := runner.Close(); err != nil {
-		t.Fatal(err)
-	}
-	httpClient := docker.HTTPClient()
-	realTransport := httpClient.Transport
-	delayed := make(chan *http.Request, 1)
-	httpClient.Transport = transportFunc(func(request *http.Request) (*http.Response, error) {
-		if request.Method == http.MethodPost && strings.Contains(request.URL.Path, "/containers/") && strings.HasSuffix(request.URL.Path, "/start") {
-			// Delivery is delayed independently of the caller's transport failure.
-			delayed <- request.Clone(context.WithoutCancel(request.Context()))
-			return nil, errors.New("injected lost Start response")
-		}
-		return realTransport.RoundTrip(request)
-	})
-	faultClient, err := client.NewClientWithOpts(client.FromEnv, client.WithHTTPClient(httpClient), client.WithAPIVersionNegotiation())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer faultClient.Close()
-	faultRunner, err := execution.New(context.Background(), faultClient, root, os.Getenv("CODECRAFT_EXECUTION_VOLUME"), strings.TrimPrefix(filepath.Base(root), "registry-"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer faultRunner.Close()
-	result, runErr := faultRunner.Run(context.Background(), input)
-	defer func() {
-		err := docker.ContainerRemove(context.Background(), result.ContainerID, container.RemoveOptions{Force: true})
-		if err != nil && !errdefs.IsNotFound(err) {
-			t.Error(err)
-		}
-	}()
-	var late *http.Request
-	select {
-	case late = <-delayed:
-	default:
-		t.Fatal("Start was not fault-injected")
-	}
-	lateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	response, err := realTransport.RoundTrip(late.WithContext(lateCtx))
-	if err != nil {
-		t.Fatal(err)
-	}
-	response.Body.Close()
-	if result.Quiescent && response.StatusCode != http.StatusNotFound {
-		t.Errorf("published quiescence but delayed Start remained executable: HTTP %d", response.StatusCode)
-	}
-	if runErr == nil || result.State != "INTERRUPTED" || !result.Quiescent || result.Cleanup != "SUCCEEDED" {
-		t.Errorf("ambiguous Start not fenced: state=%s cleanup=%s quiescent=%v error=%v", result.State, result.Cleanup, result.Quiescent, runErr)
-	}
-	saved, err := faultRunner.Query(context.Background(), input.ExecutionID)
-	if err != nil || saved.State != "INTERRUPTED" || !saved.Quiescent {
-		t.Fatalf("fencing result not durable: %v", err)
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprint(async), func(t *testing.T) {
+			source, _ := os.ReadFile("/fixture/reference/src/main/java/interview/CartTotal.java")
+			runner, input, docker, root := fixture(t, string(source))
+			if err := runner.Close(); err != nil {
+				t.Fatal(err)
+			}
+			httpClient := docker.HTTPClient()
+			realTransport := httpClient.Transport
+			delayed := make(chan *http.Request, 1)
+			httpClient.Transport = transportFunc(func(request *http.Request) (*http.Response, error) {
+				if request.Method == http.MethodPost && strings.Contains(request.URL.Path, "/containers/") && strings.HasSuffix(request.URL.Path, "/start") {
+					// Delivery is delayed independently of the caller's transport failure.
+					delayed <- request.Clone(context.WithoutCancel(request.Context()))
+					return nil, errors.New("injected lost Start response")
+				}
+				return realTransport.RoundTrip(request)
+			})
+			faultClient, err := client.NewClientWithOpts(client.FromEnv, client.WithHTTPClient(httpClient), client.WithAPIVersionNegotiation())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer faultClient.Close()
+			faultRunner, err := execution.New(context.Background(), faultClient, root, os.Getenv("CODECRAFT_EXECUTION_VOLUME"), strings.TrimPrefix(filepath.Base(root), "registry-"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer faultRunner.Close()
+			var result execution.Result
+			var runErr error
+			if async {
+				input.TaskID, input.ExerciseID, input.ProblemID, input.ProblemVersion = identifier(), identifier(), "cart-total", "1.0.1"
+				_, runErr = faultRunner.Start(context.Background(), input, nil, func(_ context.Context, final execution.Result) error {
+					if !final.Quiescent {
+						return errors.New("cleanup before quiescence")
+					}
+					return os.RemoveAll(filepath.Dir(filepath.Join("/state", input.Subpath)))
+				})
+				if runErr != nil {
+					t.Fatal(runErr)
+				}
+				joined, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				faultRunner.Wait()
+				result, runErr = faultRunner.Query(joined, input.ExecutionID)
+				if runErr != nil {
+					t.Fatal(runErr)
+				}
+				if result.CopyCleanup != "SUCCEEDED" {
+					t.Errorf("resolved Start failure abandoned copy: %s", result.CopyCleanup)
+				}
+				if _, err := os.Stat(filepath.Join("/state", input.Subpath)); !os.IsNotExist(err) {
+					t.Errorf("input copy retained: %v", err)
+				}
+			} else {
+				result, runErr = faultRunner.Run(context.Background(), input)
+			}
+			defer func() {
+				err := docker.ContainerRemove(context.Background(), result.ContainerID, container.RemoveOptions{Force: true})
+				if err != nil && !errdefs.IsNotFound(err) {
+					t.Error(err)
+				}
+			}()
+			var late *http.Request
+			select {
+			case late = <-delayed:
+			default:
+				t.Fatal("Start was not fault-injected")
+			}
+			lateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			response, err := realTransport.RoundTrip(late.WithContext(lateCtx))
+			if err != nil {
+				t.Fatal(err)
+			}
+			response.Body.Close()
+			if result.Quiescent && response.StatusCode != http.StatusNotFound {
+				t.Errorf("published quiescence but delayed Start remained executable: HTTP %d", response.StatusCode)
+			}
+			if (!async && runErr == nil) || result.State != "INTERRUPTED" || !result.Quiescent || result.Cleanup != "SUCCEEDED" {
+				t.Errorf("ambiguous Start not fenced: state=%s cleanup=%s quiescent=%v error=%v", result.State, result.Cleanup, result.Quiescent, runErr)
+			}
+			saved, err := faultRunner.Query(context.Background(), input.ExecutionID)
+			if err != nil || saved.State != "INTERRUPTED" || !saved.Quiescent {
+				t.Fatalf("fencing result not durable: %v", err)
+			}
+		})
 	}
 }
 

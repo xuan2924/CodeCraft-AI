@@ -23,4 +23,6 @@ node scripts/validate-problem.mjs problems/cart-total/1.0.1 problems/.validation
 
 第二条需要 Docker Desktop Linux 容器或 Linux Docker、Node 24；仅镜像构建联网。运行容器禁网。验证记录输出到 `problems/.validation/1.0.1/`（不跟踪），命令不是生产执行服务，也不会把题目写入业务可选列表。发布流程、最小格式和剩余门槛见 `docs/design/problem-package.md`。
 
-本版本在固定镜像内增加 Maven 编译失败采集器。它只识别固定 JDK 21 的部分源码语法/缺符号诊断；未知诊断、输出写入或权限错误保守归为环境错误，不以 stdout/stderr 判定。采集器不提供防恶意代码作弊保证。正式执行切片验证：`node scripts/test-execution.mjs`；该验证不等于本版本已发布，也不改变已有 1.0.0 演练的镜像身份。
+本版本的执行配置绑定固定 suite/testcase 与镜像。Maven 通过受保护入口使用固定 JDK 21 的 `DiagnosticListener` 收集诊断代码，区分源码错误和 I/O/资源/工具异常；不以 stdout/stderr 判分。薄适配层复用 javac 命令行解析，使用三个 JDK 内部导出，升级 JDK 必须复验。采集器不提供防恶意代码作弊保证。
+
+正式执行验证：`node scripts/test-execution.mjs`；真实 REST/浏览器链路：`node scripts/test-tracer.mjs --workspace`。隔离验证/发布不等于修改本机正式发布记录。已有 1.0.0 演练不更换身份；缺少执行配置的版本明确显示测试不可用。正式启用的发布与配置步骤见 `docs/validation/stable-test-run-13.md`。

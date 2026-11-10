@@ -34,7 +34,7 @@ func publication() workspace.Publication {
 
 func connect(t *testing.T, root string, configure ...func(*workspace.Service)) (rpc.WorkspaceStorageClient, func()) {
 	t.Helper()
-	service, err := workspace.NewService(root, []workspace.Publication{publication()}, fixtureKey)
+	service, err := workspace.NewService(root, []workspace.Publication{publication()}, fixtureKey, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

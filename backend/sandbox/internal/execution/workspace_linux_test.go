@@ -27,7 +27,7 @@ func TestGRPCStableCopyIsTheActualDockerInput(t *testing.T) {
 	}
 	key := strings.Repeat("a", 64)
 	identity := &rpc.ProblemIdentity{ProblemId: "fixture", Version: "1.0.0", PackageSha256: input.PackageSHA256, ExecutionImageDigest: input.Image, Platform: input.Platform}
-	service, err := workspace.NewService("/state", []workspace.Publication{{Identity: identity, InitialFiles: map[string]string{"pom.xml": "<project/>", "src/main/java/interview/CartTotal.java": string(reference)}}}, key)
+	service, err := workspace.NewService("/state", []workspace.Publication{{Identity: identity, InitialFiles: map[string]string{"pom.xml": "<project/>", "src/main/java/interview/CartTotal.java": string(reference)}}}, key, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

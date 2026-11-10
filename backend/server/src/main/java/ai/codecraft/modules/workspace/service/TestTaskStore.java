@@ -1,0 +1,199 @@
+package ai.codecraft.modules.workspace.service;
+
+import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
+import ai.codecraft.modules.identity.service.IdentitySecrets;
+import ai.codecraft.modules.identity.service.IdentityTransactionService;
+import ai.codecraft.modules.workspace.model.dto.StartTestRequest;
+import ai.codecraft.modules.workspace.model.dto.TestProblemResponse;
+import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
+import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
+import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
+import ai.codecraft.modules.workspace.repository.ProblemRepository;
+import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
+import ai.codecraft.modules.workspace.model.entity.WorkspaceControlEntity;
+import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
+import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
+import ai.codecraft.modules.workspace.repository.ExerciseRepository;
+import ai.codecraft.modules.workspace.repository.TestTaskRepository;
+import ai.codecraft.modules.workspace.repository.WorkspaceWriteRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class TestTaskStore {
+    private static final Set<String> TERMINAL = Set.of("PASSED", "FAILED", "TIMED_OUT", "STOPPED", "ENVIRONMENT_ERROR", "INTERRUPTED");
+    private final IdentityTransactionService identity;
+    private final IdentitySecrets secrets;
+    private final ExerciseRepository exercises;
+    private final WorkspaceWriteRepository writes;
+    private final TestTaskRepository tasks;
+    private final ProblemRepository problems;
+    private final Clock clock;
+    private final ObjectMapper json;
+
+    public TestTaskStore(IdentityTransactionService identity, IdentitySecrets secrets, ExerciseRepository exercises,
+        WorkspaceWriteRepository writes, TestTaskRepository tasks, ProblemRepository problems, Clock clock, ObjectMapper json) {
+        this.identity = identity; this.secrets = secrets; this.exercises = exercises; this.writes = writes;
+        this.tasks = tasks; this.problems = problems; this.clock = clock; this.json = json;
+    }
+
+    @Transactional(readOnly = true)
+    public TestTaskEntity previous(String session, String exercise, String key, String credential, StartTestRequest input) {
+        String user = identity.authorization(session).userId();
+        owned(user, exercise);
+        credential(writes.control(exercise), credential);
+        String fingerprint = fingerprint(key, input);
+        WorkspaceOperationEntity previous = exercises.receipt(user, "START_TEST", exercise, key);
+        if (previous == null) return null;
+        if (!previous.fingerprint().equals(fingerprint)) throw new BusinessException(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
+        return tasks.find(previous.id());
+    }
+
+    @Transactional
+    public TestTaskEntity accept(String session, String exerciseId, String key, String credential, StartTestRequest input) {
+        SessionAuthorizationDTO authorization = identity.authorizeMutation(session);
+        ExerciseEntity exercise = owned(authorization.userId(), exerciseId);
+        WorkspaceControlEntity control = writes.lock(exerciseId);
+        credential(control, credential);
+        String fingerprint = fingerprint(key, input);
+        WorkspaceOperationEntity previous = exercises.receipt(authorization.userId(), "START_TEST", exerciseId, key);
+        if (previous != null) {
+            if (!previous.fingerprint().equals(fingerprint)) throw new BusinessException(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
+            return tasks.find(previous.id());
+        }
+        if (!exercise.state().equals("ACTIVE")) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
+        if (!clock.instant().isBefore(exercise.deadlineAt())) throw new BusinessException(WorkspaceErrorCode.EXERCISE_EXPIRED);
+        if (control.transitionId() != null || control.fenceId() != null) throw new BusinessException(WorkspaceErrorCode.CONTROL_TRANSITION_PENDING);
+        if (!control.gateState().equals("OPEN") || control.gateEpoch() == null) throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE);
+        long revision = Long.parseLong(input.expectedRevision());
+        if (exercise.revision() == null || exercise.revision() != revision) throw new BusinessException(WorkspaceErrorCode.REVISION_CONFLICT);
+        if (!problems.executionAvailable(exercise.problemVersionId())) throw new BusinessException(WorkspaceErrorCode.TEST_TARGET_UNAVAILABLE);
+        tasks.lockAdmission();
+        if (tasks.occupied() != 0) throw new BusinessException(WorkspaceErrorCode.TEST_SLOT_BUSY);
+        Instant notAfter = authorization.expiresAt().isBefore(exercise.deadlineAt()) ? authorization.expiresAt() : exercise.deadlineAt();
+        String id = UUID.randomUUID().toString();
+        exercises.insertOperation(new WorkspaceOperationEntity(id, authorization.userId(), exerciseId, exercise.workspaceInstanceId(),
+            "START_TEST", exerciseId, key, fingerprint, "PENDING", clock.instant()));
+        TestTaskEntity task = new TestTaskEntity(id, UUID.randomUUID().toString(), exerciseId, exercise.workspaceInstanceId(), revision,
+            control.gateEpoch(), notAfter, input.target(), "ACCEPTED", false, false, null);
+        tasks.insert(task);
+        return task;
+    }
+
+    @Transactional(readOnly = true)
+    public TestTaskResponse query(String session, String exercise, String task) {
+        owned(identity.authorization(session).userId(), exercise);
+        TestTaskEntity value = tasks.find(task);
+        if (value == null || !value.exerciseId().equals(exercise)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        return response(value);
+    }
+
+    @Transactional(readOnly = true)
+    public List<TestTaskResponse> recent(String session, String exercise) {
+        ExerciseEntity owner = owned(identity.authorization(session).userId(), exercise);
+        TestProblemResponse problem = TestTaskMapper.problem(problems.find(owner.problemVersionId()));
+        return tasks.recent(exercise).stream().map(task -> response(task, problem)).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<TestTaskEntity> pending() { return tasks.pending(); }
+
+    @Transactional(readOnly = true)
+    public TestTaskEntity find(String id) { return tasks.find(id); }
+
+    @Transactional(readOnly = true)
+    public ProblemVersionEntity problem(TestTaskEntity task) {
+        return problems.find(exercises.find(task.exerciseId()).problemVersionId());
+    }
+
+    @Transactional
+    public boolean claim(TestTaskEntity task) {
+        WorkspaceControlEntity control = writes.lock(task.exerciseId());
+        TestTaskEntity current = tasks.lock(task.id());
+        tasks.attempted(task.id());
+        if (current.dispatched() || !current.state().equals("ACCEPTED")) return false;
+        ExerciseEntity exercise = exercises.find(task.exerciseId());
+        if (control.transitionId() != null || control.fenceId() != null) return false;
+        if (!exercise.state().equals("ACTIVE") || !clock.instant().isBefore(current.notAfter())
+            || control.gateEpoch() == null || control.gateEpoch() != current.gateEpoch() || !control.gateState().equals("OPEN")) {
+            store(current, interrupted(current, "AUTHORITY_EXPIRED_BEFORE_DISPATCH"));
+            return false;
+        }
+        return tasks.dispatch(task.id()) == 1;
+    }
+
+    @Transactional
+    public void observe(TestTaskEntity expected, TestTaskResponse result) {
+        writes.lock(expected.exerciseId());
+        TestTaskEntity current = tasks.lock(expected.id());
+        if (!result.taskId().equals(current.id()) || !result.exerciseId().equals(current.exerciseId())
+            || !result.executionInstanceId().equals(current.executionInstanceId()) || !result.workspaceInstanceId().equals(current.workspaceInstanceId())
+            || !result.revision().equals(Long.toString(current.revision())) || !result.target().equals(current.target())) throw new IllegalStateException("Mismatched execution receipt");
+        if (TERMINAL.contains(current.state()) && !current.state().equals(result.state())) return;
+        if (current.quiescent() && !result.quiescent()) return;
+        TestTaskResponse previous = response(current);
+        if (previous.copyCleanup().equals("SUCCEEDED") && !result.copyCleanup().equals("SUCCEEDED")) return;
+        if (previous.cleanup().equals("SUCCEEDED") && !result.cleanup().equals("SUCCEEDED")) return;
+        store(current, result);
+    }
+
+    @Transactional
+    public void notRegisteredAfterFence(TestTaskEntity task) {
+        writes.lock(task.exerciseId());
+        TestTaskEntity current = tasks.lock(task.id());
+        if (TERMINAL.contains(current.state())) return;
+        store(current, interrupted(current, "START_NOT_REGISTERED"));
+    }
+
+    private void store(TestTaskEntity task, TestTaskResponse result) {
+        try { tasks.observed(task.id(), result.state(), result.quiescent(), json.writeValueAsString(result)); }
+        catch (JsonProcessingException error) { throw new IllegalStateException("Cannot persist execution snapshot", error); }
+        if (TERMINAL.contains(result.state())) exercises.operationState(task.id(), "SUCCEEDED");
+    }
+
+    private TestProblemResponse provenance(TestTaskEntity task) {
+        return TestTaskMapper.problem(problems.find(exercises.find(task.exerciseId()).problemVersionId()));
+    }
+
+    private TestTaskResponse response(TestTaskEntity task) { return response(task, null); }
+
+    private TestTaskResponse response(TestTaskEntity task, TestProblemResponse problem) {
+        if (task.snapshot() != null) {
+            try { return json.readValue(task.snapshot(), TestTaskResponse.class); }
+            catch (JsonProcessingException error) { throw new IllegalStateException("Invalid persisted execution snapshot", error); }
+        }
+        return new TestTaskResponse(task.id(), task.exerciseId(), task.executionInstanceId(), task.workspaceInstanceId(), Long.toString(task.revision()),
+            task.target(), task.state(), "", null, null, null, false, "PENDING", "PENDING", "0", false, List.of(), problem != null ? problem : provenance(task), null);
+    }
+
+    private TestTaskResponse interrupted(TestTaskEntity task, String reason) {
+        return new TestTaskResponse(task.id(), task.exerciseId(), task.executionInstanceId(), task.workspaceInstanceId(), Long.toString(task.revision()),
+            task.target(), "INTERRUPTED", reason, null, clock.instant(), null, true, "SUCCEEDED", task.dispatched() ? "UNKNOWN" : "NOT_CREATED", "0", false, List.of(), provenance(task), null);
+    }
+
+    private String fingerprint(String key, StartTestRequest input) {
+        if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}") || input == null || !"base".equals(input.target())
+            || input.expectedRevision() == null || !input.expectedRevision().matches("0|[1-9][0-9]{0,18}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
+        try { Long.parseLong(input.expectedRevision()); }
+        catch (NumberFormatException error) { throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST); }
+        return secrets.fingerprint(input.expectedRevision() + "\n" + input.target());
+    }
+
+    private ExerciseEntity owned(String user, String id) {
+        ExerciseEntity exercise = exercises.find(id);
+        if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        return exercise;
+    }
+    private static void credential(WorkspaceControlEntity control, String credential) {
+        String hash = IdentitySecrets.digest(credential);
+        if (control == null || hash == null || !hash.equals(control.credentialHash())) throw new BusinessException(WorkspaceErrorCode.STALE_CONTROL);
+    }
+}

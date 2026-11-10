@@ -20,18 +20,23 @@ type Limits struct {
 // reserve its business slot and persist identity before invoking Run. Root and
 // Volume are deployment configuration; Subpath must identify only this copy.
 type Input struct {
-	ExecutionID   string    `json:"executionId"`
-	WorkspaceID   string    `json:"workspaceId"`
-	Revision      uint64    `json:"revision"`
-	Image         string    `json:"image"`
-	PackageSHA256 string    `json:"packageSha256"`
-	Platform      string    `json:"platform"`
-	Target        string    `json:"target"`
-	Subpath       string    `json:"subpath"`
-	NotAfter      time.Time `json:"notAfter"`
-	Limits        Limits    `json:"limits"`
-	Suite         string    `json:"suite"`
-	Tests         []string  `json:"tests"`
+	ExerciseID     string    `json:"exerciseId,omitempty"`
+	TaskID         string    `json:"taskId,omitempty"`
+	ProblemID      string    `json:"problemId,omitempty"`
+	ProblemVersion string    `json:"problemVersion,omitempty"`
+	GateEpoch      uint64    `json:"gateEpoch,omitempty"`
+	ExecutionID    string    `json:"executionId"`
+	WorkspaceID    string    `json:"workspaceId"`
+	Revision       uint64    `json:"revision"`
+	Image          string    `json:"image"`
+	PackageSHA256  string    `json:"packageSha256"`
+	Platform       string    `json:"platform"`
+	Target         string    `json:"target"`
+	Subpath        string    `json:"subpath"`
+	NotAfter       time.Time `json:"notAfter"`
+	Limits         Limits    `json:"limits"`
+	Suite          string    `json:"suite"`
+	Tests          []string  `json:"tests"`
 }
 
 // LogChunk preserves stdout/stderr separately; bytes are bounded before encoding.
@@ -54,6 +59,7 @@ type Result struct {
 	OOMKilled         bool       `json:"oomKilled"`
 	Quiescent         bool       `json:"quiescent"`
 	Cleanup           string     `json:"cleanup"`
+	CopyCleanup       string     `json:"copyCleanup,omitempty"`
 	Report            []byte     `json:"report,omitempty"`
 	CompilationReport []byte     `json:"compilationReport,omitempty"`
 	Logs              []LogChunk `json:"logs,omitempty"`
