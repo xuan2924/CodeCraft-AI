@@ -4,6 +4,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import WorkspaceTests from './WorkspaceTests.vue';
 import { testTask, type TestTask } from './taskApi';
+import { useTaskStream } from './useTaskStream';
 
 const exercise = { exerciseId: 'exercise', workspaceInstanceId: 'instance', problemVersionId: 'problem', state: 'ACTIVE', revision: '2', paths: [], deadlineAt: null, preparationFailureReason: null, cleanupState: null };
 const result: TestTask = { streamId: null, cursor: null, sequence: null, firstRetainedSequence: null, taskId: 'task', exerciseId: 'exercise', executionInstanceId: 'execution', workspaceInstanceId: 'instance', revision: '0', target: 'base',
@@ -15,7 +16,7 @@ const result: TestTask = { streamId: null, cursor: null, sequence: null, firstRe
 const ok = (data: unknown) => new Response(JSON.stringify({ code: 'OK', data }), { status: 200 });
 let view: VueWrapper | undefined;
 let client: QueryClient | undefined;
-afterEach(() => { view?.unmount(); client?.clear(); vi.unstubAllGlobals(); });
+afterEach(() => { view?.unmount(); client?.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it('rejects graded responses without authoritative evidence or immutable image identity', async () => {
   for (const malformed of [{ ...result, evidence: null }, { ...result, problem: { ...result.problem, executionImageDigest: 'latest' } },
@@ -42,6 +43,7 @@ it('shows old revisions and truncation, renders logs as text, and only queries o
 });
 
 it('applies ordered live events, ignores duplicates, and recovers gaps without starting a task', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const sources: FakeEvents[] = [];
   class FakeEvents extends EventTarget {
     close = vi.fn();
@@ -63,14 +65,49 @@ it('applies ordered live events, ignores duplicates, and recovers gaps without s
     schemaVersion: 1, taskId: 'task', executionInstanceId: 'execution', streamId: 'browser-stream', sequence, type: 'log',
     occurredAt: '2026-11-10T00:00:00Z', payload: { channel: 'stdout', data: text } }) }));
   send('4', 'live output'); send('4', 'duplicate');
-  await vi.waitFor(() => expect(view!.get('.test-output').text()).toContain('live output'));
+  await vi.advanceTimersByTimeAsync(99);
+  expect(view.get('.test-output').text()).not.toContain('live output');
+  await vi.advanceTimersByTimeAsync(1);
+  expect(view.get('.test-output').text()).toContain('live output');
   expect(view.get('.test-output').text()).not.toContain('duplicate');
   recovered = true; send('6', 'gap output');
-  await vi.waitFor(() => expect(view!.get('.test-output').text()).toContain('recovered tail'));
+  await flushPromises(); await flushPromises();
+  expect(view.get('.test-output').text()).toContain('recovered tail');
   expect(sources[0]!.close).toHaveBeenCalled();
   expect(view.get('.test-output').text()).not.toContain('gap output');
   view.unmount(); view = undefined;
   expect(sources.at(-1)!.close).toHaveBeenCalled();
+});
+
+it('backs off failed recovery on a controllable clock and cancels retries on unmount', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const sources: EventTarget[] = [];
+  class FakeEvents extends EventTarget {
+    close() { /* External transport fixture. */ }
+    constructor() { super(); sources.push(this); }
+  }
+  vi.stubGlobal('EventSource', FakeEvents);
+  const attempts: string[] = [];
+  vi.stubGlobal('fetch', async (path: RequestInfo | URL) => { attempts.push(String(path)); throw new TypeError('offline'); });
+  const snapshot = ref<TestTask>({ ...result, state: 'RUNNING', finishedAt: null, evidence: null, quiescent: false,
+    streamId: 'browser-stream', cursor: 'opaque3', sequence: '3', firstRetainedSequence: '1', logs: [] });
+  const host = defineComponent({ setup: () => useTaskStream(snapshot, (id) => ['task', id]), template: '<p role="status">{{ status }}</p>' });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  view = mount(host, { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
+  sources[0]!.dispatchEvent(new Event('error'));
+  await vi.advanceTimersByTimeAsync(249);
+  expect(attempts).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(view.text()).toContain('日志连接暂不可用');
+  const endpoint = '/api/exercises/exercise/tasks/task';
+  expect(attempts).toEqual([endpoint]);
+  await vi.advanceTimersByTimeAsync(999);
+  expect(attempts).toEqual([endpoint]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts).toEqual([endpoint, endpoint]);
+  view.unmount(); view = undefined;
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(attempts).toEqual([endpoint, endpoint]);
 });
 
 it('stops only on explicit action and retains the original stop key after a lost response', async () => {

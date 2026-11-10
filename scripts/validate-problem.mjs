@@ -95,6 +95,7 @@ async function run(name, command, source, timeoutSeconds = limits.timeoutSeconds
 
 let imageId;
 let receipt;
+const failures = [];
 try {
     // Snapshot trusted maintainer inputs before building/mounting; no live workspace is used.
     const snapshot = join(scratch, 'package');
@@ -168,14 +169,16 @@ exit "$status"`, source);
             cpus: environment.NCPU, memoryBytes: environment.MemTotal, driver: environment.Driver },
         results, verdict: 'local-contract-validation-passed',
     };
+} catch (error) {
+    failures.push(error);
 } finally {
-    const cleanupErrors = [];
     for (const container of containers) {
-        try { docker(['rm', '-f', container]); } catch (error) { cleanupErrors.push(error); }
+        try { docker(['rm', '-f', container]); } catch (error) { failures.push(error); }
     }
-    await rm(scratch, { recursive: true, force: true });
-    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, `Cleanup failed: ${runId}`);
+    try { await rm(scratch, { recursive: true, force: true }); } catch (error) { failures.push(error); }
 }
+if (failures.length === 1) throw failures[0];
+if (failures.length) throw new AggregateError(failures, `Validation and cleanup failed: ${runId}`);
 // No success evidence is published unless validation AND all cleanup succeeded.
 await writeFile(join(output, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
 console.log(`Validated ${manifest.id}@${manifest.version}; receipt: ${join(output, 'receipt.json')}`);

@@ -1,22 +1,71 @@
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { root, run, maven, windows } from './process.mjs';
+import { performance } from 'node:perf_hooks';
+import { root, run, maven, windows, command } from './process.mjs';
 
-run(process.execPath, ['--test', 'scripts/problem-contract.test.mjs', 'scripts/publication-contract.test.mjs', 'scripts/validation-cleanup.test.mjs']);
-maven(['verify']);
+const mode = process.argv[2] ?? '--quick';
+if (process.argv.length > 3 || !['--quick', '--all', '--heavy'].includes(mode)) {
+  throw new Error('Usage: node scripts/verify.mjs [--quick|--all|--heavy]');
+}
+const npm = windows ? 'npm.cmd' : 'npm';
 const go = { cwd: join(root, 'backend/sandbox') };
-run('go', ['mod', 'verify'], go);
+const frontend = { cwd: join(root, 'frontend') };
+// Independent languages run concurrently; each tool owns its own build directory.
+async function check(label, executable, args, cwd = root, env = process.env) {
+  const started = performance.now();
+  const [program, parameters] = command(executable, args, cwd);
+  await new Promise((resolve, reject) => {
+    const child = spawn(program, parameters, { cwd, env, stdio: 'inherit', detached: !windows,
+      windowsVerbatimArguments: windows && program === 'cmd.exe' });
+    const timer = mode === '--quick' ? setTimeout(() => {
+      console.error(`${label}: 30s budget exhausted; terminating owned process tree`);
+      if (windows) {
+        const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        killer.once('error', () => child.kill());
+      } else {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+      }
+    }, Math.max(1, 30000 - (performance.now() - verificationStarted))) : undefined;
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      code === 0 ? resolve() : reject(new Error(`${label} failed (${code})`));
+    });
+  });
+  console.log(`${label}: ${((performance.now() - started) / 1000).toFixed(2)}s`);
+}
+const verificationStarted = performance.now();
+const checks = await Promise.allSettled([
+  check('Node contracts', process.execPath, ['--test', 'scripts/problem-contract.test.mjs', 'scripts/publication-contract.test.mjs']),
+  check('Java lint + quick behavior', windows ? 'mvnw.cmd' : './mvnw', ['-B', '-ntp', 'test'], join(root, 'backend/server')),
+  check('Go quick behavior + vet', 'go', ['test', '-count=1', './internal/status', './internal/execution'], go.cwd),
+  check('Linux Go compile + vet', 'go', ['vet', './...'], go.cwd, { ...process.env, GOOS: 'linux', GOARCH: 'amd64', CGO_ENABLED: '0' }),
+  check('Vue typecheck', npm, ['run', 'typecheck'], frontend.cwd),
+  check('Vue lint', npm, ['run', 'lint'], frontend.cwd),
+  check('Vue unit/components', npm, ['run', 'test:unit'], frontend.cwd),
+]);
+const failed = checks.filter((result) => result.status === 'rejected').map((result) => result.reason);
+if (failed.length) throw new AggregateError(failed, 'Quick verification failed');
 const formatted = run('gofmt', ['-l', 'cmd', 'internal'], { ...go, encoding: 'utf8', stdio: 'pipe' });
 if (formatted.stdout.trim()) throw new Error(`Run gofmt on:\n${formatted.stdout}`);
-run('go', ['vet', './...'], go);
-run('go', ['test', '-count=1', './...'], go);
-// On Windows set CC to the verified LLVM-MinGW compiler documented in README.
-run('go', ['test', '-race', '-count=1', './...'], go);
-run('go', ['build', './cmd/sandbox'], go);
-run('go', ['vet', './...'], { ...go, env: { ...process.env, GOOS: 'linux', GOARCH: 'amd64', CGO_ENABLED: '0' } });
-run(process.execPath, ['scripts/test-workspace.mjs']);
-run(process.execPath, ['scripts/test-execution.mjs']);
-const npm = windows ? 'npm.cmd' : 'npm';
-const frontend = { cwd: join(root, 'frontend') };
-for (const script of ['lint', 'typecheck', 'test:unit', 'build']) run(npm, ['run', script], frontend);
-run(npm, ['audit'], frontend);
-console.log('Local checks passed. Real dependency/browser checks: node scripts/test-tracer.mjs');
+const seconds = (performance.now() - verificationStarted) / 1000;
+console.log(`Quick verification: ${seconds.toFixed(2)}s (30s warm-cache budget; dependency download/first compilation is separate).`);
+if (mode === '--quick') {
+  if (seconds > 30) throw new Error('Quick verification exceeded the 30s budget; prime dependencies/build caches, or investigate the timings above.');
+} else {
+  maven(['verify']);
+  run('go', ['mod', 'verify'], go);
+  run('go', ['vet', './...'], go);
+  run('go', ['test', '-count=1', './...'], go);
+  run('go', ['test', '-race', '-count=1', './...'], go);
+  run('go', ['build', './cmd/sandbox'], go);
+  run('go', ['vet', './...'], { ...go, env: { ...process.env, GOOS: 'linux', GOARCH: 'amd64', CGO_ENABLED: '0' } });
+  run(process.execPath, ['--test', 'scripts/validation-cleanup.docker.test.mjs']);
+  run(process.execPath, ['scripts/test-workspace.mjs']);
+  run(process.execPath, ['scripts/test-execution.mjs']);
+  run(npm, ['run', 'build'], frontend);
+  run(npm, ['audit'], frontend);
+  run(npm, ['run', 'test:integration'], frontend);
+  for (const suite of [[], ['--identity'], ['--workspace']]) run(process.execPath, ['scripts/test-tracer.mjs', ...suite]);
+  console.log('All verification passed.');
+}

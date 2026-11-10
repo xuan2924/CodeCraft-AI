@@ -34,7 +34,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
     "spring.datasource.password=test-only",
     "spring.datasource.hikari.initialization-fail-timeout=-1"
 })
-class StatusHttpTest {
+class StatusHttpIT {
     @MockitoBean
     private IdentityBootstrap identityBootstrap;
     private static volatile String behavior = "unavailable";

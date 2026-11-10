@@ -5,11 +5,13 @@ if (!process.env.TRACER_WEB_URL) {
 }
 export default defineConfig({
   testDir: './e2e',
-  fullyParallel: false,
-  workers: 1,
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
   retries: 0,
   timeout: 30000,
-  preserveOutput: process.env.IDENTITY_E2E ? 'never' : 'always',
+  outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR ?? 'test-results/e2e',
+  reporter: [['list'], ['html', { outputFolder: process.env.PLAYWRIGHT_REPORT_DIR ?? 'playwright-report', open: 'never' }]],
+  preserveOutput: 'failures-only',
   use: { baseURL: process.env.TRACER_WEB_URL, browserName: 'chromium',
-    trace: process.env.IDENTITY_E2E ? 'off' : 'retain-on-failure', screenshot: 'off', video: 'off' },
+    trace: 'retain-on-failure', screenshot: 'only-on-failure', video: 'retain-on-failure' },
 });

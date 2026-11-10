@@ -1,22 +1,33 @@
-name: Service tracer
+name: Layered verification
 on:
-  push:
   pull_request:
+  push:
+    branches: [main, master]
+  schedule:
+    - cron: '20 2 * * *'
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: ${{ fromJSON(github.event_name == 'pull_request' && '["quick","smoke"]' || '["quick","smoke","heavy"]') }}
+    timeout-minutes: ${{ matrix.lane == 'heavy' && 15 || 5 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '21.0.11'
+          cache: maven
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24.9.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.26.5'
@@ -25,8 +36,38 @@ jobs:
       - run: npm ci
         working-directory: frontend
       - run: npx playwright install --with-deps chromium
+        if: matrix.lane != 'quick'
         working-directory: frontend
       - run: ./scripts/generate-proto.sh
       - run: git diff --exit-code -- backend/sandbox/internal/gen
-      - run: node scripts/verify.mjs
-      - run: node scripts/test-tracer.mjs
+      # Dependency download/first compilation is explicit setup, not a hidden part
+      # of the 30-second warm-cache developer feedback budget.
+      - name: Prepare Java and Go caches
+        run: |
+          cd backend/server && ./mvnw -B -ntp -DskipTests test-compile
+          cd ../sandbox && go test -run '^$' ./internal/status ./internal/execution
+      - run: node scripts/verify.mjs --quick
+        if: matrix.lane == 'quick'
+      - name: Build smoke applications
+        if: matrix.lane == 'smoke'
+        run: |
+          cd backend/server && ./mvnw -B -ntp -DskipTests package
+          cd ../../frontend && npm run build
+      - name: Golden paths only
+        if: matrix.lane == 'smoke'
+        run: node scripts/test-tracer.mjs --smoke --identity --workspace
+      - run: node scripts/verify.mjs --all
+        if: matrix.lane == 'heavy'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: diagnostics-${{ matrix.lane }}
+          retention-days: 3
+          include-hidden-files: true
+          path: |
+            .runtime/**/browser-*/**
+            .runtime/**/*.log
+            .runtime/**/failsafe-reports/**
+            backend/server/target/surefire-reports/**
+            frontend/test-results/**
+          # Do not upload .env, publication inputs or the seeded database.

@@ -15,6 +15,7 @@
     "lint": "eslint .",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
+    "test:integration": "playwright test --config playwright.integration.config.ts",
     "build": "vue-tsc --noEmit && vite build"
   },
   "dependencies": {

@@ -69,11 +69,22 @@ node scripts/dev.mjs web
 
 ## 验证
 
+当前分层、风险与实测结果见 [测试分层整改记录](docs/validation/testing-layers.md)。
+
 ### 快速反馈
+
+```sh
+node scripts/verify.mjs          # 默认 --quick，无 Docker / race / 全量 IT
+node scripts/verify.mjs --quick
+```
+
+并行运行 Node 快速契约、Java Checkstyle/编译/轻量测试、Go 快速行为/编译/vet、Vue 类型/Lint/单元组件测试。热缓存预算 30 秒，超出会失败并显示各组耗时；首次依赖下载、首次编译单独准备。原真实 HTTP `StatusHttpTest` 已归入 `StatusHttpIT`，不再启动整个 Spring 应用阻塞快速循环。
+
+定向反馈：
 
 ```powershell
 cd backend/server
-./mvnw.cmd -Dtest=StatusHttpTest test
+./mvnw.cmd -Dtest=WorkspaceBatchCodecTest,PreparationAuthorizationTest test
 ./mvnw.cmd -DskipTests compile
 # Linux 对应 ./mvnw
 ```
@@ -96,21 +107,21 @@ npm run build
 先完成 `npm ci` 和契约生成，然后在根目录运行：
 
 ```sh
-node scripts/verify.mjs
+node scripts/verify.mjs --all    # --heavy 为同义入口；不用于 PR 全量门禁
 ```
 
-执行已有题目脚本测试、Java `verify`（Checkstyle、lint 编译、JUnit、Failsafe）、Go 格式/vet/普通测试/race/构建、Linux Docker 工作区与受限执行适配器测试、Vue lint/类型/组件测试/生产构建及 npm audit。独立运行 Java `verify` 时 `StatusIT`、`IdentityIT`、`WorkspaceIT` **明确跳过**；真实依赖集成必须运行下一节，不能将跳过称为通过。历史一次性 `backend/prototypes/` 不属于正式套件。
+执行已有题目脚本测试、Java `verify`（Checkstyle、lint 编译、JUnit、Failsafe）、Go 格式/vet/普通测试/race/构建、Linux Docker 工作区与受限执行适配器测试、Vue lint/类型/组件测试/生产构建及 npm audit。全量入口还运行无后端的浏览器存储集成、身份/工作区真实 IT 和浏览器链路。Docker 清理失败用例独立为 `scripts/validation-cleanup.docker.test.mjs`，默认快速 Node 入口仅含 8 项契约测试。独立运行 Java `verify` 时 `StatusIT`、`IdentityIT`、`WorkspaceIT` **明确跳过**；真实依赖集成必须运行下一节，不能将跳过称为通过。历史一次性 `backend/prototypes/` 不属于正式套件。
 
 **Windows race 准备**：按 [工具链设计](docs/design/engineering-toolchain.md#windows-race-的-c-工具链) 下载 LLVM-MinGW **20261104 UCRT x86_64**，验证 ZIP SHA-256 为 `552191b5754c49a5a20723276a6fc56541ea1922c4c50b7b669022333fc1b40f`，解压到自己的工具目录。只为当前终端设置：
 
 ```powershell
 $env:CC = '<工具目录>/llvm-mingw-20261104-ucrt-x86_64/bin/clang.exe'
-node scripts/verify.mjs
+node scripts/verify.mjs --all
 ```
 
 旧全局 MinGW 会导致 race 无法启动，不应关闭 race 或修改全局 Go 配置来绕过。Linux CI 使用 runner 的兼容 C 编译器。
 
-### 受限执行适配器风险切片（#13 未完成）
+### 分层集成与受限执行
 
 ```sh
 node scripts/test-execution.mjs
@@ -120,7 +131,13 @@ node scripts/test-execution.mjs -test.run=TestGRPCStableCopyIsTheActualDockerInp
 
 依赖运行中的 Linux/amd64 Docker daemon（API 1.45+、默认 builtin seccomp）。脚本构建固定题目镜像和 Go 测试二进制，创建独立具名卷；受信任测试协调容器以 UID 10001、socket 所属组 0 访问 Docker socket。**socket 等同宿主管理权限**，测试夹具不是用户沙箱；真正用户执行容器不挂 socket、工作区根卷或参考解，只获得本次副本的只读子目录。脚本只清理本次随机卷标签对应的容器/卷；失败不隐藏清理错误。
 
-此模块尚未接入服务运行配置、Java 任务和浏览器，不代表正式测试功能或 #13–#16 已交付。报告通过受控 exec 在 tmpfs 卸载前限量读取，与有界日志独立保留。已验证项、审查修复及编译错误分类/恢复/副本回收等缺口见 [#13 切片记录](docs/validation/stable-test-run-13.md)。
+#13 已接入正式 Go/Java/浏览器链路；报告通过受控 exec 在 tmpfs 卸载前限量读取，与有界日志独立保留，见 [#13 验证记录](docs/validation/stable-test-run-13.md)。稳定输入并发测试在候选代码输出 OLD 后等待显式释放，保存 NEW 后释放并断言输出仍为 OLD；不再竞争瞬时 RUNNING 状态。
+
+```sh
+npm --prefix frontend run test:integration
+```
+
+这是独立 Chromium + Vite 的 IndexedDB 集成层，无 Java/Go/数据库；事务、冲突草稿、游标、epoch、迟到写入与清理在此验证。完整 E2E 不注入原生 IndexedDB 实现细节。
 
 ### 真实数据库 / Go / Java / 浏览器
 
@@ -131,19 +148,33 @@ cd frontend
 npx playwright install chromium
 # Linux CI: npx playwright install --with-deps chromium
 cd ..
+# 生产构建（quick 不生成 jar/dist）
+cd backend/server && ./mvnw -B -ntp -DskipTests package
+cd ../../frontend && npm run build
+cd ..
+# PR 黄金路径：跳过 Java IT、崩溃和依赖停机矩阵
+node scripts/test-tracer.mjs --smoke --identity --workspace
+# 单例独立运行（另一个工作区用例无需先成功）
+node scripts/test-tracer.mjs --smoke --workspace "--browser-test=save and run"
+# PR 外完整探针
 node scripts/test-tracer.mjs
 # 账号 REST/PostgreSQL 边界、真实浏览器闭环及会话跨重启
 node scripts/test-tracer.mjs --identity
+node scripts/test-tracer.mjs --identity --boundary-only
 # 工作区 REST、真实浏览器、Go/Java 重启、撤销及故障恢复
 node scripts/test-tracer.mjs --workspace
 # 仅工作区 REST 边界（含精确 JVM 崩溃恢复）
 node scripts/test-tracer.mjs --workspace --boundary-only
-# 仅精确 JVM 崩溃恢复 / 单项原过期准备测试
+# 仅精确 JVM 崩溃恢复 / 单项撤销准备恢复测试
 node scripts/test-tracer.mjs --workspace --boundary-only --workspace-recovery-only
-node scripts/test-tracer.mjs --workspace --boundary-only --workspace-test=expiredPreparationAuthorityCannotCreateFilesAfterSandboxRecovery
+node scripts/test-tracer.mjs --workspace --boundary-only --workspace-test=revokedPreparationIsCleanedAfterSandboxRecovery
 ```
 
 Java 集成测试使用已有 `~/.m2/repository` 的只读挂载，以离线 Maven 运行预先编译的 classes/test-classes；首次先完成本机 Maven 构建。每次/每种模式的 Failsafe 输出放在其 `.runtime/cc-tracer-*/java-tests-*`，缺失产物/依赖、零执行或跳过所选测试均失败。工作区故障测试容器临时挂载 Docker socket，通过受限命令适配器真实暂停/恢复本次 Go 容器并注入损坏文件；**它是可信测试夹具，拥有 Docker 管理权限，不是用户代码沙箱**。Java 应用及题目容器不获得该挂载。
+
+`--smoke` 仅运行管理员登录/改密/邀请/退出、草稿刷新恢复、保存运行及结果恢复三条黄金路径；镜像构建、题目发布校验和服务就绪属于前置准备，不把准备时间伪报为浏览器交互耗时。
+
+工作区用例通过 tracer 独有、随机密钥保护的 loopback fixture API 在临时库 Seed 独立身份，然后调用正式业务 API 创建并开始独立工作区。没有生产 Seed 路由，不绕过生产限流配置，不共享模块级 Cookie。用例允许并行、独立筛选和本地 `test.only`（CI 禁止 only）；数据库和卷随 tracer 整体销毁。
 
 该脚本不读取开发 `.env`：生成随机凭证、独立 Compose 项目/具名卷和独立端口，启动实际进程及 **Vite preview 的生产构建**，执行 Java Failsafe 集成测试及 Playwright：
 
@@ -156,7 +187,7 @@ Java 集成测试使用已有 `~/.m2/repository` 的只读挂载，以离线 Mav
 
 脚本还检查 Go 非 root、只读根、私有具名卷、宿主 loopback 端口与无数据库/管理员凭证。浏览器同时检查响应形状、HTTP 200/503、`no-store`、键盘重试和窄屏。没有替换浏览器 API。清理仅针对该次随机项目的进程、容器和卷；删除临时凭证文件，日志保存在忽略的 `.runtime/`。Docker/浏览器/依赖缺失均非零失败，不能算作通过。若终端被强制关闭，检查 `.runtime/cc-tracer-*` 对应的测试项目并只清理该项目，勿清理开发资源。
 
-`--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器实际完成管理员改密、创建用户、用户改密、越权拒绝和退出，并验证 Java 重启后数据库会话仍可用。该模式禁用 trace、截图和视频，避免记录一次性凭证。各模式仍顺序运行（本机构建产物及 Playwright 的输出目录共用），不能把跳过的测试算作通过。`--workspace` 还覆盖选题/准备/只读浏览/开始/放弃、跨用户拒绝、Go 暂停期间的撤销与授权过期，以及 16 个损坏清理实例不阻塞新准备。另在独立测试库启动子 JVM：收到 Go 真实提交回执后立即 halt，重启后只用 REST GET 确认原操作/内容/修订，任何重新 Apply 都使测试失败。验证边界见 [#09 记录](docs/validation/problem-workspace-09.md)和 [#10–#12 记录](docs/validation/workspace-write-browser-10-12.md)。
+`--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器保留管理员改密、邀请及退出黄金路径；重置、越权和时间边界由 Java 身份 IT 覆盖，并验证 Java 重启后数据库会话仍可用。失败保留 trace、截图、录屏及 HTML 报告，各次运行使用独立输出目录。这些产物只允许来自已销毁的临时测试凭证；CI 白名单上传诊断、保留 3 天，不上传 `.env`、数据库或开发凭证。不能把跳过的测试算作通过。`--workspace` 还覆盖选题/准备/只读浏览/开始/放弃、跨用户拒绝、Go 暂停期间的撤销恢复；授权到期使用可控 Clock 快进，以及 16 个损坏清理实例不阻塞新准备。另在独立测试库启动子 JVM：收到 Go 真实提交回执后立即 halt，重启后只用 REST GET 确认原操作/内容/修订，任何重新 Apply 都使测试失败。验证边界见 [#09 记录](docs/validation/problem-workspace-09.md)和 [#10–#12 记录](docs/validation/workspace-write-browser-10-12.md)。
 
 已有独立服务时，可在 `frontend/` 设置 `TRACER_WEB_URL=http://127.0.0.1:<端口>` 后执行 `npm run test:e2e -- e2e/status.spec.ts`；默认断言两项依赖可用。普通 `npm run test:e2e` 不会偷偷启动假服务。
 
@@ -173,6 +204,6 @@ scripts/                        初始化、生成、检查与真实链路测试
 
 `GET /api/internal/status` 返回 `{"database":"AVAILABLE|UNAVAILABLE","sandbox":"AVAILABLE|UNAVAILABLE"}`。全部可用时 200，否则 503；固定字段，不返回内部连接信息、凭证或堆栈。该内部运维接口不冒充任务 05 的业务 REST/鉴权协议。
 
-Go 生成文件提交，Java 生成文件仅在 `target/`。生成脚本固定插件版本、下载校验 protoc；Wrapper 分发也校验 SHA-256。CI 重新生成后检查 Go 契约漂移，并运行 Linux race 与真实服务链路；**添加了 CI 配置不代表远程 CI 已通过**。
+Go 生成文件提交，Java 生成文件仅在 `target/`。生成脚本固定插件版本、下载校验 protoc；Wrapper 分发也校验 SHA-256。CI 重新生成后检查 Go 契约漂移；PR 并行执行 quick 和 smoke，主分支合并后/nightly 才执行 heavy（含 Linux race 和全量真实链路）；**添加了 CI 配置不代表远程 CI 已通过**。
 
 具体决策见 [工程工具链](docs/design/engineering-toolchain.md) 和 [身份契约](docs/design/api-events.md)，执行证据见 [任务 06 验证记录](docs/validation/service-tracer-06.md)、[任务 07 验证记录](docs/validation/account-login-07.md)和[任务 08 验证记录](docs/validation/password-revocation-08.md)。

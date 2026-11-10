@@ -881,13 +881,15 @@ class WorkspaceIT {
     private void docker(String... arguments) throws Exception {
         List<String> command = new ArrayList<>(List.of("docker"));
         command.addAll(List.of(arguments));
-        Process process = new ProcessBuilder(command).redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .redirectError(ProcessBuilder.Redirect.DISCARD).start();
+        Path reports = Path.of("target", "failsafe-reports");
+        Files.createDirectories(reports);
+        Path output = Files.createTempFile(reports, "docker-control-", ".log");
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(output.toFile()).start();
         if (!process.waitFor(30, TimeUnit.SECONDS)) {
             process.destroyForcibly();
-            throw new IllegalStateException("Owned sandbox control timed out");
+            throw new IllegalStateException("Owned sandbox control timed out; diagnostics: " + output);
         }
-        assertThat(process.exitValue()).as("docker " + arguments[0] + " owned sandbox").isZero();
+        assertThat(process.exitValue()).as("docker %s owned sandbox; diagnostics: %s", arguments[0], output).isZero();
     }
 
     private JsonNode waitForState(String exercise, String expected) throws Exception {
@@ -898,7 +900,7 @@ class WorkspaceIT {
             if (snapshot.path("state").asText().equals(expected)) return snapshot;
             Thread.sleep(100);
         } while (System.nanoTime() < until);
-        assertThat(snapshot.path("state").asText()).isEqualTo(expected);
+        assertThat(snapshot.path("state").asText()).as("Exercise %s last snapshot: %s", exercise, snapshot).isEqualTo(expected);
         return snapshot;
     }
 
@@ -908,8 +910,10 @@ class WorkspaceIT {
 
     private JsonNode request(String method, String path, Object body, String key, int expected, String credential) throws Exception {
         HttpResponse<String> response = http.send(buildRequest(method, path, body, key, credential), HttpResponse.BodyHandlers.ofString());
-        assertThat(response.statusCode()).as(method + " " + path).isEqualTo(expected);
-        return response.body().isEmpty() ? json.createObjectNode() : json.readTree(response.body());
+        JsonNode result = response.body().isEmpty() ? json.createObjectNode() : json.readTree(response.body());
+        assertThat(response.statusCode()).as("%s %s: code=%s requestId=%s", method, path,
+            result.path("code").asText(), result.path("requestId").asText()).isEqualTo(expected);
+        return result;
     }
 
     private HttpRequest buildRequest(String method, String path, Object body, String key, String credential) throws Exception {
