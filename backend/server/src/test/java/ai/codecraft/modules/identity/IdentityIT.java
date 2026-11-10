@@ -88,8 +88,13 @@ class IdentityIT {
         clock.at(START);
         notifications.events.clear();
         notifications.fail = false;
-        jdbc.execute("TRUNCATE workspace_mutation, workspace_transition, workspace_control, workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
+        jdbc.execute("TRUNCATE workspace_task_event, workspace_task_stream, workspace_test_stop, workspace_test_task, workspace_mutation, workspace_transition, workspace_control, workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
         store.bootstrap("admin_test", secrets.hash(PASSWORD));
+    }
+
+    @Test
+    void migratedSchemaUsesLogicalReferencesOnly() {
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND connamespace = current_schema()::regnamespace", Integer.class)).isZero();
     }
 
     @Test

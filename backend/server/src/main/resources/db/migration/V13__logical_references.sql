@@ -1,0 +1,20 @@
+-- Association integrity is owned by transactional application services.
+-- Preserve historical migration checksums, indexes, UNIQUE, NOT NULL and CHECK constraints.
+ALTER TABLE identity_session DROP CONSTRAINT identity_session_user_id_fkey;
+ALTER TABLE identity_receipt DROP CONSTRAINT identity_receipt_actor_id_fkey;
+ALTER TABLE identity_receipt DROP CONSTRAINT identity_receipt_result_user_id_fkey;
+ALTER TABLE workspace_exercise DROP CONSTRAINT workspace_exercise_user_id_fkey;
+ALTER TABLE workspace_exercise DROP CONSTRAINT workspace_exercise_problem_version_id_fkey;
+ALTER TABLE workspace_operation DROP CONSTRAINT workspace_operation_user_id_fkey;
+ALTER TABLE workspace_operation DROP CONSTRAINT workspace_operation_exercise_id_fkey;
+ALTER TABLE identity_revocation_intent DROP CONSTRAINT identity_revocation_intent_actor_id_fkey;
+ALTER TABLE identity_revocation_intent DROP CONSTRAINT identity_revocation_intent_target_id_fkey;
+ALTER TABLE workspace_control DROP CONSTRAINT workspace_control_exercise_id_fkey;
+ALTER TABLE workspace_transition DROP CONSTRAINT workspace_transition_exercise_id_fkey;
+ALTER TABLE workspace_mutation DROP CONSTRAINT workspace_mutation_operation_id_fkey;
+ALTER TABLE workspace_test_task DROP CONSTRAINT workspace_test_task_id_fkey;
+ALTER TABLE workspace_test_task DROP CONSTRAINT workspace_test_task_exercise_id_fkey;
+ALTER TABLE workspace_test_stop DROP CONSTRAINT workspace_test_stop_id_fkey;
+ALTER TABLE workspace_test_stop DROP CONSTRAINT workspace_test_stop_task_id_fkey;
+ALTER TABLE workspace_task_stream DROP CONSTRAINT workspace_task_stream_task_id_fkey;
+ALTER TABLE workspace_task_event DROP CONSTRAINT workspace_task_event_task_id_fkey;
