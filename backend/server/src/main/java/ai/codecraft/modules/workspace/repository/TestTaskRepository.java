@@ -36,8 +36,8 @@ public interface TestTaskRepository {
 
     @Select("SELECT go_state_version FROM workspace_test_task WHERE id = #{id}::uuid")
     long goVersion(String id);
-    @Update("UPDATE workspace_test_task SET go_state_version = #{version} WHERE id = #{id}::uuid")
-    void updateGoVersion(@Param("id") String id, @Param("version") long version);
+    @Update("UPDATE workspace_test_task SET go_state_version = #{version}, go_stream_id = #{stream}, go_sequence = #{sequence} WHERE id = #{id}::uuid")
+    void updateGoVersion(@Param("id") String id, @Param("version") long version, @Param("stream") String stream, @Param("sequence") long sequence);
 
     @Insert("INSERT INTO workspace_test_stop(id, task_id, gate_epoch, not_after) VALUES (#{id}::uuid, #{taskId}::uuid, #{gateEpoch}, #{notAfter})")
     void insertStop(TestStopEntity stop);

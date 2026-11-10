@@ -23,6 +23,8 @@ import ai.codecraft.workspace.v1.ReadWorkspaceFileRequest;
 import ai.codecraft.workspace.v1.ReadWorkspaceFileResponse;
 import ai.codecraft.workspace.v1.WorkspaceSnapshot;
 import ai.codecraft.workspace.v1.WorkspaceStorageGrpc;
+import io.grpc.Context;
+import ai.codecraft.workspace.v1.WatchTaskRequest;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.Metadata;
@@ -61,6 +63,31 @@ public class SandboxWorkspaceGateway {
         } catch (StatusRuntimeException error) {
             if (error.getStatus().getCode() == Status.Code.NOT_FOUND) return null;
             throw error;
+        }
+    }
+
+    /** Bounded observation only. Cancellation releases WatchTask, never execution ownership. */
+    public boolean awaitTaskEvent(TestTaskEntity task, TestTaskSnapshot checkpoint) {
+        if (checkpoint.hasFinishedAtUnixMillis() || checkpoint.getStreamId().isBlank()) return false;
+        try (Context.CancellableContext observation = Context.current().withCancellation()) {
+            Context previous = observation.attach();
+            try {
+                var events = stub.withDeadlineAfter(500, TimeUnit.MILLISECONDS).watchTask(WatchTaskRequest.newBuilder()
+                    .setTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+                        .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()))
+                    .setStreamId(checkpoint.getStreamId()).setAfterSequence(checkpoint.getSequence()).build());
+                if (!events.hasNext()) return false;
+                var event = events.next();
+                if (!event.getTaskId().equals(task.id()) || !event.getExecutionInstanceId().equals(task.executionInstanceId())) {
+                    throw new IllegalStateException("Invalid task event identity");
+                }
+                // Coalesce into an authoritative checkpoint, including on reset_required.
+                // This avoids publishing a cursor ahead of its materialized log tail.
+                return true;
+            } catch (StatusRuntimeException error) {
+                if (error.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) return false;
+                throw error;
+            } finally { observation.detach(previous); }
         }
     }
 

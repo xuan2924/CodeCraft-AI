@@ -13,6 +13,22 @@ export async function request(path: string, signal: AbortSignal, options: Reques
   if (!object(body) || body.code !== 'OK' || !('data' in body)) throw new ApiError(502, 'INVALID_RESPONSE');
   return body.data;
 }
+/** Same-origin read-only transport; callers own protocol validation and recovery. */
+export function events(path: string, types: readonly string[], receive: (type: string, data: string, id: string) => void,
+  failed: () => void, signal: AbortSignal): () => void {
+  if (!path.startsWith('/api/') || signal.aborted) return () => {};
+  const source = new EventSource(path);
+  let closed = false;
+  const close = () => { if (!closed) { closed = true; source.close(); signal.removeEventListener('abort', close); } };
+  for (const type of types) source.addEventListener(type, (event) => {
+    if (closed) return;
+    if (!(event instanceof MessageEvent) || typeof event.data !== 'string') { close(); failed(); return; }
+    receive(type, event.data, event.lastEventId);
+  });
+  source.addEventListener('error', () => { if (!closed) { close(); failed(); } });
+  signal.addEventListener('abort', close, { once: true });
+  return close;
+}
 export async function post(path: string, body: unknown, signal: AbortSignal, key?: string, operationCredential?: string): Promise<unknown> {
   // Fresh CSRF per explicit action; never automatically replay a side effect.
   const csrf = await request('/api/auth/csrf', signal);

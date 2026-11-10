@@ -6,6 +6,10 @@ import ai.codecraft.modules.workspace.model.dto.StartTestRequest;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
 import ai.codecraft.modules.workspace.service.TestTaskService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import org.springframework.web.bind.annotation.RequestParam;
+import ai.codecraft.modules.workspace.stream.TaskEventTransport;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
@@ -19,7 +23,16 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class TestTaskController {
     private final TestTaskService tasks;
-    public TestTaskController(TestTaskService tasks) { this.tasks = tasks; }
+    private final TaskEventTransport streams;
+    public TestTaskController(TestTaskService tasks, TaskEventTransport streams) { this.tasks = tasks; this.streams = streams; }
+
+    @GetMapping(value = "/api/exercises/{id}/tasks/{taskId}/events", produces = "text/event-stream")
+    public void events(@PathVariable UUID id, @PathVariable UUID taskId,
+        @RequestParam(value = "after", required = false) String after,
+        @RequestHeader(value = "Last-Event-ID", required = false) String lastEvent,
+        HttpServletRequest request, HttpServletResponse response) throws IOException {
+        streams.open(IdentityHttp.sessionHash(request), id.toString(), taskId.toString(), after, lastEvent, request, response);
+    }
 
     @PostMapping("/api/exercises/{id}/tests")
     public ResponseEntity<ApiResponse<TestTaskResponse>> start(@PathVariable UUID id, @RequestBody StartTestRequest input,

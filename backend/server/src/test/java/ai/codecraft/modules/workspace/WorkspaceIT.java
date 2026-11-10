@@ -14,6 +14,12 @@ import io.grpc.StatusRuntimeException;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -156,6 +162,87 @@ class WorkspaceIT {
         assertThat(request("POST", taskUrl + "/stop", Map.of(), "stop", 200, current).path("data").path("state").asText()).isEqualTo("STOPPED");
         seedDisposableIdentity();
         request("POST", taskUrl + "/stop", Map.of(), "foreign-stop", 404, current);
+    }
+
+    @Test
+    void streamsRealLogsAndClosesExistingConnectionOnPasswordReset() throws Exception {
+        String exercise = readyExercise("stream-revoke");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "page", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "begin", 200, credential);
+        String path = "src/main/java/interview/CartTotal.java";
+        String code = request("GET", base + "/files?path=" + path, null, null, 200).path("data").path("content").asText();
+        code = code.replace("public final class CartTotal {", "public final class CartTotal { static { System.out.println(\"private-stream-marker\"); System.err.println(\"private-stderr-marker\"); try { Thread.sleep(3000); } catch (InterruptedException e) { throw new RuntimeException(e); } }");
+        request("POST", base + "/file-batches", Map.of("expectedRevision", "0", "changes", List.of(Map.of("path", path, "kind", "UPDATE", "content", code))), "logging", 200, credential);
+        JsonNode task = request("POST", base + "/tests", Map.of("expectedRevision", "1", "target", "base"), "run", 202, credential).path("data");
+        String taskUrl = base + "/tasks/" + task.path("taskId").asText();
+        String victimToken = token;
+        String victim = jdbc.queryForObject("SELECT user_id::text FROM identity_session WHERE token_hash = ?", String.class, IdentitySecrets.digest(token));
+        HttpRequest stream = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + taskUrl + "/events"))
+            .header("Cookie", "codecraft_session=" + token).header("Accept", "text/event-stream").GET().build();
+        HttpResponse<InputStream> response = http.send(stream, HttpResponse.BodyHandlers.ofInputStream());
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.headers().firstValue("Content-Type").orElse("")).startsWith("text/event-stream");
+        CountDownLatch logged = new CountDownLatch(1);
+        try (var body = response.body()) {
+            CompletableFuture<String> received = CompletableFuture.supplyAsync(() -> {
+                StringBuilder text = new StringBuilder();
+                try (var reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8))) {
+                    for (String line; (line = reader.readLine()) != null;) {
+                        text.append(line).append('\n');
+                        if (line.contains("private-stderr-marker")) logged.countDown();
+                        if (text.length() > 131072) throw new IllegalStateException("unbounded test stream");
+                    }
+                    return text.toString();
+                } catch (IOException error) { throw new IllegalStateException(error); }
+            });
+            assertThat(logged.await(35, TimeUnit.SECONDS)).isTrue();
+            assertThat(received.isDone()).isFalse();
+            seedDisposableIdentity();
+            jdbc.update("UPDATE identity_user SET role = 'ADMIN' WHERE id = (SELECT user_id FROM identity_session WHERE token_hash = ?)", IdentitySecrets.digest(token));
+            request("POST", "/api/admin/users/" + victim + "/password-reset", Map.of(), "reset-stream", 200);
+            assertThat(received.get(7, TimeUnit.SECONDS)).contains("event:log", "private-stream-marker", "stdout", "stderr");
+            token = victimToken;
+            request("GET", taskUrl, null, null, 401);
+        }
+    }
+
+    @Test
+    void boundsStreamsAndRechecksRevocationWhenNotificationIsLost() throws Exception {
+        String exercise = readyExercise("stream-capacity");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "page", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "begin", 200, credential);
+        JsonNode task = request("POST", base + "/tests", Map.of("expectedRevision", "0", "target", "base"), "run", 202, credential).path("data");
+        String url = base + "/tasks/" + task.path("taskId").asText();
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(40);
+        do {
+            task = request("GET", url, null, null, 200).path("data");
+            if (System.nanoTime() > until) throw new AssertionError("Task did not finish");
+            Thread.sleep(100);
+        } while (!task.path("copyCleanup").asText().equals("SUCCEEDED"));
+        assertThat(task.path("cursor").asText()).isNotBlank();
+        request("GET", url + "/events?after=invalid", null, null, 409);
+        List<InputStream> bodies = new ArrayList<>();
+        try {
+            for (int index = 0; index < 5; index++) {
+                HttpRequest stream = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + url + "/events?after=" + task.path("cursor").asText()))
+                    .header("Cookie", "codecraft_session=" + token).GET().build();
+                HttpResponse<InputStream> response = http.send(stream, HttpResponse.BodyHandlers.ofInputStream());
+                assertThat(response.statusCode()).isEqualTo(200);
+                bodies.add(response.body());
+            }
+            request("GET", url + "/events?after=" + task.path("cursor").asText(), null, null, 429);
+            // Fault injection: commit the authoritative session revocation without a
+            // process-local notification. Assertions remain on the public stream.
+            jdbc.update("UPDATE identity_session SET revoked = true WHERE token_hash = ?", IdentitySecrets.digest(token));
+            List<CompletableFuture<byte[]>> tails = bodies.stream().map(body -> CompletableFuture.supplyAsync(() -> {
+                try { return body.readNBytes(131072); }
+                catch (IOException error) { throw new IllegalStateException(error); }
+            })).toList();
+            for (CompletableFuture<byte[]> tail : tails) assertThat(new String(tail.get(7, TimeUnit.SECONDS), StandardCharsets.UTF_8)).doesNotContain("data:");
+            request("GET", url, null, null, 401);
+        } finally { for (var body : bodies) body.close(); }
     }
 
     @Test

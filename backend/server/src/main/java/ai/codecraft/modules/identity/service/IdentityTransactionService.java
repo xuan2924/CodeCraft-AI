@@ -67,7 +67,13 @@ public class IdentityTransactionService {
 
     // Joins the caller's short transaction so mutations and identity revocation share the user lock.
     @Transactional
-    public SessionAuthorizationDTO authorizeMutation(String sessionHash) {
+    public SessionAuthorizationDTO authorizeMutation(String sessionHash) { return lockedAuthorization(sessionHash); }
+
+    /** Joins a short batch transaction; never renews activity or waits for transport. */
+    @Transactional
+    public SessionAuthorizationDTO authorizePrivateDelivery(String sessionHash) { return lockedAuthorization(sessionHash); }
+
+    private SessionAuthorizationDTO lockedAuthorization(String sessionHash) {
         AuthenticatedIdentityDTO auth = authenticateInside(sessionHash, true);
         requireOpenAdmission(auth.user().id());
         if (auth.user().passwordChangeRequired()) throw new IdentityFailure(IdentityErrorCode.PASSWORD_CHANGE_REQUIRED);

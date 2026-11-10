@@ -91,7 +91,15 @@ public class TestTaskCoordinator {
         TestTaskEntity task = store.find(original.id());
         if (!task.dispatched()) return;
         TestTaskSnapshot result = sandbox.task(task);
-        if (result != null) { confirm(task, result); sandbox.reconcileTask(task); return; }
+        if (result != null) {
+            confirm(task, result);
+            sandbox.reconcileTask(task);
+            if (sandbox.awaitTaskEvent(task, result)) {
+                TestTaskSnapshot checkpoint = sandbox.task(task);
+                if (checkpoint != null) confirm(task, checkpoint);
+            }
+            return;
+        }
         GateResponse gate = sandbox.gate(task.workspaceInstanceId());
         if (!gate.getWorkspaceInstanceId().equals(task.workspaceInstanceId())) throw new IllegalStateException("Invalid task fence identity");
         if (gate.getEpoch() <= task.gateEpoch()) {
@@ -135,6 +143,6 @@ public class TestTaskCoordinator {
             snapshot.hasFinishedAtUnixMillis() ? Instant.ofEpochMilli(snapshot.getFinishedAtUnixMillis()) : null,
             snapshot.hasExitCode() ? snapshot.getExitCode() : null, snapshot.getQuiescent(), snapshot.getCleanup(), snapshot.getCopyCleanup(),
             Long.toString(snapshot.getDroppedBytes()), snapshot.getLogsIncomplete(), snapshot.getLogsList().stream().map(log -> new TestLogResponse(log.getChannel(), log.getData().toStringUtf8())).toList(), TestTaskMapper.problem(expected), evidence);
-        store.observe(task, result, snapshot.getStateVersion());
+        store.observe(task, result, snapshot.getStateVersion(), snapshot.getStreamId(), snapshot.getSequence());
     }
 }

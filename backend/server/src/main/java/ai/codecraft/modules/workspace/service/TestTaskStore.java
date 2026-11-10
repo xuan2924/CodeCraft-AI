@@ -17,6 +17,8 @@ import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
 import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import ai.codecraft.modules.workspace.repository.ExerciseRepository;
 import ai.codecraft.modules.workspace.repository.TestTaskRepository;
+import ai.codecraft.modules.workspace.repository.TaskStreamRepository;
+import ai.codecraft.modules.workspace.model.entity.TaskStreamEntity;
 import ai.codecraft.modules.workspace.repository.WorkspaceWriteRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,11 +41,15 @@ public class TestTaskStore {
     private final ProblemRepository problems;
     private final Clock clock;
     private final ObjectMapper json;
+    private final TaskStreamRepository streams;
+    private final TaskStreamPublisher publisher;
 
     public TestTaskStore(IdentityTransactionService identity, IdentitySecrets secrets, ExerciseRepository exercises,
-        WorkspaceWriteRepository writes, TestTaskRepository tasks, ProblemRepository problems, Clock clock, ObjectMapper json) {
+        WorkspaceWriteRepository writes, TestTaskRepository tasks, ProblemRepository problems, Clock clock, ObjectMapper json,
+        TaskStreamRepository streams, TaskStreamPublisher publisher) {
         this.identity = identity; this.secrets = secrets; this.exercises = exercises; this.writes = writes;
         this.tasks = tasks; this.problems = problems; this.clock = clock; this.json = json;
+        this.streams = streams; this.publisher = publisher;
     }
 
     @Transactional(readOnly = true)
@@ -86,15 +92,17 @@ public class TestTaskStore {
         TestTaskEntity task = new TestTaskEntity(id, UUID.randomUUID().toString(), exerciseId, exercise.workspaceInstanceId(), revision,
             control.gateEpoch(), notAfter, input.target(), "ACCEPTED", false, false, null);
         tasks.insert(task);
+        streams.create(task.id(), UUID.randomUUID().toString());
         return task;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public TestTaskResponse query(String session, String exercise, String task) {
         owned(identity.authorization(session).userId(), exercise);
-        TestTaskEntity value = tasks.find(task);
+        TestTaskEntity value = tasks.lock(task);
         if (value == null || !value.exerciseId().equals(exercise)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
-        return response(value);
+        TaskStreamEntity stream = streams.find(task);
+        return response(value).withStream(stream.streamId(), TaskStreamCursor.encode(stream, stream.sequence()), Long.toString(stream.firstSequence()), Long.toString(stream.sequence()));
     }
 
     @Transactional(readOnly = true)
@@ -181,20 +189,20 @@ public class TestTaskStore {
     }
 
     @Transactional
-    public void observe(TestTaskEntity expected, TestTaskResponse result, long stateVersion) {
+    public void observe(TestTaskEntity expected, TestTaskResponse result, long stateVersion, String goStream, long goSequence) {
         writes.lock(expected.exerciseId());
         TestTaskEntity current = tasks.lock(expected.id());
         if (!result.taskId().equals(current.id()) || !result.exerciseId().equals(current.exerciseId())
             || !result.executionInstanceId().equals(current.executionInstanceId()) || !result.workspaceInstanceId().equals(current.workspaceInstanceId())
             || !result.revision().equals(Long.toString(current.revision())) || !result.target().equals(current.target())) throw new IllegalStateException("Mismatched execution receipt");
-        if (stateVersion < 0 || stateVersion < tasks.goVersion(current.id())) return;
+        if (stateVersion < 0 || goSequence < 0 || stateVersion < tasks.goVersion(current.id())) return;
         if (TERMINAL.contains(current.state()) && !current.state().equals(result.state())) return;
         if (current.quiescent() && !result.quiescent()) return;
         TestTaskResponse previous = response(current);
         if (previous.copyCleanup().equals("SUCCEEDED") && !result.copyCleanup().equals("SUCCEEDED")) return;
         if (previous.cleanup().equals("SUCCEEDED") && !result.cleanup().equals("SUCCEEDED")) return;
         store(current, result);
-        tasks.updateGoVersion(current.id(), stateVersion);
+        tasks.updateGoVersion(current.id(), stateVersion, goStream, goSequence);
     }
 
     @Transactional
@@ -206,6 +214,7 @@ public class TestTaskStore {
     }
 
     private void store(TestTaskEntity task, TestTaskResponse result) {
+        publisher.checkpoint(response(task), result);
         try { tasks.observed(task.id(), result.state(), result.quiescent(), json.writeValueAsString(result)); }
         catch (JsonProcessingException error) { throw new IllegalStateException("Cannot persist execution snapshot", error); }
         if (TERMINAL.contains(result.state())) exercises.operationState(task.id(), "SUCCEEDED");

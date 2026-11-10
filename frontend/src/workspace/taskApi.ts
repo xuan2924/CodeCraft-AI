@@ -1,4 +1,4 @@
-import { ApiError, object, post, request } from '../api/request';
+import { ApiError, events, object, post, request } from '../api/request';
 
 export interface TestTask {
   taskId: string; exerciseId: string; executionInstanceId: string; workspaceInstanceId: string;
@@ -7,8 +7,9 @@ export interface TestTask {
   droppedBytes: string; logsIncomplete: boolean; logs: { channel: string; text: string }[];
   problem: { problemId: string; version: string; packageSha256: string; executionImageDigest: string; platform: string };
   evidence: { kind: string; sha256: string; bytes: number } | null;
+  streamId: string | null; cursor: string | null; sequence: string | null; firstRetainedSequence: string | null;
 }
-const states = ['ACCEPTED', 'STARTING', 'RUNNING', 'PASSED', 'FAILED', 'TIMED_OUT', 'STOPPED', 'ENVIRONMENT_ERROR', 'INTERRUPTED'];
+const states = ['ACCEPTED', 'STARTING', 'RUNNING', 'STOPPING', 'PASSED', 'FAILED', 'TIMED_OUT', 'STOPPED', 'ENVIRONMENT_ERROR', 'INTERRUPTED'];
 function invalid(): never { throw new ApiError(502, 'INVALID_RESPONSE'); }
 function timestamp(value: unknown): value is string | null { return value === null || (typeof value === 'string' && Number.isFinite(Date.parse(value))); }
 function parse(value: unknown, exercise: string, workspace: string): TestTask {
@@ -44,16 +45,55 @@ function parse(value: unknown, exercise: string, workspace: string): TestTask {
     if (retained > 3 * 1048576) return invalid(); // UTF-8 replacement can expand retained binary output.
     return { channel: entry.channel, text: entry.text };
   });
-  return { taskId: value.taskId, exerciseId: exercise, executionInstanceId: value.executionInstanceId, workspaceInstanceId: workspace,
+  const streamId = value.streamId ?? null; const cursor = value.cursor ?? null;
+  const sequence = value.sequence ?? null; const firstRetainedSequence = value.firstRetainedSequence ?? null;
+  if ((cursor !== null && typeof cursor !== 'string') || (sequence !== null && typeof sequence !== 'string')
+    || (firstRetainedSequence !== null && typeof firstRetainedSequence !== 'string')) return invalid();
+  if (streamId === null && (cursor !== null || sequence !== null || firstRetainedSequence !== null)) return invalid();
+  if (streamId !== null && (typeof streamId !== 'string' || streamId.length > 64 || typeof cursor !== 'string' || cursor.length > 160
+    || typeof sequence !== 'string' || !/^(0|[1-9]\d{0,18})$/.test(sequence)
+    || typeof firstRetainedSequence !== 'string' || !/^[1-9]\d{0,18}$/.test(firstRetainedSequence))) return invalid();
+  return { streamId, cursor, sequence, firstRetainedSequence, taskId: value.taskId, exerciseId: exercise, executionInstanceId: value.executionInstanceId, workspaceInstanceId: workspace,
     revision: value.revision, target: value.target, state: value.state, reason: value.reason, startedAt: value.startedAt, finishedAt: value.finishedAt,
     exitCode: value.exitCode, quiescent: value.quiescent, cleanup: value.cleanup, copyCleanup: value.copyCleanup,
     droppedBytes: value.droppedBytes, logsIncomplete: value.logsIncomplete, logs,
     problem: { problemId: problem.problemId, version: problem.version, packageSha256: problem.packageSha256,
       executionImageDigest: problem.executionImageDigest, platform: problem.platform }, evidence };
 }
+export interface TaskEvent {
+  type: 'log' | 'progress' | 'task_result' | 'log_truncated'; sequence: string; cursor: string;
+  payload: { channel?: 'stdout' | 'stderr'; data?: string; state?: string; replaceLogs?: boolean; droppedBytes?: string };
+}
+export function watchTask(task: TestTask, receive: (event: TaskEvent) => void, reset: () => void, signal: AbortSignal): () => void {
+  if (!task.cursor || !task.streamId) return () => {};
+  return events(`/api/exercises/${encodeURIComponent(task.exerciseId)}/tasks/${encodeURIComponent(task.taskId)}/events?after=${encodeURIComponent(task.cursor)}`,
+    ['log', 'progress', 'task_result', 'log_truncated', 'reset_required'], (type, data, id) => {
+      try {
+        if (type === 'reset_required' || data.length > 65536 || id.length > 160 || !id) return reset();
+        const event: unknown = JSON.parse(data);
+        if (!object(event) || event.schemaVersion !== 1 || event.taskId !== task.taskId || event.executionInstanceId !== task.executionInstanceId
+          || event.streamId !== task.streamId || event.type !== type || typeof event.sequence !== 'string' || !/^[1-9]\d{0,18}$/.test(event.sequence)
+          || typeof event.occurredAt !== 'string' || !Number.isFinite(Date.parse(event.occurredAt)) || !object(event.payload)) return reset();
+        const payload = event.payload;
+        if (type === 'log' && (payload.channel === 'stdout' || payload.channel === 'stderr') && typeof payload.data === 'string' && payload.data.length <= 16384) {
+          receive({ type, sequence: event.sequence, cursor: id, payload: { channel: payload.channel, data: payload.data } });
+        } else if ((type === 'progress' || type === 'task_result') && typeof payload.state === 'string' && states.includes(payload.state)
+          && (type === 'task_result' || typeof payload.replaceLogs === 'boolean')) {
+          receive({ type, sequence: event.sequence, cursor: id, payload: { state: payload.state, replaceLogs: payload.replaceLogs === true } });
+        } else if (type === 'log_truncated' && typeof payload.droppedBytes === 'string' && /^\d{1,20}$/.test(payload.droppedBytes)) {
+          receive({ type, sequence: event.sequence, cursor: id, payload: { droppedBytes: payload.droppedBytes } });
+        } else reset();
+      } catch { reset(); }
+    }, reset, signal);
+}
 export async function startTest(exercise: string, workspace: string, revision: string, key: string, credential: string, signal: AbortSignal): Promise<TestTask> {
   const result = parse(await post(`/api/exercises/${encodeURIComponent(exercise)}/tests`, { expectedRevision: revision, target: 'base' }, signal, key, credential), exercise, workspace);
   if (result.revision !== revision) return invalid();
+  return result;
+}
+export async function stopTest(exercise: string, workspace: string, id: string, key: string, credential: string, signal: AbortSignal): Promise<TestTask> {
+  const result = parse(await post(`/api/exercises/${encodeURIComponent(exercise)}/tasks/${encodeURIComponent(id)}/stop`, {}, signal, key, credential), exercise, workspace);
+  if (result.taskId !== id) return invalid();
   return result;
 }
 export async function recentTests(exercise: string, workspace: string, signal: AbortSignal): Promise<TestTask[]> {

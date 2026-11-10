@@ -6,7 +6,7 @@ import WorkspaceTests from './WorkspaceTests.vue';
 import { testTask, type TestTask } from './taskApi';
 
 const exercise = { exerciseId: 'exercise', workspaceInstanceId: 'instance', problemVersionId: 'problem', state: 'ACTIVE', revision: '2', paths: [], deadlineAt: null, preparationFailureReason: null, cleanupState: null };
-const result: TestTask = { taskId: 'task', exerciseId: 'exercise', executionInstanceId: 'execution', workspaceInstanceId: 'instance', revision: '0', target: 'base',
+const result: TestTask = { streamId: null, cursor: null, sequence: null, firstRetainedSequence: null, taskId: 'task', exerciseId: 'exercise', executionInstanceId: 'execution', workspaceInstanceId: 'instance', revision: '0', target: 'base',
   state: 'PASSED', reason: 'authority_report', startedAt: '2026-11-10T00:00:00Z', finishedAt: '2026-11-10T00:00:05Z', exitCode: 0,
   quiescent: true, cleanup: 'SUCCEEDED', copyCleanup: 'SUCCEEDED', droppedBytes: '50', logsIncomplete: false,
   logs: [{ channel: 'stdout', text: '<script>window.stolen = true</script>' }],
@@ -39,6 +39,65 @@ it('shows old revisions and truncation, renders logs as text, and only queries o
   expect(view.findAll('script')).toHaveLength(0);
   expect(view.get('.test-output').text()).toContain('<script>');
   expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it('applies ordered live events, ignores duplicates, and recovers gaps without starting a task', async () => {
+  const sources: FakeEvents[] = [];
+  class FakeEvents extends EventTarget {
+    close = vi.fn();
+    constructor(readonly url: string) { super(); sources.push(this); }
+  }
+  vi.stubGlobal('EventSource', FakeEvents);
+  let recovered = false;
+  const snapshot = { ...result, state: 'RUNNING', finishedAt: null, evidence: null, quiescent: false,
+    streamId: 'browser-stream', cursor: 'opaque3', sequence: '3', firstRetainedSequence: '1', logs: [] };
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (path, options) => {
+    expect(options?.method ?? 'GET').toBe('GET');
+    return ok(String(path).endsWith('/tasks') ? [snapshot] : recovered ? { ...snapshot, cursor: 'opaque6', sequence: '6', logs: [{ channel: 'stderr', text: 'recovered tail' }] } : snapshot);
+  }));
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  view = mount(WorkspaceTests, { props: { owner: 'owner', exercise, credential: '' }, global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
+  await flushPromises(); await flushPromises();
+  expect(sources).toHaveLength(1);
+  const send = (sequence: string, text: string) => sources[0]!.dispatchEvent(new MessageEvent('log', { lastEventId: `opaque${sequence}`, data: JSON.stringify({
+    schemaVersion: 1, taskId: 'task', executionInstanceId: 'execution', streamId: 'browser-stream', sequence, type: 'log',
+    occurredAt: '2026-11-10T00:00:00Z', payload: { channel: 'stdout', data: text } }) }));
+  send('4', 'live output'); send('4', 'duplicate');
+  await vi.waitFor(() => expect(view!.get('.test-output').text()).toContain('live output'));
+  expect(view.get('.test-output').text()).not.toContain('duplicate');
+  recovered = true; send('6', 'gap output');
+  await vi.waitFor(() => expect(view!.get('.test-output').text()).toContain('recovered tail'));
+  expect(sources[0]!.close).toHaveBeenCalled();
+  expect(view.get('.test-output').text()).not.toContain('gap output');
+  view.unmount(); view = undefined;
+  expect(sources.at(-1)!.close).toHaveBeenCalled();
+});
+
+it('stops only on explicit action and retains the original stop key after a lost response', async () => {
+  const keys: string[] = [];
+  const running = { ...result, state: 'RUNNING', finishedAt: null, quiescent: false, evidence: null, exitCode: null, logs: [] };
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (path, options) => {
+    if (String(path) === '/api/auth/csrf') return ok({ token: 'csrf' });
+    if (options?.method === 'POST') {
+      expect(String(path)).toBe('/api/exercises/exercise/tasks/task/stop');
+      expect(new Headers(options.headers).get('X-Operation-Credential')).toBe('credential');
+      keys.push(new Headers(options.headers).get('Idempotency-Key') ?? '');
+      if (keys.length === 1) throw new TypeError('lost response');
+      return ok({ ...running, state: 'STOPPING' });
+    }
+    return ok(String(path).endsWith('/tasks') ? [running] : running);
+  }));
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  view = mount(WorkspaceTests, { props: { owner: 'owner', exercise, credential: 'credential' }, global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
+  await flushPromises(); await flushPromises();
+  expect(keys).toHaveLength(0);
+  await view.findAll('button').find((button) => button.text() === '停止任务')!.trigger('click');
+  await flushPromises();
+  expect(view.text()).toContain('停止结果尚未确认');
+  await view.findAll('button').find((button) => button.text() === '核对原停止请求')!.trigger('click');
+  await flushPromises();
+  expect(keys).toHaveLength(2); expect(keys[0]).toBe(keys[1]);
+  expect(view.text()).toContain('正在停止');
 });
 
 it('retains the original test key and revision after an unknown response without automatic retry', async () => {
