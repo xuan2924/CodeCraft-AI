@@ -214,6 +214,15 @@ func (s *Service) CancelPreparation(ctx context.Context, request *rpc.CancelPrep
 	if err != nil && !errors.Is(err, errNoCommit) {
 		return nil, storageError(err)
 	}
+	// Input copies may be referenced by an execution. Preparation cancellation
+	// cannot reconcile those references or truthfully confirm their cleanup.
+	copies, err := hasTestCopies(fd)
+	if err != nil {
+		return nil, storageError(err)
+	}
+	if copies {
+		return nil, status.Error(codes.FailedPrecondition, "workspace has test copies requiring execution reconciliation")
+	}
 	view := &rpc.WorkspaceSnapshot{WorkspaceInstanceId: request.WorkspaceInstanceId, OperationId: request.OperationId, Cancelled: true}
 	var sequence uint64
 	if previous != nil {

@@ -16,6 +16,9 @@ service WorkspaceStorage {
   rpc OpenGate(CloseGateRequest) returns (GateResponse);
   rpc ApplyBatch(ApplyBatchRequest) returns (MutationReceipt);
   rpc QueryMutation(QueryMutationRequest) returns (MutationReceipt);
+  // Internal input preparation only; these calls never register or start an execution.
+  rpc PrepareTestCopy(PrepareTestCopyRequest) returns (TestCopyReceipt);
+  rpc QueryTestCopy(QueryTestCopyRequest) returns (TestCopyReceipt);
 }
 
 message ProblemIdentity {
@@ -87,6 +90,25 @@ message MutationReceipt {
   string fingerprint = 4;
   uint64 revision = 5;
   bool changed = 6;
+}
+message PrepareTestCopyRequest {
+  string workspace_instance_id = 1;
+  string execution_instance_id = 2;
+  uint64 expected_revision = 3;
+  uint64 gate_epoch = 4;
+  int64 not_after_unix_millis = 5;
+}
+message QueryTestCopyRequest {
+  string workspace_instance_id = 1;
+  string execution_instance_id = 2;
+}
+// The relative path is private Go storage metadata, never a browser mount input.
+message TestCopyReceipt {
+  string workspace_instance_id = 1;
+  string execution_instance_id = 2;
+  uint64 revision = 3;
+  ProblemIdentity problem = 4;
+  string relative_path = 5;
 }
 message WorkspaceSnapshot {
   string workspace_instance_id = 1;

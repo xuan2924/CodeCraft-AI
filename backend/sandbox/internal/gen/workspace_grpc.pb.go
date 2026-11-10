@@ -28,6 +28,8 @@ const (
 	WorkspaceStorage_OpenGate_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/OpenGate"
 	WorkspaceStorage_ApplyBatch_FullMethodName        = "/codecraft.workspace.v1.WorkspaceStorage/ApplyBatch"
 	WorkspaceStorage_QueryMutation_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/QueryMutation"
+	WorkspaceStorage_PrepareTestCopy_FullMethodName   = "/codecraft.workspace.v1.WorkspaceStorage/PrepareTestCopy"
+	WorkspaceStorage_QueryTestCopy_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/QueryTestCopy"
 )
 
 // WorkspaceStorageClient is the client API for WorkspaceStorage service.
@@ -45,6 +47,9 @@ type WorkspaceStorageClient interface {
 	OpenGate(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error)
 	ApplyBatch(ctx context.Context, in *ApplyBatchRequest, opts ...grpc.CallOption) (*MutationReceipt, error)
 	QueryMutation(ctx context.Context, in *QueryMutationRequest, opts ...grpc.CallOption) (*MutationReceipt, error)
+	// Internal input preparation only; these calls never register or start an execution.
+	PrepareTestCopy(ctx context.Context, in *PrepareTestCopyRequest, opts ...grpc.CallOption) (*TestCopyReceipt, error)
+	QueryTestCopy(ctx context.Context, in *QueryTestCopyRequest, opts ...grpc.CallOption) (*TestCopyReceipt, error)
 }
 
 type workspaceStorageClient struct {
@@ -145,6 +150,26 @@ func (c *workspaceStorageClient) QueryMutation(ctx context.Context, in *QueryMut
 	return out, nil
 }
 
+func (c *workspaceStorageClient) PrepareTestCopy(ctx context.Context, in *PrepareTestCopyRequest, opts ...grpc.CallOption) (*TestCopyReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TestCopyReceipt)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_PrepareTestCopy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) QueryTestCopy(ctx context.Context, in *QueryTestCopyRequest, opts ...grpc.CallOption) (*TestCopyReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TestCopyReceipt)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_QueryTestCopy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkspaceStorageServer is the server API for WorkspaceStorage service.
 // All implementations must embed UnimplementedWorkspaceStorageServer
 // for forward compatibility.
@@ -160,6 +185,9 @@ type WorkspaceStorageServer interface {
 	OpenGate(context.Context, *CloseGateRequest) (*GateResponse, error)
 	ApplyBatch(context.Context, *ApplyBatchRequest) (*MutationReceipt, error)
 	QueryMutation(context.Context, *QueryMutationRequest) (*MutationReceipt, error)
+	// Internal input preparation only; these calls never register or start an execution.
+	PrepareTestCopy(context.Context, *PrepareTestCopyRequest) (*TestCopyReceipt, error)
+	QueryTestCopy(context.Context, *QueryTestCopyRequest) (*TestCopyReceipt, error)
 	mustEmbedUnimplementedWorkspaceStorageServer()
 }
 
@@ -196,6 +224,12 @@ func (UnimplementedWorkspaceStorageServer) ApplyBatch(context.Context, *ApplyBat
 }
 func (UnimplementedWorkspaceStorageServer) QueryMutation(context.Context, *QueryMutationRequest) (*MutationReceipt, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryMutation not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) PrepareTestCopy(context.Context, *PrepareTestCopyRequest) (*TestCopyReceipt, error) {
+	return nil, status.Error(codes.Unimplemented, "method PrepareTestCopy not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) QueryTestCopy(context.Context, *QueryTestCopyRequest) (*TestCopyReceipt, error) {
+	return nil, status.Error(codes.Unimplemented, "method QueryTestCopy not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) mustEmbedUnimplementedWorkspaceStorageServer() {}
 func (UnimplementedWorkspaceStorageServer) testEmbeddedByValue()                          {}
@@ -380,6 +414,42 @@ func _WorkspaceStorage_QueryMutation_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkspaceStorage_PrepareTestCopy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PrepareTestCopyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).PrepareTestCopy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_PrepareTestCopy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).PrepareTestCopy(ctx, req.(*PrepareTestCopyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_QueryTestCopy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTestCopyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).QueryTestCopy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_QueryTestCopy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).QueryTestCopy(ctx, req.(*QueryTestCopyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // WorkspaceStorage_ServiceDesc is the grpc.ServiceDesc for WorkspaceStorage service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -422,6 +492,14 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "QueryMutation",
 			Handler:    _WorkspaceStorage_QueryMutation_Handler,
+		},
+		{
+			MethodName: "PrepareTestCopy",
+			Handler:    _WorkspaceStorage_PrepareTestCopy_Handler,
+		},
+		{
+			MethodName: "QueryTestCopy",
+			Handler:    _WorkspaceStorage_QueryTestCopy_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
