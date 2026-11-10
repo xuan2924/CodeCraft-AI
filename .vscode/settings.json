@@ -8,5 +8,9 @@
         }
     },
     // 确保同一包下即便引用很多类，也绝不折叠为通配符 *
-    "java.completion.importOrder": ["java", "javax", "org", "com"]
+    "java.completion.importOrder": ["java", "javax", "org", "com"],
+    // 仅关闭生成代码中 SuppressWarnings 对应分析未开启的信息提示。
+    "java.settings.url": ".vscode/java.prefs",
+    // 保留方法上的完整路由，不要求提取公共路径到类级注解。
+    "spring-boot.ls.problem.boot2.EXTRACT_REQUEST_MAPPING_PARENT_PATH": "IGNORE"
 }

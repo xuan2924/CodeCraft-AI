@@ -1,0 +1,3 @@
+# Protobuf emits suppression annotations for checks that JDT may not enable.
+# Keep actual compiler diagnostics; silence only the incomplete-analysis notice.
+org.eclipse.jdt.core.compiler.problem.suppressWarningsNotFullyAnalysed=ignore
