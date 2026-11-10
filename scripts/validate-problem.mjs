@@ -7,8 +7,13 @@ import { fileURLToPath } from 'node:url';
 import { validatePackage } from './problem-contract.mjs';
 import { publicationInputsSha256, readPublicationInputs } from './publication-inputs.mjs';
 
-const packageDirectory = fileURLToPath(new URL('../problems/cart-total/1.0.0/', import.meta.url));
-const output = fileURLToPath(new URL('../problems/.validation/', import.meta.url));
+if (process.argv.length !== 2 && process.argv.length !== 4) {
+    throw new Error('Usage: node scripts/validate-problem.mjs [package-directory evidence-directory]');
+}
+const packageDirectory = process.argv[2] ? resolve(process.argv[2])
+    : fileURLToPath(new URL('../problems/cart-total/1.0.0/', import.meta.url));
+const output = process.argv[3] ? resolve(process.argv[3])
+    : fileURLToPath(new URL('../problems/.validation/', import.meta.url));
 await mkdir(output, { recursive: true });
 await rm(join(output, 'receipt.json'), { force: true });
 const { manifest, packageSha256 } = await validatePackage(packageDirectory);

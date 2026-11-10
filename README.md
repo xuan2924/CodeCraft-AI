@@ -99,7 +99,7 @@ npm run build
 node scripts/verify.mjs
 ```
 
-执行已有题目脚本测试、Java `verify`（Checkstyle、lint 编译、JUnit、Failsafe）、Go 格式/vet/普通测试/race/构建、Vue lint/类型/组件测试/生产构建及 npm audit。独立运行 Java `verify` 时 `StatusIT`、`IdentityIT`、`WorkspaceIT` **明确跳过**；真实依赖集成必须运行下一节，不能将跳过称为通过。历史一次性 `backend/prototypes/` 不属于正式套件。
+执行已有题目脚本测试、Java `verify`（Checkstyle、lint 编译、JUnit、Failsafe）、Go 格式/vet/普通测试/race/构建、Linux Docker 工作区与受限执行适配器测试、Vue lint/类型/组件测试/生产构建及 npm audit。独立运行 Java `verify` 时 `StatusIT`、`IdentityIT`、`WorkspaceIT` **明确跳过**；真实依赖集成必须运行下一节，不能将跳过称为通过。历史一次性 `backend/prototypes/` 不属于正式套件。
 
 **Windows race 准备**：按 [工具链设计](docs/design/engineering-toolchain.md#windows-race-的-c-工具链) 下载 LLVM-MinGW **20261104 UCRT x86_64**，验证 ZIP SHA-256 为 `552191b5754c49a5a20723276a6fc56541ea1922c4c50b7b669022333fc1b40f`，解压到自己的工具目录。只为当前终端设置：
 
@@ -109,6 +109,18 @@ node scripts/verify.mjs
 ```
 
 旧全局 MinGW 会导致 race 无法启动，不应关闭 race 或修改全局 Go 配置来绕过。Linux CI 使用 runner 的兼容 C 编译器。
+
+### 受限执行适配器风险切片（#13 未完成）
+
+```sh
+node scripts/test-execution.mjs
+# 单用例示例：稳定副本来自真实 gRPC，执行期间保存不改变 Docker 输入
+node scripts/test-execution.mjs -test.run=TestGRPCStableCopyIsTheActualDockerInput
+```
+
+依赖运行中的 Linux/amd64 Docker daemon（API 1.45+、默认 builtin seccomp）。脚本构建固定题目镜像和 Go 测试二进制，创建独立具名卷；受信任测试协调容器以 UID 10001、socket 所属组 0 访问 Docker socket。**socket 等同宿主管理权限**，测试夹具不是用户沙箱；真正用户执行容器不挂 socket、工作区根卷或参考解，只获得本次副本的只读子目录。脚本只清理本次随机卷标签对应的容器/卷；失败不隐藏清理错误。
+
+此模块尚未接入服务运行配置、Java 任务和浏览器，不代表正式测试功能或 #13–#16 已交付。报告通过受控 exec 在 tmpfs 卸载前限量读取，与有界日志独立保留。已验证项、审查修复及编译错误分类/恢复/副本回收等缺口见 [#13 切片记录](docs/validation/stable-test-run-13.md)。
 
 ### 真实数据库 / Go / Java / 浏览器
 
