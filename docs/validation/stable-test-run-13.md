@@ -1,66 +1,65 @@
-# #13 稳定输入与受限执行：实施中的风险切片
+# #13 稳定版本测试：交付与验证记录
 
-状态：**部分实现，#13 未验收；#14–#16 未开始。** 本轮用户已要求按可验证改动提交；先前“不暂存、不提交”仅描述上轮交付状态。有效规格仍是 `.scratch/workspace-test-foundation/issues/13-stable-test-run.md` 与 `docs/design/`，本文只记录实现和验证，不新增产品政策。
+状态：**#13 验收通过；#14–#16 未交付。** 有效规格为 `.scratch/workspace-test-foundation/issues/13-stable-test-run.md` 与 `docs/design/`。早期切片及红灯历史保留在任务 Comments 和提交 `f21dc32`、`38fe48e`；本文记录最终实现，不新增产品政策。
 
-## 当前边界
+## 已实现的正式链路
 
-- `backend/proto/workspace.proto`：内部 PrepareTestCopy / QueryTestCopy；只是稳定输入准备，不登记业务测试、不授权创建容器。
-- `backend/sandbox/internal/workspace/testcopy_linux.go`：同保存/CloseGate 协调区检查 revision、epoch、截止；独立文件树与完整回执原子发布；重放固定原输入；损坏/缺失内容与“副本不存在”分开。存在副本时拒绝准备取消，避免丢失执行引用或误报清理完成。
-- `backend/sandbox/internal/execution/`：同步、内部 Docker 适配器，持久化登记/结果/有界日志/报告/清理状态；Run 的 Context 是工作进程所有者生命周期，不能直接传浏览器或 RPC Context。尚未接入 Go 服务入口、Java 任务/outbox/槽位或浏览器。
-- 每个私有 registry 由 flock 独占；同一 Runner 不排队，只运行一个任务。启动盘点发现未知容器、损坏登记或未确认静默的执行时关闭准入；不自动重放、重启或删除证据。它不是 #14 要求的完整重启重接/清扫实现，也不能替代 Java 的每演练任务槽位和宿主执行代次。
-- 固定本机 image ID、`base`、离线 Maven 模板、预装依赖、权威测试与 POM；只挂指定副本的只读 volume subpath，不给整个卷。实际容器非 root、禁网、只读根、drop ALL、no-new-privileges、默认 builtin seccomp，并设置 CPU/内存/swap/PID/tmpfs/shm/core/log 限额。容量值来自显式输入的可信发布配置；首题按现有 manifest 实测。
+- 浏览器：只能运行 `base`；有脏缓冲时选择“保存后运行”或“返回编辑”。逐个保存并确认修订，保存失败、未知保存结果或期间出现新编辑均不启动。运行后可继续编辑/保存；结果显示启动修订及旧版本提示。POST 未知保留原请求键和原修订，仅显式重试；挂载/刷新只查询，不自动启动。
+- Java：`POST /api/exercises/{id}/tests`、单任务 GET、最近 20 项 GET。校验登录、归属、操作凭证、ACTIVE/截止、版本和已发布目标；V9 持久化任务/执行身份、幂等指纹、一次性派发和全局单槽。不同键并发拒绝，无隐式队列；相同键异载荷冲突。
+- Go：正式 `StartTest` / `QueryTask`。与写入/CloseGate 同协调区完成授权、稳定副本和准入；固定发布配置选择镜像、suite/tests/限额，不接收用户命令。执行登记先于创建容器，task ID 不可换 execution ID 重用，绑定从持久记录重建。worker 独立于 RPC 取消/页面接管，停机取消并等待所有者退出。
+- 结果：Go 保留完整权威证据、结构化终态及有限日志；Java 校验身份后持久化快照。REST 返回题目版本、包摘要、镜像身份/平台，以及证据种类、字节数、SHA-256；execution ID + 种类定位持久结果内的原始证据，不提供任意文件读取入口。列表不携带日志正文。
+- 清理：确认进程静默与持久终态后，标记副本已释放再删除文件树，禁止迟到重放重建；容器与副本清理分别可查。操作报错不等于仍在执行：已确认删除容器的未知 Start 仍完成副本清理。复制成功后授权过期或 worker 取消时，登记 INTERRUPTED 清理责任方，不创建容器。
+- 未知状态：派发响应丢失只查询；查询不存在还需推进工作区栅栏并再次查询，才可确认旧请求不能注册。不把一次“查无记录”当成安全重启许可。损坏登记、未知容器、未确认静默保持关闭准入。
 
-## SDK 与报告采集
+## 隔离与部署边界
 
-引入 Docker SDK `github.com/docker/docker v28.5.2+incompatible`，复用官方 API、attach/exec 多路流与挂载类型；不自建 Docker HTTP 客户端。依赖锁在 go.mod/go.sum，兼容项参照该版本 vendor.mod，并保留现有 gRPC 要求的 OpenTelemetry 1.45 基线。最初依赖解析选到旧 pkg/errors 导致 SDK 编译失败，按官方 vendor.mod 锁定 0.9.1 后重新验证；不是业务失败红灯。
+固定本机 image ID、离线 Maven 模板、只读权威测试/POM；仅挂本次副本的只读 volume subpath，不暴露整个工作区卷。真实容器使用非 root、禁网、只读根、drop ALL、no-new-privileges、builtin seccomp，并限制 CPU、内存/swap、PID、tmpfs/shm、core 和日志。stdout/stderr 合计有界、单片至多 16 KiB、最多 4096 片；超量继续排空，丢弃字节数与流不完整状态单独记录。
 
-核验环境：Docker Desktop Linux/amd64、Engine 29.4.0（API 1.40–1.54），SDK 协商 API 1.51；适配器拒绝低于 1.45 或没有 builtin seccomp 的 daemon。
+Docker SDK 为 `github.com/docker/docker v28.5.2+incompatible`，沿用已锁依赖。测试环境 Docker Desktop Linux/amd64、Engine 29.4.0；SDK 协商 API 1.51。拒绝低于 1.45 或无 builtin seccomp 的 daemon。固定 SDK exec 收集器解决 Docker archive/cp 不能读取 tmpfs 的限制；没有开放任意命令接口。完整 Surefire XML 上限 2 MiB，交叉检查 suite、testcase、计数、跳过和退出码；不依据控制台成功标记判分。
 
-- SDK 官方接口：[attach](https://github.com/moby/moby/blob/v28.5.2/client/container_attach.go)、[exec](https://github.com/moby/moby/blob/v28.5.2/client/container_exec.go)、[mount](https://github.com/moby/moby/blob/v28.5.2/api/types/mount/mount.go)、[vendor.mod](https://github.com/moby/moby/blob/v28.5.2/vendor.mod)。
-- 真实参考解首次运行发现 archive/cp 无法从运行容器 tmpfs 收集报告，测试按超时失败；[Docker cp 官方 Corner cases](https://docs.docker.com/reference/cli/docker/container/cp/#corner-cases)明确不支持 tmpfs，建议 exec。
-- 修正为固定、非交互 SDK exec 收集器，在容器仍存活时限量读取退出信息和完整 Surefire XML；没有开放任意命令接口。XML 上限 2 MiB，完整检查期望 suite/testcase 名称、计数、跳过及 Maven 退出码。报告异常归环境错误，不信任日志成功标记。
-- 报告/结果与日志分离。stdout/stderr 合计按配置保留尾部，单片不超过 16 KiB、最多 4096 片，丢弃字节数可查；超量继续排空。输出流不完整单独记录，不根据日志覆盖结构化结论。
-- 报告先落盘，再终止持有 tmpfs 的容器进程、排空输出、发布一次终态，最后移除容器。结果、进程静默、物理清理是不同字段；清理失败不把通过改成代码失败。
+**Compose 的受信任 Go 协调进程持有 Docker socket，等同宿主管理权限。** `DOCKER_SOCKET_GID` 需匹配宿主 socket 组；只读根、cap_drop 或 socket 的只读挂载均不能把此权限变为低权限。用户测试容器绝不持有 socket。宿主仍须按部署环境隔离受信任控制面；本机验收不代替生产宿主复验。
 
-## 风险与实际测试入口
+## 编译证据与版本兼容
 
-| 不变量 | 权威状态 / 提交点 | 故障或竞态 | 已执行公开行为测试 |
-|---|---|---|---|
-| 稳定版本 | Go 工作区原子提交与 copy 回执 | 保存/复制竞争、旧 epoch/截止 | workspace gRPC 新用例；实际 gRPC 副本送入 Docker、运行期间保存，结果仍关联 revision 0，当前版本为 1 |
-| 先登记再创建 | 私有 registry 刷新并原子发布 | 进程在 RUNNING 后被 SIGKILL | 实际子进程死亡、重新创建 Runner，原 ID 可查，新任务 ErrBusy，原任务不重启 |
-| 真实隔离 | SDK HostConfig + 镜像权威路径 | 用户代码探测网络/权限/资源、替换练习测试/POM | 实际 Java 源码内探针验证 UID/caps/NNP/seccomp/网络、cgroup 与 tmpfs 写满；用户测试/POM 不替换权威入口 |
-| 结果不依赖输出文本 | 完整 XML + Maven exit | 初始断言失败、无报告、日志洪水 | 初始 FAILED、参考 PASSED、缺报告 ENVIRONMENT_ERROR；120 万字符输出后日志截断可见、报告结论保留 |
-| 超时/工作进程取消真的终止 | 已登记容器精确 ID、kill + inspect | 超时与取消、第二任务并发 | TIMED_OUT / INTERRUPTED 后 quiescent=true，容器已移除；运行期间新任务不排队 |
-| Start 未知不能视为静默 | 未知 Start 意图 + 精确容器删除栅栏 | HTTP 失败后 Start 延迟到达 | 回归先复现“quiescent=true 后迟到 Start 仍返回 204”；修复后迟到请求 404，记录 INTERRUPTED、清理成功 |
-| 清理失败不隐藏 | 独立 cleanup 字段及持久化终态 | 对真实 Engine 的 DELETE 注入 500 | 实际执行/证据/kill/inspect 仍走 daemon；结果 PASSED、cleanup=FAILED 持久化，保留已停止容器供恢复 |
-| 恢复不信任损坏报告 | Query 重新验证完整证据及边界 | 改坏已完成记录中的 XML | 回归先复现错误恢复 PASSED；修复后查询/重放报不可确认，不启动替代执行 |
+- 保留已发布 `cart-total/1.0.0` 身份，不替换镜像或迁移已有演练。新增 `1.0.1` 的受保护执行配置，并在隔离 tracer 内实际验证、发布和执行；未修改本机原有业务发布记录。
+- 旧版本无执行配置时 `executionAvailable=false`，浏览器明确禁用，REST 在保留任务/容量之前返回 `TEST_TARGET_UNAVAILABLE`，不默默用新镜像执行旧工作区。
+- 1.0.1 用固定 JDK 21 的 `DiagnosticListener` 采集诊断代码/来源/位置，不再匹配英文异常正文。Maven compiler 3.14.1 通过固定 fork executable 调用原 javac 参数解析；禁用注解处理器。没有新增下载依赖。
+- 只有来源正确的源码 ERROR、受控 javac ERROR 退出及完整证据可判代码失败；I/O、读写权限、位置/处理器配置错误、SYSERR/异常、资源耗尽和证据写入失败不出具源码失败证据。证据上限 16 KiB，与日志独立保存；查询重新校验。
+- 为复用 javac 的完整命令行解析而不是自研参数解析，薄适配层使用 `com.sun.tools.javac.main/util/file` 三个 JDK 内部导出。**升级固定 JDK 必须复验此适配层**；不宣称内部 API 跨版本稳定。清理使用 try-with-resources 保留原异常。此机制不提供对恶意候选代码的防作弊保证。
+- 本机正式启用需维护者先验证/发布新版本，再配置未跟踪 `.env` 的 `PROBLEM_PUBLICATION_FILE` 指向新 artifact 并重建服务镜像；旧演练仍绑定旧身份。示例：
 
-真实测试通过 `scripts/test-execution.mjs` 运行：它将 Linux Go 测试二进制放在独立受信任协调容器里，使用真实 SDK、真实 daemon 和一次性题目容器。fixture 自身持有 socket 等同宿主管理权限；用户执行容器不持有 socket。故障注入替换的只有指定 Engine 请求结果，其他操作仍到真实 daemon，不能将这种故障注入描述成 daemon 本身宕机。
+```sh
+node scripts/validate-problem.mjs problems/cart-total/1.0.1 .runtime/validation-cart-1.0.1
+node scripts/publish-problem.mjs problems/cart-total/1.0.1 .runtime/validation-cart-1.0.1 .runtime/problem-publication-1.0.1.json
+```
 
-## 验证范围与审查
+官方接口核对：[Maven compiler 3.14.1](https://maven.apache.org/plugins-archives/maven-compiler-plugin-3.14.1/compile-mojo.html)、[JDK 21 javac Main](https://github.com/openjdk/jdk21u/blob/master/src/jdk.compiler/share/classes/com/sun/tools/javac/main/Main.java)、[诊断代码](https://github.com/openjdk/jdk21u/blob/master/src/jdk.compiler/share/classes/com/sun/tools/javac/resources/compiler.properties)、[Docker volume subpath](https://docs.docker.com/engine/storage/volumes/#mount-a-volume-subdirectory)、[socket 风险](https://docs.docker.com/engine/security/protect-access/)、[cp 限制](https://docs.docker.com/reference/cli/docker/container/cp/#corner-cases)。
 
-- 已执行整套 `scripts/verify.mjs`（使用仓库说明的当前进程 LLVM-MinGW CC），包括新增真实 Docker 执行套件、全部 Linux 工作区测试、Java 本地 18 测试、Windows Go race、前端 8 文件/57 测试、lint/typecheck/build/audit。
-- Java 真实依赖 IT 35 项在 verify 中明确跳过；本切片没有执行新的 Java REST/PostgreSQL 或浏览器链路。Windows race 不覆盖 Linux-only 执行包，不能冒充 Linux 执行 race 证据。
-- 独立规范审查未报告硬性规范违例，发现启动保留全部历史证据造成聚合内存放大、测试脚本清理异常遮蔽原错误；已改为只保留 ID 映射，以及独立尝试清理并聚合错误。
-- 独立规格审查发现未知 Start 后可能误报静默；以真实延迟请求回归先红后绿修复。相邻恢复检查又补充损坏持久化报告回归，先红后修复。审查修复后的验证单独记录在任务 Comments，不把修复前整套结果冒充最终代码验证。
+## 风险与实际验证接缝
 
-## 明确未完成
+| 不变量 / 提交点 | 故障或竞态 | 实际公开行为验证 |
+|---|---|---|
+| Java 事务固定身份/指纹/槽位 | 同键并发、异键并发、异载荷、越权/旧凭证、过期/目标不可用 | 真实 REST + PostgreSQL + Go；复用同 task，409/404 拒绝，不产生额外任务 |
+| 同协调区复制与准入 | 运行时保存、页面接管、调用方取消、任务 ID 换执行 ID | 真实 gRPC + Docker，原 revision 结果不变，接管不杀任务，身份重用冲突 |
+| 注册先于外部副作用 | 进程死亡、Start 响应丢失且延迟送达 | 真实子进程死亡保留占槽；故障注入后精确删除容器，迟到 Start 返回 404 |
+| 副本有清理责任方 | 操作报错但已静默；复制发布后恰好过期/取消 | 两个审查发现均以负向控制复现，修复后实际副本删除、终态/清理持久化、不创建过期容器 |
+| 权威证据独立于日志 | 语法、缺符号、类型不匹配、重复类；不可写输出、编译器栈耗尽 | 源码失败 FAILED；I/O 与 StackOverflowError 为 ENVIRONMENT_ERROR；损坏证据拒绝恢复成绩 |
+| 隔离先于运行 | Java 探针访问网络、权限、资源及替换入口 | 实际 UID/caps/NNP/seccomp/网络/cgroup/tmpfs；参考解通过，初始代码失败，练习文件不绕过权威入口 |
+| 超时先终止再回收 | 超时、所有者取消、容器删除失败、日志洪水 | kill/inspect/remove；TIMED_OUT/INTERRUPTED；cleanup 失败可见且不改变既有成绩；日志截断保留完整结论 |
+| 浏览器不测试脏缓冲/旧结果冒充当前 | 保存失败/期间继续输入、未知 POST、运行时继续保存、刷新 | 组件失败路径；真实浏览器初始失败→确认保存参考解→运行时保存→通过并标旧版本；刷新只查询 |
 
-1. Java 身份/归属/操作凭证/截止与业务任务、幂等指纹、持久化派发及全局/每演练槽位；Go StartTest/QueryTask 正式 RPC 与服务生命周期装配；REST 和浏览器保存后运行/轮询/旧版本提示。
-2. 编译失败完整分类与旧镜像兼容：新建未发布 `cart-total/1.0.1` 镜像内 EventSpy 仅识别固定 JDK 的部分源码语法/缺符号诊断，其他诊断仍保守报环境错误；既有已发布 1.0.0 不覆盖、不换镜像，尚不支持新分类。不能因此宣称完整满足“编译失败属于 FAILED”。
-3. 稳定副本的执行引用登记、终态后的临时副本回收、持久化配额/回执保留。适配器不擅自删除工作区所有者的代码证据。
-4. 容器创建响应未知的主动对账、完整重启观察/宿主代次、主动停止协议、日志流/SSE、清理重试（#14）；当前只保守占槽与拒绝盲重放。
-5. 磁盘不足/落盘中途进程死亡矩阵、实际 daemon 故障与恢复、慢消费者、Linux race、部署宿主复验；正常副本 gRPC 测试与实际 Docker 测试不替代这些证据。
-6. #15 冻结/结束/最终验收与 #16 容量/保留/删除/阶段整体验收。没有开放运行按钮，没有伪造流式日志或 AI 报告。
+故障注入只拦截指定真实 Engine 请求，其他操作仍走实际 daemon；不将它描述成 daemon 自身宕机。无配置目标的 REST 负向用例临时移除隔离测试库中的执行策略并在 finally 恢复，不改发布文件/镜像，也不是旧镜像执行兼容性证明。
 
-## 后续编译证据切片
+## 最终执行结果
 
-- 已核实本机 `.runtime/problem-publication.json` 保存 1.0.0 发布记录，因此新增 1.0.1，不改旧包、不迁移既有演练。新版本源码与测试规则不变；镜像构建用既有 Maven API 编译受保护 EventSpy，无新增下载依赖。维护成本是随固定 Maven/compiler/JDK 版本维护采集器和有限诊断格式白名单。
-- 核对 Maven 3.9.15 `ExecutionEvent` / `EventSpy` / `MojoExecutor` 和 compiler 3.14.1 `AbstractCompilerMojo` 官方源码。`MojoFailed` 的外层是 `LifecycleExecutionException`，需要检查其 cause；`CompilationFailureException` 本身不足以证明用户代码失败。
-- 原始语法错误回归先失败为 `ENVIRONMENT_ERROR`。新采集器先按异常类型分类，独立规格审查指出权限/I/O 错误同样使用该异常；真实 Docker 夹具将 `/work/target/classes` 改成不可写而保留 `/work` 可写，先复现错误的 `FAILED`，再收紧为仅接受带固定源码位置的已知源码诊断及完整续行结构。该回归现为 `ENVIRONMENT_ERROR`。未知、混合或本地化诊断不出具代码失败标记。
-- 这不是依赖日志关键词：输入来自 Maven 编译失败异常的诊断正文，但仍依赖固定版本的诊断文本格式，不宣称已获得通用结构化 javac 诊断代码。Go 将有限证据与日志分开持久化，查询/重放重新校验；语法错误、验收 API 缺符号、日志截断、证据损坏拒绝与容器清理通过真实测试。
-- 新版本维护者验证命令支持显式包路径及独立证据目录：`node scripts/validate-problem.mjs problems/cart-total/1.0.1 .runtime/validation-cart-1.0.1`。已实际通过，不把验证 receipt 当作业务发布。默认无参数仍验证 1.0.0；新版本 README 已修正相应命令。
-- 风险映射新增：编译结果的权威依据为固定镜像采集的正向源码诊断与受控退出码；权限/I/O、未知诊断、落盘证据损坏均不允许判通过/代码失败。测试入口为 `TestRestrictedExecutionCompilationFailure` 与 `TestRestrictedExecutionUnwritableCompilerOutputIsEnvironmentError`。
-- 最终验证：`scripts/verify.mjs` 使用既有 LLVM-MinGW CC 全部通过，日志 `.runtime/verify-13-compilation.log`；包含真实 Docker 执行全套、Linux 工作区 gRPC 全套、Java 本地测试、Windows race、前端 8 文件/57 测试、类型检查/lint/build/audit。另执行 Linux `go vet ./...` 与 `go mod verify` 通过。Java 真实依赖 IT 明确跳过；没有新增 REST/浏览器运行证据。
-- 独立审查：规范轴未报告硬性代码违例，修复新包 README 指向旧版验证命令；规格轴输出 I/O 误判已复审通过。对有限诊断白名单和旧版本兼容不足的提示仍有效，不将其列为已完成。
-- 本轮没有接入正式 StartTest/QueryTask、Java 业务槽位或浏览器。#13 仍未完成，不能把编译证据切片称为全票交付。
+1. `CC='D:/hot/prototype/CodeCraft-AI/.tools/llvm-mingw-20261104-ucrt-x86_64/bin/clang.exe' node scripts/verify.mjs`：通过。包含完整真实 Docker 执行、Linux 工作区 gRPC、Java 本地测试、Windows Go race，以及前端 **9 文件 / 62 测试**、类型检查/lint/build/audit。日志 `.runtime/task13-verify-final.log`。
+2. `node scripts/test-tracer.mjs --workspace`：通过。**22 项 WorkspaceIT、1 项 WorkspaceCrashRecoveryIT、1 项 StatusIT** 全部真实依赖执行；两个工作区浏览器用例、状态/依赖故障/重启探针通过。日志 `.runtime/task13-full-chain-final.log`，隔离服务日志 `.runtime/cc-tracer-5196-81dc9b70/`。
+3. 最终题目包 `node scripts/validate-problem.mjs problems/cart-total/1.0.1 .runtime/validation-cart-1.0.1` 通过，覆盖当前 README/包身份，日志 `.runtime/task13-package-final.log`；只验证，不修改正式发布记录。
+4. 单独验证：类型诊断先复现旧白名单漏判；清理负向控制日志 `.runtime/task13-cleanup-red.log`，对应修复及正式 gRPC 用例通过 `.runtime/task13-cleanup-green.log`。新增测试曾因 Wait API/SQL 表名写错失败，修正后重跑；不把编译失败/夹具失败冒充行为红灯。全链路曾因额外登录触发现有限流，测试改为仅在 worker 内存复用已有 Cookie，不放宽服务端限制。
+5. 最终双轴独立审查：规范、规格均 **OK with notes**，未发现新阻断项；要求保留最后 tracer 结果，该复验现已通过。此前两个清理 P1、构造器装配、异常保留及响应证据遗漏均已修复并复审。审查只读，没有把审查员未执行的测试说成独立复跑。
+
+## 明确未验证 / 未交付
+
+- verify 中跳过的其他真实依赖 IT 不等于执行过；本票真实依赖证据来自单独 tracer。Windows race 不覆盖 Linux-only 执行包；未宣称 Linux race、生产宿主、实际 daemon 宕机或磁盘耗尽完整矩阵通过。
+- #14：主动停止、SSE/实时日志、断流续接、完整执行重启重接/宿主代次、未知创建主动对账及清理重试。当前未知仅保守占槽；不盲重启，不把它冒充恢复完成。
+- #15：冻结/结束与最终验收；#16：持久化容量/保留/删除和阶段整体验收。当前普通任务清理不等于历史回执 GC 或完整灾难恢复。

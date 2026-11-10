@@ -8,8 +8,8 @@ import { buffer, committed, dirty, observe, useLatestBaseline, type Buffer } fro
 import { listDrafts, putDraft, readDraftEpoch, removeDraft, type Draft } from './drafts';
 import CodeEditor from './CodeEditor.vue';
 
-const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean }>();
-const emit = defineEmits<{ saved: []; select: [path: string]; 'stale-control': [] }>();
+const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean; testBusy?: boolean }>();
+const emit = defineEmits<{ saved: []; select: [path: string]; 'stale-control': []; 'run-test': [revision: string] }>();
 const theme = useThemeVars();
 const buffers = reactive(new Map<string, Buffer>());
 const current = computed(() => buffers.get(props.selected));
@@ -19,6 +19,11 @@ const canWrite = computed(() => !!props.credential && props.exercise.state === '
 const busy = ref(false);
 const notice = ref('尚未修改；编辑内容需显式保存。');
 const error = ref('');
+const testPrompt = ref(false);
+const confirmedRevision = ref(props.exercise.revision);
+watch(() => props.exercise.revision, (revision) => {
+  if (revision !== null && (confirmedRevision.value === null || BigInt(revision) > BigInt(confirmedRevision.value))) confirmedRevision.value = revision;
+});
 const backup = ref('本地草稿尚未更新。');
 const recoverable = ref<Draft[]>([]);
 const newPath = ref('src/test/java/Example.java');
@@ -136,6 +141,7 @@ async function submit(pending: Pending, polling = false): Promise<boolean> {
     if (result.state === 'REJECTED') { unresolved.value = null; throw new ApiError(409, result.failureCode ?? 'WRITE_NOT_COMMITTED'); }
     if (result.revision === null) throw new ApiError(502, 'INVALID_RESPONSE');
     unresolved.value = null;
+    confirmedRevision.value = result.revision;
     for (const change of pending.changes) {
       const value = buffers.get(change.path);
       if (change.kind === 'DELETE') buffers.delete(change.path);
@@ -174,6 +180,19 @@ async function saveForLogout(): Promise<boolean> {
   return !disposed && !edited.value && !unresolved.value;
 }
 defineExpose({ saveForLogout });
+function requestTest() {
+  if (!canWrite.value || props.locked || props.testBusy || busy.value || unresolved.value) return;
+  if (edited.value) { testPrompt.value = true; return; }
+  if (confirmedRevision.value !== null) emit('run-test', confirmedRevision.value);
+}
+async function saveAndTest() {
+  if (!testPrompt.value || props.testBusy || props.locked) return;
+  if (!await saveBuffers([...buffers.values()].filter(dirty))) return;
+  if (disposed || !testPrompt.value) return;
+  if (edited.value || unresolved.value) { error.value = '保存期间产生了新输入或结果未确认，未启动测试。'; return; }
+  testPrompt.value = false;
+  requestTest();
+}
 function saveCurrent() { if (current.value && !props.locked) void saveBuffers([current.value]); }
 function closeFile() {
   if (!current.value || busy.value || unresolved.value || props.locked) return;
@@ -258,7 +277,15 @@ onScopeDispose(() => {
     >
       {{ error }}
     </p>
+    <div v-if="testPrompt" role="group" aria-label="运行前保存确认">
+      <p>有未保存修改，测试不会使用这些草稿。保存所有已打开文件后运行，或返回编辑。</p>
+      <NButton :disabled="busy || !!unresolved || testBusy || !canWrite" @click="saveAndTest">保存后运行</NButton>
+      <NButton @click="testPrompt = false">返回编辑</NButton>
+    </div>
     <div class="editor-actions">
+      <NButton :disabled="!canWrite || busy || !!unresolved || testBusy || testPrompt" @click="requestTest">
+        运行基础测试
+      </NButton>
       <NButton
         :disabled="!current || !canWrite || busy || !!unresolved"
         @click="saveCurrent"

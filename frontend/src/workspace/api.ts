@@ -2,7 +2,7 @@ import { ApiError, object, post, request } from '../api/request';
 
 export interface Problem {
   problemVersionId: string; title: string; version: string; requirements: string;
-  durationSeconds: number; editableRoots: string[]; acceptanceFiles: Record<string, string>;
+  durationSeconds: number; editableRoots: string[]; acceptanceFiles: Record<string, string>; executionAvailable?: boolean;
 }
 export interface Exercise {
   exerciseId: string; problemVersionId: string; workspaceInstanceId: string; state: string;
@@ -18,6 +18,7 @@ export async function problems(signal: AbortSignal): Promise<Problem[]> {
   return data.map((value: unknown) => {
     if (!object(value) || typeof value.problemVersionId !== 'string' || typeof value.title !== 'string'
       || typeof value.version !== 'string' || typeof value.requirements !== 'string' || typeof value.durationSeconds !== 'number'
+      || (value.executionAvailable !== undefined && typeof value.executionAvailable !== 'boolean')
       || !strings(value.editableRoots) || !object(value.acceptanceFiles)) return invalid();
     const acceptanceFiles: Record<string, string> = {};
     for (const [path, content] of Object.entries(value.acceptanceFiles)) {
@@ -25,7 +26,7 @@ export async function problems(signal: AbortSignal): Promise<Problem[]> {
       acceptanceFiles[path] = content;
     }
     return { problemVersionId: value.problemVersionId, title: value.title, version: value.version, requirements: value.requirements,
-      durationSeconds: value.durationSeconds, editableRoots: value.editableRoots, acceptanceFiles };
+      durationSeconds: value.durationSeconds, editableRoots: value.editableRoots, acceptanceFiles, executionAvailable: value.executionAvailable === true };
   });
 }
 export async function current(signal: AbortSignal): Promise<Exercise | null> {
@@ -85,6 +86,8 @@ export function message(error: unknown): string {
     if (error.code === 'REVISION_CONFLICT') return '工作区版本已变化。草稿已保留，请比较服务端内容后再保存。';
     if (error.code === 'STALE_CONTROL' || error.code === 'CONTROL_HELD') return '当前页面没有操作权，请显式接管；草稿不会自动清除。';
     if (error.code === 'EXERCISE_EXPIRED') return '作答已到期，本地内容不会自动提交。';
+    if (error.code === 'TEST_TARGET_UNAVAILABLE') return '这个固定题目版本尚未配备正式执行配置，不会替换已有工作区版本，请联系维护者。';
+    if (error.code === 'TEST_SLOT_BUSY') return '已有测试占用执行名额，不会排队。请查询原任务，确认结束后再运行。';
     if (error.code === 'WORKSPACE_CAPACITY') return '工作区容量不足，本批次未保存，草稿已保留。';
     if (error.code === 'WRITE_NOT_COMMITTED') return '已核对原操作未提交。请检查当前版本后显式重新保存。';
     if (error.code === 'FILE_EXISTS') return '目标文件已存在，本批次未应用。';

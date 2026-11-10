@@ -1,4 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type BrowserContext } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+// Reuse the already-authenticated fixture without consuming a sixth login in
+// the same rate-limit window. Credentials stay in this worker's memory only.
+let sessionCookies: Awaited<ReturnType<BrowserContext['cookies']>> = [];
 
 test.skip(process.env.WORKSPACE_E2E !== 'true', 'Use node scripts/test-tracer.mjs --workspace');
 
@@ -235,4 +241,45 @@ test('published problem, controlled editing, drafts, conflicts and atomic files'
   expect((await (await page.request.get(fileUrl)).json()).data.content).not.toContain('new login draft must survive old logout');
   stalePage.once('dialog', (dialog) => dialog.accept());
   await stalePage.close();
+  sessionCookies = await context.cookies();
+});
+
+test('runs saved stable versions and marks results stale after a later save', async ({ page, context }) => {
+  test.setTimeout(60000);
+  expect(sessionCookies.length).toBeGreaterThan(0);
+  await context.addCookies(sessionCookies);
+  await page.goto('/workspace');
+  await page.getByRole('button', { name: '接管操作权', exact: true }).click();
+  const path = 'src/main/java/interview/CartTotal.java';
+  await page.getByRole('button', { name: path, exact: true }).click();
+  const current = (await (await page.request.get('/api/exercises/current')).json()).data;
+  const base = `/api/exercises/${current.exerciseId}`;
+  const editor = page.getByRole('textbox', { name: '文件编辑器', exact: false });
+  const result = page.getByRole('article', { name: '当前测试结果' });
+  await page.getByRole('button', { name: '运行基础测试', exact: true }).click();
+  await expect(page.getByRole('button', { name: '运行基础测试', exact: true })).toBeDisabled();
+  await expect(result.getByRole('heading')).toContainText('测试失败', { timeout: 30000 });
+  await expect(result).toContainText('副本清理：SUCCEEDED');
+  const reference = readFileSync(resolve('..', 'problems/cart-total/1.0.1/reference/src/main/java/interview/CartTotal.java'), 'utf8');
+  await editor.focus(); await page.keyboard.press('ControlOrMeta+a'); await page.keyboard.insertText(reference);
+  await page.getByRole('button', { name: '运行基础测试', exact: true }).click();
+  await expect(page.getByRole('group', { name: '运行前保存确认' })).toBeVisible();
+  await page.getByRole('button', { name: '返回编辑', exact: true }).click();
+  expect((await (await page.request.get(`${base}/tasks`)).json()).data).toHaveLength(1);
+  await page.getByRole('button', { name: '运行基础测试', exact: true }).click();
+  const started = page.waitForResponse((response) => response.url().endsWith(`${base}/tests`) && response.request().method() === 'POST');
+  await page.getByRole('button', { name: '保存后运行', exact: true }).click();
+  const accepted = (await (await started).json()).data;
+  await expect.poll(async () => (await (await page.request.get(`${base}/tasks/${accepted.taskId}`)).json()).data.state,
+    { timeout: 15000 }).toBe('RUNNING');
+  await editor.focus(); await page.keyboard.press('ControlOrMeta+End'); await page.keyboard.insertText('\n// newer than the running test\n');
+  await page.getByRole('button', { name: '保存文件', exact: true }).click();
+  await expect(result.getByRole('heading')).toContainText('通过', { timeout: 30000 });
+  await expect(result).toContainText('这是旧版本结果');
+  await expect(result).toContainText(`启动修订 ${accepted.revision}`);
+  await expect(result).toContainText('副本清理：SUCCEEDED');
+  expect((await (await page.request.get(`${base}/tasks`)).json()).data).toHaveLength(2);
+  await page.reload();
+  await expect(page.getByRole('article', { name: '当前测试结果' })).toContainText('通过');
+  expect((await (await page.request.get(`${base}/tasks`)).json()).data).toHaveLength(2);
 });

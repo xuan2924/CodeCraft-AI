@@ -21,6 +21,41 @@ function render(owner = 'owner') {
   view = mount(WorkspaceEditor, { props: { owner, exercise, file, selected: file.path, credential: 'credential' } });
   return view;
 }
+it('requires save confirmation before emitting a test start for the confirmed revision', async () => {
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('changed for test');
+  await page.findAll('button').find((button) => button.text() === '运行基础测试')!.trigger('click');
+  expect(page.emitted('run-test')).toBeUndefined();
+  expect(page.text()).toContain('有未保存修改，测试不会使用这些草稿');
+  await page.findAll('button').find((button) => button.text() === '返回编辑')!.trigger('click');
+  expect(api.save).not.toHaveBeenCalled();
+  await page.findAll('button').find((button) => button.text() === '运行基础测试')!.trigger('click');
+  vi.mocked(api.save).mockResolvedValueOnce({ exerciseId: 'exercise', operationId: 'save-test', state: 'SUCCEEDED', revision: '1', changed: true, failureCode: null });
+  await page.findAll('button').find((button) => button.text() === '保存后运行')!.trigger('click');
+  await flushPromises();
+  expect(page.emitted('run-test')).toEqual([['1']]);
+});
+
+it('does not start a test after a failed save or when typing continues during save', async () => {
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('draft');
+  await page.findAll('button').find((button) => button.text() === '运行基础测试')!.trigger('click');
+  vi.mocked(api.save).mockRejectedValueOnce(new ApiError(409, 'REVISION_CONFLICT'));
+  await page.findAll('button').find((button) => button.text() === '保存后运行')!.trigger('click');
+  await flushPromises();
+  expect(page.emitted('run-test')).toBeUndefined();
+  let finish!: (value: api.Mutation) => void;
+  vi.mocked(api.save).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  await page.findAll('button').find((button) => button.text() === '保存后运行')!.trigger('click');
+  await flushPromises();
+  await page.get('textarea').setValue('newer draft');
+  finish({ exerciseId: 'exercise', operationId: 'save-test', state: 'SUCCEEDED', revision: '1', changed: true, failureCode: null });
+  await flushPromises();
+  expect(page.emitted('run-test')).toBeUndefined();
+  expect(page.get('textarea').element.value).toBe('newer draft');
+  expect(page.text()).toContain('未启动测试');
+});
+
 it('retains newer input when a save response arrives and backs it up with the new baseline', async () => {
   let finish!: (value: api.Mutation) => void;
   vi.mocked(api.save).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));

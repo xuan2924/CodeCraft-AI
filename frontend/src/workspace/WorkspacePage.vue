@@ -7,6 +7,7 @@ import { session } from '../auth/api';
 import { ApiError } from '../api/request';
 import * as api from './api';
 import WorkspaceLogout from './WorkspaceLogout.vue';
+import WorkspaceTests from './WorkspaceTests.vue';
 import { cancelSaveLogout, saveLogoutOwner } from './logoutIntent';
 
 const WorkspaceEditor = defineAsyncComponent(() => import('./WorkspaceEditor.vue'));
@@ -24,6 +25,8 @@ const problem = computed(() => catalogue.data.value?.find((item) => item.problem
 const selected = ref('');
 const editorView = ref<{ saveForLogout: () => Promise<boolean> }>();
 const logoutBusy = ref(false);
+const testView = ref<{ start: (revision: string) => void }>();
+const testBusy = ref(true);
 const editorGeneration = ref(0);
 async function saveForLogout() {
   if (!writable.value || pending.value || unresolved.value) return false;
@@ -42,7 +45,7 @@ const controlState = useQuery({ queryKey: ['workspace', owner, 'control', comput
 watch(() => controlState.data.value?.generation, (value) => {
   if (value && credential.value && value !== credentialGeneration.value) credential.value = '';
 });
-watch(() => exercise.value?.workspaceInstanceId, () => { selected.value = ''; credential.value = ''; });
+watch(() => exercise.value?.workspaceInstanceId, () => { selected.value = ''; credential.value = ''; testBusy.value = true; });
 const source = useQuery({ queryKey: ['workspace', owner, 'file', computed(() => exercise.value?.workspaceInstanceId), selected, computed(() => exercise.value?.revision)],
   queryFn: ({ signal }) => {
     if (!exercise.value) throw new Error('Workspace is not available');
@@ -130,7 +133,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
     <header>
       <RouterLink :to="{ name: 'account' }">账号与登录</RouterLink>
       <h1>题目与工作区</h1>
-      <p>工程底座：支持编辑与显式保存；测试、模型检查与面试对话尚未接入，不代表完整面试流程。</p>
+      <p>工程底座：支持编辑、显式保存与稳定版本测试；模型检查与面试对话尚未接入，不代表完整面试流程。</p>
     </header>
     <p
       v-if="account.isPending.value"
@@ -280,6 +283,17 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               放弃本次演练
             </NButton>
           </section>
+          <p v-if="problem && !problem.executionAvailable" role="status">这个固定题目版本尚未配备正式执行配置，测试不可用；不会替换已有工作区版本。</p>
+          <WorkspaceTests
+            v-if="['ACTIVE', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
+            :key="owner + exercise.workspaceInstanceId"
+            ref="testView"
+            :owner="owner"
+            :exercise="exercise"
+            :credential="writable && !logoutBusy ? credential : ''"
+            @locked="testBusy = $event"
+            @stale-control="credential = ''"
+          />
           <div class="workspace-panels">
             <section aria-label="题目与文件">
               <h2>题目要求</h2>
@@ -335,12 +349,14 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               :key="owner + exercise.workspaceInstanceId + editorGeneration"
               ref="editorView"
               :locked="logoutBusy"
+              :test-busy="testBusy || !problem?.executionAvailable"
               :owner="owner"
               :exercise="exercise"
               :file="source.data.value"
               :selected="selected"
               :credential="writable ? credential : ''"
               @saved="refreshWorkspace"
+              @run-test="testView?.start($event)"
               @select="selected = $event"
               @stale-control="credential = ''"
             />
