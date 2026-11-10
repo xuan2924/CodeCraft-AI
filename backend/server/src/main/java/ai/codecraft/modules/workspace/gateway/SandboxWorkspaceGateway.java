@@ -4,6 +4,9 @@ import ai.codecraft.modules.workspace.config.WorkspaceProperties;
 import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
 import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
+import ai.codecraft.modules.workspace.model.entity.TestStopEntity;
+import ai.codecraft.workspace.v1.StopTaskRequest;
+import ai.codecraft.workspace.v1.StopTaskResponse;
 import ai.codecraft.workspace.v1.StartTestRequest;
 import ai.codecraft.workspace.v1.QueryTaskRequest;
 import ai.codecraft.workspace.v1.TestTaskSnapshot;
@@ -59,6 +62,22 @@ public class SandboxWorkspaceGateway {
             if (error.getStatus().getCode() == Status.Code.NOT_FOUND) return null;
             throw error;
         }
+    }
+
+    public StopTaskResponse stopTask(TestTaskEntity task, TestStopEntity stop) {
+        return client().stopTask(StopTaskRequest.newBuilder().setTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+            .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()))
+            .setGateEpoch(stop.gateEpoch()).setNotAfterUnixMillis(stop.notAfter().toEpochMilli()).build());
+    }
+
+    public StopTaskResponse queryStop(TestTaskEntity task) {
+        return client().queryStop(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+            .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()).build());
+    }
+
+    public TestTaskSnapshot reconcileTask(TestTaskEntity task) {
+        return client().reconcileTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+            .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()).build());
     }
 
     public WorkspaceSnapshot prepare(WorkspaceOperationEntity operation, ProblemVersionEntity problem, Instant notAfter) {

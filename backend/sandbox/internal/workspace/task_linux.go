@@ -10,6 +10,7 @@ import (
 
 	"codecraft.local/sandbox/internal/execution"
 	rpc "codecraft.local/sandbox/internal/gen"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -79,6 +80,9 @@ func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) 
 		return err
 	}
 	result, err := s.executor.Start(s.worker, input, prepare, s.releaseTestCopy)
+	if errors.Is(err, execution.ErrCancelled) {
+		return nil, status.Error(codes.FailedPrecondition, "task was cancelled")
+	}
 	if errors.Is(err, execution.ErrBusy) {
 		return nil, status.Error(codes.ResourceExhausted, "test slot busy")
 	}
@@ -144,6 +148,138 @@ func (s *Service) QueryTask(ctx context.Context, request *rpc.QueryTaskRequest) 
 	return taskSnapshot(result), nil
 }
 
+// StopTask shares the workspace gate coordinator with takeover and revocation.
+// Its RPC lifetime authorizes the intent only; the execution owner reclaims work.
+func (s *Service) StopTask(ctx context.Context, request *rpc.StopTaskRequest) (*rpc.StopTaskResponse, error) {
+	release, err := s.enter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	task := request.GetTask()
+	if task == nil || !validTaskIdentity(task.ExerciseId, task.TaskId, task.ExecutionInstanceId, task.WorkspaceInstanceId) || request.NotAfterUnixMillis <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "invalid stop authority")
+	}
+	if s.executor == nil {
+		return nil, status.Error(codes.Unavailable, "execution is not configured")
+	}
+	fd, err := s.instance(task.WorkspaceInstanceId, false)
+	if err != nil {
+		return nil, err
+	}
+	defer syscall.Close(fd)
+	gates, err := gateRecords(fd, task.WorkspaceInstanceId)
+	if err != nil {
+		return nil, storageError(err)
+	}
+	if len(gates) == 0 || gates[len(gates)-1].State != "OPEN" || gates[len(gates)-1].Epoch != request.GateEpoch || !time.Now().Before(time.UnixMilli(request.NotAfterUnixMillis)) {
+		return nil, status.Error(codes.FailedPrecondition, "stop authority expired or gate closed")
+	}
+	result, err := s.executor.Stop(ctx, execution.TaskIdentity{ExerciseID: task.ExerciseId, TaskID: task.TaskId, ExecutionID: task.ExecutionInstanceId, WorkspaceID: task.WorkspaceInstanceId})
+	if errors.Is(err, execution.ErrConflict) {
+		return nil, status.Error(codes.NotFound, "task not found")
+	}
+	if err != nil {
+		return nil, storageError(err)
+	}
+	if result == nil {
+		return &rpc.StopTaskResponse{CancelledBeforeRegistration: true}, nil
+	}
+	return &rpc.StopTaskResponse{Snapshot: taskSnapshot(*result)}, nil
+}
+
+// QueryStop recovers the original receipt even when its write authority expired.
+func (s *Service) QueryStop(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.StopTaskResponse, error) {
+	release, err := s.enter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if !validTaskIdentity(request.ExerciseId, request.TaskId, request.ExecutionInstanceId, request.WorkspaceInstanceId) {
+		return nil, status.Error(codes.InvalidArgument, "invalid task identity")
+	}
+	if s.executor == nil {
+		return nil, status.Error(codes.Unavailable, "execution is not configured")
+	}
+	result, cancelled, err := s.executor.QueryStop(ctx, execution.TaskIdentity{ExerciseID: request.ExerciseId, TaskID: request.TaskId, ExecutionID: request.ExecutionInstanceId, WorkspaceID: request.WorkspaceInstanceId})
+	if errors.Is(err, execution.ErrConflict) {
+		return nil, status.Error(codes.NotFound, "task not found")
+	}
+	if err != nil {
+		return nil, storageError(err)
+	}
+	response := &rpc.StopTaskResponse{CancelledBeforeRegistration: cancelled}
+	if result != nil {
+		response.Snapshot = taskSnapshot(*result)
+	}
+	return response, nil
+}
+
+// ReconcileTask only resumes observation and exact-instance cleanup. It cannot
+// replay a start or infer a successful test from logs or an exit code alone.
+func (s *Service) ReconcileTask(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.TestTaskSnapshot, error) {
+	snapshot, err := s.QueryTask(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.executor.Recover(s.worker, request.ExecutionInstanceId, s.releaseTestCopy); err != nil {
+		return nil, storageError(err)
+	}
+	return snapshot, nil
+}
+
+// WatchTask consumes persisted observations; disconnecting cannot cancel execution.
+// No per-subscriber unbounded queue is maintained. gRPC flow control may block
+// Send, but never the execution owner or the storage coordinator.
+func (s *Service) WatchTask(request *rpc.WatchTaskRequest, stream grpc.ServerStreamingServer[rpc.TaskEvent]) error {
+	ctx := stream.Context()
+	if request.GetTask() == nil {
+		return status.Error(codes.InvalidArgument, "task required")
+	}
+	if _, err := s.QueryTask(ctx, request.Task); err != nil {
+		return err
+	}
+	select {
+	case s.watches <- struct{}{}:
+		defer func() { <-s.watches }()
+	default:
+		return status.Error(codes.ResourceExhausted, "watch capacity reached")
+	}
+	after := request.AfterSequence
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		result, err := s.executor.Query(ctx, request.Task.ExecutionInstanceId)
+		if err != nil {
+			return storageError(err)
+		}
+		first := result.Sequence + 1
+		if len(result.Events) > 0 {
+			first = result.Events[0].Sequence
+		}
+		if request.StreamId == "" || request.StreamId != result.StreamID || after > result.Sequence || after+1 < first {
+			return stream.Send(&rpc.TaskEvent{SchemaVersion: 1, TaskId: request.Task.TaskId, ExecutionInstanceId: request.Task.ExecutionInstanceId, StreamId: result.StreamID, Sequence: result.Sequence, Type: "reset_required"})
+		}
+		for _, event := range result.Events {
+			if event.Sequence <= after {
+				continue
+			}
+			if err = stream.Send(&rpc.TaskEvent{SchemaVersion: 1, TaskId: request.Task.TaskId, ExecutionInstanceId: request.Task.ExecutionInstanceId, StreamId: result.StreamID, Sequence: event.Sequence, Type: event.Type, OccurredAtUnixMillis: event.OccurredAt.UnixMilli(), Channel: event.Channel, Data: event.Data, State: event.State, DroppedBytes: event.DroppedBytes}); err != nil {
+				return err
+			}
+			after = event.Sequence
+		}
+		if result.FinishedAt != nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return status.FromContextError(ctx.Err()).Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func validTaskIdentity(exercise, task, executionID, workspace string) bool {
 	return uuid.MatchString(exercise) && uuid.MatchString(task) && uuid.MatchString(executionID) && uuid.MatchString(workspace)
 }
@@ -153,7 +289,10 @@ func taskSnapshot(result execution.Result) *rpc.TestTaskSnapshot {
 	snapshot := &rpc.TestTaskSnapshot{ExerciseId: i.ExerciseID, TaskId: i.TaskID, ExecutionInstanceId: i.ExecutionID, WorkspaceInstanceId: i.WorkspaceID,
 		Revision: i.Revision, Target: i.Target, Problem: &rpc.ProblemIdentity{ProblemId: i.ProblemID, Version: i.ProblemVersion, PackageSha256: i.PackageSHA256, ExecutionImageDigest: i.Image, Platform: i.Platform},
 		State: result.State, Reason: result.Reason, StartedAtUnixMillis: result.StartedAt.UnixMilli(), Quiescent: result.Quiescent, Cleanup: result.Cleanup, CopyCleanup: result.CopyCleanup,
-		DroppedBytes: result.DroppedBytes, LogsIncomplete: result.LogsIncomplete}
+		DroppedBytes: result.DroppedBytes, LogsIncomplete: result.LogsIncomplete, StreamId: result.StreamID, Sequence: result.Sequence, StateVersion: result.Version}
+	if len(result.Events) > 0 {
+		snapshot.FirstRetainedSequence = result.Events[0].Sequence
+	}
 	if result.FinishedAt != nil {
 		value := result.FinishedAt.UnixMilli()
 		snapshot.FinishedAtUnixMillis = &value
@@ -187,13 +326,20 @@ func (s *Service) releaseTestCopy(ctx context.Context, result execution.Result) 
 	}
 	defer syscall.Close(fd)
 	name := "copy-" + result.Input.ExecutionID
-	if _, err = readTestCopy(ctx, fd, result.Input.WorkspaceID, result.Input.ExecutionID); err != nil {
-		return err
-	}
-	// Persist a tombstone before deleting bytes: delayed input preparation may
-	// never recreate this execution's copy after the terminal record is retained.
-	if err = writePath(fd, name+"/released", []byte(result.Input.ExecutionID)); err != nil {
-		return err
+	marker, markerErr := readPath(fd, name+"/released")
+	if errors.Is(markerErr, syscall.ENOENT) {
+		if _, err = readTestCopy(ctx, fd, result.Input.WorkspaceID, result.Input.ExecutionID); err != nil {
+			return err
+		}
+		// Tombstone precedes byte deletion. A retry after either step must remain
+		// idempotent without granting delayed preparation new authority.
+		if err = writePath(fd, name+"/released", []byte(result.Input.ExecutionID)); err != nil {
+			return err
+		}
+	} else if markerErr != nil {
+		return markerErr
+	} else if string(marker) != result.Input.ExecutionID {
+		return fmt.Errorf("invalid input release tombstone")
 	}
 	owned, err := os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", fd))
 	if err != nil {

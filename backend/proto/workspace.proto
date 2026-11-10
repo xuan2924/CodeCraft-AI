@@ -21,6 +21,10 @@ service WorkspaceStorage {
   rpc QueryTestCopy(QueryTestCopyRequest) returns (TestCopyReceipt);
   rpc StartTest(StartTestRequest) returns (TestTaskSnapshot);
   rpc QueryTask(QueryTaskRequest) returns (TestTaskSnapshot);
+  rpc StopTask(StopTaskRequest) returns (StopTaskResponse);
+  rpc QueryStop(QueryTaskRequest) returns (StopTaskResponse);
+  rpc ReconcileTask(QueryTaskRequest) returns (TestTaskSnapshot);
+  rpc WatchTask(WatchTaskRequest) returns (stream TaskEvent);
 }
 
 message ProblemIdentity {
@@ -130,6 +134,35 @@ message QueryTaskRequest {
   string execution_instance_id = 3;
   string workspace_instance_id = 4;
 }
+// Stop authority uses the current page gate, not the task's historical start gate.
+message StopTaskRequest {
+  QueryTaskRequest task = 1;
+  uint64 gate_epoch = 2;
+  int64 not_after_unix_millis = 3;
+}
+message StopTaskResponse {
+  // Absent registration is durably cancelled; a delayed Start cannot run.
+  bool cancelled_before_registration = 1;
+  TestTaskSnapshot snapshot = 2;
+}
+message WatchTaskRequest {
+  QueryTaskRequest task = 1;
+  string stream_id = 2;
+  uint64 after_sequence = 3;
+}
+message TaskEvent {
+  uint32 schema_version = 1;
+  string task_id = 2;
+  string execution_instance_id = 3;
+  string stream_id = 4;
+  uint64 sequence = 5;
+  string type = 6;
+  int64 occurred_at_unix_millis = 7;
+  string channel = 8;
+  bytes data = 9;
+  string state = 10;
+  uint64 dropped_bytes = 11;
+}
 message TestLogChunk {
   string channel = 1;
   bytes data = 2;
@@ -159,6 +192,10 @@ message TestTaskSnapshot {
   uint64 dropped_bytes = 17;
   bool logs_incomplete = 18;
   TestEvidence evidence = 19;
+  string stream_id = 20;
+  uint64 sequence = 21;
+  uint64 first_retained_sequence = 22;
+  uint64 state_version = 23;
 }
 message WorkspaceSnapshot {
   string workspace_instance_id = 1;

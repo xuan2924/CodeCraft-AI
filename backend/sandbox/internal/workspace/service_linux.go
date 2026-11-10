@@ -42,6 +42,7 @@ type Service struct {
 	key          string
 	publications []Publication
 	gate         chan struct{}
+	watches      chan struct{}
 	executor     *execution.Runner
 	worker       context.Context
 	// Test-only synchronization, configured before serving; never exposed by RPC or configuration.
@@ -77,7 +78,7 @@ func NewService(root string, publications []Publication, key string, runtime *Ex
 		return nil, err
 	}
 	syscall.Close(fd)
-	s := &Service{root: root, key: key, gate: make(chan struct{}, 1)}
+	s := &Service{root: root, key: key, gate: make(chan struct{}, 1), watches: make(chan struct{}, 16)}
 	if runtime != nil {
 		s.executor, s.worker = runtime.Runner, runtime.Worker
 	}

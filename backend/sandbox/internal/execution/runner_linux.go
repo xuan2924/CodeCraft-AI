@@ -81,6 +81,16 @@ func (r *Runner) register(ctx context.Context, input Input, prepare func() error
 	}
 	input.Tests = append([]string(nil), input.Tests...)
 	r.mu.Lock()
+	if cancellation, err := r.cancellation(input.ExecutionID); err == nil {
+		r.mu.Unlock()
+		if !cancellation.matches(input) {
+			return Result{}, false, ErrConflict
+		}
+		return Result{}, false, ErrCancelled
+	} else if !errors.Is(err, os.ErrNotExist) {
+		r.mu.Unlock()
+		return Result{}, false, err
+	}
 	if previous, exists := r.tasks[input.TaskID]; input.TaskID != "" && exists && previous != input.ExecutionID {
 		r.mu.Unlock()
 		return Result{}, false, ErrConflict
@@ -146,6 +156,11 @@ func (r *Runner) finished(ctx context.Context, result Result) {
 	r.running = false
 	if err != nil || !result.Quiescent || !durable.Quiescent || durable.Cleanup != "SUCCEEDED" || durable.CopyCleanup == "FAILED" || (durable.Input.TaskID != "" && durable.CopyCleanup != "SUCCEEDED") {
 		r.blocked = true
+	} else {
+		r.blocked = false
+		if err := r.inventory(context.WithoutCancel(ctx)); err != nil {
+			r.blocked = true
+		}
 	}
 	close(r.done)
 }
@@ -157,6 +172,17 @@ func (r *Runner) execute(ctx context.Context, record Result) (Result, error) {
 	}
 	if ctx.Err() != nil || !time.Now().Before(input.NotAfter) {
 		record.State, record.Reason = "INTERRUPTED", "authority_expired_before_create"
+		record.Quiescent, record.Cleanup = true, "SUCCEEDED"
+		now := time.Now().UTC()
+		record.FinishedAt = &now
+		return record, r.persist(record)
+	}
+	intent, intentErr := r.intent(ctx, input.ExecutionID)
+	if intentErr != nil {
+		return record, intentErr
+	}
+	if intent != "" {
+		record.State, record.Intent, record.Reason = intent, intent, "user_stop"
 		record.Quiescent, record.Cleanup = true, "SUCCEEDED"
 		now := time.Now().UTC()
 		record.FinishedAt = &now
@@ -211,6 +237,12 @@ func (r *Runner) execute(ctx context.Context, record Result) (Result, error) {
 		_ = join()
 		return r.finish(ctx, record, "INTERRUPTED", "authorization_expired_before_start", logs, nil)
 	}
+	intent, intentErr = r.intent(ctx, input.ExecutionID)
+	if intentErr != nil || intent != "" {
+		attached.Close()
+		_ = join()
+		return r.finish(ctx, record, "STOPPED", "user_stop", logs, intentErr)
+	}
 	call, cancel = context.WithTimeout(ctx, 5*time.Second)
 	err = r.docker.ContainerStart(call, created.ID, container.StartOptions{})
 	cancel()
@@ -225,8 +257,13 @@ func (r *Runner) execute(ctx context.Context, record Result) (Result, error) {
 		_ = join()
 		return r.finish(ctx, record, "INTERRUPTED", "running_state_persistence_failed", logs, err)
 	}
-	runtime, cancelRuntime := context.WithTimeout(ctx, time.Duration(input.Limits.TimeoutSeconds)*time.Second)
-	state, reason := r.observe(runtime, &record)
+	return r.observeExecution(ctx, record, logs, join)
+}
+
+func (r *Runner) observeExecution(ctx context.Context, record Result, logs *tailLog, join func() error) (Result, error) {
+	// Restart never grants a fresh runtime budget.
+	runtime, cancelRuntime := context.WithDeadline(ctx, record.StartedAt.Add(time.Duration(record.Input.Limits.TimeoutSeconds)*time.Second))
+	state, reason := r.observe(runtime, &record, logs)
 	if runtime.Err() != nil {
 		state, reason = "TIMED_OUT", "platform_deadline"
 	}
@@ -235,11 +272,15 @@ func (r *Runner) execute(ctx context.Context, record Result) (Result, error) {
 	}
 	cancelRuntime()
 	// Evidence is durable BEFORE killing the holding shell/unmounting tmpfs.
+	if state == "TIMED_OUT" {
+		record.Intent = "TIMED_OUT"
+	}
 	record.Reason = reason // Durable timeout/interruption intent precedes termination.
 	record.Logs, record.DroppedBytes = logs.snapshot()
 	evidenceErr := r.persist(record)
 	stopErr := r.terminate(ctx, &record)
-	record.LogsIncomplete = join() != nil
+	drainErr := join()
+	record.LogsIncomplete = record.LogsIncomplete || drainErr != nil
 	record.Logs, record.DroppedBytes = logs.snapshot()
 	// Publish the terminal state only once, after quiescence and log draining.
 	// A broken output stream is visible but never overrides structured evidence.
@@ -263,7 +304,7 @@ func (r *Runner) containerConfig(input Input) (*container.Config, *container.Hos
 	return config, host
 }
 
-func (r *Runner) observe(ctx context.Context, record *Result) (string, string) {
+func (r *Runner) observe(ctx context.Context, record *Result, logs *tailLog) (string, string) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -272,6 +313,17 @@ func (r *Runner) observe(ctx context.Context, record *Result) (string, string) {
 				return "TIMED_OUT", "platform_deadline"
 			}
 			return "INTERRUPTED", "worker_cancelled"
+		}
+		intent, err := r.intent(ctx, record.Input.ExecutionID)
+		if err != nil {
+			return "INTERRUPTED", "intent_unavailable"
+		}
+		if intent != "" {
+			return intent, "user_stop"
+		}
+		record.Logs, record.DroppedBytes = logs.snapshot()
+		if err := r.persist(*record); err != nil {
+			return "INTERRUPTED", "log_checkpoint_failed"
 		}
 		data, err := r.readFile(ctx, record.ContainerID, "/work/result-status", 16)
 		if err == nil {
@@ -479,6 +531,10 @@ func (r *Runner) complete(ctx context.Context, record Result, state, reason stri
 	now := time.Now().UTC()
 	record.FinishedAt = &now
 	persistErr := r.persist(record)
+	if persistErr == nil {
+		// Publication may have been ordered after a competing stop intent.
+		record, persistErr = r.Query(context.WithoutCancel(ctx), record.Input.ExecutionID)
+	}
 	// Never remove the only evidence when durable result storage has failed.
 	if persistErr == nil && cause == nil && record.Quiescent {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

@@ -99,6 +99,9 @@ func TestGRPCTestTaskSurvivesCallerCancellationAndSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	query := &rpc.QueryTaskRequest{ExerciseId: start.ExerciseId, TaskId: start.TaskId, ExecutionInstanceId: start.ExecutionInstanceId, WorkspaceInstanceId: start.WorkspaceInstanceId}
+	if _, err = client.StopTask(ctx, &rpc.StopTaskRequest{Task: query, GateEpoch: opened.Epoch, NotAfterUnixMillis: start.NotAfterUnixMillis}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("old page stopped a task after takeover: %v", err)
+	}
 	wrong := proto.Clone(query).(*rpc.QueryTaskRequest)
 	wrong.ExerciseId = identifier()
 	if _, err = client.QueryTask(ctx, wrong); status.Code(err) != codes.NotFound {
@@ -133,6 +136,10 @@ func TestGRPCTestTaskSurvivesCallerCancellationAndSave(t *testing.T) {
 	openedAgain, err := client.OpenGate(ctx, &rpc.CloseGateRequest{WorkspaceInstanceId: input.WorkspaceID, TransitionId: takeover, ExpectedEpoch: closedAfterStart.Epoch})
 	if err != nil {
 		t.Fatal(err)
+	}
+	completedStop, err := client.StopTask(ctx, &rpc.StopTaskRequest{Task: query, GateEpoch: openedAgain.Epoch, NotAfterUnixMillis: start.NotAfterUnixMillis})
+	if err != nil || completedStop.GetSnapshot().GetState() != "PASSED" {
+		t.Fatalf("stop overwrote natural completion: %v %v", completedStop, err)
 	}
 	reusedTask := proto.Clone(start).(*rpc.StartTestRequest)
 	reusedTask.ExecutionInstanceId, reusedTask.ExpectedRevision, reusedTask.GateEpoch = identifier(), 1, openedAgain.Epoch

@@ -29,6 +29,14 @@ public class TestTaskController {
             tasks.start(IdentityHttp.sessionHash(request), id.toString(), key, credential, input)));
     }
 
+    @PostMapping("/api/exercises/{id}/tasks/{taskId}/stop")
+    public ResponseEntity<ApiResponse<TestTaskResponse>> stop(@PathVariable UUID id, @PathVariable UUID taskId,
+        @RequestHeader(value = "Idempotency-Key", required = false) String key,
+        @RequestHeader(value = "X-Operation-Credential", required = false) String credential, HttpServletRequest request) {
+        TestTaskResponse result = tasks.stop(IdentityHttp.sessionHash(request), id.toString(), taskId.toString(), key, credential);
+        return ResponseEntity.status(result.finishedAt() == null ? 202 : 200).header("Cache-Control", "no-store").body(ApiResponse.success(result));
+    }
+
     @GetMapping("/api/exercises/{id}/tasks/{taskId}")
     public ApiResponse<TestTaskResponse> query(@PathVariable UUID id, @PathVariable UUID taskId, HttpServletRequest request) {
         return ApiResponse.success(tasks.query(IdentityHttp.sessionHash(request), id.toString(), taskId.toString()));

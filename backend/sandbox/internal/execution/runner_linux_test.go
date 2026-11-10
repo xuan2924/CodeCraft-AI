@@ -331,7 +331,7 @@ func TestRestrictedExecutionCleanupFailureRemainsObservable(t *testing.T) {
 		t.Fatalf("cleanup failure hidden: state=%s cleanup=%s error=%v", result.State, result.Cleanup, err)
 	}
 	defer func() {
-		if err := docker.ContainerRemove(context.Background(), result.ContainerID, container.RemoveOptions{}); err != nil {
+		if err := docker.ContainerRemove(context.Background(), result.ContainerID, container.RemoveOptions{}); err != nil && !errdefs.IsNotFound(err) {
 			t.Error(err)
 		}
 	}()
@@ -342,6 +342,15 @@ func TestRestrictedExecutionCleanupFailureRemainsObservable(t *testing.T) {
 	saved, err := faultRunner.Query(context.Background(), input.ExecutionID)
 	if err != nil || saved.Cleanup != "FAILED" || len(saved.Report) == 0 {
 		t.Fatalf("cleanup failure/evidence not persisted: %v", err)
+	}
+	httpClient.Transport = realTransport
+	if err = faultRunner.Recover(context.Background(), input.ExecutionID, nil); err != nil {
+		t.Fatal(err)
+	}
+	faultRunner.Wait()
+	recovered, err := faultRunner.Query(context.Background(), input.ExecutionID)
+	if err != nil || recovered.Cleanup != "SUCCEEDED" || recovered.State != "PASSED" || string(recovered.Report) != string(saved.Report) {
+		t.Fatalf("cleanup retry changed outcome or leaked container: %s %s %v", recovered.State, recovered.Cleanup, err)
 	}
 }
 
@@ -391,9 +400,15 @@ func TestRestrictedExecutionWorkerCancellationAndCapacity(t *testing.T) {
 	}
 }
 
-func TestRestrictedExecutionProcessDeathRetainsSlot(t *testing.T) {
+func TestRestrictedExecutionProcessDeathRetainsSlot(t *testing.T) { processDeathRecovery(t, false) }
+func TestRecoveryDoesNotRenewExpiredRuntime(t *testing.T)         { processDeathRecovery(t, true) }
+
+func processDeathRecovery(t *testing.T, expired bool) {
 	source, _ := os.ReadFile("/fixture/reference/src/main/java/interview/CartTotal.java")
 	runner, input, docker, root := fixture(t, string(source))
+	if expired {
+		input.Limits.TimeoutSeconds = 1
+	}
 	if err := runner.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +429,9 @@ func TestRestrictedExecutionProcessDeathRetainsSlot(t *testing.T) {
 	}
 	scanner := bufio.NewScanner(output)
 	ready := false
+	var childOutput []string
 	for scanner.Scan() {
+		childOutput = append(childOutput, scanner.Text())
 		if scanner.Text() == "EXECUTION_REGISTERED_AND_RUNNING" {
 			ready = true
 			break
@@ -423,7 +440,7 @@ func TestRestrictedExecutionProcessDeathRetainsSlot(t *testing.T) {
 	killErr := child.Process.Kill()
 	_ = child.Wait()
 	if !ready || killErr != nil {
-		t.Fatalf("crash fixture never reached running registration: ready=%v kill=%v scan=%v", ready, killErr, scanner.Err())
+		t.Fatalf("crash fixture never reached running registration: ready=%v kill=%v scan=%v output=%v", ready, killErr, scanner.Err(), childOutput)
 	}
 	restarted, err := execution.New(ctx, docker, root, os.Getenv("CODECRAFT_EXECUTION_VOLUME"), strings.TrimPrefix(filepath.Base(root), "registry-"))
 	if err != nil {
@@ -436,7 +453,7 @@ func TestRestrictedExecutionProcessDeathRetainsSlot(t *testing.T) {
 	}
 	// Test teardown only: production recovery must reconcile, not blindly remove.
 	defer func() {
-		if err := docker.ContainerRemove(context.Background(), observed.ContainerID, container.RemoveOptions{Force: true}); err != nil {
+		if err := docker.ContainerRemove(context.Background(), observed.ContainerID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 			t.Error(err)
 		}
 	}()
@@ -449,6 +466,21 @@ func TestRestrictedExecutionProcessDeathRetainsSlot(t *testing.T) {
 	replay, err := restarted.Run(ctx, input)
 	if err != nil || replay.ContainerID != observed.ContainerID {
 		t.Fatalf("restart re-executed original input: %v", err)
+	}
+	if expired {
+		time.Sleep(time.Until(observed.StartedAt.Add(17 * time.Second)))
+	}
+	if err = restarted.Recover(ctx, input.ExecutionID, nil); err != nil {
+		t.Fatal(err)
+	}
+	restarted.Wait()
+	recovered, err := restarted.Query(ctx, input.ExecutionID)
+	want := "PASSED"
+	if expired {
+		want = "TIMED_OUT"
+	}
+	if err != nil || recovered.State != want || !recovered.Quiescent || recovered.Cleanup != "SUCCEEDED" || recovered.ContainerID != observed.ContainerID || !recovered.StartedAt.Equal(observed.StartedAt) {
+		t.Fatalf("recovery must observe the original execution and reclaim it: state=%s reason=%s error=%v", recovered.State, recovered.Reason, err)
 	}
 }
 

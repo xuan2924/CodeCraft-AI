@@ -1,6 +1,7 @@
 package ai.codecraft.modules.workspace.repository;
 
 import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
+import ai.codecraft.modules.workspace.model.entity.TestStopEntity;
 import java.util.List;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -22,7 +23,7 @@ public interface TestTaskRepository {
     TestTaskEntity find(String id);
     @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE id = #{id}::uuid FOR UPDATE")
     TestTaskEntity lock(String id);
-    @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE NOT quiescent OR snapshot IS NULL OR snapshot->>'copyCleanup' = 'PENDING' ORDER BY last_attempt_at, id LIMIT 16")
+    @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE NOT quiescent OR snapshot IS NULL OR snapshot->>'copyCleanup' IN ('PENDING', 'FAILED') OR snapshot->>'cleanup' = 'FAILED' ORDER BY last_attempt_at, id LIMIT 16")
     List<TestTaskEntity> pending();
     @Select("SELECT " + SUMMARY_COLUMNS + " FROM workspace_test_task WHERE exercise_id = #{exercise}::uuid ORDER BY created_at DESC, id DESC LIMIT 20")
     List<TestTaskEntity> recent(String exercise);
@@ -32,4 +33,18 @@ public interface TestTaskRepository {
     int dispatch(String id);
     @Update("UPDATE workspace_test_task SET state = #{state}, quiescent = #{quiescent}, snapshot = #{snapshot}::jsonb WHERE id = #{id}::uuid")
     void observed(@Param("id") String id, @Param("state") String state, @Param("quiescent") boolean quiescent, @Param("snapshot") String snapshot);
+
+    @Select("SELECT go_state_version FROM workspace_test_task WHERE id = #{id}::uuid")
+    long goVersion(String id);
+    @Update("UPDATE workspace_test_task SET go_state_version = #{version} WHERE id = #{id}::uuid")
+    void updateGoVersion(@Param("id") String id, @Param("version") long version);
+
+    @Insert("INSERT INTO workspace_test_stop(id, task_id, gate_epoch, not_after) VALUES (#{id}::uuid, #{taskId}::uuid, #{gateEpoch}, #{notAfter})")
+    void insertStop(TestStopEntity stop);
+    @Select("SELECT id::text, task_id::text, gate_epoch, not_after, state FROM workspace_test_stop WHERE id = #{id}::uuid")
+    TestStopEntity stop(String id);
+    @Select("SELECT id::text, task_id::text, gate_epoch, not_after, state FROM workspace_test_stop WHERE state = 'PENDING' ORDER BY last_attempt_at, id LIMIT 16")
+    List<TestStopEntity> pendingStops();
+    @Update("UPDATE workspace_test_stop SET state = #{state}, last_attempt_at = clock_timestamp() WHERE id = #{id}::uuid AND state = 'PENDING'")
+    void stopState(@Param("id") String id, @Param("state") String state);
 }

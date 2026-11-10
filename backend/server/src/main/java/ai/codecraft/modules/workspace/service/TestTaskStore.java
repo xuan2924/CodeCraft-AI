@@ -11,6 +11,7 @@ import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
 import ai.codecraft.modules.workspace.repository.ProblemRepository;
 import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
+import ai.codecraft.modules.workspace.model.entity.TestStopEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceControlEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
 import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
@@ -103,6 +104,55 @@ public class TestTaskStore {
         return tasks.recent(exercise).stream().map(task -> response(task, problem)).toList();
     }
 
+    @Transactional
+    public TestStopEntity acceptStop(String session, String exerciseId, String taskId, String key, String credential) {
+        SessionAuthorizationDTO authorization = identity.authorizeMutation(session);
+        ExerciseEntity exercise = owned(authorization.userId(), exerciseId);
+        WorkspaceControlEntity control = writes.lock(exerciseId);
+        credential(control, credential);
+        TestTaskEntity task = tasks.lock(taskId);
+        if (task == null || !task.exerciseId().equals(exerciseId)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
+        WorkspaceOperationEntity previous = exercises.receipt(authorization.userId(), "STOP_TEST", taskId, key);
+        if (previous != null) {
+            if (previous.state().equals("REJECTED")) throw new BusinessException(WorkspaceErrorCode.STALE_CONTROL);
+            return tasks.stop(previous.id());
+        }
+        if (!exercise.state().equals("ACTIVE")) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
+        if (!clock.instant().isBefore(exercise.deadlineAt())) throw new BusinessException(WorkspaceErrorCode.EXERCISE_EXPIRED);
+        if (control.transitionId() != null || control.fenceId() != null) throw new BusinessException(WorkspaceErrorCode.CONTROL_TRANSITION_PENDING);
+        if (!control.gateState().equals("OPEN") || control.gateEpoch() == null) throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE);
+        String id = UUID.randomUUID().toString();
+        boolean terminal = TERMINAL.contains(task.state());
+        exercises.insertOperation(new WorkspaceOperationEntity(id, authorization.userId(), exerciseId, task.workspaceInstanceId(),
+            "STOP_TEST", taskId, key, secrets.fingerprint(taskId), terminal ? "SUCCEEDED" : "PENDING", clock.instant()));
+        if (terminal) return null;
+        Instant notAfter = authorization.expiresAt().isBefore(exercise.deadlineAt()) ? authorization.expiresAt() : exercise.deadlineAt();
+        TestStopEntity stop = new TestStopEntity(id, taskId, control.gateEpoch(), notAfter, "PENDING");
+        tasks.insertStop(stop);
+        return stop;
+    }
+
+    @Transactional(readOnly = true)
+    public List<TestStopEntity> pendingStops() { return tasks.pendingStops(); }
+
+    @Transactional
+    public void stopObserved(TestStopEntity stop, boolean accepted, boolean beforeRegistration) {
+        TestTaskEntity task = tasks.find(stop.taskId());
+        writes.lock(task.exerciseId());
+        task = tasks.lock(task.id());
+        if (beforeRegistration && !TERMINAL.contains(task.state())) {
+            store(task, new TestTaskResponse(task.id(), task.exerciseId(), task.executionInstanceId(), task.workspaceInstanceId(), Long.toString(task.revision()),
+                task.target(), "STOPPED", "CANCELLED_BEFORE_REGISTRATION", null, clock.instant(), null, true, "SUCCEEDED", "NOT_CREATED", "0", false, List.of(), provenance(task), null));
+        }
+        String state = accepted ? "SUCCEEDED" : "REJECTED";
+        tasks.stopState(stop.id(), state);
+        exercises.operationState(stop.id(), state);
+    }
+
+    @Transactional
+    public void stopAttempted(TestStopEntity stop) { tasks.stopState(stop.id(), "PENDING"); }
+
     @Transactional(readOnly = true)
     public List<TestTaskEntity> pending() { return tasks.pending(); }
 
@@ -131,18 +181,20 @@ public class TestTaskStore {
     }
 
     @Transactional
-    public void observe(TestTaskEntity expected, TestTaskResponse result) {
+    public void observe(TestTaskEntity expected, TestTaskResponse result, long stateVersion) {
         writes.lock(expected.exerciseId());
         TestTaskEntity current = tasks.lock(expected.id());
         if (!result.taskId().equals(current.id()) || !result.exerciseId().equals(current.exerciseId())
             || !result.executionInstanceId().equals(current.executionInstanceId()) || !result.workspaceInstanceId().equals(current.workspaceInstanceId())
             || !result.revision().equals(Long.toString(current.revision())) || !result.target().equals(current.target())) throw new IllegalStateException("Mismatched execution receipt");
+        if (stateVersion < 0 || stateVersion < tasks.goVersion(current.id())) return;
         if (TERMINAL.contains(current.state()) && !current.state().equals(result.state())) return;
         if (current.quiescent() && !result.quiescent()) return;
         TestTaskResponse previous = response(current);
         if (previous.copyCleanup().equals("SUCCEEDED") && !result.copyCleanup().equals("SUCCEEDED")) return;
         if (previous.cleanup().equals("SUCCEEDED") && !result.cleanup().equals("SUCCEEDED")) return;
         store(current, result);
+        tasks.updateGoVersion(current.id(), stateVersion);
     }
 
     @Transactional

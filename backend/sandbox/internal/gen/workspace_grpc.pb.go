@@ -32,6 +32,10 @@ const (
 	WorkspaceStorage_QueryTestCopy_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/QueryTestCopy"
 	WorkspaceStorage_StartTest_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/StartTest"
 	WorkspaceStorage_QueryTask_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryTask"
+	WorkspaceStorage_StopTask_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/StopTask"
+	WorkspaceStorage_QueryStop_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryStop"
+	WorkspaceStorage_ReconcileTask_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/ReconcileTask"
+	WorkspaceStorage_WatchTask_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/WatchTask"
 )
 
 // WorkspaceStorageClient is the client API for WorkspaceStorage service.
@@ -54,6 +58,10 @@ type WorkspaceStorageClient interface {
 	QueryTestCopy(ctx context.Context, in *QueryTestCopyRequest, opts ...grpc.CallOption) (*TestCopyReceipt, error)
 	StartTest(ctx context.Context, in *StartTestRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error)
 	QueryTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error)
+	StopTask(ctx context.Context, in *StopTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error)
+	QueryStop(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error)
+	ReconcileTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error)
+	WatchTask(ctx context.Context, in *WatchTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TaskEvent], error)
 }
 
 type workspaceStorageClient struct {
@@ -194,6 +202,55 @@ func (c *workspaceStorageClient) QueryTask(ctx context.Context, in *QueryTaskReq
 	return out, nil
 }
 
+func (c *workspaceStorageClient) StopTask(ctx context.Context, in *StopTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StopTaskResponse)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_StopTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) QueryStop(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StopTaskResponse)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_QueryStop_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) ReconcileTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TestTaskSnapshot)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_ReconcileTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) WatchTask(ctx context.Context, in *WatchTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TaskEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &WorkspaceStorage_ServiceDesc.Streams[0], WorkspaceStorage_WatchTask_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchTaskRequest, TaskEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type WorkspaceStorage_WatchTaskClient = grpc.ServerStreamingClient[TaskEvent]
+
 // WorkspaceStorageServer is the server API for WorkspaceStorage service.
 // All implementations must embed UnimplementedWorkspaceStorageServer
 // for forward compatibility.
@@ -214,6 +271,10 @@ type WorkspaceStorageServer interface {
 	QueryTestCopy(context.Context, *QueryTestCopyRequest) (*TestCopyReceipt, error)
 	StartTest(context.Context, *StartTestRequest) (*TestTaskSnapshot, error)
 	QueryTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error)
+	StopTask(context.Context, *StopTaskRequest) (*StopTaskResponse, error)
+	QueryStop(context.Context, *QueryTaskRequest) (*StopTaskResponse, error)
+	ReconcileTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error)
+	WatchTask(*WatchTaskRequest, grpc.ServerStreamingServer[TaskEvent]) error
 	mustEmbedUnimplementedWorkspaceStorageServer()
 }
 
@@ -262,6 +323,18 @@ func (UnimplementedWorkspaceStorageServer) StartTest(context.Context, *StartTest
 }
 func (UnimplementedWorkspaceStorageServer) QueryTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryTask not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) StopTask(context.Context, *StopTaskRequest) (*StopTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StopTask not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) QueryStop(context.Context, *QueryTaskRequest) (*StopTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method QueryStop not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) ReconcileTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReconcileTask not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) WatchTask(*WatchTaskRequest, grpc.ServerStreamingServer[TaskEvent]) error {
+	return status.Error(codes.Unimplemented, "method WatchTask not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) mustEmbedUnimplementedWorkspaceStorageServer() {}
 func (UnimplementedWorkspaceStorageServer) testEmbeddedByValue()                          {}
@@ -518,6 +591,71 @@ func _WorkspaceStorage_QueryTask_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkspaceStorage_StopTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StopTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).StopTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_StopTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).StopTask(ctx, req.(*StopTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_QueryStop_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).QueryStop(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_QueryStop_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).QueryStop(ctx, req.(*QueryTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_ReconcileTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).ReconcileTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_ReconcileTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).ReconcileTask(ctx, req.(*QueryTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_WatchTask_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchTaskRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(WorkspaceStorageServer).WatchTask(m, &grpc.GenericServerStream[WatchTaskRequest, TaskEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type WorkspaceStorage_WatchTaskServer = grpc.ServerStreamingServer[TaskEvent]
+
 // WorkspaceStorage_ServiceDesc is the grpc.ServiceDesc for WorkspaceStorage service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -577,7 +715,25 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "QueryTask",
 			Handler:    _WorkspaceStorage_QueryTask_Handler,
 		},
+		{
+			MethodName: "StopTask",
+			Handler:    _WorkspaceStorage_StopTask_Handler,
+		},
+		{
+			MethodName: "QueryStop",
+			Handler:    _WorkspaceStorage_QueryStop_Handler,
+		},
+		{
+			MethodName: "ReconcileTask",
+			Handler:    _WorkspaceStorage_ReconcileTask_Handler,
+		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "WatchTask",
+			Handler:       _WorkspaceStorage_WatchTask_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "workspace.proto",
 }

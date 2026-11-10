@@ -48,9 +48,14 @@ type LogChunk struct {
 // Result keeps execution outcome, process quiescence and cleanup distinct.
 // ExitCode belongs to the controlled Maven invocation, not the holding shell.
 type Result struct {
+	Version           uint64     `json:"stateVersion,omitempty"`
+	StreamID          string     `json:"streamId,omitempty"`
+	Sequence          uint64     `json:"sequence,omitempty"`
+	Events            []Event    `json:"events,omitempty"`
 	Input             Input      `json:"input"`
 	State             string     `json:"state"`
 	Reason            string     `json:"reason"`
+	Intent            string     `json:"intent,omitempty"`
 	ContainerID       string     `json:"containerId"`
 	StartedAt         time.Time  `json:"startedAt"`
 	FinishedAt        *time.Time `json:"finishedAt,omitempty"`

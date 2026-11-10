@@ -40,6 +40,7 @@ type Runner struct {
 	owner       string
 	lock        *os.File
 	mu          sync.Mutex
+	stateMu     sync.Mutex // Orders durable intent and result publication.
 	blocked     bool
 	running     bool
 	closed      bool
@@ -120,6 +121,17 @@ func (r *Runner) inventory(ctx context.Context) error {
 		if entry.Name() == ".lock" || strings.HasPrefix(entry.Name(), ".stage-") {
 			continue
 		}
+		if strings.HasSuffix(entry.Name(), ".cancel") {
+			identity, err := r.cancellation(strings.TrimSuffix(entry.Name(), ".cancel"))
+			if err != nil {
+				return err
+			}
+			if previous, exists := r.tasks[identity.TaskID]; exists && previous != identity.ExecutionID {
+				return ErrConflict
+			}
+			r.tasks[identity.TaskID] = identity.ExecutionID
+			continue
+		}
 		if !strings.HasSuffix(entry.Name(), ".json") {
 			return errors.New("unknown registry entry")
 		}
@@ -135,7 +147,7 @@ func (r *Runner) inventory(ctx context.Context) error {
 			}
 			r.tasks[task] = id
 		}
-		if !record.Quiescent {
+		if !record.Quiescent || record.Cleanup != "SUCCEEDED" || (record.Input.TaskID != "" && record.CopyCleanup != "SUCCEEDED") {
 			r.blocked = true
 		}
 	}
@@ -209,16 +221,22 @@ func (r *Runner) Query(ctx context.Context, id string) (Result, error) {
 		return Result{}, errors.New("invalid execution record")
 	}
 	switch result.State {
-	case "STARTING", "RUNNING":
+	case "STARTING", "RUNNING", "STOPPING":
 		if result.Quiescent || result.FinishedAt != nil {
 			return Result{}, errors.New("invalid active execution record")
 		}
-	case "PASSED", "FAILED", "TIMED_OUT", "ENVIRONMENT_ERROR", "INTERRUPTED":
+	case "PASSED", "FAILED", "TIMED_OUT", "STOPPED", "ENVIRONMENT_ERROR", "INTERRUPTED":
 		if result.FinishedAt == nil {
 			return Result{}, errors.New("missing terminal execution time")
 		}
 	default:
 		return Result{}, errors.New("unknown execution state")
+	}
+	if result.Intent != "" && result.Intent != "STOPPED" && result.Intent != "TIMED_OUT" {
+		return Result{}, errors.New("invalid execution intent")
+	}
+	if result.State == "STOPPING" && result.Intent == "" {
+		return Result{}, errors.New("stopping without durable intent")
 	}
 	if result.CopyCleanup != "" && result.CopyCleanup != "PENDING" && result.CopyCleanup != "SUCCEEDED" && result.CopyCleanup != "FAILED" {
 		return Result{}, errors.New("invalid input cleanup state")
@@ -237,6 +255,19 @@ func (r *Runner) Query(ctx context.Context, id string) (Result, error) {
 	}
 	if result.ContainerID != "" && !sha256.MatchString(result.ContainerID) {
 		return Result{}, errors.New("invalid recorded container identity")
+	}
+	if len(result.Events) > eventCountLimit {
+		return Result{}, errors.New("event window exceeds limit")
+	}
+	eventBytes := 0
+	for index, event := range result.Events {
+		if event.Sequence == 0 || event.Sequence > result.Sequence || (index > 0 && event.Sequence != result.Events[index-1].Sequence+1) || len(event.Data) > eventChunkLimit {
+			return Result{}, errors.New("invalid event sequence or size")
+		}
+		eventBytes += len(event.Data) + 256
+	}
+	if eventBytes > eventBytesLimit {
+		return Result{}, errors.New("event window exceeds byte limit")
 	}
 	if len(result.Report) > reportLimit || len(result.CompilationReport) > compilationReportLimit || len(result.Logs) > 4096 {
 		return Result{}, errors.New("recorded evidence exceeds bounds")
@@ -269,11 +300,54 @@ func (r *Runner) Query(ctx context.Context, id string) (Result, error) {
 	return result, nil
 }
 
-func (r *Runner) persist(result Result) (err error) {
+func (r *Runner) persist(result Result) error {
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	return r.persistOrdered(result)
+}
+
+// Caller owns stateMu. An active worker cannot overwrite a previously durable
+// stop/timeout intent. Terminal publication is the natural-completion commit point.
+func (r *Runner) persistOrdered(result Result) error {
+	previous, err := r.Query(context.TODO(), result.Input.ExecutionID)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil {
+		if previous.Intent != "" {
+			result.Intent = previous.Intent
+		}
+	}
+	if result.Intent != "" {
+		if result.FinishedAt == nil {
+			result.State = "STOPPING"
+		} else if result.Quiescent {
+			result.State = result.Intent
+			result.Reason = map[string]string{"STOPPED": "user_stop", "TIMED_OUT": "platform_deadline"}[result.Intent]
+			result.Report, result.CompilationReport, result.ExitCode = nil, nil, nil
+		}
+	}
+	if err == nil && previous.FinishedAt != nil {
+		// Terminal meaning is immutable; only quiescence/cleanup can advance.
+		result.State, result.Reason, result.FinishedAt = previous.State, previous.Reason, previous.FinishedAt
+		result.Report, result.CompilationReport, result.ExitCode = previous.Report, previous.CompilationReport, previous.ExitCode
+		if previous.Quiescent {
+			result.Quiescent = true
+		}
+	}
+	if previous.Version == ^uint64(0) {
+		return errors.New("execution version exhausted")
+	}
+	result.Version = previous.Version + 1
+	appendEvents(&result, previous)
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err
 	}
+	return r.writeRegistry(result.Input.ExecutionID+".json", data)
+}
+
+func (r *Runner) writeRegistry(destination string, data []byte) (err error) {
 	file, err := os.CreateTemp(r.root, ".stage-")
 	if err != nil {
 		return err
@@ -293,7 +367,7 @@ func (r *Runner) persist(result Result) (err error) {
 	if err = errors.Join(syncErr, closeErr); err != nil {
 		return err
 	}
-	if err = os.Rename(name, filepath.Join(r.root, result.Input.ExecutionID+".json")); err != nil {
+	if err = os.Rename(name, filepath.Join(r.root, destination)); err != nil {
 		return err
 	}
 	// A successful rename makes the temporary pathname absent; cleanup must not

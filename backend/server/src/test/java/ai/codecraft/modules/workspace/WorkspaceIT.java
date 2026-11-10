@@ -124,6 +124,41 @@ class WorkspaceIT {
     }
 
     @Test
+    void stopsRealExecutionWithCurrentControlAndDurableOutcome() throws Exception {
+        String exercise = readyExercise("stop-task");
+        String base = "/api/exercises/" + exercise;
+        String credential = request("POST", base + "/control/acquire", Map.of(), "page", 200).path("data").path("credential").asText();
+        request("POST", base + "/start", Map.of(), "begin", 200, credential);
+        String path = "src/main/java/interview/CartTotal.java";
+        String code = request("GET", base + "/files?path=" + path, null, null, 200).path("data").path("content").asText();
+        code = code.replace("public final class CartTotal {", "public final class CartTotal { static { try { Thread.sleep(60000); } catch (InterruptedException e) { throw new RuntimeException(e); } }");
+        request("POST", base + "/file-batches", Map.of("expectedRevision", "0", "changes", List.of(Map.of("path", path, "kind", "UPDATE", "content", code))), "slow", 200, credential);
+        JsonNode accepted = request("POST", base + "/tests", Map.of("expectedRevision", "1", "target", "base"), "run", 202, credential).path("data");
+        String taskUrl = base + "/tasks/" + accepted.path("taskId").asText();
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
+        JsonNode result;
+        do {
+            result = request("GET", taskUrl, null, null, 200).path("data");
+            if (System.nanoTime() >= until) throw new AssertionError("Task did not run: " + result);
+            Thread.sleep(100);
+        } while (!result.path("state").asText().equals("RUNNING"));
+        String current = request("POST", base + "/control/takeover", Map.of(), "takeover", 200).path("data").path("credential").asText();
+        request("POST", taskUrl + "/stop", Map.of(), "old-stop", 409, credential);
+        assertThat(request("POST", taskUrl + "/stop", Map.of(), "stop", 202, current).path("data").path("state").asText()).isEqualTo("STOPPING");
+        do {
+            result = request("GET", taskUrl, null, null, 200).path("data");
+            if (System.nanoTime() >= until) throw new AssertionError("Task did not stop: " + result);
+            Thread.sleep(100);
+        } while (!result.path("copyCleanup").asText().equals("SUCCEEDED"));
+        assertThat(result.path("state").asText()).isEqualTo("STOPPED");
+        assertThat(result.path("quiescent").asBoolean()).isTrue();
+        assertThat(result.path("cleanup").asText()).isEqualTo("SUCCEEDED");
+        assertThat(request("POST", taskUrl + "/stop", Map.of(), "stop", 200, current).path("data").path("state").asText()).isEqualTo("STOPPED");
+        seedDisposableIdentity();
+        request("POST", taskUrl + "/stop", Map.of(), "foreign-stop", 404, current);
+    }
+
+    @Test
     void rejectsUnconfiguredAndExpiredTestsBeforeReservingCapacity() throws Exception {
         String exercise = readyExercise("test-policy");
         String base = "/api/exercises/" + exercise;
