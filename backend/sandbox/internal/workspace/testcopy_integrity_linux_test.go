@@ -62,6 +62,16 @@ func TestTestCopyAndSaveHaveSingleRevisionOrdering(t *testing.T) {
 	client, disconnect := connect(t, root)
 	defer disconnect()
 	epoch := writable(t, client)
+	seed := update(epoch)
+	seed.Changes = []*rpc.FileChange{{Path: "src/main/java/Pair.java", Kind: "CREATE", Content: "class Pair { String value = \"OLD\"; }"}}
+	if _, err := client.ApplyBatch(authorized(t), seed); err != nil {
+		t.Fatal(err)
+	}
+	copyInput := copyRequest(epoch)
+	copyInput.ExpectedRevision = 1
+	batch := update(epoch)
+	batch.RequestId, batch.OperationId, batch.ExpectedRevision = nextTransition, nextTransition, 1
+	batch.Changes = append(batch.Changes, &rpc.FileChange{Path: "src/main/java/Pair.java", Kind: "UPDATE", Content: "class Pair { String value = \"NEW\"; }"})
 	type outcome struct {
 		receipt *rpc.TestCopyReceipt
 		err     error
@@ -72,10 +82,10 @@ func TestTestCopyAndSaveHaveSingleRevisionOrdering(t *testing.T) {
 	start := make(chan struct{})
 	go func() {
 		<-start
-		receipt, err := client.PrepareTestCopy(ctx, copyRequest(epoch))
+		receipt, err := client.PrepareTestCopy(ctx, copyInput)
 		copied <- outcome{receipt, err}
 	}()
-	go func() { <-start; _, err := client.ApplyBatch(ctx, update(epoch)); saved <- err }()
+	go func() { <-start; _, err := client.ApplyBatch(ctx, batch); saved <- err }()
 	close(start)
 	result := <-copied
 	if err := <-saved; err != nil {
@@ -91,7 +101,11 @@ func TestTestCopyAndSaveHaveSingleRevisionOrdering(t *testing.T) {
 		return
 	}
 	content, err := os.ReadFile(filepath.Join(root, result.receipt.RelativePath, sourcePath))
-	if err != nil || string(content) != "class Main {}\n" || result.receipt.Revision != 0 {
+	if err != nil || string(content) != "class Main {}\n" || result.receipt.Revision != 1 {
 		t.Fatalf("mixed revision copy: %v %q %v", result.receipt, content, err)
+	}
+	pair, err := os.ReadFile(filepath.Join(root, result.receipt.RelativePath, "src/main/java/Pair.java"))
+	if err != nil || string(pair) != "class Pair { String value = \"OLD\"; }" {
+		t.Fatalf("torn multi-file revision: %q %v", pair, err)
 	}
 }

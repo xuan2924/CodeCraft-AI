@@ -113,7 +113,7 @@ func (r *Runner) register(ctx context.Context, input Input, prepare func() error
 		r.mu.Unlock()
 		return Result{}, false, ErrBusy
 	}
-	if !time.Now().Before(input.NotAfter) {
+	if !r.now().Before(input.NotAfter) {
 		r.mu.Unlock()
 		return Result{}, false, errors.New("execution authorization expired")
 	}
@@ -124,7 +124,7 @@ func (r *Runner) register(ctx context.Context, input Input, prepare func() error
 		}
 	}
 	record := Result{Input: input, State: "STARTING", StartedAt: time.Now().UTC(), Cleanup: "PENDING"}
-	if ctx.Err() != nil || !time.Now().Before(input.NotAfter) {
+	if ctx.Err() != nil || !r.now().Before(input.NotAfter) {
 		// Publication succeeded: retain a durable owner even if authority expired
 		// at this boundary. It owns cleanup only, never container creation.
 		record.State, record.Reason = "INTERRUPTED", "authority_expired_after_input"
@@ -170,7 +170,7 @@ func (r *Runner) execute(ctx context.Context, record Result) (Result, error) {
 	if record.State == "INTERRUPTED" && record.Quiescent {
 		return record, nil
 	}
-	if ctx.Err() != nil || !time.Now().Before(input.NotAfter) {
+	if ctx.Err() != nil || !r.now().Before(input.NotAfter) {
 		record.State, record.Reason = "INTERRUPTED", "authority_expired_before_create"
 		record.Quiescent, record.Cleanup = true, "SUCCEEDED"
 		now := time.Now().UTC()
@@ -206,7 +206,7 @@ func (r *Runner) execute(ctx context.Context, record Result) (Result, error) {
 	if err = r.persist(record); err != nil {
 		return r.finish(ctx, record, "INTERRUPTED", "registration_update_failed", nil, err)
 	}
-	if !time.Now().Before(input.NotAfter) {
+	if !r.now().Before(input.NotAfter) {
 		return r.finish(ctx, record, "INTERRUPTED", "authorization_expired_before_start", nil, nil)
 	}
 	call, cancel = context.WithTimeout(ctx, 5*time.Second)
@@ -232,7 +232,7 @@ func (r *Runner) execute(ctx context.Context, record Result) (Result, error) {
 			return <-drained
 		}
 	}
-	if !time.Now().Before(input.NotAfter) {
+	if !r.now().Before(input.NotAfter) {
 		attached.Close()
 		_ = join()
 		return r.finish(ctx, record, "INTERRUPTED", "authorization_expired_before_start", logs, nil)

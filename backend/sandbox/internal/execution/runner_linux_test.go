@@ -468,7 +468,17 @@ func processDeathRecovery(t *testing.T, expired bool) {
 		t.Fatalf("restart re-executed original input: %v", err)
 	}
 	if expired {
-		time.Sleep(time.Until(observed.StartedAt.Add(17 * time.Second)))
+		// Wait only for the actual configured process deadline, not a fixed 17s cushion.
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		deadline := observed.StartedAt.Add(time.Duration(input.Limits.TimeoutSeconds) * time.Second)
+		for time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-ticker.C:
+			}
+		}
 	}
 	if err = restarted.Recover(ctx, input.ExecutionID, nil); err != nil {
 		t.Fatal(err)

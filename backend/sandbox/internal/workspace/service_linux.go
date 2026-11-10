@@ -45,6 +45,7 @@ type Service struct {
 	watches      chan struct{}
 	executor     *execution.Runner
 	worker       context.Context
+	now          func() time.Time // Business authority clock; production uses the shared system clock.
 	// Test-only synchronization, configured before serving; never exposed by RPC or configuration.
 	beforeMutationPublish func(context.Context)
 }
@@ -78,7 +79,7 @@ func NewService(root string, publications []Publication, key string, runtime *Ex
 		return nil, err
 	}
 	syscall.Close(fd)
-	s := &Service{root: root, key: key, gate: make(chan struct{}, 1), watches: make(chan struct{}, 16)}
+	s := &Service{root: root, key: key, gate: make(chan struct{}, 1), watches: make(chan struct{}, 16), now: time.Now}
 	if runtime != nil {
 		s.executor, s.worker = runtime.Runner, runtime.Worker
 	}
@@ -154,7 +155,7 @@ func (s *Service) PrepareWorkspace(ctx context.Context, request *rpc.PrepareWork
 		return nil, status.Error(codes.InvalidArgument, "missing preparation authorization deadline")
 	}
 	deadline := time.UnixMilli(request.NotAfterUnixMillis)
-	if !time.Now().Before(deadline) {
+	if !s.now().Before(deadline) {
 		return nil, status.Error(codes.FailedPrecondition, "preparation authorization expired")
 	}
 	ctx, cancel := context.WithDeadline(ctx, deadline)
@@ -211,7 +212,7 @@ func (s *Service) PrepareWorkspace(ctx context.Context, request *rpc.PrepareWork
 		r.Hashes[path] = sum([]byte(content))
 	}
 	sort.Strings(view.Paths)
-	if err = publish(ctx, fd, 0, r, publication.InitialFiles, nil); err != nil {
+	if err = publish(ctx, fd, 0, r, publication.InitialFiles, nil, s.now); err != nil {
 		return nil, storageError(err)
 	}
 	return view, nil
@@ -277,7 +278,7 @@ func (s *Service) CancelPreparation(ctx context.Context, request *rpc.CancelPrep
 		sequence++
 		view.Problem = previous.Snapshot.Problem
 	}
-	if err = publish(ctx, fd, sequence, &record{Snapshot: view, Hashes: map[string]string{}}, nil, nil); err != nil {
+	if err = publish(ctx, fd, sequence, &record{Snapshot: view, Hashes: map[string]string{}}, nil, nil, s.now); err != nil {
 		return nil, storageError(err)
 	}
 	if err = cleanupPreparation(ctx, fd, fmt.Sprintf("commit-%020d", sequence), true); err != nil {
@@ -540,7 +541,7 @@ func latest(parent int, expectedID string) (*record, string, error) {
 	}
 	return &r, name, nil
 }
-func publish(ctx context.Context, parent int, sequence uint64, r *record, files map[string]string, beforePublish func(context.Context)) (result error) {
+func publish(ctx context.Context, parent int, sequence uint64, r *record, files map[string]string, beforePublish func(context.Context), now func() time.Time) (result error) {
 	// Pin cleanup to the already-open directory, not a mutable absolute path.
 	owned, err := os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", parent))
 	if err != nil {
@@ -582,7 +583,7 @@ func publish(ctx context.Context, parent int, sequence uint64, r *record, files 
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+	if deadline, ok := ctx.Deadline(); ok && !now().Before(deadline) {
 		return context.DeadlineExceeded
 	}
 	if err = syscall.Renameat(parent, stage, parent, fmt.Sprintf("commit-%020d", sequence)); err != nil {

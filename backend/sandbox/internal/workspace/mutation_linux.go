@@ -61,7 +61,7 @@ func (s *Service) ApplyBatch(ctx context.Context, request *rpc.ApplyBatchRequest
 		return nil, status.Error(codes.FailedPrecondition, "write gate is not active")
 	}
 	deadline := time.UnixMilli(request.NotAfterUnixMillis)
-	if request.NotAfterUnixMillis <= 0 || !time.Now().Before(deadline) {
+	if request.NotAfterUnixMillis <= 0 || !s.now().Before(deadline) {
 		return nil, status.Error(codes.FailedPrecondition, "write authorization expired")
 	}
 	ctx, cancel := context.WithDeadline(ctx, deadline)
@@ -149,7 +149,7 @@ func (s *Service) ApplyBatch(ctx context.Context, request *rpc.ApplyBatchRequest
 	if len(encoded) > fileLimit {
 		return nil, status.Error(codes.ResourceExhausted, "workspace receipt capacity exhausted")
 	}
-	if err = publish(ctx, fd, sequence+1, r, files, s.beforeMutationPublish); err != nil {
+	if err = publish(ctx, fd, sequence+1, r, files, s.beforeMutationPublish, s.now); err != nil {
 		return nil, storageError(err)
 	}
 	return receipt, nil

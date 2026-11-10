@@ -46,6 +46,7 @@ type Runner struct {
 	closed      bool
 	done        chan struct{}
 	tasks       map[string]string
+	now         func() time.Time // Authorization only; process timeout timers remain real.
 }
 
 // New acquires process ownership and checks inventory before admitting work.
@@ -66,7 +67,7 @@ func New(ctx context.Context, docker *client.Client, root, volume, owner string)
 		lock.Close()
 		return nil, fmt.Errorf("execution registry already owned: %w", err)
 	}
-	r := &Runner{docker: docker, root: root, volume: volume, owner: owner, lock: lock, tasks: map[string]string{}}
+	r := &Runner{docker: docker, root: root, volume: volume, owner: owner, lock: lock, tasks: map[string]string{}, now: time.Now}
 	if err = r.inventory(ctx); err != nil {
 		lock.Close()
 		return nil, err

@@ -18,14 +18,14 @@ func TestRestrictedExecutionRetainsCleanupOwnershipAfterPreparedInputExpires(t *
 			input.TaskID, input.ExerciseID, input.ProblemID, input.ProblemVersion = identifier(), identifier(), "cart-total", "1.0.1"
 			owner, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			if cause == "expiry" {
-				input.NotAfter = time.Now().Add(100 * time.Millisecond)
-			}
+			now := time.Now()
+			execution.ClockForTest(runner, func() time.Time { return now })
+			input.NotAfter = now.Add(time.Minute)
 			prepared := func() error {
 				// The fixture is an actual independent input tree. Fault precisely after its
 				// publication, before admission completes; no Docker side effect may start.
 				if cause == "expiry" {
-					<-time.After(time.Until(input.NotAfter) + time.Millisecond)
+					now = input.NotAfter
 				} else {
 					cancel()
 				}
@@ -52,7 +52,7 @@ func TestRestrictedExecutionRetainsCleanupOwnershipAfterPreparedInputExpires(t *
 			next := input
 			next.ExecutionID, next.TaskID, next.Subpath = identifier(), identifier(), ""
 			next.Subpath = next.WorkspaceID + "/copy-" + next.ExecutionID + "/tree"
-			next.NotAfter = time.Now().Add(time.Minute)
+			next.NotAfter = now.Add(time.Minute)
 			nextOwner, cancelNext := context.WithCancel(context.Background())
 			if _, err = runner.Start(nextOwner, next, func() error { cancelNext(); return nil }, cleanup); err != nil {
 				t.Fatal(err)

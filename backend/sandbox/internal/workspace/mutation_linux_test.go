@@ -49,17 +49,18 @@ func update(epoch uint64) *rpc.ApplyBatchRequest {
 func TestMutationExpiresAfterStagingBeforePublication(t *testing.T) {
 	root := t.TempDir()
 	stagedWhileAuthorized := make(chan bool, 1)
+	now := time.Now()
 	client, close := connect(t, root, func(service *workspace.Service) {
+		workspace.ClockForTest(service, func() time.Time { return now })
 		workspace.BeforeMutationPublishForTest(service, func(ctx context.Context) {
 			deadline, ok := ctx.Deadline()
-			stagedWhileAuthorized <- ok && time.Now().Before(deadline) && ctx.Err() == nil
-			// The real authorization expires naturally while the complete staged
-			// tree waits. No system/test clock is changed and no RPC is cancelled.
-			<-ctx.Done()
+			stagedWhileAuthorized <- ok && now.Before(deadline) && ctx.Err() == nil
+			// Advance business authority at the exact post-fsync boundary, not wall time.
+			now = deadline
 		})
 	})
 	request := update(writable(t, client))
-	request.NotAfterUnixMillis = time.Now().Add(2 * time.Second).UnixMilli()
+	request.NotAfterUnixMillis = now.Add(time.Minute).UnixMilli()
 	_, err := client.ApplyBatch(authorized(t), request)
 	close()
 	select {
