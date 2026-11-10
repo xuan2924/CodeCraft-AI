@@ -59,7 +59,7 @@ public class ProblemPublicationReader {
             List<String> roots = new ArrayList<>();
             manifest.path("editableRoots").forEach(root -> roots.add(root.asText()));
             Map<String, String> acceptance = new LinkedHashMap<>();
-            artifact.path("acceptanceFiles").fields().forEachRemaining(entry -> acceptance.put(entry.getKey(), entry.getValue().asText()));
+            artifact.path("acceptanceFiles").properties().forEach(entry -> acceptance.put(entry.getKey(), entry.getValue().asText()));
             return new ProblemResponse(version.id(), version.problemId(), version.version(), manifest.path("title").asText(),
                 artifact.path("requirements").asText(), manifest.path("durationSeconds").asInt(), List.copyOf(roots),
                 Map.copyOf(acceptance), version.packageSha256(), version.executionImageDigest(), version.platform(), "LOCAL_DOCKER_IMAGE_ID", manifest.path("execution").isObject());
@@ -123,7 +123,7 @@ public class ProblemPublicationReader {
         require(artifact.path("initialFiles").has("pom.xml") && artifact.path("acceptanceFiles").has("CartTotalTest.java"));
         for (String section : List.of("initialFiles", "acceptanceFiles")) {
             require(artifact.path(section).isObject());
-            artifact.path(section).fields().forEachRemaining(entry -> {
+            artifact.path(section).properties().forEach(entry -> {
                 require(validPath(entry.getKey()) && entry.getValue().isTextual() && entry.getValue().asText().indexOf(0) < 0);
                 if (section.equals("initialFiles")) require(entry.getKey().equals("pom.xml")
                     || entry.getKey().startsWith("src/main/java/") || entry.getKey().startsWith("src/test/java/"));

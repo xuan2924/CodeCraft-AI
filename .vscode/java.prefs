@@ -1,3 +1,8 @@
 # Protobuf emits suppression annotations for checks that JDT may not enable.
 # Keep actual compiler diagnostics; silence only the incomplete-analysis notice.
 org.eclipse.jdt.core.compiler.problem.suppressWarningsNotFullyAnalysed=ignore
+# Workspace-wide style diagnostics emitted by protoc/grpc; do not edit generated Java.
+org.eclipse.jdt.core.compiler.problem.unusedWarningToken=ignore
+org.eclipse.jdt.core.compiler.problem.redundantSuperinterface=ignore
+# Keep normal raw/unchecked checks, but ignore problems forced by external raw APIs.
+org.eclipse.jdt.core.compiler.problem.unavoidableGenericTypeProblems=disabled
