@@ -124,7 +124,10 @@ func TestGRPCStableCopyIsTheActualDockerInput(t *testing.T) {
 		<-done
 		t.Fatalf("save did not advance revision: %v", receipt)
 	}
-	release, err := docker.ContainerExecCreate(ctx, executionContainer, container.ExecOptions{User: "10001:10001", Cmd: []string{"touch", "/tmp/release-input"}})
+	// Check the container's actual mounted source after saving too: an OLD class
+	// already loaded into the JVM alone would not detect a mistakenly live mount.
+	release, err := docker.ContainerExecCreate(ctx, executionContainer, container.ExecOptions{User: "10001:10001", Cmd: []string{"sh", "-c",
+		`grep -q '"OLD"' /input/src/main/java/interview/CartTotal.java && ! grep -q '"NEW"' /input/src/main/java/interview/CartTotal.java && touch /tmp/release-input`}})
 	if err != nil {
 		cancel()
 		<-done
