@@ -186,13 +186,8 @@ public class ExerciseTransactionService {
         PreparationAuthorizationDTO authority = repository.preparationAuthorization(operation.exerciseId());
         if (authority == null || authority.sessionHash() == null || authority.notAfter() == null
             || !clock.instant().isBefore(authority.notAfter())) return null;
-        try {
-            SessionAuthorizationDTO current = identity.authorizeMutation(authority.sessionHash());
-            return current.userId().equals(operation.userId()) ? authority : null;
-        } catch (IdentityFailure failure) {
-            if (failure.errorCode() == IdentityErrorCode.UNAUTHENTICATED || failure.errorCode() == IdentityErrorCode.PASSWORD_CHANGE_REQUIRED) return null;
-            throw failure;
-        }
+        SessionAuthorizationDTO current = identity.tryAuthorizeMutation(authority.sessionHash());
+        return current != null && current.userId().equals(operation.userId()) ? authority : null;
     }
 
     @Transactional

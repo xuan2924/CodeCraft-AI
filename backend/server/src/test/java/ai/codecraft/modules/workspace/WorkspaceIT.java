@@ -27,7 +27,6 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
-import java.sql.Timestamp;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.nio.file.Files;
@@ -93,7 +92,8 @@ class WorkspaceIT {
         assertThat(request("POST", base + "/tests", Map.of("expectedRevision", "1", "target", "base"), "same-key", 409, credential).path("code").asText()).isEqualTo("IDEMPOTENCY_CONFLICT");
         String source = "src/main/java/interview/CartTotal.java";
         String code = request("GET", base + "/files?path=" + source, null, null, 200).path("data").path("content").asText();
-        // Observe registration before saving: acceptance itself is asynchronous.
+        // REST checks result identity; the Go integration test uses an explicit
+        // candidate-code barrier to prove concurrent OLD/NEW input isolation.
         String taskUrl = base + "/tasks/" + accepted.path("taskId").asText();
         long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
         JsonNode result;
@@ -103,7 +103,7 @@ class WorkspaceIT {
             Thread.sleep(100);
         } while (result.path("state").asText().equals("ACCEPTED"));
         assertThat(request("POST", base + "/file-batches", Map.of("expectedRevision", "0", "changes", List.of(
-            Map.of("path", source, "kind", "UPDATE", "content", code + "\n// saved during execution\n"))), "save-running", 200, credential).path("data").path("revision").asText()).isEqualTo("1");
+            Map.of("path", source, "kind", "UPDATE", "content", code.replace("public final class CartTotal {", "public final class CartTotal { static { System.out.println(\"NEW_VERSION_MARKER\"); }" )))), "save-running", 200, credential).path("data").path("revision").asText()).isEqualTo("1");
         String newCredential = request("POST", base + "/control/takeover", Map.of(), "takeover-test", 200).path("data").path("credential").asText();
         request("POST", base + "/tests", input, "old-page", 409, credential);
         do {
@@ -112,6 +112,7 @@ class WorkspaceIT {
             Thread.sleep(100);
         } while (!result.path("copyCleanup").asText().equals("SUCCEEDED"));
         assertThat(result.path("state").asText()).isEqualTo("FAILED");
+        assertThat(result.path("logs").toString()).doesNotContain("NEW_VERSION_MARKER");
         assertThat(result.path("revision").asText()).isEqualTo("0");
         assertThat(result.path("exitCode").asInt()).isEqualTo(1);
         assertThat(result.path("problem")).isEqualTo(accepted.path("problem"));
@@ -805,7 +806,7 @@ class WorkspaceIT {
     }
 
     @Test
-    void expiredPreparationAuthorityCannotCreateFilesAfterSandboxRecovery() throws Exception {
+    void revokedPreparationIsCleanedAfterSandboxRecovery() throws Exception {
         String container = System.getenv("SANDBOX_TEST_CONTAINER");
         assertThat(container).matches("[0-9a-f]{64}");
         String owner = jdbc.queryForObject("SELECT user_id::text FROM identity_session WHERE token_hash = ?", String.class, IdentitySecrets.digest(token));
@@ -813,10 +814,10 @@ class WorkspaceIT {
         String exercise;
         docker("pause", container);
         try {
-            jdbc.update("UPDATE identity_session SET issued_at = ? WHERE token_hash = ?",
-                Timestamp.from(Instant.now().minus(Duration.ofDays(30)).plusSeconds(5)), IdentitySecrets.digest(token));
-            exercise = request("POST", "/api/exercises", Map.of("problemVersionId", version), "expires-while-offline", 202).path("data").path("exerciseId").asText();
-            Thread.sleep(5500);
+            exercise = request("POST", "/api/exercises", Map.of("problemVersionId", version), "revoked-while-offline", 202).path("data").path("exerciseId").asText();
+            // Recovery transport is tested here; expiry decisions are tested with
+            // a controllable Clock in PreparationAuthorizationTest, without waiting.
+            jdbc.update("UPDATE identity_session SET revoked = true WHERE token_hash = ?", IdentitySecrets.digest(token));
         } finally {
             docker("unpause", container);
         }

@@ -69,6 +69,20 @@ public class IdentityTransactionService {
     @Transactional
     public SessionAuthorizationDTO authorizeMutation(String sessionHash) { return lockedAuthorization(sessionHash); }
 
+    /** A recovery decision, not an exception across a joined transaction boundary.
+     * Expected invalidation must not poison the caller's cleanup transaction.
+     * Infrastructure and pending-revocation failures still propagate.
+     */
+    @Transactional
+    public SessionAuthorizationDTO tryAuthorizeMutation(String sessionHash) {
+        try { return lockedAuthorization(sessionHash); }
+        catch (IdentityFailure failure) {
+            if (failure.errorCode() == IdentityErrorCode.UNAUTHENTICATED
+                || failure.errorCode() == IdentityErrorCode.PASSWORD_CHANGE_REQUIRED) return null;
+            throw failure;
+        }
+    }
+
     /** Joins a short batch transaction; never renews activity or waits for transport. */
     @Transactional
     public SessionAuthorizationDTO authorizePrivateDelivery(String sessionHash) { return lockedAuthorization(sessionHash); }
