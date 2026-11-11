@@ -3,9 +3,16 @@ on:
   pull_request:
   push:
     branches: [main, master]
-  schedule:
-    - cron: '20 2 * * *'
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Verification scope (heavy is opt-in, never a routine PR gate)
+        type: choice
+        default: quick
+        options:
+          - quick
+          - smoke
+          - heavy
 permissions:
   contents: read
 jobs:
@@ -14,7 +21,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: ${{ fromJSON(github.event_name == 'pull_request' && '["quick","smoke"]' || '["quick","smoke","heavy"]') }}
+        # Heavy runs only when explicitly selected; no per-issue/merge/nightly matrix.
+        lane: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.scope) || '["quick","smoke"]') }}
     timeout-minutes: ${{ matrix.lane == 'heavy' && 15 || 5 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
