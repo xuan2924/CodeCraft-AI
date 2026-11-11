@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue';
 import type { Terminal } from '@xterm/xterm';
+import { useThemeVars } from 'naive-ui';
 import '@xterm/xterm/css/xterm.css';
 
 const props = defineProps<{ logs: { channel: string; text: string }[] }>();
+const themeVars = useThemeVars();
+const terminalTheme = computed(() => ({ background: themeVars.value.baseColor,
+  foreground: themeVars.value.textColorBase, selectionBackground: themeVars.value.primaryColorHover }));
 const host = ref<globalThis.HTMLDivElement>();
 const unavailable = ref(false);
 // Local rendering is capped separately from the server's retained log window.
@@ -41,6 +45,7 @@ function render() {
   terminal.write(text.value, () => { writing = false; if (!disposed && pending) timer = globalThis.setTimeout(render, 100); });
 }
 watch(text, () => { pending = true; if (!timer && !writing) timer = globalThis.setTimeout(render, 100); });
+watch(terminalTheme, (theme) => { if (terminal) terminal.options.theme = theme; });
 onMounted(async () => {
   if (typeof globalThis.ResizeObserver === 'undefined') { unavailable.value = true; return; }
   try {
@@ -49,7 +54,7 @@ onMounted(async () => {
     terminal = new Xterm({ disableStdin: true, convertEol: true, scrollback: 2000, rows: 18, cols: 80,
       fontFamily: 'Consolas, "Cascadia Mono", monospace', fontSize: 14, cursorBlink: false,
       linkHandler: { activate: () => {} },
-      theme: { background: '#ffffff', foreground: '#243746', selectionBackground: '#c3d1dc' } });
+      theme: terminalTheme.value });
     terminal.open(host.value);
     resize = new globalThis.ResizeObserver(() => {
       if (terminal && host.value && !disposed) terminal.resize(Math.max(20, Math.min(160, Math.floor(host.value.clientWidth / 8.5))), 18);

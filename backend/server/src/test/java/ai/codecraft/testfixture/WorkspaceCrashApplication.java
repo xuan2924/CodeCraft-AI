@@ -5,6 +5,8 @@ import ai.codecraft.modules.workspace.config.WorkspaceProperties;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.workspace.v1.ApplyBatchRequest;
 import ai.codecraft.workspace.v1.MutationReceipt;
+import ai.codecraft.workspace.v1.TestTaskSnapshot;
+import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
 import io.grpc.Status;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -21,10 +23,12 @@ import org.springframework.context.annotation.Primary;
 public final class WorkspaceCrashApplication {
     private WorkspaceCrashApplication() { }
     private static boolean crash;
+    private static String mode;
     private static Path evidence;
 
     public static void main(String[] args) {
-        crash = args[0].equals("crash");
+        mode = args[0];
+        crash = mode.equals("crash");
         evidence = Path.of(args[1]);
         SpringApplication application = new SpringApplication(ServerApplication.class, FaultConfiguration.class);
         application.run("--server.port=" + args[2], "--server.address=127.0.0.1",
@@ -54,6 +58,26 @@ public final class WorkspaceCrashApplication {
                     // A competing reconciliation worker must not save the receipt before this exact crash point.
                     if (crash) throw Status.UNAVAILABLE.withDescription("test crash barrier").asRuntimeException();
                     return super.mutation(instance, request);
+                }
+
+                @Override
+                public TestTaskSnapshot startTest(TestTaskEntity task) {
+                    if (mode.equals("task-recover")) {
+                        persist("START_REPLAYED\n");
+                        Runtime.getRuntime().halt(138);
+                    }
+                    TestTaskSnapshot result = super.startTest(task);
+                    if (mode.equals("task-crash")) {
+                        persist(result.getTaskId() + "\n" + result.getExecutionInstanceId() + "\n");
+                        Runtime.getRuntime().halt(137);
+                    }
+                    return result;
+                }
+
+                @Override
+                public TestTaskSnapshot task(TestTaskEntity task) {
+                    if (mode.equals("task-crash")) throw Status.UNAVAILABLE.withDescription("test execution crash barrier").asRuntimeException();
+                    return super.task(task);
                 }
 
                 private void persist(String value) {

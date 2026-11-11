@@ -1,7 +1,7 @@
 import { onScopeDispose, ref, watch, type Ref } from 'vue';
 import { useQueryClient, type QueryKey } from '@tanstack/vue-query';
 import { ApiError } from '../api/request';
-import { testTask, watchTask, type TaskEvent, type TestTask } from './taskApi';
+import { latestTaskSnapshot, testTask, watchTask, type TaskEvent, type TestTask } from './taskApi';
 
 /** The query cache owns server state. The only local buffer is a bounded render batch. */
 export function useTaskStream(task: Ref<TestTask | undefined>, key: (id: string) => QueryKey) {
@@ -34,9 +34,9 @@ export function useTaskStream(task: Ref<TestTask | undefined>, key: (id: string)
         if (!active()) return;
         await client.cancelQueries({ queryKey: key(snapshot.taskId), exact: true });
         if (!active()) return;
-        client.setQueryData(key(snapshot.taskId), snapshot);
+        const current = client.setQueryData<TestTask>(key(snapshot.taskId), (previous) => latestTaskSnapshot(previous, snapshot));
         recovering = false;
-        connect(snapshot);
+        connect(current ?? snapshot);
       } catch (error) {
         if (!active()) return;
         recovering = false;

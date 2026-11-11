@@ -34,6 +34,7 @@ const (
 	WorkspaceStorage_QueryTask_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryTask"
 	WorkspaceStorage_StopTask_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/StopTask"
 	WorkspaceStorage_QueryStop_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryStop"
+	WorkspaceStorage_ListExecutions_FullMethodName    = "/codecraft.workspace.v1.WorkspaceStorage/ListExecutions"
 	WorkspaceStorage_ReconcileTask_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/ReconcileTask"
 	WorkspaceStorage_WatchTask_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/WatchTask"
 )
@@ -60,6 +61,7 @@ type WorkspaceStorageClient interface {
 	QueryTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error)
 	StopTask(ctx context.Context, in *StopTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error)
 	QueryStop(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error)
+	ListExecutions(ctx context.Context, in *ExecutionInventoryRequest, opts ...grpc.CallOption) (*ExecutionInventory, error)
 	ReconcileTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error)
 	WatchTask(ctx context.Context, in *WatchTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TaskEvent], error)
 }
@@ -222,6 +224,16 @@ func (c *workspaceStorageClient) QueryStop(ctx context.Context, in *QueryTaskReq
 	return out, nil
 }
 
+func (c *workspaceStorageClient) ListExecutions(ctx context.Context, in *ExecutionInventoryRequest, opts ...grpc.CallOption) (*ExecutionInventory, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExecutionInventory)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_ListExecutions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *workspaceStorageClient) ReconcileTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TestTaskSnapshot)
@@ -273,6 +285,7 @@ type WorkspaceStorageServer interface {
 	QueryTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error)
 	StopTask(context.Context, *StopTaskRequest) (*StopTaskResponse, error)
 	QueryStop(context.Context, *QueryTaskRequest) (*StopTaskResponse, error)
+	ListExecutions(context.Context, *ExecutionInventoryRequest) (*ExecutionInventory, error)
 	ReconcileTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error)
 	WatchTask(*WatchTaskRequest, grpc.ServerStreamingServer[TaskEvent]) error
 	mustEmbedUnimplementedWorkspaceStorageServer()
@@ -329,6 +342,9 @@ func (UnimplementedWorkspaceStorageServer) StopTask(context.Context, *StopTaskRe
 }
 func (UnimplementedWorkspaceStorageServer) QueryStop(context.Context, *QueryTaskRequest) (*StopTaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryStop not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) ListExecutions(context.Context, *ExecutionInventoryRequest) (*ExecutionInventory, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListExecutions not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) ReconcileTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReconcileTask not implemented")
@@ -627,6 +643,24 @@ func _WorkspaceStorage_QueryStop_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkspaceStorage_ListExecutions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecutionInventoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).ListExecutions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_ListExecutions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).ListExecutions(ctx, req.(*ExecutionInventoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _WorkspaceStorage_ReconcileTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryTaskRequest)
 	if err := dec(in); err != nil {
@@ -722,6 +756,10 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "QueryStop",
 			Handler:    _WorkspaceStorage_QueryStop_Handler,
+		},
+		{
+			MethodName: "ListExecutions",
+			Handler:    _WorkspaceStorage_ListExecutions_Handler,
 		},
 		{
 			MethodName: "ReconcileTask",

@@ -11,8 +11,8 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface TestTaskRepository {
-    String COLUMNS = "id::text, execution_instance_id::text, exercise_id::text, workspace_instance_id::text, revision, gate_epoch, not_after, target, state, dispatched, quiescent, snapshot::text";
-    String SUMMARY_COLUMNS = "id::text, execution_instance_id::text, exercise_id::text, workspace_instance_id::text, revision, gate_epoch, not_after, target, state, dispatched, quiescent, jsonb_set(snapshot, '{logs}', '[]')::text AS snapshot";
+    String COLUMNS = "id::text, execution_instance_id::text, exercise_id::text, workspace_instance_id::text, revision, gate_epoch, not_after, target, state, dispatched, quiescent, snapshot::text, host_epoch, go_state_version AS state_version";
+    String SUMMARY_COLUMNS = "id::text, execution_instance_id::text, exercise_id::text, workspace_instance_id::text, revision, gate_epoch, not_after, target, state, dispatched, quiescent, jsonb_set(snapshot, '{logs}', '[]')::text AS snapshot, host_epoch, go_state_version AS state_version";
     @Select("SELECT id FROM workspace_execution_admission WHERE id = 1 FOR UPDATE")
     int lockAdmission();
     @Select("SELECT count(*) FROM workspace_test_task WHERE NOT quiescent")
@@ -21,6 +21,8 @@ public interface TestTaskRepository {
     void insert(TestTaskEntity task);
     @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE id = #{id}::uuid")
     TestTaskEntity find(String id);
+    @Select("<script>SELECT " + COLUMNS + " FROM workspace_test_task WHERE execution_instance_id IN <foreach item='id' collection='ids' open='(' separator=',' close=')'>#{id}::uuid</foreach></script>")
+    List<TestTaskEntity> executions(@Param("ids") List<String> ids);
     @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE id = #{id}::uuid FOR UPDATE")
     TestTaskEntity lock(String id);
     @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE NOT quiescent OR snapshot IS NULL OR snapshot->>'copyCleanup' IN ('PENDING', 'FAILED') OR snapshot->>'cleanup' = 'FAILED' ORDER BY last_attempt_at, id LIMIT 16")
@@ -29,8 +31,8 @@ public interface TestTaskRepository {
     List<TestTaskEntity> recent(String exercise);
     @Update("UPDATE workspace_test_task SET last_attempt_at = clock_timestamp() WHERE id = #{id}::uuid")
     void attempted(String id);
-    @Update("UPDATE workspace_test_task SET dispatched = true WHERE id = #{id}::uuid AND NOT dispatched AND state = 'ACCEPTED'")
-    int dispatch(String id);
+    @Update("UPDATE workspace_test_task SET dispatched = true, host_epoch = #{epoch} WHERE id = #{id}::uuid AND NOT dispatched AND state = 'ACCEPTED'")
+    int dispatch(@Param("id") String id, @Param("epoch") String epoch);
     @Update("UPDATE workspace_test_task SET state = #{state}, quiescent = #{quiescent}, snapshot = #{snapshot}::jsonb WHERE id = #{id}::uuid")
     void observed(@Param("id") String id, @Param("state") String state, @Param("quiescent") boolean quiescent, @Param("snapshot") String snapshot);
 

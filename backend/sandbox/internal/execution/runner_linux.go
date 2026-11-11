@@ -79,6 +79,9 @@ func (r *Runner) register(ctx context.Context, input Input, prepare func() error
 	if err := validateInput(input); err != nil {
 		return Result{}, false, err
 	}
+	if input.HostEpoch != "" && input.HostEpoch != r.epoch {
+		return Result{}, false, ErrConflict
+	}
 	input.Tests = append([]string(nil), input.Tests...)
 	r.mu.Lock()
 	if cancellation, err := r.cancellation(input.ExecutionID); err == nil {
@@ -189,6 +192,16 @@ func (r *Runner) execute(ctx context.Context, record Result) (Result, error) {
 		return record, r.persist(record)
 	}
 	config, host := r.containerConfig(input)
+	// An immutable Engine-side owner receipt survives loss of both local files.
+	// It can recover identity for interruption/cleanup, never a passing grade.
+	receipt, receiptErr := json.Marshal(recoveryReceipt{Input: input, StartedAt: record.StartedAt, Version: 1, CounterUncertain: true})
+	if receiptErr != nil {
+		return r.finish(ctx, record, "INTERRUPTED", "recovery_receipt_unavailable", nil, receiptErr)
+	}
+	config.Labels["codecraft.execution.receipt"] = string(receipt)
+	config.Labels["codecraft.task.id"] = input.TaskID
+	config.Labels["codecraft.exercise.id"] = input.ExerciseID
+	config.Labels["codecraft.host.epoch"] = input.HostEpoch
 	call, cancel := context.WithTimeout(ctx, 5*time.Second)
 	created, err := r.docker.ContainerCreate(call, config, host, nil, &specs.Platform{OS: "linux", Architecture: "amd64"}, "cc-execution-"+input.ExecutionID)
 	cancel()

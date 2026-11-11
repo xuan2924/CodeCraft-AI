@@ -6,6 +6,8 @@ import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
 import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
 import ai.codecraft.modules.workspace.model.entity.TestStopEntity;
 import ai.codecraft.workspace.v1.StopTaskRequest;
+import ai.codecraft.workspace.v1.ExecutionInventory;
+import ai.codecraft.workspace.v1.ExecutionInventoryRequest;
 import ai.codecraft.workspace.v1.StopTaskResponse;
 import ai.codecraft.workspace.v1.StartTestRequest;
 import ai.codecraft.workspace.v1.QueryTaskRequest;
@@ -49,11 +51,18 @@ public class SandboxWorkspaceGateway {
         stub = WorkspaceStorageGrpc.newBlockingStub(channel).withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
     }
 
+    public ExecutionInventory inventory(String after, String epoch) {
+        ExecutionInventory page = client().listExecutions(ExecutionInventoryRequest.newBuilder()
+            .setAfterExecutionId(after).setHostEpoch(epoch).setLimit(100).build());
+        if (!page.getHostEpoch().matches("[A-Z2-7]{26}") || page.getEntriesCount() > 100) throw new IllegalStateException("Invalid execution inventory");
+        return page;
+    }
+
     public TestTaskSnapshot startTest(TestTaskEntity task) {
         return client().startTest(StartTestRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
             .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId())
             .setExpectedRevision(task.revision()).setGateEpoch(task.gateEpoch()).setNotAfterUnixMillis(task.notAfter().toEpochMilli())
-            .setTarget(task.target()).setPurpose("MANUAL").build());
+            .setTarget(task.target()).setPurpose("MANUAL").setHostEpoch(task.hostEpoch()).build());
     }
 
     public TestTaskSnapshot task(TestTaskEntity task) {
@@ -104,7 +113,8 @@ public class SandboxWorkspaceGateway {
 
     public TestTaskSnapshot reconcileTask(TestTaskEntity task) {
         return client().reconcileTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
-            .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()).build());
+            .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId())
+            .setObservedStateVersion(task.stateVersion()).build());
     }
 
     public WorkspaceSnapshot prepare(WorkspaceOperationEntity operation, ProblemVersionEntity problem, Instant notAfter) {

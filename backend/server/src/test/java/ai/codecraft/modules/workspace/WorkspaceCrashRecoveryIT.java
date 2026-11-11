@@ -79,7 +79,27 @@ class WorkspaceCrashRecoveryIT {
                 assertThat(file.path("content").asText()).isEqualTo("class Recovered {}");
                 assertThat(request("GET", base, null, null, null, 200).path("data").path("revision").asText()).isEqualTo("1");
                 assertThat(Files.exists(replayed)).as("recovery must never call ApplyBatch again").isFalse();
-                // Only GETs after the crash: neither a mutation retry nor a new idempotency key drives recovery.
+                // Only GETs drove file recovery. Now crash another real JVM after
+                // Go accepted StartTest but before Java persists its first result.
+                stop();
+                Path taskAccepted = evidence.resolve("task-accepted.txt");
+                Path taskReplayed = evidence.resolve("task-replayed.txt");
+                start("task-crash", taskAccepted, evidence.resolve("task-before.log"));
+                try {
+                    assertThat(send("POST", base + "/tests", Map.of("expectedRevision", "1", "target", "base"), "test-once", credential).statusCode()).isEqualTo(202);
+                } catch (IOException expectedConnectionLoss) { /* Durable receipt below is the acceptance evidence. */ }
+                assertThat(application.waitFor(25, TimeUnit.SECONDS)).as("StartTest commit crash barrier").isTrue();
+                assertThat(application.exitValue()).isEqualTo(137);
+                List<String> taskReceipt = Files.readAllLines(taskAccepted);
+                assertThat(taskReceipt).hasSize(2);
+                start("task-recover", taskReplayed, evidence.resolve("task-after.log"));
+                JsonNode taskResult = awaitState(base + "/tasks/" + taskReceipt.get(0), "FAILED");
+                assertThat(taskResult.path("taskId").asText()).isEqualTo(taskReceipt.get(0));
+                assertThat(taskResult.path("executionInstanceId").asText()).isEqualTo(taskReceipt.get(1));
+                assertThat(taskResult.path("revision").asText()).isEqualTo("1");
+                assertThat(taskResult.path("cursor").asText()).isNotBlank();
+                assertThat(request("GET", base + "/tasks", null, null, null, 200).path("data")).hasSize(1);
+                assertThat(Files.exists(taskReplayed)).as("Java restart must never replay StartTest").isFalse();
             } catch (Exception | Error error) {
                 failure = error;
                 throw error;

@@ -9,6 +9,15 @@ export interface TestTask {
   evidence: { kind: string; sha256: string; bytes: number } | null;
   streamId: string | null; cursor: string | null; sequence: string | null; firstRetainedSequence: string | null;
 }
+/** Do not let a delayed REST response roll back an already observed stream. */
+export function latestTaskSnapshot(current: TestTask | undefined, incoming: TestTask): TestTask {
+  if (current?.taskId === incoming.taskId && current.executionInstanceId === incoming.executionInstanceId) {
+    if (current.finishedAt && !incoming.finishedAt) return current;
+    if (current.streamId && current.streamId === incoming.streamId && current.sequence !== null && incoming.sequence !== null
+      && BigInt(current.sequence) > BigInt(incoming.sequence)) return current;
+  }
+  return incoming;
+}
 const states = ['ACCEPTED', 'STARTING', 'RUNNING', 'STOPPING', 'PASSED', 'FAILED', 'TIMED_OUT', 'STOPPED', 'ENVIRONMENT_ERROR', 'INTERRUPTED'];
 function invalid(): never { throw new ApiError(502, 'INVALID_RESPONSE'); }
 function timestamp(value: unknown): value is string | null { return value === null || (typeof value === 'string' && Number.isFinite(Date.parse(value))); }

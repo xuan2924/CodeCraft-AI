@@ -90,7 +90,7 @@ public class TestTaskStore {
         exercises.insertOperation(new WorkspaceOperationEntity(id, authorization.userId(), exerciseId, exercise.workspaceInstanceId(),
             "START_TEST", exerciseId, key, fingerprint, "PENDING", clock.instant()));
         TestTaskEntity task = new TestTaskEntity(id, UUID.randomUUID().toString(), exerciseId, exercise.workspaceInstanceId(), revision,
-            control.gateEpoch(), notAfter, input.target(), "ACCEPTED", false, false, null);
+            control.gateEpoch(), notAfter, input.target(), "ACCEPTED", false, false, null, null, 0);
         tasks.insert(task);
         streams.create(task.id(), UUID.randomUUID().toString());
         return task;
@@ -165,6 +165,12 @@ public class TestTaskStore {
     public List<TestTaskEntity> pending() { return tasks.pending(); }
 
     @Transactional(readOnly = true)
+    public List<TestTaskEntity> inventoryTasks(List<String> executionIds) {
+        if (executionIds.size() > 100) throw new IllegalArgumentException("Inventory page too large");
+        return executionIds.isEmpty() ? List.of() : tasks.executions(executionIds);
+    }
+
+    @Transactional(readOnly = true)
     public TestTaskEntity find(String id) { return tasks.find(id); }
 
     @Transactional(readOnly = true)
@@ -173,7 +179,7 @@ public class TestTaskStore {
     }
 
     @Transactional
-    public boolean claim(TestTaskEntity task) {
+    public boolean claim(TestTaskEntity task, String hostEpoch) {
         WorkspaceControlEntity control = writes.lock(task.exerciseId());
         TestTaskEntity current = tasks.lock(task.id());
         tasks.attempted(task.id());
@@ -185,7 +191,8 @@ public class TestTaskStore {
             store(current, interrupted(current, "AUTHORITY_EXPIRED_BEFORE_DISPATCH"));
             return false;
         }
-        return tasks.dispatch(task.id()) == 1;
+        if (hostEpoch == null || !hostEpoch.matches("[A-Z2-7]{26}")) throw new IllegalStateException("Invalid execution host generation");
+        return tasks.dispatch(task.id(), hostEpoch) == 1;
     }
 
     @Transactional
@@ -196,9 +203,16 @@ public class TestTaskStore {
             || !result.executionInstanceId().equals(current.executionInstanceId()) || !result.workspaceInstanceId().equals(current.workspaceInstanceId())
             || !result.revision().equals(Long.toString(current.revision())) || !result.target().equals(current.target())) throw new IllegalStateException("Mismatched execution receipt");
         if (stateVersion < 0 || goSequence < 0 || stateVersion < tasks.goVersion(current.id())) return;
-        if (TERMINAL.contains(current.state()) && !current.state().equals(result.state())) return;
-        if (current.quiescent() && !result.quiescent()) return;
         TestTaskResponse previous = response(current);
+        if (TERMINAL.contains(current.state()) && !current.state().equals(result.state())) {
+            if (!result.state().equals("INTERRUPTED") || !result.reason().equals("registry_evidence_lost")) return;
+            // Java already committed an authoritative outcome before Go lost its
+            // primary evidence. Preserve that outcome, but keep cleanup recoverable.
+            result = new TestTaskResponse(previous.taskId(), previous.exerciseId(), previous.executionInstanceId(), previous.workspaceInstanceId(),
+                previous.revision(), previous.target(), previous.state(), previous.reason(), previous.startedAt(), previous.finishedAt(), previous.exitCode(),
+                result.quiescent(), result.cleanup(), result.copyCleanup(), previous.droppedBytes(), true, previous.logs(), previous.problem(), previous.evidence());
+        }
+        if (current.quiescent() && !result.quiescent()) return;
         if (previous.copyCleanup().equals("SUCCEEDED") && !result.copyCleanup().equals("SUCCEEDED")) return;
         if (previous.cleanup().equals("SUCCEEDED") && !result.cleanup().equals("SUCCEEDED")) return;
         store(current, result);
@@ -206,11 +220,19 @@ public class TestTaskStore {
     }
 
     @Transactional
-    public void notRegisteredAfterFence(TestTaskEntity task) {
+    public void notRegisteredAfterFence(TestTaskEntity task, boolean hostChanged) {
         writes.lock(task.exerciseId());
         TestTaskEntity current = tasks.lock(task.id());
         if (TERMINAL.contains(current.state())) return;
-        store(current, interrupted(current, "START_NOT_REGISTERED"));
+        TestTaskResponse result = interrupted(current, hostChanged ? "HOST_RESTART_REGISTRATION_UNCONFIRMED" : "START_NOT_REGISTERED");
+        if (hostChanged) {
+            // Absence after registry loss does not fence an Engine Create already
+            // in flight. Keep the slot isolated; inventory may find it later.
+            result = new TestTaskResponse(result.taskId(), result.exerciseId(), result.executionInstanceId(), result.workspaceInstanceId(), result.revision(),
+                result.target(), result.state(), result.reason(), result.startedAt(), result.finishedAt(), null, false, "FAILED", "UNKNOWN",
+                "0", true, List.of(), result.problem(), null);
+        }
+        store(current, result);
     }
 
     private void store(TestTaskEntity task, TestTaskResponse result) {

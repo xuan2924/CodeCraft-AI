@@ -67,7 +67,7 @@ func TestGRPCStopOrdersWithCompletionAndFencesLateStart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			start := &rpc.StartTestRequest{ExerciseId: identifier(), TaskId: identifier(), ExecutionInstanceId: input.ExecutionID, WorkspaceInstanceId: input.WorkspaceID, Target: "base", Purpose: "MANUAL", GateEpoch: opened.Epoch, NotAfterUnixMillis: time.Now().Add(time.Minute).UnixMilli()}
+			start := &rpc.StartTestRequest{HostEpoch: runner.HostEpoch(), ExerciseId: identifier(), TaskId: identifier(), ExecutionInstanceId: input.ExecutionID, WorkspaceInstanceId: input.WorkspaceID, Target: "base", Purpose: "MANUAL", GateEpoch: opened.Epoch, NotAfterUnixMillis: time.Now().Add(time.Minute).UnixMilli()}
 			query := &rpc.QueryTaskRequest{ExerciseId: start.ExerciseId, TaskId: start.TaskId, ExecutionInstanceId: start.ExecutionInstanceId, WorkspaceInstanceId: start.WorkspaceInstanceId}
 			stopRequest := &rpc.StopTaskRequest{Task: query, GateEpoch: opened.Epoch, NotAfterUnixMillis: start.NotAfterUnixMillis}
 			if !beforeStart {

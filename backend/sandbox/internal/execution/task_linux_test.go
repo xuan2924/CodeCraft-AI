@@ -68,6 +68,15 @@ func TestGRPCTestTaskSurvivesCallerCancellationAndSave(t *testing.T) {
 	}
 	start := &rpc.StartTestRequest{ExerciseId: identifier(), TaskId: identifier(), ExecutionInstanceId: input.ExecutionID, WorkspaceInstanceId: input.WorkspaceID,
 		Target: "base", Purpose: "MANUAL", GateEpoch: opened.Epoch, NotAfterUnixMillis: time.Now().Add(time.Minute).UnixMilli()}
+	inventory, err := client.ListExecutions(ctx, &rpc.ExecutionInventoryRequest{Limit: 1})
+	if err != nil || inventory.HostEpoch == "" {
+		t.Fatalf("missing durable host generation: %v %v", inventory, err)
+	}
+	start.HostEpoch = "stale-host-generation"
+	if _, err = client.StartTest(ctx, start); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("old dispatch admitted: %v", err)
+	}
+	start.HostEpoch = inventory.HostEpoch
 	call, cancelCall := context.WithCancel(ctx)
 	accepted, err := client.StartTest(call, start)
 	cancelCall()

@@ -20,6 +20,7 @@ type Limits struct {
 // reserve its business slot and persist identity before invoking Run. Root and
 // Volume are deployment configuration; Subpath must identify only this copy.
 type Input struct {
+	HostEpoch      string    `json:"hostEpoch,omitempty"`
 	ExerciseID     string    `json:"exerciseId,omitempty"`
 	TaskID         string    `json:"taskId,omitempty"`
 	ProblemID      string    `json:"problemId,omitempty"`
@@ -49,6 +50,7 @@ type LogChunk struct {
 // ExitCode belongs to the controlled Maven invocation, not the holding shell.
 type Result struct {
 	Version           uint64     `json:"stateVersion,omitempty"`
+	CounterUncertain  bool       `json:"counterUncertain,omitempty"`
 	StreamID          string     `json:"streamId,omitempty"`
 	Sequence          uint64     `json:"sequence,omitempty"`
 	Events            []Event    `json:"events,omitempty"`

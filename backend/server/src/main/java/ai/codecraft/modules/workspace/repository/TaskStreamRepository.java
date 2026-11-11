@@ -16,8 +16,11 @@ public interface TaskStreamRepository {
     void create(@Param("task") String task, @Param("stream") String stream);
     @Select("SELECT task_id::text, stream_id::text, sequence, first_sequence FROM workspace_task_stream WHERE task_id = #{task}::uuid")
     TaskStreamEntity find(String task);
-    @Insert("INSERT INTO workspace_task_event(task_id, sequence, type, payload, bytes) VALUES (#{task}::uuid, #{sequence}, #{type}, #{payload}, #{bytes})")
-    void append(@Param("task") String task, @Param("sequence") long sequence, @Param("type") String type, @Param("payload") String payload, @Param("bytes") int bytes);
+    @Insert("<script>INSERT INTO workspace_task_event(task_id, sequence, type, payload, bytes) VALUES "
+        + "<foreach collection='events' item='event' separator=','>"
+        + "(#{task}::uuid, #{event.sequence}, #{event.type}, #{event.payload}, #{event.bytes})"
+        + "</foreach></script>")
+    void appendBatch(@Param("task") String task, @Param("events") List<TaskEventEntity> events);
     @Update("UPDATE workspace_task_stream SET sequence = #{sequence} WHERE task_id = #{task}::uuid")
     void advance(@Param("task") String task, @Param("sequence") long sequence);
     @Delete("DELETE FROM workspace_task_event WHERE task_id = #{task}::uuid AND sequence IN (SELECT sequence FROM (SELECT sequence, row_number() OVER (ORDER BY sequence DESC) AS position, sum(bytes) OVER (ORDER BY sequence DESC) AS total FROM workspace_task_event WHERE task_id = #{task}::uuid) retained_window WHERE position > 4096 OR total > 4194304)")

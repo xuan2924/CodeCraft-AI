@@ -23,6 +23,7 @@ service WorkspaceStorage {
   rpc QueryTask(QueryTaskRequest) returns (TestTaskSnapshot);
   rpc StopTask(StopTaskRequest) returns (StopTaskResponse);
   rpc QueryStop(QueryTaskRequest) returns (StopTaskResponse);
+  rpc ListExecutions(ExecutionInventoryRequest) returns (ExecutionInventory);
   rpc ReconcileTask(QueryTaskRequest) returns (TestTaskSnapshot);
   rpc WatchTask(WatchTaskRequest) returns (stream TaskEvent);
 }
@@ -127,12 +128,14 @@ message StartTestRequest {
   string purpose = 7; // MANUAL in #13; final verification has separate authority in #15.
   uint64 gate_epoch = 8;
   int64 not_after_unix_millis = 9;
+  string host_epoch = 10; // Opaque durable boot generation; never reused after restart.
 }
 message QueryTaskRequest {
   string exercise_id = 1;
   string task_id = 2;
   string execution_instance_id = 3;
   string workspace_instance_id = 4;
+  uint64 observed_state_version = 5; // Reconcile only: Java's already committed high-water mark.
 }
 // Stop authority uses the current page gate, not the task's historical start gate.
 message StopTaskRequest {
@@ -144,6 +147,23 @@ message StopTaskResponse {
   // Absent registration is durably cancelled; a delayed Start cannot run.
   bool cancelled_before_registration = 1;
   TestTaskSnapshot snapshot = 2;
+}
+message ExecutionInventoryRequest {
+  string after_execution_id = 1;
+  uint32 limit = 2; // 1..100
+  string host_epoch = 3; // Empty on the first page; bind subsequent pages.
+}
+message ExecutionInventoryEntry {
+  QueryTaskRequest task = 1;
+  string state = 2;
+  bool quiescent = 3;
+  string cleanup = 4;
+  string copy_cleanup = 5;
+}
+message ExecutionInventory {
+  string host_epoch = 1;
+  repeated ExecutionInventoryEntry entries = 2;
+  string next_execution_id = 3;
 }
 message WatchTaskRequest {
   QueryTaskRequest task = 1;

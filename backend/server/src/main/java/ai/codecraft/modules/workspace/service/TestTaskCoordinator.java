@@ -29,6 +29,8 @@ public class TestTaskCoordinator {
     private final SandboxWorkspaceGateway sandbox;
     private final WorkspaceCoordinationStore coordination;
     private final WorkspaceWriteCoordinator fences;
+    private String inventoryCursor = "";
+    private String inventoryEpoch = "";
 
     public TestTaskCoordinator(TestTaskStore store, SandboxWorkspaceGateway sandbox, WorkspaceCoordinationStore coordination,
         WorkspaceWriteCoordinator fences) {
@@ -41,6 +43,31 @@ public class TestTaskCoordinator {
         for (TestTaskEntity task : store.pending()) {
             try { observe(task); }
             catch (RuntimeException error) { LOG.warn("Test task {} remains unresolved ({})", task.id(), error.getClass().getSimpleName()); }
+        }
+    }
+
+    /** One bounded page per tick; a JVM restart safely begins from the first page. */
+    @Scheduled(fixedDelay = 5000)
+    public void reconcileInventory() {
+        try {
+            var page = sandbox.inventory(inventoryCursor, inventoryEpoch);
+            var known = store.inventoryTasks(page.getEntriesList().stream().map(entry -> entry.getTask().getExecutionInstanceId()).toList());
+            for (var entry : page.getEntriesList()) {
+                var identity = entry.getTask();
+                TestTaskEntity task = known.stream().filter(value -> value.executionInstanceId().equals(identity.getExecutionInstanceId())).findFirst().orElse(null);
+                if (task == null) {
+                    LOG.warn("Execution {} has no business receipt; retaining isolation", identity.getExecutionInstanceId());
+                    continue;
+                }
+                if (!task.id().equals(identity.getTaskId()) || !task.exerciseId().equals(identity.getExerciseId())
+                    || !task.workspaceInstanceId().equals(identity.getWorkspaceInstanceId())) throw new IllegalStateException("Inventory owner mismatch");
+                if (!entry.getQuiescent() || !entry.getCleanup().equals("SUCCEEDED") || !entry.getCopyCleanup().equals("SUCCEEDED")) observe(task);
+            }
+            inventoryCursor = page.getNextExecutionId();
+            inventoryEpoch = inventoryCursor.isEmpty() ? "" : page.getHostEpoch();
+        } catch (RuntimeException error) {
+            inventoryCursor = ""; inventoryEpoch = "";
+            LOG.warn("Execution inventory remains unresolved ({})", error.getClass().getSimpleName());
         }
     }
 
@@ -81,11 +108,13 @@ public class TestTaskCoordinator {
     }
 
     public void observe(TestTaskEntity original) {
-        if (store.claim(original)) {
+        String hostEpoch = original.dispatched() ? original.hostEpoch() : sandbox.inventory("", "").getHostEpoch();
+        if (store.claim(original, hostEpoch)) {
             // A lost response remains dispatched forever. The next observation
             // queries the same ID rather than launching a replacement container.
-            TestTaskSnapshot result = sandbox.startTest(original);
-            confirm(original, result);
+            TestTaskEntity dispatched = store.find(original.id());
+            TestTaskSnapshot result = sandbox.startTest(dispatched);
+            confirm(dispatched, result);
             return;
         }
         TestTaskEntity task = store.find(original.id());
@@ -100,6 +129,11 @@ public class TestTaskCoordinator {
             }
             return;
         }
+        // Refresh physical inventory before treating an absent registration as
+        // a never-dispatched task. Lost files can be reconstructed for cleanup.
+        String currentHost = sandbox.inventory("", "").getHostEpoch();
+        result = sandbox.task(task);
+        if (result != null) { confirm(task, result); sandbox.reconcileTask(task); return; }
         GateResponse gate = sandbox.gate(task.workspaceInstanceId());
         if (!gate.getWorkspaceInstanceId().equals(task.workspaceInstanceId())) throw new IllegalStateException("Invalid task fence identity");
         if (gate.getEpoch() <= task.gateEpoch()) {
@@ -110,7 +144,7 @@ public class TestTaskCoordinator {
         // The absence observation MUST follow the durable fence. A Start that
         // registered before it is preserved; a late old-epoch Start cannot register.
         result = sandbox.task(task);
-        if (result == null) store.notRegisteredAfterFence(task);
+        if (result == null) store.notRegisteredAfterFence(task, !currentHost.equals(task.hostEpoch()));
         else confirm(task, result);
     }
 

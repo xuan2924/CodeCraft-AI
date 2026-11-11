@@ -31,6 +31,9 @@ func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) 
 	if s.executor == nil {
 		return nil, status.Error(codes.Unavailable, "execution is not configured")
 	}
+	if request.HostEpoch != s.executor.HostEpoch() {
+		return nil, status.Error(codes.FailedPrecondition, "stale execution host generation")
+	}
 	previous, err := s.executor.Query(ctx, request.ExecutionInstanceId)
 	if err == nil {
 		i := previous.Input
@@ -64,7 +67,7 @@ func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) 
 		return nil, status.Error(codes.FailedPrecondition, "publication has no verified execution policy")
 	}
 	identity := current.Snapshot.Problem
-	input := execution.Input{ExerciseID: request.ExerciseId, TaskID: request.TaskId, ExecutionID: request.ExecutionInstanceId, WorkspaceID: request.WorkspaceInstanceId,
+	input := execution.Input{HostEpoch: request.HostEpoch, ExerciseID: request.ExerciseId, TaskID: request.TaskId, ExecutionID: request.ExecutionInstanceId, WorkspaceID: request.WorkspaceInstanceId,
 		ProblemID: identity.ProblemId, ProblemVersion: identity.Version, Revision: request.ExpectedRevision, GateEpoch: request.GateEpoch,
 		Image: identity.ExecutionImageDigest, PackageSHA256: identity.PackageSha256, Platform: identity.Platform,
 		Target: request.Target, Subpath: request.WorkspaceInstanceId + "/copy-" + request.ExecutionInstanceId + "/tree", NotAfter: time.UnixMilli(request.NotAfterUnixMillis), Limits: policy.Limits, Suite: policy.Suite, Tests: policy.Tests}
@@ -188,6 +191,38 @@ func (s *Service) StopTask(ctx context.Context, request *rpc.StopTaskRequest) (*
 	return &rpc.StopTaskResponse{Snapshot: taskSnapshot(*result)}, nil
 }
 
+// ListExecutions pages identities without buffering report/log bodies.
+func (s *Service) ListExecutions(ctx context.Context, request *rpc.ExecutionInventoryRequest) (*rpc.ExecutionInventory, error) {
+	release, err := s.enter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	release() // Engine observation must not hold the workspace write coordinator.
+	if s.executor == nil {
+		return nil, status.Error(codes.Unavailable, "execution is not configured")
+	}
+	if request.HostEpoch != "" && request.HostEpoch != s.executor.HostEpoch() {
+		return nil, status.Error(codes.FailedPrecondition, "inventory generation changed")
+	}
+	if request.Limit < 1 || request.Limit > 100 || (request.AfterExecutionId != "" && !uuid.MatchString(request.AfterExecutionId)) {
+		return nil, status.Error(codes.InvalidArgument, "invalid inventory page")
+	}
+	if request.AfterExecutionId == "" {
+		if err = s.executor.RefreshEvidence(ctx); err != nil {
+			return nil, storageError(err)
+		}
+	}
+	entries, next, err := s.executor.List(ctx, request.AfterExecutionId, int(request.Limit))
+	if err != nil {
+		return nil, storageError(err)
+	}
+	response := &rpc.ExecutionInventory{HostEpoch: s.executor.HostEpoch(), NextExecutionId: next}
+	for _, entry := range entries {
+		response.Entries = append(response.Entries, &rpc.ExecutionInventoryEntry{Task: &rpc.QueryTaskRequest{ExerciseId: entry.Identity.ExerciseID, TaskId: entry.Identity.TaskID, ExecutionInstanceId: entry.Identity.ExecutionID, WorkspaceInstanceId: entry.Identity.WorkspaceID}, State: entry.State, Quiescent: entry.Quiescent, Cleanup: entry.Cleanup, CopyCleanup: entry.CopyCleanup})
+	}
+	return response, nil
+}
+
 // QueryStop recovers the original receipt even when its write authority expired.
 func (s *Service) QueryStop(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.StopTaskResponse, error) {
 	release, err := s.enter(ctx)
@@ -221,6 +256,9 @@ func (s *Service) ReconcileTask(ctx context.Context, request *rpc.QueryTaskReque
 	snapshot, err := s.QueryTask(ctx, request)
 	if err != nil {
 		return nil, err
+	}
+	if err = s.executor.AlignRecoveredVersion(ctx, request.ExecutionInstanceId, request.ObservedStateVersion); err != nil {
+		return nil, storageError(err)
 	}
 	if err = s.executor.Recover(s.worker, request.ExecutionInstanceId, s.releaseTestCopy); err != nil {
 		return nil, storageError(err)

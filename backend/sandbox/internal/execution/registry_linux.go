@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +39,7 @@ type Runner struct {
 	volume      string
 	inputPrefix string
 	owner       string
+	epoch       string
 	lock        *os.File
 	mu          sync.Mutex
 	stateMu     sync.Mutex // Orders durable intent and result publication.
@@ -67,7 +69,21 @@ func New(ctx context.Context, docker *client.Client, root, volume, owner string)
 		lock.Close()
 		return nil, fmt.Errorf("execution registry already owned: %w", err)
 	}
-	r := &Runner{docker: docker, root: root, volume: volume, owner: owner, lock: lock, tasks: map[string]string{}, now: time.Now}
+	r := &Runner{docker: docker, root: root, volume: volume, owner: owner, lock: lock, tasks: map[string]string{}, epoch: rand.Text(), now: time.Now}
+	// Each process durably fences all previous dispatch generations before it
+	// inspects/repairs evidence or permits RPC admission.
+	if err = r.writeRegistry(".epoch", []byte(r.epoch)); err != nil {
+		lock.Close()
+		return nil, err
+	}
+	if err = r.recoverOrphans(ctx); err != nil {
+		lock.Close()
+		return nil, err
+	}
+	if err = r.repairResults(ctx); err != nil {
+		lock.Close()
+		return nil, err
+	}
 	if err = r.inventory(ctx); err != nil {
 		lock.Close()
 		return nil, err
@@ -119,7 +135,7 @@ func (r *Runner) inventory(ctx context.Context) error {
 	// Inventory needs identities only; do not retain all historical log/report bodies.
 	records := map[string]string{}
 	for _, entry := range entries {
-		if entry.Name() == ".lock" || strings.HasPrefix(entry.Name(), ".stage-") {
+		if entry.Name() == ".lock" || entry.Name() == ".epoch" || strings.HasPrefix(entry.Name(), ".stage-") || strings.HasPrefix(entry.Name(), ".corrupt-") || strings.HasSuffix(entry.Name(), ".meta") {
 			continue
 		}
 		if strings.HasSuffix(entry.Name(), ".cancel") {
@@ -315,6 +331,7 @@ func (r *Runner) persistOrdered(result Result) error {
 		return err
 	}
 	if err == nil {
+		result.CounterUncertain = previous.CounterUncertain
 		if previous.Intent != "" {
 			result.Intent = previous.Intent
 		}
@@ -343,6 +360,9 @@ func (r *Runner) persistOrdered(result Result) error {
 	appendEvents(&result, previous)
 	data, err := json.Marshal(result)
 	if err != nil {
+		return err
+	}
+	if err = r.writeRecoveryReceipt(result); err != nil {
 		return err
 	}
 	return r.writeRegistry(result.Input.ExecutionID+".json", data)

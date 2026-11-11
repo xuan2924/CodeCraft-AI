@@ -110,6 +110,31 @@ it('backs off failed recovery on a controllable clock and cancels retries on unm
   expect(attempts).toEqual([endpoint, endpoint]);
 });
 
+it('reconnects from the newest cached cursor when a recovery response arrives late', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const sources: FakeEvents[] = [];
+  class FakeEvents extends EventTarget {
+    close() {}
+    constructor(readonly url: string) { super(); sources.push(this); }
+  }
+  vi.stubGlobal('EventSource', FakeEvents);
+  let resolveSnapshot!: (response: Response) => void;
+  vi.stubGlobal('fetch', () => new Promise<Response>((resolve) => { resolveSnapshot = resolve; }));
+  const snapshot = ref<TestTask>({ ...result, state: 'RUNNING', finishedAt: null, evidence: null, quiescent: false,
+    streamId: 'browser-stream', cursor: 'opaque3', sequence: '3', firstRetainedSequence: '1', logs: [] });
+  const host = defineComponent({ setup: () => useTaskStream(snapshot, (id) => ['task', id]), template: '<p>{{ status }}</p>' });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  view = mount(host, { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
+  sources[0]!.dispatchEvent(new Event('error'));
+  await vi.advanceTimersByTimeAsync(250);
+  const completed = { ...result, streamId: 'browser-stream', cursor: 'opaque6', sequence: '6', firstRetainedSequence: '1' };
+  client.setQueryData(['task', 'task'], completed);
+  resolveSnapshot(ok({ ...snapshot.value, sequence: '4', cursor: 'opaque4' }));
+  await flushPromises(); await flushPromises();
+  expect(client.getQueryData<TestTask>(['task', 'task'])?.state).toBe('PASSED');
+  expect(sources.at(-1)?.url).toContain('after=opaque6');
+});
+
 it('stops only on explicit action and retains the original stop key after a lost response', async () => {
   const keys: string[] = [];
   const running = { ...result, state: 'RUNNING', finishedAt: null, quiescent: false, evidence: null, exitCode: null, logs: [] };
@@ -135,6 +160,44 @@ it('stops only on explicit action and retains the original stop key after a lost
   await flushPromises();
   expect(keys).toHaveLength(2); expect(keys[0]).toBe(keys[1]);
   expect(view.text()).toContain('正在停止');
+});
+
+it('does not replace a terminal stream snapshot with a delayed stop response', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const sources: EventTarget[] = [];
+  class FakeEvents extends EventTarget {
+    close() {}
+    constructor() { super(); sources.push(this); }
+  }
+  vi.stubGlobal('EventSource', FakeEvents);
+  const running: TestTask = { ...result, state: 'RUNNING', finishedAt: null, quiescent: false, evidence: null,
+    exitCode: null, logs: [], streamId: 'browser-stream', cursor: 'opaque3', sequence: '3', firstRetainedSequence: '1' };
+  const stopped: TestTask = { ...running, state: 'STOPPED', reason: 'user_stop', quiescent: true,
+    finishedAt: result.finishedAt, cursor: 'opaque5', sequence: '5' };
+  let complete = false;
+  let resolveStop!: (response: Response) => void;
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (path, options) => {
+    if (String(path) === '/api/auth/csrf') return ok({ token: 'csrf' });
+    if (options?.method === 'POST') return new Promise<Response>((resolve) => { resolveStop = resolve; });
+    const snapshot = complete ? stopped : running;
+    return ok(String(path).endsWith('/tasks') ? [snapshot] : snapshot);
+  }));
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  view = mount(WorkspaceTests, { props: { owner: 'owner', exercise, credential: 'credential' }, global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
+  await flushPromises(); await flushPromises();
+  await view.findAll('button').find((button) => button.text() === '停止任务')!.trigger('click');
+  await flushPromises();
+  complete = true;
+  sources[0]!.dispatchEvent(new MessageEvent('task_result', { lastEventId: 'opaque4', data: JSON.stringify({
+    schemaVersion: 1, taskId: 'task', executionInstanceId: 'execution', streamId: 'browser-stream', sequence: '4',
+    type: 'task_result', occurredAt: '2026-11-10T00:00:05Z', payload: { state: 'STOPPED', reason: 'user_stop' } }) }));
+  await vi.advanceTimersByTimeAsync(100);
+  await flushPromises(); await flushPromises();
+  expect(view.text()).toContain('已停止');
+  resolveStop(ok({ ...running, state: 'STOPPING', cursor: 'opaque4', sequence: '4' }));
+  await flushPromises(); await flushPromises();
+  expect(view.text()).toContain('已停止');
+  expect(client.getQueryData<TestTask>(['workspace', 'owner', 'tests', 'instance', 'detail', 'task'])?.state).toBe('STOPPED');
 });
 
 it('retains the original test key and revision after an unknown response without automatic retry', async () => {

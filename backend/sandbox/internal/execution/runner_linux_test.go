@@ -400,10 +400,20 @@ func TestRestrictedExecutionWorkerCancellationAndCapacity(t *testing.T) {
 	}
 }
 
-func TestRestrictedExecutionProcessDeathRetainsSlot(t *testing.T) { processDeathRecovery(t, false) }
-func TestRecoveryDoesNotRenewExpiredRuntime(t *testing.T)         { processDeathRecovery(t, true) }
+func TestRestrictedExecutionProcessDeathRetainsSlot(t *testing.T) {
+	processDeathRecovery(t, false, "")
+}
+func TestRecoveryDoesNotRenewExpiredRuntime(t *testing.T) { processDeathRecovery(t, true, "") }
+func TestRecoveryFencesMissingRegistration(t *testing.T)  { processDeathRecovery(t, false, "primary") }
 
-func processDeathRecovery(t *testing.T, expired bool) {
+func TestRecoveryUsesOwnedContainerWhenRegistryReceiptsAreLost(t *testing.T) {
+	processDeathRecovery(t, false, "both")
+}
+func TestRecoveryQuarantinesCorruptRegistration(t *testing.T) {
+	processDeathRecovery(t, false, "corrupt")
+}
+
+func processDeathRecovery(t *testing.T, expired bool, lost string) {
 	source, _ := os.ReadFile("/fixture/reference/src/main/java/interview/CartTotal.java")
 	runner, input, docker, root := fixture(t, string(source))
 	if expired {
@@ -441,6 +451,21 @@ func processDeathRecovery(t *testing.T, expired bool) {
 	_ = child.Wait()
 	if !ready || killErr != nil {
 		t.Fatalf("crash fixture never reached running registration: ready=%v kill=%v scan=%v output=%v", ready, killErr, scanner.Err(), childOutput)
+	}
+	if lost != "" {
+		if err := os.Remove(filepath.Join(root, input.ExecutionID+".json")); err != nil {
+			t.Fatal(err)
+		}
+		if lost == "both" {
+			if err := os.Remove(filepath.Join(root, input.ExecutionID+".meta")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if lost == "corrupt" {
+			if err := os.WriteFile(filepath.Join(root, input.ExecutionID+".json"), []byte("{broken"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	restarted, err := execution.New(ctx, docker, root, os.Getenv("CODECRAFT_EXECUTION_VOLUME"), strings.TrimPrefix(filepath.Base(root), "registry-"))
 	if err != nil {
@@ -486,11 +511,42 @@ func processDeathRecovery(t *testing.T, expired bool) {
 	restarted.Wait()
 	recovered, err := restarted.Query(ctx, input.ExecutionID)
 	want := "PASSED"
+	if lost != "" {
+		want = "INTERRUPTED"
+	}
 	if expired {
 		want = "TIMED_OUT"
 	}
 	if err != nil || recovered.State != want || !recovered.Quiescent || recovered.Cleanup != "SUCCEEDED" || recovered.ContainerID != observed.ContainerID || !recovered.StartedAt.Equal(observed.StartedAt) {
 		t.Fatalf("recovery must observe the original execution and reclaim it: state=%s reason=%s error=%v", recovered.State, recovered.Reason, err)
+	}
+}
+
+func TestRestartAdvancesHostFenceBeforeAdmission(t *testing.T) {
+	source, _ := os.ReadFile("/fixture/reference/src/main/java/interview/CartTotal.java")
+	runner, input, docker, root := fixture(t, string(source))
+	old := runner.HostEpoch()
+	if err := runner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := execution.New(context.Background(), docker, root, os.Getenv("CODECRAFT_EXECUTION_VOLUME"), strings.TrimPrefix(filepath.Base(root), "registry-"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if restarted.HostEpoch() == old || restarted.HostEpoch() == "" {
+		t.Fatal("host generation reused")
+	}
+	input.HostEpoch = old
+	if _, err = restarted.Run(context.Background(), input); !errors.Is(err, execution.ErrConflict) {
+		t.Fatalf("delayed old-host dispatch admitted: %v", err)
+	}
+	if _, err = restarted.Query(context.Background(), input.ExecutionID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old dispatch created registration: %v", err)
+	}
+	entries, next, err := restarted.List(context.Background(), "", 1)
+	if err != nil || len(entries) != 0 || next != "" {
+		t.Fatalf("unexpected inventory after rejected dispatch: %v", err)
 	}
 }
 

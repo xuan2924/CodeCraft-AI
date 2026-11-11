@@ -23,8 +23,7 @@ const detail = useQuery({ queryKey: [...scope, 'detail', chosen], enabled: compu
     const id = chosen.value;
     const snapshot = await api.testTask(exerciseId, workspaceId, id, signal);
     const current = client.getQueryData<api.TestTask>([...scope, 'detail', id]);
-    return current?.streamId && current.streamId === snapshot.streamId && current.sequence && snapshot.sequence
-      && BigInt(current.sequence) > BigInt(snapshot.sequence) ? current : snapshot;
+    return api.latestTaskSnapshot(current, snapshot);
   }, retry: false, gcTime: 0,
   refetchInterval: (query) => query.state.data?.cursor || (query.state.data?.quiescent && query.state.data.copyCleanup !== 'PENDING') ? false : 1000 });
 const stream = useTaskStream(detail.data, (id) => [...scope, 'detail', id]);
@@ -46,7 +45,7 @@ async function dispatch(input: { key: string; revision: string }) {
     if (disposed) return;
     unknown.value = null;
     chosen.value = result.taskId;
-    client.setQueryData([...scope, 'detail', result.taskId], result);
+    client.setQueryData<api.TestTask>([...scope, 'detail', result.taskId], (current) => api.latestTaskSnapshot(current, result));
     client.setQueryData<api.TestTask[]>(scope, (old) => [result, ...(old ?? []).filter((item) => item.taskId !== result.taskId)].slice(0, 20));
     await client.invalidateQueries({ queryKey: scope, exact: true });
   } catch (failure) {
@@ -65,7 +64,7 @@ async function stop(input = stopUnknown.value ?? { task: chosen.value, key: glob
     stopUnknown.value = null;
     await client.cancelQueries({ queryKey: [...scope, 'detail', input.task], exact: true });
     if (disposed) return;
-    client.setQueryData([...scope, 'detail', input.task], result);
+    client.setQueryData<api.TestTask>([...scope, 'detail', input.task], (current) => api.latestTaskSnapshot(current, result));
     await client.invalidateQueries({ queryKey: scope, exact: true });
   } catch (failure) {
     if (disposed) return;
