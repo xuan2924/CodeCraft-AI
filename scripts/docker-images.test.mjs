@@ -1,15 +1,53 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import * as fs from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { root } from './process.mjs';
 import { imageTag } from './docker-images.mjs';
-import { cleanupPlan, publicationImageIds, validateCurrentReference } from './docker-cleanup-policy.mjs';
-import { containerInputs } from './container-inputs.mjs';
+import { cleanupPlan, publicationImageIds, validateCurrentReference, containerPublicationPath } from './docker-cleanup-policy.mjs';
+import { containerInputs, persistContainerInputs } from './container-inputs.mjs';
 import { readPublicationInputs, publicationInputsSha256 } from './publication-inputs.mjs';
 import { validatePackage } from './problem-contract.mjs';
 
 const id = (character) => `sha256:${character.repeat(64)}`;
 const tag = (repo, character) => `${repo}:local-${character.repeat(64)}`;
 const image = (repo, character) => ({ Id: id(character), RepoTags: [tag(repo, character)], RepoDigests: [] });
+
+test('failed snapshot write stays unpublished and a retry succeeds', async (t) => {
+  const parent = await fs.mkdtemp(join(tmpdir(), 'image-input-test-'));
+  t.after(() => fs.rm(parent, { recursive: true, force: true }));
+  const files = containerInputs(null);
+  const failure = new Error('injected disk failure');
+  await assert.rejects(persistContainerInputs(files, parent, { ...fs, writeFile: async (path) => {
+    await fs.writeFile(path, 'partial');
+    throw failure;
+  } }), /injected disk failure/);
+  assert.deepEqual(await fs.readdir(parent), [], 'failed publication must not expose incomplete snapshots');
+  const result = await persistContainerInputs(files, parent);
+  assert.equal(await fs.readFile(join(result.CONTAINER_INPUTS_DIRECTORY, 'publication.json'), 'utf8'), '{}');
+});
+
+test('concurrent snapshot preparation returns the same complete directory', async (t) => {
+  const parent = await fs.mkdtemp(join(tmpdir(), 'image-input-test-'));
+  t.after(() => fs.rm(parent, { recursive: true, force: true }));
+  const files = containerInputs(null);
+  const prepared = await Promise.all(Array.from({ length: 4 }, () => persistContainerInputs(files, parent)));
+  assert.equal(new Set(prepared.map((value) => value.CONTAINER_INPUTS_DIRECTORY)).size, 1);
+  assert.equal((await fs.readdir(parent)).length, 1);
+  for (const [name, content] of Object.entries(files)) {
+    assert.equal(await fs.readFile(join(prepared[0].CONTAINER_INPUTS_DIRECTORY, name), 'utf8'), content);
+  }
+});
+
+test('container publication discovery survives removal of current image tags', () => {
+  assert.equal(containerPublicationPath({ Config: { Image: 'codecraft/java:local-old' } }, { RepoTags: [] }), '/app/publication.json');
+  assert.equal(containerPublicationPath({ Config: { Image: id('a') }, Mounts: [{ Destination: '/publications.json' }] }, { RepoTags: ['other:alias'] }), '/publications.json');
+  assert.equal(containerPublicationPath({ Config: { Image: id('a'), Labels: { 'com.docker.compose.service': 'sandbox', 'com.docker.compose.project.working_dir': root } } }, { RepoTags: [] }), '/publications.json');
+  assert.equal(containerPublicationPath({ Config: { Image: 'postgres:17' } }, { RepoTags: ['postgres:17'] }), null);
+  assert.equal(containerPublicationPath({ Config: { Image: id('a'), Labels: { 'com.docker.compose.service': 'sandbox', 'com.docker.compose.project.working_dir': '/another/project' } } }, { RepoTags: [] }), null);
+});
 
 test('image keys are deterministic, ordered and sensitive to build artifacts', () => {
   const first = imageTag('codecraft/java', ['Dockerfile', 'jar']);

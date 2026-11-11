@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import * as fs from 'node:fs/promises';
 import { join } from 'node:path';
 import { root } from './process.mjs';
 import { verifyPublicationInputs } from './publication-inputs.mjs';
@@ -18,17 +18,36 @@ export function containerInputs(publication) {
 // Content-addressed, read-only runtime snapshots outlive stopped containers.
 // Only validated publication data enters this directory, never .env or repository files.
 export async function prepareContainerInputs(publicationFile) {
-  const files = containerInputs(publicationFile ? JSON.parse(await readFile(publicationFile, 'utf8')) : null);
+  const files = containerInputs(publicationFile ? JSON.parse(await fs.readFile(publicationFile, 'utf8')) : null);
+  return persistContainerInputs(files);
+}
+
+export async function persistContainerInputs(files, parent = join(root, '.runtime', 'container-inputs'), io = fs) {
   const digest = createHash('sha256').update(JSON.stringify(files)).digest('hex');
-  const directory = join(root, '.runtime', 'container-inputs', digest);
-  await mkdir(directory, { recursive: true });
-  for (const [name, content] of Object.entries(files)) {
-    const path = join(directory, name);
-    try { await writeFile(path, content, { flag: 'wx', mode: 0o444 }); }
-    catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      if (await readFile(path, 'utf8') !== content) throw new Error('Runtime input snapshot differs from its content hash');
+  const directory = join(parent, digest);
+  await io.mkdir(parent, { recursive: true });
+  const staging = await io.mkdtemp(join(parent, '.stage-'));
+  let failure;
+  try {
+    for (const [name, content] of Object.entries(files)) {
+      await io.writeFile(join(staging, name), content, { flag: 'wx', mode: 0o444 });
     }
+    try { await io.rename(staging, directory); }
+    catch (error) {
+      // Another caller may have published this exact snapshot first. Windows
+      // and POSIX report different rename errors for an existing directory.
+      for (const [name, content] of Object.entries(files)) {
+        let existing;
+        try { existing = await io.readFile(join(directory, name), 'utf8'); }
+        catch { throw error; }
+        if (existing !== content) throw new Error('Runtime input snapshot differs from its content hash', { cause: error });
+      }
+    }
+  } catch (error) { failure = error; }
+  finally {
+    try { await io.rm(staging, { recursive: true, force: true }); }
+    catch (error) { failure = failure ? new AggregateError([failure, error], 'Snapshot publication and cleanup failed') : error; }
   }
+  if (failure) throw failure;
   return { CONTAINER_INPUTS_DIRECTORY: directory.replaceAll('\\', '/') };
 }

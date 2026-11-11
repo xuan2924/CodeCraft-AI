@@ -1,4 +1,5 @@
 import { imageRepositories } from './docker-images.mjs';
+import { root } from './process.mjs';
 
 const legacyTag = /^codecraft\/(?:java|sandbox):local-[0-9a-f]{24}$|^codecraft\/cart-total:(?:(?:validation|execution-test)-[0-9a-f]{12}|contract-red)$/;
 const currentTag = /^codecraft\/(?:java|sandbox|cart-total):local-[0-9a-f]{64}$/;
@@ -17,6 +18,21 @@ export function cleanupPlan(images, protectedIds, protectedTags = new Set()) {
     }
   }
   return plan;
+}
+
+export function containerPublicationPath(container, image) {
+  const references = [container.Config?.Image ?? '', ...(image.RepoTags ?? [])];
+  const mounts = container.Mounts ?? [];
+  const labels = container.Config?.Labels ?? {};
+  const workingDirectory = (labels['com.docker.compose.project.working_dir'] ?? '').replaceAll('\\', '/').replace(/\/$/, '');
+  const ownCompose = workingDirectory === root.replaceAll('\\', '/').replace(/\/$/, '');
+  if (references.some((tag) => tag.startsWith('codecraft/java:'))
+    || mounts.some((mount) => mount.Destination === '/app/publication.json')
+    || (ownCompose && labels['com.docker.compose.service'] === 'java')) return '/app/publication.json';
+  if (references.some((tag) => tag.startsWith('codecraft/sandbox:'))
+    || mounts.some((mount) => mount.Destination === '/publications.json')
+    || (ownCompose && labels['com.docker.compose.service'] === 'sandbox')) return '/publications.json';
+  return null;
 }
 
 export function publicationImageIds(value) {

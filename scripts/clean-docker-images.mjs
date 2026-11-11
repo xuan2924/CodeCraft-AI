@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { docker, currentImageDirectory } from './docker-images.mjs';
-import { cleanupPlan, publicationImageIds, validateCurrentReference } from './docker-cleanup-policy.mjs';
+import { cleanupPlan, publicationImageIds, validateCurrentReference, containerPublicationPath } from './docker-cleanup-policy.mjs';
 import { loadConfig } from './local-config.mjs';
 
 const args = process.argv.slice(2);
@@ -42,12 +42,10 @@ try {
     // Existing containers may still have the old baked-in publications. Include
     // stopped containers, and fail closed if an expected publication cannot be read.
     const image = inspect('image', [container.Image])[0];
-    const tags = image.RepoTags ?? [];
-    const java = tags.some((tag) => tag.startsWith('codecraft/java:'));
-    const sandbox = tags.some((tag) => tag.startsWith('codecraft/sandbox:'));
-    if (!java && !sandbox) continue;
+    const publicationPath = containerPublicationPath(container, image);
+    if (!publicationPath) continue;
     const file = join(scratch, `${container.Id}.json`);
-    docker(['cp', `${container.Id}:${java ? '/app/publication.json' : '/publications.json'}`, file]);
+    docker(['cp', `${container.Id}:${publicationPath}`, file]);
     for (const id of publicationImageIds(JSON.parse(await readFile(file, 'utf8')))) protectedIds.add(id);
   }
 } finally { await rm(scratch, { recursive: true, force: true }); }
