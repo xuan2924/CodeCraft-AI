@@ -6,7 +6,7 @@
 
 - 新迁移 V13 移除物理外键，历史迁移校验和不改；关联存在性/归属继续由 Service 的事务校验负责。保留唯一性、主键、非空、CHECK 和索引。
 - PR 并行运行 quick 与 smoke；heavy 只在主分支 push、nightly 或手动触发执行。
-- `verify.mjs --quick` 为默认，30 秒热缓存预算并终止超时的自有进程树；无 Docker、race 或完整 Spring HTTP IT。首次依赖下载和编译属于明确的准备步骤。
+- `verify.mjs --quick` 为默认，30 秒热缓存性能目标（超过只警告），默认 60 秒硬超时并终止超时的自有进程树；`CODECRAFT_QUICK_TIMEOUT_SECONDS` 可调整硬超时为 31–600 秒；无 Docker、race 或完整 Spring HTTP IT。首次依赖下载和编译属于明确的准备步骤。
 - `--all` / `--heavy` 执行快速层、真实 HTTP IT、Docker、race、浏览器存储集成及完整 tracer。重型 Node 清理故障测试独立命名，不进入 8 项快速契约入口。
 - 三条浏览器黄金路径：管理员登录/改密/邀请/退出；输入/刷新/草稿恢复；保存后运行/结果/刷新恢复。工作区用例各自通过临时 fixture API Seed 身份，并通过正式 API 创建工作区，不依赖另一条测试。
 - fixture API 只在 tracer 进程中启用，使用随机密钥、loopback 端口及受检查的临时库；无生产测试路由，不读取开发 `.env`，不修改生产登录限流。测试数据由临时数据库/卷整体销毁。

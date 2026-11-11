@@ -78,7 +78,7 @@ node scripts/verify.mjs          # 默认 --quick，无 Docker / race / 全量 I
 node scripts/verify.mjs --quick
 ```
 
-并行运行 Node 快速契约、Java Checkstyle/编译/轻量测试、Go 快速行为/编译/vet、Vue 类型/Lint/单元组件测试。热缓存预算 30 秒，超出会失败并显示各组耗时；首次依赖下载、首次编译单独准备。原真实 HTTP `StatusHttpTest` 已归入 `StatusHttpIT`，不再启动整个 Spring 应用阻塞快速循环。
+并行运行 Node 快速契约、Java Checkstyle/编译/轻量测试、Go 快速行为/编译/vet、Vue 类型/Lint/单元组件测试。热缓存性能目标为 30 秒，超过只警告；默认硬超时为 60 秒，届时终止自有进程树并失败。可通过 `CODECRAFT_QUICK_TIMEOUT_SECONDS=90` 调整本机或 CI 的硬超时（整数 31–600 秒），不改变 30 秒性能目标，也不自动随历史慢运行放宽。首次依赖下载、首次编译单独准备。原真实 HTTP `StatusHttpTest` 已归入 `StatusHttpIT`，不再启动整个 Spring 应用阻塞快速循环。
 
 定向反馈：
 

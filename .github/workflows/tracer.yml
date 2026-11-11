@@ -41,7 +41,7 @@ jobs:
       - run: ./scripts/generate-proto.sh
       - run: git diff --exit-code -- backend/sandbox/internal/gen
       # Dependency download/first compilation is explicit setup, not a hidden part
-      # of the 30-second warm-cache developer feedback budget.
+      # of the 30-second warm-cache feedback target (60-second default hard timeout).
       - name: Prepare Java and Go caches
         run: |
           cd backend/server && ./mvnw -B -ntp -DskipTests test-compile
