@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { root, run } from './process.mjs';
 import { buildSandboxImage } from './build-sandbox.mjs';
 import { validatePackage } from './problem-contract.mjs';
+import { buildProblemImage } from './docker-images.mjs';
 
 // Trusted SDK test process gets Docker management access. User execution
 // containers are created by the adapter and NEVER receive this socket.
@@ -16,8 +17,7 @@ let volumeCreated = false;
 let failure;
 try {
   const { packageSha256 } = await validatePackage(fixture);
-  const tag = `codecraft/cart-total:execution-test-${packageSha256.slice(0, 12)}`;
-  run('docker', ['build', '--platform', 'linux/amd64', '-t', tag, fixture]);
+  const tag = await buildProblemImage(fixture, packageSha256);
   const image = run('docker', ['image', 'inspect', '--format', '{{.Id}}', tag], { encoding: 'utf8', stdio: 'pipe' }).stdout.trim();
   const binary = join(directory, 'execution.test');
   run('go', ['test', '-c', '-o', binary, './internal/execution'], {

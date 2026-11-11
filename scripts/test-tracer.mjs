@@ -10,6 +10,7 @@ import { root, run, windows } from './process.mjs';
 import { serviceEnv } from './local-config.mjs';
 import { buildSandboxImage } from './build-sandbox.mjs';
 import { buildJavaImage, javaComposeEnv } from './build-java.mjs';
+import { prepareContainerInputs } from './container-inputs.mjs';
 import { linuxJavaTests } from './linux-java-tests.mjs';
 import { browserFixtures } from './test-support/browser-fixtures.mjs';
 
@@ -162,7 +163,9 @@ function inspectJava() {
   assert.equal(info.HostConfig.ReadonlyRootfs, true);
   assert(info.HostConfig.CapDrop.includes('ALL'));
   assert(info.HostConfig.SecurityOpt.some((value) => value.startsWith('no-new-privileges')));
-  assert(info.Mounts.every((mount) => mount.Type === 'tmpfs' && mount.Destination === '/tmp'), 'Java must not receive source, workspace or Docker socket mounts');
+  assert(info.Mounts.some((mount) => mount.Type === 'bind' && mount.Destination === '/app/publication.json' && !mount.RW));
+  assert(info.Mounts.every((mount) => (mount.Type === 'tmpfs' && mount.Destination === '/tmp')
+    || (mount.Type === 'bind' && mount.Destination === '/app/publication.json' && !mount.RW)), 'Java receives only its read-only publication and tmpfs');
   assert.equal(info.HostConfig.PortBindings['8080/tcp'][0].HostIp, '127.0.0.1');
 }
 function inspectSandbox() {
@@ -173,7 +176,8 @@ function inspectSandbox() {
   assert.equal(info.HostConfig.ReadonlyRootfs, true);
   assert(info.HostConfig.CapDrop.includes('ALL'));
   assert(info.HostConfig.SecurityOpt.some((value) => value.startsWith('no-new-privileges')));
-  assert.equal(info.Mounts.length, 2, 'trusted coordinator gets private data and Docker socket only');
+  assert.equal(info.Mounts.length, 3, 'trusted coordinator gets private data, Docker socket and read-only publication');
+  assert(info.Mounts.some((mount) => mount.Type === 'bind' && mount.Destination === '/publications.json' && !mount.RW));
   assert(info.Mounts.some((mount) => mount.Type === 'volume' && mount.Destination === '/var/lib/codecraft'));
   assert(info.Mounts.some((mount) => mount.Type === 'bind' && mount.Destination === '/docker.sock'));
   assert.equal(info.HostConfig.PortBindings['9090/tcp'][0].HostIp, '127.0.0.1');
@@ -188,9 +192,10 @@ try {
   run('docker', ['info'], { stdio: 'ignore' });
   if (workspaceMode) run(process.execPath, ['scripts/publish-problem.mjs', 'problems/cart-total/1.0.1',
     join(directory, 'publication-evidence'), values.PROBLEM_PUBLICATION_FILE]);
-  composeEnv.SANDBOX_IMAGE = await buildSandboxImage(values.PROBLEM_PUBLICATION_FILE);
+  Object.assign(composeEnv, await prepareContainerInputs(values.PROBLEM_PUBLICATION_FILE));
+  composeEnv.SANDBOX_IMAGE = await buildSandboxImage();
   composeEnv.SANDBOX_PORT = values.SANDBOX_PORT;
-  composeEnv.JAVA_IMAGE = await buildJavaImage(values.PROBLEM_PUBLICATION_FILE);
+  composeEnv.JAVA_IMAGE = await buildJavaImage();
   Object.assign(composeEnv, javaComposeEnv(values));
   // Fail fast if built artifacts or matching browser are missing; see README setup.
   compose(['up', '-d', '--wait', 'postgres']);

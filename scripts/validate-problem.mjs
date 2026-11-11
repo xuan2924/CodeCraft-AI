@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validatePackage } from './problem-contract.mjs';
+import { buildProblemImage } from './docker-images.mjs';
 import { publicationInputsSha256, readPublicationInputs } from './publication-inputs.mjs';
 
 if (process.argv.length !== 2 && process.argv.length !== 4) {
@@ -18,7 +19,6 @@ await mkdir(output, { recursive: true });
 await rm(join(output, 'receipt.json'), { force: true });
 const { manifest, packageSha256 } = await validatePackage(packageDirectory);
 const limits = manifest.runtime;
-const tag = `codecraft/cart-total:validation-${packageSha256.slice(0, 12)}`;
 const runId = `cart-validation-${process.pid}-${Date.now()}`;
 const scratch = await mkdtemp(join(tmpdir(), 'cart-validation-'));
 const containers = new Set();
@@ -101,9 +101,7 @@ try {
     const snapshot = join(scratch, 'package');
     await cp(packageDirectory, snapshot, { recursive: true });
     assert.equal((await validatePackage(snapshot)).packageSha256, packageSha256);
-    docker(['build', '--platform', limits.platform, '-t', tag, snapshot], {
-        timeout: 240000, stdio: 'inherit',
-    });
+    const tag = await buildProblemImage(snapshot, packageSha256);
     imageId = docker(['image', 'inspect', '--format', '{{.Id}}', tag]);
     const environment = JSON.parse(docker(['info', '--format', '{{json .}}'], { maxBuffer: 4 * 1024 * 1024 }));
     const probe = await run('isolation', `set -eu
