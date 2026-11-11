@@ -1,6 +1,6 @@
 # CodeCraft-AI
 
-AI 结对编程面试平台。目前提供 **本机工程底座**：服务状态、受邀账号闭环，以及经过验证的首题发布、独立工作区准备/只读浏览、开始与准备放弃。编辑、测试任务、AI 和完整面试流程尚未接入；Go 在线不代表执行环境已就绪。
+AI 结对编程面试平台。目前提供 **本机工程底座**：服务状态、受邀账号、首题发布、独立工作区、编辑保存/文件操作/草稿，以及稳定版本隔离测试。实时日志、停止与恢复（#14）仍在整票收口；结束冻结与保留删除按 #15/#16 交付。AI 和完整面试流程不在当前已交付范围；Go 在线不代表执行环境已就绪。
 
 ## 环境
 
@@ -8,7 +8,7 @@ AI 结对编程面试平台。目前提供 **本机工程底座**：服务状态
 - Maven **3.9.15** 由已提交 Wrapper 下载并校验，不要求全局 Maven。
 - Docker Engine / Docker Desktop（Linux containers）及 Docker Compose；无需安装 PostgreSQL。
 - 自动生成入口支持 Windows x64、Linux x64。其他平台须先核对 protoc 二进制和 SHA-256，不从 PATH 随意选用 protoc。
-- 全部下载发生在开发/构建阶段；维护者发布验证会运行首题代码，浏览器工作区尚不提供执行入口。
+- 全部下载发生在开发/构建阶段；维护者发布验证会运行首题代码，浏览器测试入口依赖有效题目发布产物与执行环境。
 
 ## 初始化与本地启动
 
@@ -46,7 +46,7 @@ node scripts/dev.mjs web
 访问 **http://localhost:5173**（若修改 `WEB_PORT`，使用对应端口）。浏览器只通过 Vite 代理访问 Java。Java 在容器内监听 `0.0.0.0:8080`，通过私网访问 `postgres:5432` 和 `sandbox:9090`；其宿主 HTTP 映射、Vite 及 Go/PostgreSQL 的宿主映射端口均绑定 `127.0.0.1`，**不得改为公网/局域网入口或为其配置公开反向代理**。此页面免登录的前提仅是本机可信联调，不是未来产品鉴权方案。
 
 - Java 使用固定摘要的 Java 21/Maven 基础镜像，非 root、只读根文件系统，只提供 `/tmp` 临时空间；不挂载源代码、Go 工作区或 Docker socket。修改 Java 代码后重新运行 `node scripts/dev.mjs java` 构建并替换容器，当前未提供热更新/远程调试端口。
-- Go 启动脚本构建 Linux 静态二进制与本地镜像，通过 Compose 启动非 root 服务。私有数据使用 `sandbox-data` 具名卷；新容器可重新挂载，进程锁拒绝同时启动第二个存储所有者。未配置题目发布产物时仅提供在线查询；配置后提供初始工作区存储，不宣称测试执行服务已交付。
+- Go 启动脚本构建 Linux 静态二进制与本地镜像，通过 Compose 启动非 root 服务。私有数据使用 `sandbox-data` 具名卷；新容器可重新挂载，进程锁拒绝同时启动第二个存储所有者。未配置题目发布产物时仅提供在线查询；配置后提供工作区存储及受控测试执行；执行条件以发布产物和实际配置为准。
 - 启动脚本显式读取根目录 `.env`，只按服务传递白名单键；前端与 Go 不接收数据库/管理员凭证，不打印配置值。Spring Boot、Go 本身不会自动读取 `.env`。
 - Java 启动时 Flyway 在空库创建 `codecraft` schema；重复启动校验已发布迁移。数据库不可达、迁移失败或校验失败会阻止启动。不 baseline、clean 或忽略校验。
 - 状态查询通过 MyBatis 实际检查数据库中的 schema，并通过有 1 秒 deadline 的真实 gRPC 检查 Go。数据库查询/连接也有超时；无后台自动重试。
@@ -63,7 +63,7 @@ node scripts/dev.mjs web
 
 在未跟踪 `.env` 中按 `.env.example` 设置 `PROBLEM_PUBLICATION_FILE` 和随机 `SANDBOX_RPC_KEY`，重新启动 Go/Java。密钥只用于内部 RPC，不打印或发送给浏览器。发布产物不能手工改内容后沿用旧验证回执；修改题目需重新验证、发布新版本。
 
-登录并完成强制改密后访问 `/workspace`：选题、等待准备、查看需求与只读文件；开始时由服务器固定截止时间。准备失败可用新实例重试或放弃，READY 也可放弃。开始后的收尾留给后续任务，不伪造 AI 检查、编辑或测试成功。
+登录并完成强制改密后访问 `/workspace`：选题、等待准备、查看需求与文件；获取单页面操作权并开始后，可编辑保存、管理文件/草稿及运行已保存版本的隔离测试。开始时由服务器固定截止时间；准备失败可用新实例重试或放弃，READY 也可放弃。结束收尾按 #15 实施，不伪造 AI 检查或未实现能力的成功。
 
 密码重置、改密或退出遇到未确认准备时，先持久化撤销意图、关闭新副作用准入，再在数据库事务外确认 Go 栅栏。Go 不可用返回 202 和可查询操作；页面提示尚未完成，使用原操作重试，不自动重放密码请求。已完成文件保留；过期准备不再发布新文件。
 
@@ -84,7 +84,9 @@ node scripts/clean-docker-images.mjs --keep IMAGE --publication FILE
 
 ## 验证
 
-当前分层、风险与实测结果见 [测试分层整改记录](docs/validation/testing-layers.md)。
+当前分层与历史实测结果见 [测试分层整改记录](docs/validation/testing-layers.md)。默认以本地 L1 和代码审查收口；核心单测反馈回路控制在 10 秒内，quick 的多语言汇总耗时另计。额外真实链路与故障验证只按明确安排或具体问题最小执行，不逐 issue/PR 跑重型矩阵，也不自动生成 QA 欠账。
+
+当前没有远程仓库；GitHub Actions 仅预置配置，不作为当前 Dev Done 前提。未来启用后，PR/主分支 push 运行 quick 与有限黄金路径 smoke；heavy 仅手动明确选择，无自动合并后/nightly 重型运行。收费模型验证不进入默认 CI。
 
 ### 快速反馈
 
@@ -117,7 +119,7 @@ npm run lint
 npm run build
 ```
 
-### 全套正式工程检查
+### 按需全套工程检查
 
 先完成 `npm ci` 和契约生成，然后在根目录运行：
 
@@ -171,7 +173,7 @@ cd ..
 node scripts/test-tracer.mjs --smoke --identity --workspace
 # 单例独立运行（另一个工作区用例无需先成功）
 node scripts/test-tracer.mjs --smoke --workspace "--browser-test=save and run"
-# PR 外完整探针
+# 显式按需完整探针（不随每票或 PR 自动运行）
 node scripts/test-tracer.mjs
 # 账号 REST/PostgreSQL 边界、真实浏览器闭环及会话跨重启
 node scripts/test-tracer.mjs --identity
@@ -202,16 +204,16 @@ Java 集成测试使用已有 `~/.m2/repository` 的只读挂载，以离线 Mav
 
 脚本还检查 Go 非 root、只读根、私有具名卷、宿主 loopback 端口与无数据库/管理员凭证。浏览器同时检查响应形状、HTTP 200/503、`no-store`、键盘重试和窄屏。没有替换浏览器 API。清理仅针对该次随机项目的进程、容器和卷；删除临时凭证文件，日志保存在忽略的 `.runtime/`。Docker/浏览器/依赖缺失均非零失败，不能算作通过。若终端被强制关闭，检查 `.runtime/cc-tracer-*` 对应的测试项目并只清理该项目，勿清理开发资源。
 
-`--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器保留管理员改密、邀请及退出黄金路径；重置、越权和时间边界由 Java 身份 IT 覆盖，并验证 Java 重启后数据库会话仍可用。失败保留 trace、截图、录屏及 HTML 报告，各次运行使用独立输出目录。这些产物只允许来自已销毁的临时测试凭证；CI 白名单上传诊断、保留 3 天，不上传 `.env`、数据库或开发凭证。不能把跳过的测试算作通过。`--workspace` 还覆盖选题/准备/只读浏览/开始/放弃、跨用户拒绝、Go 暂停期间的撤销恢复；授权到期使用可控 Clock 快进，以及 16 个损坏清理实例不阻塞新准备。另在独立测试库启动子 JVM：收到 Go 真实提交回执后立即 halt，重启后只用 REST GET 确认原操作/内容/修订，任何重新 Apply 都使测试失败。验证边界见 [#09 记录](docs/validation/problem-workspace-09.md)和 [#10–#12 记录](docs/validation/workspace-write-browser-10-12.md)。
+`--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器保留管理员改密、邀请及退出黄金路径；重置、越权和时间边界由 Java 身份 IT 覆盖，并验证 Java 重启后数据库会话仍可用。失败保留 trace、截图、录屏及 HTML 报告，各次运行使用独立输出目录。这些产物只允许来自已销毁的临时测试凭证；预置 CI 配置限定白名单上传诊断、保留 3 天，不上传 `.env`、数据库或开发凭证。不能把跳过的测试算作通过。`--workspace` 还覆盖选题/准备/只读浏览/开始/放弃、跨用户拒绝、Go 暂停期间的撤销恢复；授权到期使用可控 Clock 快进，以及 16 个损坏清理实例不阻塞新准备。另在独立测试库启动子 JVM：收到 Go 真实提交回执后立即 halt，重启后只用 REST GET 确认原操作/内容/修订，任何重新 Apply 都使测试失败。验证边界见 [#09 记录](docs/validation/problem-workspace-09.md)和 [#10–#12 记录](docs/validation/workspace-write-browser-10-12.md)。
 
 已有独立服务时，可在 `frontend/` 设置 `TRACER_WEB_URL=http://127.0.0.1:<端口>` 后执行 `npm run test:e2e -- e2e/status.spec.ts`；默认断言两项依赖可用。普通 `npm run test:e2e` 不会偷偷启动假服务。
 
 ## 契约与目录
 
 ```text
-backend/proto/status.proto        唯一 Protobuf 源码，只定义内部状态查询
-backend/server/                  Java HTTP 聚合、MyBatis 查询、Flyway 迁移
-backend/sandbox/                 Go gRPC 在线检查，无数据库或 Docker 访问
+backend/proto/                   Protobuf 唯一源文件，含状态、工作区与执行契约
+backend/server/                  Java REST/SSE、授权与业务编排、MyBatis、Flyway
+backend/sandbox/                 Go 工作区存储与 Docker 受控执行，不访问业务数据库
 frontend/src/status/             查询缓存、边界校验和状态页
 frontend/src/auth/               登录、强制改密、账号管理；凭证不写入浏览器持久存储
 scripts/                        初始化、生成、检查与真实链路测试
@@ -219,6 +221,6 @@ scripts/                        初始化、生成、检查与真实链路测试
 
 `GET /api/internal/status` 返回 `{"database":"AVAILABLE|UNAVAILABLE","sandbox":"AVAILABLE|UNAVAILABLE"}`。全部可用时 200，否则 503；固定字段，不返回内部连接信息、凭证或堆栈。该内部运维接口不冒充任务 05 的业务 REST/鉴权协议。
 
-Go 生成文件提交，Java 生成文件仅在 `target/`。生成脚本固定插件版本、下载校验 protoc；Wrapper 分发也校验 SHA-256。CI 重新生成后检查 Go 契约漂移；PR 并行执行 quick 和 smoke，主分支合并后/nightly 才执行 heavy（含 Linux race 和全量真实链路）；**添加了 CI 配置不代表远程 CI 已通过**。
+Go 生成文件提交，Java 生成文件仅在 `target/`。生成脚本固定插件版本、下载校验 protoc；Wrapper 分发也校验 SHA-256。预置 CI 重新生成后检查 Go 契约漂移；PR/主分支 push 并行 quick 和 smoke，手动触发默认 quick，可明确选择 smoke 或 heavy（含 Linux race 和全量真实链路）。heavy 不自动随合并或 nightly 运行；**添加了 CI 配置不代表远程 CI 已通过**。
 
 具体决策见 [工程工具链](docs/design/engineering-toolchain.md) 和 [身份契约](docs/design/api-events.md)，执行证据见 [任务 06 验证记录](docs/validation/service-tracer-06.md)、[任务 07 验证记录](docs/validation/account-login-07.md)和[任务 08 验证记录](docs/validation/password-revocation-08.md)。

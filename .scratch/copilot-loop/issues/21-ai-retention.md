@@ -11,7 +11,7 @@
 
 ## 开工门槛
 
-第一阶段全部验收（特别是 [#16](../../workspace-test-foundation/issues/16-deletion-retention.md)）；前置各数据类型、计量和引用契约完成。读 [Loop](../../../docs/design/copilot-loop.md)、[Skill](../../../docs/design/skills.md)及 [保留与删除](../../../docs/design/workspace-execution.md#保留与删除)。
+第一阶段达到 Dev Done（功能、L1 与代码审查完成，不含远程 CI 或重型验证；特别是 [#16](../../workspace-test-foundation/issues/16-deletion-retention.md)）；前置各数据类型、计量和引用契约完成。读 [Loop](../../../docs/design/copilot-loop.md)、[Skill](../../../docs/design/skills.md)及 [保留与删除](../../../docs/design/workspace-execution.md#保留与删除)。
 
 ## Acceptance criteria
 

@@ -11,7 +11,7 @@
 
 ## 开工门槛
 
-第一阶段全部验收；直接前置的接口、状态、授权、消息配对、输出/超时和空间预留契约已确认。读 [Loop](../../../docs/design/copilot-loop.md)、[接口](../../../docs/design/api-events.md)。
+第一阶段达到 Dev Done（功能、L1 与代码审查完成，不含远程 CI 或重型验证）；直接前置的接口、状态、授权、消息配对、输出/超时和空间预留契约已确认。读 [Loop](../../../docs/design/copilot-loop.md)、[接口](../../../docs/design/api-events.md)。
 
 ## Acceptance criteria
 

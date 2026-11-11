@@ -1,11 +1,13 @@
 # 测试分层与黄金路径整改
 
+> 本文保留整改时的执行事实，不新增当前验收义务。当前以本地 L1 为默认收口；没有远程仓库或远程 CI 通过证据。预置 CI 的最新边界为 PR/主分支 push 运行 quick 与有限 smoke，heavy 仅手动明确选择，不逐 issue/PR/合并或 nightly 自动运行。下文旧触发策略是历史安排，现行入口见 [工具链设计](../design/engineering-toolchain.md#验证命令契约)。
+
 ## 范围与决定
 
 按本次用户清单整改 #01–#13 相关实现及当前测试入口；历史一次 ECONNRESET 按用户要求跳过，不重新调查。已有未提交的 host epoch/inventory/恢复改动保留，不作为本次提交的交付内容。
 
 - 新迁移 V13 移除物理外键，历史迁移校验和不改；关联存在性/归属继续由 Service 的事务校验负责。保留唯一性、主键、非空、CHECK 和索引。
-- PR 并行运行 quick 与 smoke；heavy 只在主分支 push、nightly 或手动触发执行。
+- 当时预置 PR 并行 quick 与 smoke，主分支 push/nightly/手动执行 heavy；该触发策略已由本文开头的当前边界替代，不表示远程曾运行。
 - `verify.mjs --quick` 为默认，30 秒热缓存性能目标（超过只警告），默认 60 秒硬超时并终止超时的自有进程树；`CODECRAFT_QUICK_TIMEOUT_SECONDS` 可调整硬超时为 31–600 秒；无 Docker、race 或完整 Spring HTTP IT。首次依赖下载和编译属于明确的准备步骤。
 - `--all` / `--heavy` 执行快速层、真实 HTTP IT、Docker、race、浏览器存储集成及完整 tracer。重型 Node 清理故障测试独立命名，不进入 8 项快速契约入口。
 - 三条浏览器黄金路径：管理员登录/改密/邀请/退出；输入/刷新/草稿恢复；保存后运行/结果/刷新恢复。工作区用例各自通过临时 fixture API Seed 身份，并通过正式 API 创建工作区，不依赖另一条测试。

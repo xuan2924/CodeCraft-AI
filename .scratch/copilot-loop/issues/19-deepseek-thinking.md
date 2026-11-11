@@ -11,7 +11,7 @@
 
 ## 开工门槛
 
-第一阶段全部验收，P2-01 核实实际模型/SDK/协议字段及适配方案；前置运行控制、恢复与压缩完成。实施时重新核对 [官方思考模式文档](https://api-docs.deepseek.com/guides/thinking_mode)，不依赖旧示例模型名。
+第一阶段达到 Dev Done（功能、L1 与代码审查完成，不含远程 CI 或重型验证），P2-01 核实实际模型/SDK/协议字段及适配方案；前置运行控制、恢复与压缩完成。实施时重新核对 [官方思考模式文档](https://api-docs.deepseek.com/guides/thinking_mode)，不依赖旧示例模型名。
 
 ## Acceptance criteria
 

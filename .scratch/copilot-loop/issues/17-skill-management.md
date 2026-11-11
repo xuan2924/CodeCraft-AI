@@ -11,7 +11,7 @@
 
 ## 开工门槛
 
-第一阶段全部验收，P2-05 元数据/路径/版本/计量契约确认。读 [Skill 设计](../../../docs/design/skills.md)。
+第一阶段达到 Dev Done（功能、L1 与代码审查完成，不含远程 CI 或重型验证），P2-05 元数据/路径/版本/计量契约确认。读 [Skill 设计](../../../docs/design/skills.md)。
 
 ## Acceptance criteria
 

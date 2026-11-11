@@ -1,6 +1,6 @@
 # 工程初始化与验证工具链
 
-状态：初始化方式已由用户确认；任务 #1 的方案与工具链最小验证已完成。任务 06 已建立正式清单、生成/启动/验证脚本与本机真实状态链路，入口见 [README](../../README.md)，证据见 [任务 06 验证](../validation/service-tracer-06.md)。账号、工作区、沙箱执行及 Linux 隔离仍未交付；状态链路不代表第一阶段业务闭环。
+状态：初始化方式已由用户确认；任务 #1 的方案与工具链最小验证已完成。任务 06 已建立正式清单、生成/启动/验证脚本与本机真实状态链路，入口见 [README](../../README.md)，证据见 [任务 06 验证](../validation/service-tracer-06.md)。账号、工作区编辑与稳定版本测试已有交付记录，见 [#10–#12](../validation/workspace-write-browser-10-12.md)和 [#13](../validation/stable-test-run-13.md)；#14 尚未整票完成，不由工具链状态推导阶段完成。
 
 ## 已确认的初始化方式
 
@@ -15,7 +15,7 @@
 
 ## 版本与锁定
 
-以下是任务 01 验证的精确版本，不是“永远使用最新”的策略。任务 06 已按需落入正式清单；未用到的模型、Docker SDK、编辑器和状态路由库暂不添加。正式新增静态检查为 Checkstyle Maven plugin 3.6.0、ESLint 10.14.0、@eslint/js 10.0.1、eslint-plugin-vue 10.12.0、typescript-eslint 8.72.1；选择理由是执行现有规范且避免初始化已停止支持的 ESLint 9。正式依赖树须持续审计。
+以下是任务 01 验证的精确版本，不是“永远使用最新”的策略。任务 06 已按需落入正式清单；依赖按功能需要落入正式清单，已接入的 Docker SDK、编辑器和路由等以锁文件为准；不为后续模型功能提前添加依赖。正式新增静态检查为 Checkstyle Maven plugin 3.6.0、ESLint 10.14.0、@eslint/js 10.0.1、eslint-plugin-vue 10.12.0、typescript-eslint 8.72.1；选择理由是执行现有规范且避免初始化已停止支持的 ESLint 9。正式依赖树须持续审计。
 
 | 层 | 验证基线 | 锁定与用途 |
 |---|---|---|
@@ -34,7 +34,7 @@
 | Vue 构建 | Vue 3.5.45、TypeScript 5.9.3、vue-tsc 3.3.14、Vite 7.3.7、plugin-vue 6.0.10 | 安装、SFC 转换、类型检查、构建通过；不自动追随 TS 7/Vite 8 |
 | Vue 测试 | Vitest 4.1.12、Vue Test Utils 2.4.11、jsdom 27.4.0、Playwright 1.65.0、@types/node 24.10.0 | 组件及 Chromium 浏览器探针通过；须同时应用下述 overrides，干净安装后 audit 为 0 |
 
-其余已确认前端库的**候选**版本：Naive UI 2.45.3、Tailwind CSS / @tailwindcss/vite 4.3.4、Vue Router 4.6.4、Pinia 3.0.4、TanStack Vue Query 5.106.1、xterm 6.0.0。它们完成 npm 安装解析，但未逐个验证运行时接口。Monaco 基线采用 0.57.0，必须搭配下述 DOMPurify 覆盖；其 Vite worker、diff 和悬浮内容净化已做最小浏览器验证。完整编辑器行为、xterm 生命周期和 Tailwind 插件集成仍需功能级验证。
+任务 01 当时验证的其余前端库**候选**版本（当前采用情况以正式清单/锁文件为准）：Naive UI 2.45.3、Tailwind CSS / @tailwindcss/vite 4.3.4、Vue Router 4.6.4、Pinia 3.0.4、TanStack Vue Query 5.106.1、xterm 6.0.0。它们完成 npm 安装解析，但未逐个验证运行时接口。Monaco 基线采用 0.57.0，必须搭配下述 DOMPurify 覆盖；其 Vite worker、diff 和悬浮内容净化已做最小浏览器验证。后续编辑器与 xterm 的实现证据分别见 #10–#12、#14 记录；本段候选版本核验不代替功能完成证据。
 
 新增依赖的理由限于已确认职责：Wrapper 保证 Maven 版本；Protobuf 插件生成唯一契约；Flyway PostgreSQL 模块支持迁移；Vue Test Utils/jsdom 提供组件环境；Playwright 提供真实浏览器测试。第一阶段不因技术路线中出现 LangChain4j 而提前添加模型 SDK、MapStruct 或其他通用框架。
 
@@ -64,28 +64,32 @@ Go 官方要求 Windows race 使用 mingw-w64 runtime 8+。本机 GCC 8.1.0 配�
 
 ## 双端生成约定
 
-- `.proto` 只在 `backend/proto/` 维护；Java 与 Go 的 package、服务和字段属于任务 05 的协议设计，本任务不预定义业务 RPC。
+- `.proto` 只在 `backend/proto/` 维护；Java 与 Go 的 package、服务和字段遵循业务协议；已落地业务 RPC 见 `workspace.proto` 等协议源文件。
 - Java POM 将 `../proto` 配为 `protoSourceRoot`，绑定 `compile` 与 `compile-custom` 到生成阶段，输出至 `target/generated-sources/`，不提交生成代码。
 - Go 工具安装在项目本地工具目录，固定 `GOBIN`，使用上述精确插件版本；脚本解析同一固定版本 protoc 的 OS 二进制，不从任意 PATH 接受另一个版本。
 - Go 输出到 `backend/sandbox/internal/gen/`，采用 `paths=source_relative`，提交生成文件；CI 重新生成后 `git diff --exit-code` 检查漂移。删除字段保留名称和编号，生成文件不手改。
 - `scripts/generate-proto.ps1` / `.sh` 已提供统一入口，共用 Node 实现，负责固定版本下载、校验、插件路径、双端输出及失败退出。目前校验支持 Windows/Linux x64。
-- `status.proto` 仅用于任务 06 的内部在线查询，不预先实现任务 05 的业务 RPC。Java→Go 状态 RPC 已真实联调；流式日志与业务契约仍待后续任务。
+- `status.proto` 仅用于内部在线查询，`workspace.proto` 承载工作区与执行 RPC；流式日志实施进展见 [#14](../validation/stream-stop-recover-14.md)。
 
 ## 数据迁移与启动约定
 
-以下列出当前已落地入口及迁移边界；准确可执行入口和环境要求见 [README](../../README.md)。ADR 0002 的同一 Linux 时钟域路线已落实到 `dev.mjs java` / `test-tracer.mjs`。Windows 本机启动 Java 的旧入口不能作为截止时间敏感业务验收；本地编译、静态检查和单元测试仍可使用。Docker SDK 配置随实际执行功能落实：
+以下列出当前已落地入口及迁移边界；准确可执行入口和环境要求见 [README](../../README.md)。ADR 0002 的同一 Linux 时钟域路线已落实到 `dev.mjs java` / `test-tracer.mjs`。Windows 本机启动 Java 的旧入口不能作为截止时间敏感业务验收；本地编译、静态检查和单元测试仍可使用。Docker SDK 的运行配置以正式启动脚本和 Compose 为准：
 
 1. 根目录 `.env.example` 仅提供变量名及非敏感默认值；开发者建立 `.env`，提供数据库凭证、端口及工作区路径。Compose 的 `.env` 不会自动注入本机 Java/Go，启动脚本必须显式读取并传递白名单变量，不打印凭证。
 2. `docker compose up -d --wait postgres`：检查数据库健康，具名卷持久化；不自动执行 `down -v` 或删除开发数据。
-3. 运行双端生成脚本；`node scripts/dev.mjs sandbox` 交叉编译 Linux 静态 Go 二进制，在仅含构建产物的临时上下文构建镜像，再由 Compose 启动。Go 非 root、只读根文件系统、持久化私有具名卷，端口只发布到宿主 loopback。原生 Go 入口仅保留状态链路兼容性，不提供 Windows 工作区保证。Docker SDK/socket 接入仍随执行功能落实，不将 Docker CLI context 选择隐式当成 SDK 配置。
+3. 运行双端生成脚本；`node scripts/dev.mjs sandbox` 交叉编译 Linux 静态 Go 二进制，在仅含构建产物的临时上下文构建镜像，再由 Compose 启动。Go 非 root、只读根文件系统、持久化私有具名卷，端口只发布到宿主 loopback。原生 Go 入口仅保留状态链路兼容性，不提供 Windows 工作区保证。Docker SDK/socket 已用于受控执行，Go 是可信执行协调服务；题目容器不得获得 socket。不将 Docker CLI context 选择隐式当成 SDK 配置。
 4. `node scripts/dev.mjs java` 先执行 Maven package，将可复现的 jar 放入独立最小构建上下文，按内容复用或构建 Java 镜像；Java/Go 的题目发布产物独立生成受控快照，在启动时只读挂载，不因发布验证时间变化重建程序镜像，再由 Compose 启动非 root、只读根文件系统容器。容器内 HTTP 监听 `0.0.0.0:8080`，宿主仅 loopback 映射，Java 默认本机绑定仍为 `127.0.0.1`；显式传递配置白名单，不挂载开发 `.env`、源代码、Go 工作区或 Docker socket。修改代码后重新执行该入口；单独 `spring-boot:run` 不作为跨端入口。Flyway 执行 `src/main/resources/db/migration/V<版本>__<说明>.sql` 并校验，失败阻止启动。已发布迁移不可修改，不自动 baseline、clean 或忽略校验。
 5. `frontend/` 中 `npm ci`、`npm run dev`；Vite 将浏览器 API 请求代理给 Java，浏览器不直连 Go 或数据库。具体端口、健康检查及 Cookie/CSRF 配置由实际配置和任务 02/06 提供。
 
-容器镜像下载发生在环境准备阶段；题目执行阶段仍禁网且依赖预装。Go 创建容器时挂载路径由 Docker daemon 解释，Windows 路径映射和 Linux 权限须独立验收。不得为联调向题目容器挂载 Docker socket。
+容器镜像下载发生在环境准备阶段；题目执行阶段仍禁网且依赖预装。Go 创建容器时挂载路径由 Docker daemon 解释，路径映射和 Linux 权限按支持的运行布局实现并测试，不从 Windows 开发宿主推导 Windows 工作区存储支持。不得为联调向题目容器挂载 Docker socket。
 
 ## 验证命令契约
 
-下表命令已随任务 06 建立；`scripts/verify.mjs` 汇总本地检查，`scripts/test-tracer.mjs` 用隔离真实依赖补充 Failsafe 与浏览器验证。涉及跨端截止的 Java 测试 JVM 也运行于同一 Linux daemon，离线复用只读 Maven repository，各模式复制编译产物并隔离报告，零执行或跳过所选测试失败。可信工作区故障测试容器拥有临时 Docker socket 权限，不能充当用户代码沙箱。迁移及真实链路证据见 [#10–#12 验证](../validation/workspace-write-browser-10-12.md)，专项时钟异常保护已按 [ADR 0003](../adr/0003-accept-shared-system-clock-risk.md) 排除首期范围，不作为未完成的验收门槛；正常时间前提下的过期拒绝与重启恢复测试仍保留：
+本地默认 `node scripts/verify.mjs --quick`；核心单测反馈回路按根规则控制在 10 秒内。quick 汇总编译、静态检查和多语言快速测试的 30 秒热缓存目标/60 秒默认硬超时，不等于单测反馈预算。`--all`/`--heavy` 和完整 tracer 仅按明确安排或具体问题运行，不作为逐票默认收口。
+
+当前没有远程仓库，GitHub Actions 仅预置配置，无远程通过证据。启用后 PR/主分支 push 只运行 quick 与有限黄金路径 smoke；heavy 仅手动明确选择，不在每张 issue、每次 PR、合并或 nightly 自动运行。CI 不能隐含新增生产、跨服务故障或收费模型验证要求；未来扩大触发范围须另行确认。
+
+下表列出可用检查入口，不是每张票必须全跑的清单；`scripts/test-tracer.mjs` 用隔离真实依赖补充 Failsafe 与浏览器验证。涉及跨端截止的 Java 测试 JVM 也运行于同一 Linux daemon，离线复用只读 Maven repository，各模式复制编译产物并隔离报告，零执行或跳过所选测试失败。可信工作区故障测试容器拥有临时 Docker socket 权限，不能充当用户代码沙箱。迁移及真实链路证据见 [#10–#12 验证](../validation/workspace-write-browser-10-12.md)，专项时钟异常保护已按 [ADR 0003](../adr/0003-accept-shared-system-clock-risk.md) 排除首期范围，不作为未完成的验收门槛；正常时间前提下的过期拒绝与重启恢复测试仍保留：
 
 | 范围 | 单点与快速反馈 | 完整验证 |
 |---|---|---|
@@ -94,13 +98,13 @@ Go 官方要求 Windows race 使用 mingw-w64 runtime 8+。本机 GCC 8.1.0 配�
 | Vue | `npm run typecheck` → `vue-tsc --noEmit`；`npm run test:unit -- <文件>` → `vitest run` | `npm run lint`（ESLint，规则匹配 Vue/TS）；`npm run typecheck`；`npm run test:unit`；`npm run build` → `vite build` |
 | 浏览器 | `npm run test:e2e -- <文件>` → `playwright test` | 安装匹配版本的 Chromium；在独立测试数据库/工作区启动真实 Java、Go、PostgreSQL、Docker，再跑全套；不能用前端假 API 代替 |
 
-Java/前端静态检查插件已锁定，任务 06 已实际执行 Checkstyle、ESLint 和 Failsafe。测试分层沿用规格已确认的浏览器、Java REST、Go gRPC 边界；只验证内部状态查询，不宣称 SSE、Docker 沙箱或业务闭环完成。
+Java/前端静态检查插件已锁定，任务 06 已实际执行 Checkstyle、ESLint 和 Failsafe。测试分层沿用规格已确认的浏览器、Java REST、Go gRPC 边界；已执行范围与结果以对应功能验证记录为准，不由命令存在推导通过；独立 Java verify 跳过的 IT 不计为通过。
 
-## 后续实现仍需验证
+## 使用与证据边界
 
 1. **正式依赖与脚本**：任务 06 已提供真实清单、启动/生成/验证脚本并在正式锁文件上复验；后续新增候选库仍需接口核实和安全审计。
-2. **Linux race**：Windows 正式 Go 测试已通过 race；已添加 Linux CI 配置，但本地未执行 Linux race，远程 CI 尚未运行，不能用 Windows 通过代替 Linux 验收。
+2. **Linux race**：可在显式 heavy 中执行；Windows 通过不代替 Linux 证据。未执行不自动阻塞所有功能的 Dev Done。
 3. **浏览器环境复现**：Chromium 安装命令曾超时，但随后日志确认下载完成，实际浏览器烟测通过。正式 CI 仍需可访问的官方下载或经校验的缓存；不能将一个按钮的烟测当完整业务端到端。
-4. **真实链路**：任务 06 已验证浏览器→Java→PostgreSQL/Go 的正常、停服与恢复路径；Linux 路径/权限/资源隔离、完整 Vue IDE、备份恢复仍未验证，交由相应功能任务。
+4. **真实链路**：复用所属功能已有证据，额外验证按需，不将工具链记录变成后续票的全量回归义务。第一阶段不建设备份及备份恢复验收；正常重启对账、授权与清理恢复仍须实现并覆盖 L1。
 
 环境、执行结果及官方资料见 [任务 01 验证记录](../validation/toolchain-01.md)。

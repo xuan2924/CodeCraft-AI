@@ -11,7 +11,7 @@
 
 ## 开工门槛
 
-第一阶段全部验收；前置快照、受控加载、存储计量和版本契约完成。读 [Skill](../../../docs/design/skills.md)、[Loop](../../../docs/design/copilot-loop.md)。
+第一阶段达到 Dev Done（功能、L1 与代码审查完成，不含远程 CI 或重型验证）；前置快照、受控加载、存储计量和版本契约完成。读 [Skill](../../../docs/design/skills.md)、[Loop](../../../docs/design/copilot-loop.md)。
 
 ## Acceptance criteria
 

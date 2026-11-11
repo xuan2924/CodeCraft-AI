@@ -1,6 +1,6 @@
 # 架构与首期范围
 
-状态：本文件及关联专题记录用户已确认的设计；各文件的“待决与实现验证”不是已批准方案。内部状态链路及账号登录/密码重置已实现，见 [运行入口](../../README.md)、[账号验证](../validation/account-login-07.md)和[重置验证](../validation/password-revocation-08.md)。工作区与执行尚未实现，设计、研究与一次性 PoC 不代表生产能力。
+状态：本文件及关联专题记录用户已确认的设计；各文件的“待决与实现验证”不是已批准方案。内部状态链路及账号登录/密码重置已实现，见 [运行入口](../../README.md)、[账号验证](../validation/account-login-07.md)和[重置验证](../validation/password-revocation-08.md)。工作区编辑与稳定版本测试已交付，见 [#10–#12](../validation/workspace-write-browser-10-12.md)及 [#13](../validation/stable-test-run-13.md)；#14 的实时流/停止恢复仍在实施，#15/#16 以对应票据收口为准。设计与一次性 PoC 不代表生产能力。
 
 ## 技术路线与职责
 
@@ -40,7 +40,7 @@
 2. Copilot 工具循环、审批、Diff、steer、上下文压缩与用户 Skill。
 3. 确定性面试流程、平台 Agent 配置与基于证据的评测。
 
-第二阶段已确认 [规格与 22 张任务](../../.scratch/copilot-loop/spec.md)：以第一阶段 #01–#16 全部验收为整体实现入口，决定票可提前核验。先真实 DeepSeek 非思考模式纵向闭环，再完成运行控制、压缩、用户 Skill、用量费用、思考模式与三协议矩阵及数据删除联动。第二阶段使用明确标识的阶段性入口，模型检查须真实通过，不伪装完整面试；面试官、挑战、评测、平台 Agent 配置和授权反馈留到第三阶段。任务规划不代表已实现。
+第二阶段目标见 [规格与拆票草案](../../.scratch/copilot-loop/spec.md)：已单独确认的产品行为继续有效，22 张任务的拆分、依赖和验证安排待确认。以第一阶段 #01–#16 达到 Dev Done 为整体实现入口，不隐含远程 CI、生产验证或完整真实故障矩阵；决定票可提前核验。先真实 DeepSeek 非思考模式纵向闭环，再完成运行控制、压缩、用户 Skill、用量费用、思考模式与三协议矩阵及数据删除联动。第二阶段使用明确标识的阶段性入口，模型检查须真实通过，不伪装完整面试；面试官、挑战、评测、平台 Agent 配置和授权反馈留到第三阶段。任务规划不代表已实现。
 
 账号管理后台、模型配置测试及授权反馈属于已确认首期能力。暂不引入 Redis、消息队列、向量数据库、AST 索引、容器预热池、多语言执行、企业组织或多人协作体系。
 
@@ -60,10 +60,10 @@
 
 ## 待决与实现验证
 
-- 工程目录已随任务 06 初始化为 `backend/server/`、`backend/sandbox/`、`backend/proto/` 和 `frontend/`。当前已交付内部状态与身份模块；后续业务模块与 feature 边界按功能建立，不提前搭建无用途框架。
+- 工程目录已随任务 06 初始化为 `backend/server/`、`backend/sandbox/`、`backend/proto/` 和 `frontend/`。状态、身份、工作区与执行模块按功能建立；后续业务模块与 feature 边界仍按功能扩展，不提前搭建无用途框架。
 - 已确认 Maven Wrapper、npm + package-lock.json、Vitest + Vue Test Utils、Playwright；暂不引入 MapStruct、不启用虚拟线程，按实际需求再评估。
-- 日常开发与真实链路验收已改为 Java/Go 同处一个 Linux VM/宿主时钟域；Windows 可保留编辑器、Vite 和浏览器，不再以 Windows JVM + Linux VM 混合模式作为截止时间敏感的业务基线。变更原因与取舍见 [ADR 0002](../adr/0002-java-go-shared-linux-clock.md)。PostgreSQL 继续由 Docker 提供，Go 工作区使用持久化具名卷，题目仍在独立受限容器执行。启动/验收脚本已迁移到 Linux Java 容器（含集成测试 JVM），证据见 [#10–#12 验证](../validation/workspace-write-browser-10-12.md)；首期按 [ADR 0003](../adr/0003-accept-shared-system-clock-risk.md) 接受共享系统时间调整的风险，不建设专项时钟异常保护；正常截止、重启恢复及后续真实业务验收仍须完成。
-- 工具链决定票已验收：前端以精确依赖覆盖清除本次审计告警，Windows Go race 显式使用兼容 C 工具链。任务 06 已交付正式清单/脚本与 Linux CI 配置；远程 CI、Linux 隔离及完整业务链路仍待验证。精确版本、覆盖策略与证据见 [工程工具链](engineering-toolchain.md)。
-- Monaco/xterm 的原生封装与 Vite worker 集成待验证；SSE 客户端结合已确认的 Cookie 身份和恢复契约选择，不因草案 POST 示例锁定库。
+- 日常开发与真实链路验收已改为 Java/Go 同处一个 Linux VM/宿主时钟域；Windows 可保留编辑器、Vite 和浏览器，不再以 Windows JVM + Linux VM 混合模式作为截止时间敏感的业务基线。变更原因与取舍见 [ADR 0002](../adr/0002-java-go-shared-linux-clock.md)。PostgreSQL 继续由 Docker 提供，Go 工作区使用持久化具名卷，题目仍在独立受限容器执行。启动/验收脚本已迁移到 Linux Java 容器（含集成测试 JVM），证据见 [#10–#12 验证](../validation/workspace-write-browser-10-12.md)；首期按 [ADR 0003](../adr/0003-accept-shared-system-clock-risk.md) 接受共享系统时间调整的风险，不建设专项时钟异常保护；正常截止与重启恢复仍须实现并覆盖 L1，额外真实验证按需安排。
+- 工具链决定票已验收：前端以精确依赖覆盖清除本次审计告警，Windows Go race 显式使用兼容 C 工具链。任务 06 已交付正式清单/脚本与 Linux CI 配置；当前没有远程仓库，CI 仅为预置配置，不作为本地 Dev Done 前提；Linux 隔离及业务链路证据按对应功能记录，不生成默认全套验证待办。精确版本、覆盖策略与证据见 [工程工具链](engineering-toolchain.md)。
+- Monaco 封装与 Vite worker 已有 #10–#12 证据；xterm 与 SSE 客户端见 #14 切片，整票尚未完成。后续客户端继续遵循 Cookie 身份和恢复契约，不因草案 POST 示例锁定库。
 - 依赖选择兼容版本并锁定，以实际清单和脚本为准；PoC 依赖不构成正式版本决定。
 - 任务 16 已确认第一阶段保留、单场限额、引用回收与删除政策，见 [工作区与执行](workspace-execution.md#保留与删除)：已结束演练默认保留 30 天，每用户最多 20 场历史；不新增固定全局磁盘预算/水位，第一阶段不做备份与恢复功能。单场配额、磁盘不足安全处理及重启对账仍须验收，不从“受控试用”推导无限资源；第二阶段已确认演练 AI 记录随演练保留/删除并纳入同一 512 MiB 预算，个人模型连接/Skill 原件独立保留，具体计量与回收仍待实现验证。

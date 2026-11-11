@@ -11,7 +11,7 @@
 
 ## 开工门槛
 
-第一阶段全部验收；P2-08 和其上游任务/工具契约完成，测试归属及停止排序已明确。读 [工作区执行](../../../docs/design/workspace-execution.md)、[Loop](../../../docs/design/copilot-loop.md)。
+第一阶段达到 Dev Done（功能、L1 与代码审查完成，不含远程 CI 或重型验证）；P2-08 和其上游任务/工具契约完成，测试归属及停止排序已明确。读 [工作区执行](../../../docs/design/workspace-execution.md)、[Loop](../../../docs/design/copilot-loop.md)。
 
 ## Acceptance criteria
 

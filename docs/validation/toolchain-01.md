@@ -1,5 +1,7 @@
 # 任务 01：工程工具链验证记录
 
+> 历史验证记录：保留当时的执行事实、失败及限制，不新增当前验收义务。当前完成边界以根 [AGENTS.md](../../AGENTS.md) 和对应任务最新结论为准；旧“后续门槛”不自动成为待办，已有证据无需逐票重跑。
+
 执行日期：2026-11-06。状态：第一轮问题已在本文末尾的第二轮验证中关闭；保留原始失败记录。任务：[01 工程初始化](../../.scratch/workspace-test-foundation/issues/01-engineering-toolchain.md)。有效方案：[工程工具链](../design/engineering-toolchain.md)。
 
 本记录是验证证据，不是正式服务清单。探针建立在 `%TEMP%/codecraft-toolchain-probe/`，未复用审批 PoC 的 POM、Wrapper 或业务实现，未在正式目录创建通用框架。临时文件不随 Git 交付；本记录保留版本、命令、夹具行为和结果，不声称可从仓库直接执行这些探针。

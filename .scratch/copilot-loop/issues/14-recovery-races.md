@@ -11,7 +11,7 @@
 
 ## 开工门槛
 
-第一阶段全部验收；前置能力及 P2-02 恢复/授权契约完成。读 [接口恢复](../../../docs/design/api-events.md#保存与恢复)、[底座恢复协议](../../../docs/design/task-event-recovery.md)。
+第一阶段达到 Dev Done（功能、L1 与代码审查完成，不含远程 CI 或重型验证）；前置能力及 P2-02 恢复/授权契约完成。读 [接口恢复](../../../docs/design/api-events.md#保存与恢复)、[底座恢复协议](../../../docs/design/task-event-recovery.md)。
 
 ## Acceptance criteria
 

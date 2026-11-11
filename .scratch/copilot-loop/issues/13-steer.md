@@ -11,7 +11,7 @@
 
 ## 开工门槛
 
-第一阶段全部验收；前置票及 P2-02 的安全点、顺序和未执行结果协议完成。读 [Loop steer](../../../docs/design/copilot-loop.md#steer)。
+第一阶段达到 Dev Done（功能、L1 与代码审查完成，不含远程 CI 或重型验证）；前置票及 P2-02 的安全点、顺序和未执行结果协议完成。读 [Loop steer](../../../docs/design/copilot-loop.md#steer)。
 
 ## Acceptance criteria
 

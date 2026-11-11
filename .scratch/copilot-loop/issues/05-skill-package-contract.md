@@ -1,7 +1,7 @@
 # P2-05：用户 Skill 包契约
 
 **Type:** decision
-**Status:** ready-for-agent
+**Status:** needs-triage
 **Blocked by:** None
 **Spec:** [第二阶段规格](../spec.md)
 

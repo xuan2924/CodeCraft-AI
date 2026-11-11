@@ -1,7 +1,7 @@
 # P2-04：上下文与 AI 数据容量契约
 
 **Type:** decision
-**Status:** ready-for-agent
+**Status:** needs-triage
 **Blocked by:** None
 **Spec:** [第二阶段规格](../spec.md)
 

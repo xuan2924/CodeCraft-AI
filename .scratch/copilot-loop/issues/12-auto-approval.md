@@ -11,7 +11,7 @@
 
 ## 开工门槛
 
-第一阶段全部验收；P2-09 及上游模式登记/切换排序契约完成。读 [审批设计](../../../docs/design/approval.md)。
+第一阶段达到 Dev Done（功能、L1 与代码审查完成，不含远程 CI 或重型验证）；P2-09 及上游模式登记/切换排序契约完成。读 [审批设计](../../../docs/design/approval.md)。
 
 ## Acceptance criteria
 

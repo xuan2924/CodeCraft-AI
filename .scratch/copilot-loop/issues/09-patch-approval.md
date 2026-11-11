@@ -11,7 +11,7 @@
 
 ## 开工门槛
 
-第一阶段全部验收，P2-08 及其上游提案 schema、检查点、审批排序与授权契约完成。读 [审批](../../../docs/design/approval.md)、[工作区](../../../docs/design/workspace-execution.md)、[Web IDE](../../../docs/design/web-ide.md)。
+第一阶段达到 Dev Done（功能、L1 与代码审查完成，不含远程 CI 或重型验证），P2-08 及其上游提案 schema、检查点、审批排序与授权契约完成。读 [审批](../../../docs/design/approval.md)、[工作区](../../../docs/design/workspace-execution.md)、[Web IDE](../../../docs/design/web-ide.md)。
 
 ## Acceptance criteria
 

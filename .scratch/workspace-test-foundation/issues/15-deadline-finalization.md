@@ -1,7 +1,7 @@
 # 15：倒计时、结束与最终验收
 
 **Type:** implementation
-**Status:** needs-info
+**Status:** ready-for-agent
 **Blocked by:** 12 本地草稿与冲突恢复；14 实时日志、停止与断线恢复
 **Spec:** [第一阶段规格](../spec.md)
 
