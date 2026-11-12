@@ -207,7 +207,7 @@ public class TestTaskStore {
         WorkspaceControlEntity control = writes.lock(task.exerciseId());
         TestTaskEntity current = tasks.lock(task.id());
         tasks.attempted(task.id());
-        if (current.dispatched() || !current.state().equals("ACCEPTED")) return false;
+        if (current == null || current.dispatched() || !current.state().equals("ACCEPTED")) return false;
         ExerciseEntity exercise = exercises.find(task.exerciseId());
         FinalTaskAuthorityEntity authority = finals.authority(task.id());
         boolean allowed;
@@ -233,6 +233,7 @@ public class TestTaskStore {
     public void observe(TestTaskEntity expected, TestTaskResponse result, long stateVersion, String goStream, long goSequence) {
         writes.lock(expected.exerciseId());
         TestTaskEntity current = tasks.lock(expected.id());
+        if (current == null) return;
         if (!result.taskId().equals(current.id()) || !result.exerciseId().equals(current.exerciseId())
             || !result.executionInstanceId().equals(current.executionInstanceId()) || !result.workspaceInstanceId().equals(current.workspaceInstanceId())
             || !result.revision().equals(Long.toString(current.revision())) || !result.target().equals(current.target())) throw new IllegalStateException("Mismatched execution receipt");
@@ -257,7 +258,7 @@ public class TestTaskStore {
     public void notRegisteredAfterFence(TestTaskEntity task, boolean hostChanged) {
         writes.lock(task.exerciseId());
         TestTaskEntity current = tasks.lock(task.id());
-        if (TERMINAL.contains(current.state())) return;
+        if (current == null || TERMINAL.contains(current.state())) return;
         TestTaskResponse result = interrupted(current, hostChanged ? "HOST_RESTART_REGISTRATION_UNCONFIRMED" : "START_NOT_REGISTERED");
         if (hostChanged) {
             // Absence after registry loss does not fence an Engine Create already
@@ -312,6 +313,7 @@ public class TestTaskStore {
     private ExerciseEntity owned(String user, String id) {
         ExerciseEntity exercise = exercises.find(id);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        if (exercises.deleted(id)) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
         return exercise;
     }
     private static void credential(WorkspaceControlEntity control, String credential) {

@@ -88,6 +88,10 @@ func New(ctx context.Context, docker *client.Client, root, volume, owner string)
 		lock.Close()
 		return nil, err
 	}
+	if err = r.cleanupStages(ctx); err != nil {
+		lock.Close()
+		return nil, err
+	}
 	return r, nil
 }
 
@@ -369,7 +373,7 @@ func (r *Runner) persistOrdered(result Result) error {
 }
 
 func (r *Runner) writeRegistry(destination string, data []byte) (err error) {
-	file, err := os.CreateTemp(r.root, ".stage-")
+	file, err := os.CreateTemp(r.root, ".stage-"+destination+"-")
 	if err != nil {
 		return err
 	}

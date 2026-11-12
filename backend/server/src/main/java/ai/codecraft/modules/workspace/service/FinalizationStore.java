@@ -61,6 +61,7 @@ public class FinalizationStore {
         String user = identity.authorizeMutation(session).userId();
         ExerciseEntity exercise = exercises.find(exerciseId);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        if (exercises.deleted(exerciseId)) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
         if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
         WorkspaceControlEntity control = writes.lock(exerciseId);
         FinalizationEntity existing = finals.find(exerciseId);
@@ -188,6 +189,7 @@ public class FinalizationStore {
     private void finish(FinalizationEntity value, String verification, String task) {
         finals.finish(value.exerciseId(), clock.instant(), verification, task);
         finals.ended(value.exerciseId());
+        exercises.endedAt(value.exerciseId(), clock.instant());
         exercises.operationState(value.id(), "SUCCEEDED");
     }
 

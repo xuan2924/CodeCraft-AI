@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	WorkspaceStorage_PrepareWorkspace_FullMethodName  = "/codecraft.workspace.v1.WorkspaceStorage/PrepareWorkspace"
 	WorkspaceStorage_QueryWorkspace_FullMethodName    = "/codecraft.workspace.v1.WorkspaceStorage/QueryWorkspace"
+	WorkspaceStorage_DeleteWorkspace_FullMethodName   = "/codecraft.workspace.v1.WorkspaceStorage/DeleteWorkspace"
 	WorkspaceStorage_ReadWorkspaceFile_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/ReadWorkspaceFile"
 	WorkspaceStorage_CancelPreparation_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/CancelPreparation"
 	WorkspaceStorage_CloseGate_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/CloseGate"
@@ -50,6 +51,8 @@ const (
 type WorkspaceStorageClient interface {
 	PrepareWorkspace(ctx context.Context, in *PrepareWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceSnapshot, error)
 	QueryWorkspace(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceSnapshot, error)
+	// Durable deletion fence; repeated calls finish cleanup without reopening the instance.
+	DeleteWorkspace(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceDeletionReceipt, error)
 	ReadWorkspaceFile(ctx context.Context, in *ReadWorkspaceFileRequest, opts ...grpc.CallOption) (*ReadWorkspaceFileResponse, error)
 	CancelPreparation(ctx context.Context, in *CancelPreparationRequest, opts ...grpc.CallOption) (*WorkspaceSnapshot, error)
 	CloseGate(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error)
@@ -95,6 +98,16 @@ func (c *workspaceStorageClient) QueryWorkspace(ctx context.Context, in *QueryWo
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WorkspaceSnapshot)
 	err := c.cc.Invoke(ctx, WorkspaceStorage_QueryWorkspace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) DeleteWorkspace(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceDeletionReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkspaceDeletionReceipt)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_DeleteWorkspace_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -308,6 +321,8 @@ type WorkspaceStorage_WatchTaskClient = grpc.ServerStreamingClient[TaskEvent]
 type WorkspaceStorageServer interface {
 	PrepareWorkspace(context.Context, *PrepareWorkspaceRequest) (*WorkspaceSnapshot, error)
 	QueryWorkspace(context.Context, *QueryWorkspaceRequest) (*WorkspaceSnapshot, error)
+	// Durable deletion fence; repeated calls finish cleanup without reopening the instance.
+	DeleteWorkspace(context.Context, *QueryWorkspaceRequest) (*WorkspaceDeletionReceipt, error)
 	ReadWorkspaceFile(context.Context, *ReadWorkspaceFileRequest) (*ReadWorkspaceFileResponse, error)
 	CancelPreparation(context.Context, *CancelPreparationRequest) (*WorkspaceSnapshot, error)
 	CloseGate(context.Context, *CloseGateRequest) (*GateResponse, error)
@@ -344,6 +359,9 @@ func (UnimplementedWorkspaceStorageServer) PrepareWorkspace(context.Context, *Pr
 }
 func (UnimplementedWorkspaceStorageServer) QueryWorkspace(context.Context, *QueryWorkspaceRequest) (*WorkspaceSnapshot, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryWorkspace not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) DeleteWorkspace(context.Context, *QueryWorkspaceRequest) (*WorkspaceDeletionReceipt, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteWorkspace not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) ReadWorkspaceFile(context.Context, *ReadWorkspaceFileRequest) (*ReadWorkspaceFileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadWorkspaceFile not implemented")
@@ -455,6 +473,24 @@ func _WorkspaceStorage_QueryWorkspace_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WorkspaceStorageServer).QueryWorkspace(ctx, req.(*QueryWorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_DeleteWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).DeleteWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_DeleteWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).DeleteWorkspace(ctx, req.(*QueryWorkspaceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -808,6 +844,10 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "QueryWorkspace",
 			Handler:    _WorkspaceStorage_QueryWorkspace_Handler,
+		},
+		{
+			MethodName: "DeleteWorkspace",
+			Handler:    _WorkspaceStorage_DeleteWorkspace_Handler,
 		},
 		{
 			MethodName: "ReadWorkspaceFile",

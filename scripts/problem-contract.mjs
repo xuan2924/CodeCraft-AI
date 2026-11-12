@@ -9,6 +9,8 @@ export async function validatePackage(directory) {
     const root = directory instanceof URL ? fileURLToPath(directory) : directory;
     const hash = createHash('sha256');
     const files = new Set();
+    let initialFiles = 0;
+    let initialBytes = 0;
     async function visit(relative) {
         const absolute = join(root, relative);
         const stat = await lstat(absolute);
@@ -22,6 +24,12 @@ export async function validatePackage(directory) {
         } else {
             assert(stat.isFile() && stat.nlink === 1, `Special/hardlinked file: ${relative}`);
             assert(stat.size <= 1024 * 1024, `File too large: ${relative}`);
+            if (relative.startsWith('initial/')) {
+                initialFiles++;
+                initialBytes += stat.size;
+                assert(initialFiles <= 200, 'Initial workspace file limit exceeded');
+                assert(initialBytes <= 10 * 1024 * 1024, 'Initial workspace content limit exceeded');
+            }
             const data = await readFile(absolute);
             assert(!data.includes(0), `Binary file: ${relative}`);
             hash.update(JSON.stringify([relative, data.length]));

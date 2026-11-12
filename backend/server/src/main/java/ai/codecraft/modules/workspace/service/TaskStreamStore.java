@@ -30,6 +30,7 @@ public class TaskStreamStore {
         String user = identity.authorizePrivateDelivery(session).userId();
         ExerciseEntity exercise = exercises.find(exerciseId);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        if (exercises.deleted(exerciseId)) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
         TestTaskEntity task = tasks.lock(taskId);
         if (task == null || !task.exerciseId().equals(exerciseId)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         TaskStreamEntity stream = streams.find(taskId);

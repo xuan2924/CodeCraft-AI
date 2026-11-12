@@ -4,7 +4,7 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import WorkspacePage from './WorkspacePage.vue';
 import * as drafts from './drafts';
-vi.mock('./drafts', async (original) => ({ ...await original<typeof drafts>(), listAccountDrafts: vi.fn(async () => []) }));
+vi.mock('./drafts', async (original) => ({ ...await original<typeof drafts>(), listAccountDrafts: vi.fn(async () => []), confirmExerciseDeletion: vi.fn(async () => {}) }));
 
 const endPreparation = vi.hoisted(() => vi.fn<() => Promise<boolean>>());
 vi.mock('./WorkspaceEditor.vue', () => ({ __esModule: true, default: { props: ['credential'], data: () => ({ draft: '' }),
@@ -15,10 +15,11 @@ const ok = (data: unknown) => new Response(JSON.stringify({ code: 'OK', data }),
 const rejected = (status: number) => new Response(JSON.stringify({ code: 'RESOURCE_NOT_FOUND', data: null }), { status });
 let page: VueWrapper | undefined;
 let client: QueryClient | undefined;
-afterEach(() => { page?.unmount(); client?.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); endPreparation.mockReset(); vi.mocked(drafts.listAccountDrafts).mockReset().mockResolvedValue([]); });
+afterEach(() => { page?.unmount(); client?.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); endPreparation.mockReset(); vi.mocked(drafts.listAccountDrafts).mockReset().mockResolvedValue([]); vi.mocked(drafts.confirmExerciseDeletion).mockClear(); });
 
 async function render(fetcher: typeof fetch, initial = '/') {
-  vi.stubGlobal('fetch', fetcher);
+  vi.stubGlobal('fetch', (input: RequestInfo | URL, options?: RequestInit) =>
+    String(input) === '/api/exercises' && !options?.method ? Promise.resolve(ok([])) : fetcher(input, options));
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/', name: 'workspace', component: WorkspacePage },
@@ -29,6 +30,24 @@ async function render(fetcher: typeof fetch, initial = '/') {
   await flushPromises();
   return page;
 }
+
+it('clears only the authoritatively deleted exercise on reconnect, not generic resource errors', async () => {
+  let deleted = false;
+  const fetcher = vi.fn<typeof fetch>(async (input) => {
+    if (String(input) === '/api/auth/session') return ok({ id: 'owner', username: 'invited', role: 'USER', passwordChangeRequired: false, expiresAt: '2026-12-01T00:00:00Z' });
+    if (String(input) === '/api/problems') return ok([]);
+    if (String(input) === '/api/exercises/old' && deleted) return new Response(JSON.stringify({ code: 'EXERCISE_DELETED', data: null }), { status: 404 });
+    return rejected(404);
+  });
+  await render(fetcher, '/?exercise=old');
+  expect(drafts.confirmExerciseDeletion).not.toHaveBeenCalled();
+  deleted = true;
+  await client!.invalidateQueries({ queryKey: ['workspace', 'owner', 'current'] });
+  await flushPromises();
+  expect(drafts.confirmExerciseDeletion).toHaveBeenCalledWith('owner', 'old');
+  expect(page!.text()).toContain('演练已删除');
+  expect(page!.find('textarea').exists()).toBe(false);
+});
 
 it('retains the original mutation key after a lost response and aborts requests on unmount', async () => {
   const keys: string[] = [];

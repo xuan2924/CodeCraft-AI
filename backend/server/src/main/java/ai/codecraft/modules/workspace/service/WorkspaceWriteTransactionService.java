@@ -122,6 +122,7 @@ public class WorkspaceWriteTransactionService {
         String user = identity.authorization(session).userId();
         WorkspaceOperationEntity operation = exercises.operation(id);
         if (operation == null || !operation.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        if (exercises.deleted(operation.exerciseId())) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
         WorkspaceMutationEntity mutation = writes.mutation(id);
         return new WorkspaceOperationResponse(id, operation.exerciseId(), operation.state(), "/api/operations/" + id,
             mutation == null || mutation.revision() == null ? null : mutation.revision().toString(),
@@ -138,6 +139,7 @@ public class WorkspaceWriteTransactionService {
     private ExerciseEntity owned(String user, String id) {
         ExerciseEntity exercise = exercises.find(id);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        if (exercises.deleted(id)) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
         return exercise;
     }
 

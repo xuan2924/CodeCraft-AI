@@ -57,6 +57,24 @@ test('rejects unbounded execution settings', async (t) => {
     await assert.rejects(validatePackage(directory), /runtime.timeoutSeconds/);
 });
 
+test('rejects an initial workspace beyond 200 files before publication', async (t) => {
+    const directory = await fixture(t);
+    for (let index = 0; index < 199; index++) {
+        await writeFile(join(directory, 'initial', 'src', 'main', 'java', 'interview', `Extra${index}.java`), 'class Extra {}');
+    }
+    await assert.rejects(validatePackage(directory), /Initial workspace file limit/);
+});
+
+test('rejects an initial workspace beyond 10 MiB without truncating its files', async (t) => {
+    const directory = await fixture(t);
+    const content = 'a'.repeat(1024 * 1024);
+    for (let index = 0; index < 10; index++) {
+        await writeFile(join(directory, 'initial', 'src', 'main', 'java', 'interview', `Large${index}.java`), content);
+    }
+    await assert.rejects(validatePackage(directory), /Initial workspace content limit/);
+    assert.equal((await readFile(join(directory, 'initial', 'src', 'main', 'java', 'interview', 'Large0.java'))).length, 1024 * 1024);
+});
+
 test('content changes alter package identity without changing the semantic version', async (t) => {
     const directory = await fixture(t);
     const before = await validatePackage(directory);

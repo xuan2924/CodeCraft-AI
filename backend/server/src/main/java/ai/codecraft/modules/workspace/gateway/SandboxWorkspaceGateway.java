@@ -26,6 +26,7 @@ import ai.codecraft.workspace.v1.QueryWorkspaceRequest;
 import ai.codecraft.workspace.v1.ReadWorkspaceFileRequest;
 import ai.codecraft.workspace.v1.ReadWorkspaceFileResponse;
 import ai.codecraft.workspace.v1.WorkspaceSnapshot;
+import ai.codecraft.workspace.v1.WorkspaceDeletionReceipt;
 import ai.codecraft.workspace.v1.WorkspaceStorageGrpc;
 import io.grpc.Context;
 import ai.codecraft.workspace.v1.WatchTaskRequest;
@@ -51,6 +52,10 @@ public class SandboxWorkspaceGateway {
         Metadata metadata = new Metadata();
         metadata.put(Metadata.Key.of("x-codecraft-internal-key", Metadata.ASCII_STRING_MARSHALLER), properties.rpcKey());
         stub = WorkspaceStorageGrpc.newBlockingStub(channel).withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
+    }
+
+    public WorkspaceDeletionReceipt deleteWorkspace(String instance) {
+        return client().deleteWorkspace(QueryWorkspaceRequest.newBuilder().setWorkspaceInstanceId(instance).build());
     }
 
     public ExecutionInventory inventory(String after, String epoch) {

@@ -10,14 +10,15 @@ function valid(value: unknown): value is Draft {
 }
 async function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('codecraft-workspace-drafts', 2);
+    const request = indexedDB.open('codecraft-workspace-drafts', 3);
     let blocked = false;
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains('drafts')) {
         const store = request.result.createObjectStore('drafts', { keyPath: ['owner', 'exercise', 'path', 'id'] });
         store.createIndex('file', ['owner', 'exercise', 'path']);
       }
-      request.result.createObjectStore('accounts', { keyPath: 'owner' });
+      if (!request.result.objectStoreNames.contains('accounts')) request.result.createObjectStore('accounts', { keyPath: 'owner' });
+      if (!request.result.objectStoreNames.contains('deleted')) request.result.createObjectStore('deleted', { keyPath: ['owner', 'exercise'] });
     };
     request.onerror = () => reject(new Error('Local draft storage unavailable'));
     request.onblocked = () => { blocked = true; reject(new Error('Local draft storage upgrade blocked')); };
@@ -31,7 +32,7 @@ async function transaction<T>(mode: IDBTransactionMode, action: (store: IDBObjec
   const database = await open();
   try {
     return await new Promise<T>((resolve, reject) => {
-      const tx = database.transaction(['drafts', 'accounts'], mode);
+      const tx = database.transaction(['drafts', 'accounts', 'deleted'], mode);
       let result: T;
       tx.oncomplete = () => resolve(result);
       tx.onabort = () => reject(new Error('Local draft transaction failed'));
@@ -75,7 +76,11 @@ export async function putDraft(value: Draft, writerEpoch: number): Promise<void>
       const account: unknown = request.result;
       try {
         if (epoch(account) !== writerEpoch || (object(account) && account.blocked === true)) throw new Error('Stale draft writer');
-        store.put(value); result(undefined);
+        const deleted = store.transaction.objectStore('deleted').get([value.owner, value.exercise]);
+        deleted.onsuccess = () => {
+          if (deleted.result !== undefined) { store.transaction.abort(); return; }
+          store.put(value); result(undefined);
+        };
       } catch { store.transaction.abort(); }
     };
   });
@@ -148,6 +153,22 @@ export async function removeDraft(value: Draft): Promise<void> {
     };
   });
 }
+// An irreversible, exercise-scoped fence also rejects delayed writers in other tabs.
+// Login/account epoch changes never remove this deletion authority.
+export async function confirmExerciseDeletion(owner: string, exercise: string): Promise<void> {
+  await transaction<void>('readwrite', (store, result) => {
+    store.transaction.objectStore('deleted').put({ owner, exercise });
+    const request = store.openCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) { result(undefined); return; }
+      const value: unknown = cursor.value;
+      if (object(value) && value.owner === owner && value.exercise === exercise) cursor.delete();
+      cursor.continue();
+    };
+  });
+}
+
 export async function clearDrafts(owner: string, exercise?: string): Promise<void> {
   await transaction<void>('readwrite', (store, result, accounts) => {
     if (exercise === undefined) {

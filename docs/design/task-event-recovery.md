@@ -127,7 +127,9 @@ Go 暂不可用时保持可查询的撤销操作未决，禁止新副作用，�
 | `GET /exercises/{id}/tasks/{taskId}` | 200 快照/游标；查询不重启任务 |
 | `POST /exercises/{id}/tasks/{taskId}/stop` | 202 STOPPING；已终态 200 原结果 |
 | `POST /exercises/{id}/end` | 202 CLOSING；已收尾返回原状态，不重新冻结/验收 |
-| `DELETE /exercises/{id}` | 202，已结束才允许；之后私有资源 404，另提供本人最小删除进度 |
+| `GET /exercises?after={exerciseId}` | 本人已结束演练及删除进度索引，每页最多 50 条，按标识倒序；返回保留到期日 |
+| `DELETE /exercises/{id}` | 202，已结束才允许；以不可复用的 exerciseId 作为删除操作身份，不同键也返回同一受理事实；之后本人私有资源 404 `EXERCISE_DELETED`，跨用户仍为普通 404 |
+| `GET /exercises/{id}/deletion`、`POST /exercises/{id}/deletion/retry` | 本人最小删除进度、手动推动原清理；重试要求幂等键，不并行清理；完成后 7 天进度查询返回普通 404 |
 | `GET /operations/{operationId}` | 200 PENDING/PENDING_RECONCILIATION/SUCCEEDED/REJECTED，回执引用；每次校验操作所有权 |
 | `GET /exercises/{id}/tasks/{taskId}/events?after={cursor}` | SSE，有效 Cookie，无操作凭证；游标不是授权 |
 
@@ -136,6 +138,7 @@ Go 暂不可用时保持可查询的撤销操作未决，禁止新副作用，�
 - Java 首次受理在同一短事务保存唯一业务操作、可恢复非秘密载荷/指纹及槽位。成功重试返回原引用；进行中返回原 operationId；不同键仍受唯一活动名额/任务槽位限制。文件侧映射为工作区实例内唯一 requestId，不按文件拆键。
 - 完整业务回执至少保留完成后 7 天；未决操作绝不按时间清除。详细回执到期后保留精简墓碑（scope、key 指纹、operationId、结果引用/已过期标志），同键返回原引用或 410 OPERATION_RECEIPT_EXPIRED，绝不作为新请求执行。密码回执不存明文，指纹沿用任务 02 的服务端 HMAC。
 - 墓碑保留至所属资源不可再接收任何旧操作且所有内部派发均已被持久化栅栏覆盖；账号变更墓碑在账号存续期间保留。归属演练的记录纳入任务 16 的单场 512 MiB 预算及收尾预留，达到准入上限拒绝新增占用，不静默丢弃去重记录。非演练记录不因此获得无界存储承诺，容量与回收仍按其所属模块验证。
+- 本人资源查询的 `EXERCISE_DELETED` 是权威删除确认，可触发该演练本地清理；普通 `RESOURCE_NOT_FOUND`、网络错误和登录失效不具备此含义。删除进度过期不撤销内部墓碑的效力。创建演练的 PREPARE 回执作用域是用户而非旧演练，不能随演练详细回执过期一并删除，否则旧创建键可能生成新演练。
 - 删除后内部防重放记录仅含必要标识、指纹与处理结果，不含代码、日志正文或凭证。完整业务回执不等于完整原始请求载荷；仍需对账的载荷/证据在安全收敛前不得清除，也不得提前报告清理完成。最小删除进度的 7 天期限不覆盖业务回执的完成时间下限，更不授权按统一 TTL 删除安全墓碑。
 - 凭证签发类一次性秘密不做成功 body 缓存；响应丢失通过查询确认完成，再按明确路径换新凭证。身份撤销后旧会话访问操作回执仍 401，不能为幂等豁免身份。
 
@@ -147,6 +150,7 @@ Go 暂不可用时保持可查询的撤销操作未决，禁止新副作用，�
 |---|---|
 | PrepareWorkspace / QueryPreparation / CancelPreparation | exerciseId、attemptId、workspaceInstanceId、固定题目身份；返回准备状态及实例；取消墓碑先于销毁 |
 | CloseGate / OpenGate / QueryGate | 实例、transitionId、expectedEpoch；返回持久化 epoch、OPEN/CLOSED/FROZEN、转换回执 |
+| DeleteWorkspace | 不可复用的工作区实例；与所有文件/启动准入串行，先持久化不可逆墓碑；确认执行静默及清理后移除正文，返回精确实例和 complete；失败仍拒绝迟到 Prepare/Apply/Start |
 | ApplyBatch / QueryMutation | 实例、requestId、operationId、指纹、基线、gateEpoch、notAfter、变更；返回任务 04 回执/NOT_FOUND/UNKNOWN |
 | Freeze / QueryFreeze | 实例、关闭栅栏代次、operationId；返回冻结版本；不自行冻结一个仍 OPEN 的实例 |
 | StopSystemTask / QueryStop | 受信任生命周期调用，系统停止要求 CLOSED/FROZEN；返回执行快照或持久化取消回执，并绑定接受/观察取消的 hostEpoch。Java 在协调锁内重新读取派发代次，跨宿主代次的缺失登记不能据此释放隔离槽位 |

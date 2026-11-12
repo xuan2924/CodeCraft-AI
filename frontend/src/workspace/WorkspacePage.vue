@@ -9,7 +9,9 @@ import * as api from './api';
 import WorkspaceLogout from './WorkspaceLogout.vue';
 import WorkspaceTests from './WorkspaceTests.vue';
 import ClosedDrafts from './ClosedDrafts.vue';
+import WorkspaceRetention from './WorkspaceRetention.vue';
 import { cancelSaveLogout, saveLogoutOwner } from './logoutIntent';
+import { confirmExerciseDeletion } from './drafts';
 
 const WorkspaceEditor = defineAsyncComponent(() => import('./WorkspaceEditor.vue'));
 const theme = useThemeVars();
@@ -24,8 +26,12 @@ const router = useRouter();
 const lastExercise = ref(typeof route.query.exercise === 'string' ? route.query.exercise : undefined);
 const active = useQuery({ queryKey: ['workspace', owner, 'current', lastExercise], queryFn: ({ signal }) => api.current(signal, lastExercise.value),
   enabled: allowed, retry: false, refetchInterval: 2000 });
-watch(() => route.query.exercise, (id) => { lastExercise.value = typeof id === 'string' ? id : undefined; });
-const exercise = computed(() => active.data.value);
+watch(() => route.query.exercise, (id) => {
+  lastExercise.value = typeof id === 'string' ? id : undefined;
+  if (id !== deletedExercise.value) deletedExercise.value = '';
+});
+const deletedExercise = ref('');
+const exercise = computed(() => active.data.value?.exerciseId === deletedExercise.value ? null : active.data.value);
 const problem = computed(() => catalogue.data.value?.find((item) => item.problemVersionId === exercise.value?.problemVersionId));
 const selected = ref('');
 const editorView = ref<{ saveForLogout: () => Promise<boolean>; prepareEnd: (choice: 'save' | 'discard') => Promise<boolean> }>();
@@ -87,6 +93,8 @@ let disposed = false;
 watch(owner, (_, previous) => {
   generation++;
   logoutBusy.value = false;
+  deletedExercise.value = '';
+  cleanupFailed.value = '';
   if (previous) {
     lastExercise.value = undefined;
     void router.replace({ query: {} });
@@ -101,6 +109,44 @@ watch(owner, (_, previous) => {
   pending.value = false;
   credential.value = '';
 }, { flush: 'sync' });
+const cleanedDeletions = new Set<string>();
+const cleaningDeletions = new Set<string>();
+const cleanupFailed = ref('');
+async function acceptedDeletion(id: string) {
+  const user = owner.value;
+  if (!user) return;
+  const key = `${user}:${id}`;
+  if ((lastExercise.value === id || exercise.value?.exerciseId === id) && deletedExercise.value !== id) {
+    generation++;
+    pending.value = false;
+    ending.value = false;
+    unresolved.value = null;
+    deletedExercise.value = id;
+    hasEditor.value = false;
+    selected.value = '';
+    credential.value = '';
+    endPrompt.value = false;
+    controller.abort();
+    controller = new globalThis.AbortController();
+    await client.cancelQueries({ queryKey: ['workspace', user, 'current'] });
+    for (const kind of ['file', 'control', 'tasks']) {
+      await client.cancelQueries({ queryKey: ['workspace', user, kind] });
+      client.removeQueries({ queryKey: ['workspace', user, kind] });
+    }
+  }
+  if (cleanedDeletions.has(key) || cleaningDeletions.has(key)) return;
+  cleaningDeletions.add(key);
+  try {
+    await confirmExerciseDeletion(user, id);
+    cleanedDeletions.add(key);
+    if (owner.value === user && cleanupFailed.value === id) cleanupFailed.value = '';
+  } catch { if (!disposed && owner.value === user) cleanupFailed.value = id; }
+  finally { cleaningDeletions.delete(key); }
+}
+watch(() => active.error.value, (failure) => {
+  if (failure instanceof ApiError && failure.code === 'EXERCISE_DELETED' && lastExercise.value) void acceptedDeletion(lastExercise.value);
+});
+
 onScopeDispose(() => {
   disposed = true;
   globalThis.clearInterval(tick);
@@ -230,8 +276,28 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
       >
         核对并重试原操作
       </NButton>
+      <WorkspaceRetention
+        :key="owner"
+        :owner="owner"
+        @deleted="acceptedDeletion"
+        @select="router.push({ query: { ...route.query, exercise: $event } })"
+      />
       <p
-        v-if="catalogue.isError.value || active.isError.value"
+        v-if="cleanupFailed"
+        role="alert"
+      >
+        本地草稿清理失败，演练访问仍已撤销。<NButton @click="acceptedDeletion(cleanupFailed)">
+          重试清理本地草稿
+        </NButton>
+      </p>
+      <p
+        v-if="deletedExercise"
+        role="status"
+      >
+        演练已删除，不能恢复作答；后台清理进度可继续查询。
+      </p>
+      <p
+        v-if="catalogue.isError.value || active.isError.value && !deletedExercise"
         role="alert"
         class="failure"
       >
@@ -300,25 +366,59 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             <p v-if="exercise.deadlineAt">
               服务器截止时间：{{ new Date(exercise.deadlineAt).toLocaleString() }}
             </p>
-            <p v-if="exercise.state === 'ACTIVE'" role="status">
+            <p
+              v-if="exercise.state === 'ACTIVE'"
+              role="status"
+            >
               {{ expired ? '作答已到期，等待服务器确认；本地草稿不会自动提交。' : `剩余时间 ${remaining}` }}
             </p>
-            <NButton v-if="exercise.state === 'ACTIVE' && !expired" data-testid="end-exercise"
-              :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy" @click="endPrompt = true">
+            <NButton
+              v-if="exercise.state === 'ACTIVE' && !expired"
+              data-testid="end-exercise"
+              :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy"
+              @click="endPrompt = true"
+            >
               结束演练
             </NButton>
-            <section v-if="endPrompt && !answeringClosed" role="dialog" aria-modal="true" aria-label="结束演练确认">
+            <section
+              v-if="endPrompt && !answeringClosed"
+              role="dialog"
+              aria-modal="true"
+              aria-label="结束演练确认"
+            >
               <p>结束后不可继续作答。请选择保存所有已打开文件，或丢弃本页未保存内容；也可返回编辑。</p>
-              <p v-if="testBusy">仍有测试运行或状态待核对，结束后将由服务器停止并核对，不会把未知结果视为已停止。</p>
-              <NButton :disabled="ending || pending" @click="endExercise('save')">保存后结束</NButton>
-              <NButton :disabled="ending || pending" @click="endExercise('discard')">丢弃并结束</NButton>
-              <NButton :disabled="ending || pending" @click="endPrompt = false">返回编辑</NButton>
+              <p v-if="testBusy">
+                仍有测试运行或状态待核对，结束后将由服务器停止并核对，不会把未知结果视为已停止。
+              </p>
+              <NButton
+                :disabled="ending || pending"
+                @click="endExercise('save')"
+              >
+                保存后结束
+              </NButton>
+              <NButton
+                :disabled="ending || pending"
+                @click="endExercise('discard')"
+              >
+                丢弃并结束
+              </NButton>
+              <NButton
+                :disabled="ending || pending"
+                @click="endPrompt = false"
+              >
+                返回编辑
+              </NButton>
             </section>
-            <section v-if="exercise.finalization" aria-label="最终验收结果">
+            <section
+              v-if="exercise.finalization"
+              aria-label="最终验收结果"
+            >
               <p>最终冻结修订：{{ exercise.finalization.finalRevision ?? '尚未确认，正在核对' }}</p>
               <p>{{ ({ PENDING: '最终验收待核对', PASSED: '最终验收通过', FAILED: '最终验收失败', TIMED_OUT: '最终验收超时', UNAVAILABLE: '最终验收结果不可用' })[exercise.finalization.verification] }}</p>
               <p>系统验收尝试 {{ exercise.finalization.attempts }} / {{ exercise.finalization.maxAttempts }}；报告状态 UNAVAILABLE_NOT_IMPLEMENTED，AI 报告尚未接入。</p>
-              <p v-if="exercise.finalization.status === 'RECONCILIATION_REQUIRED'">冻结事实未确认，不能虚构最终版本，请稍后刷新。</p>
+              <p v-if="exercise.finalization.status === 'RECONCILIATION_REQUIRED'">
+                冻结事实未确认，不能虚构最终版本，请稍后刷新。
+              </p>
             </section>
             <p v-if="exercise.state === 'PREPARING'">
               后台正在核对准备结果。结果未知时不能另开重试或放弃请求。
@@ -358,7 +458,12 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               放弃本次演练
             </NButton>
           </section>
-          <p v-if="problem && !problem.executionAvailable" role="status">这个固定题目版本尚未配备正式执行配置，测试不可用；不会替换已有工作区版本。</p>
+          <p
+            v-if="problem && !problem.executionAvailable"
+            role="status"
+          >
+            这个固定题目版本尚未配备正式执行配置，测试不可用；不会替换已有工作区版本。
+          </p>
           <WorkspaceTests
             v-if="['ACTIVE', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
             :key="owner + exercise.workspaceInstanceId"
@@ -369,8 +474,12 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             @locked="testBusy = $event"
             @stale-control="credential = ''"
           />
-          <ClosedDrafts v-if="answeringClosed && ['CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
-            :key="owner + exercise.exerciseId" :owner="owner" :exercise-id="exercise.exerciseId" />
+          <ClosedDrafts
+            v-if="answeringClosed && ['CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
+            :key="owner + exercise.exerciseId"
+            :owner="owner"
+            :exercise-id="exercise.exerciseId"
+          />
           <div class="workspace-panels">
             <section aria-label="题目与文件">
               <h2>题目要求</h2>

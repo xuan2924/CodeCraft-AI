@@ -116,6 +116,19 @@ func TestFinalTaskAdmitsFrozenInputWithoutOpeningAnswerGate(t *testing.T) {
 	if err != nil || gate.State != "FROZEN" {
 		t.Fatalf("answer gate reopened: %v %v", gate, err)
 	}
+	deleted, deleteErr := storage.DeleteWorkspace(authorized(t), &rpc.QueryWorkspaceRequest{WorkspaceInstanceId: instance})
+	if deleteErr == nil || deleted.GetComplete() {
+		t.Fatalf("unknown execution was declared deleted: %v %v", deleted, deleteErr)
+	}
+	// Recovery evidence remains until Engine quiescence is known; the deletion
+	// fence still prevents even a historical successful Start from being reused.
+	queried, err = storage.QueryTask(authorized(t), &rpc.QueryTaskRequest{ExerciseId: operation, TaskId: mutation, ExecutionInstanceId: executionIDForFinalTest, WorkspaceInstanceId: instance})
+	if err != nil || queried.Quiescent || queried.State != "INTERRUPTED" {
+		t.Fatalf("unknown evidence lost during deletion: %v %v", queried, err)
+	}
+	if _, err = storage.StartTest(authorized(t), request); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("deleted instance accepted historical start: %v", err)
+	}
 }
 
 const executionIDForFinalTest = "66666666-6666-4666-8666-666666666666"

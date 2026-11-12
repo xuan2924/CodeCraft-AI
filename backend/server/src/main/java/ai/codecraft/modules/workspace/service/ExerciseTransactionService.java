@@ -6,6 +6,7 @@ import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.model.exception.IdentityFailure;
 import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
 import ai.codecraft.modules.workspace.model.dto.PreparationAuthorizationDTO;
+import ai.codecraft.modules.workspace.config.RetentionProperties;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
@@ -26,15 +27,17 @@ public class ExerciseTransactionService {
     private final Clock clock;
     private final IdentitySecrets secrets;
     private final WorkspaceCoordinationStore coordination;
+    private final RetentionProperties retention;
 
     public ExerciseTransactionService(ExerciseRepository repository, IdentityTransactionService identity,
-                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination) {
+                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination, RetentionProperties retention) {
         this.repository = repository;
         this.identity = identity;
         this.problems = problems;
         this.clock = clock;
         this.secrets = secrets;
         this.coordination = coordination;
+        this.retention = retention;
     }
 
     @Transactional
@@ -48,15 +51,18 @@ public class ExerciseTransactionService {
         WorkspaceOperationEntity previous = repository.receipt(user, "PREPARE", user, key);
         if (previous != null) {
             if (!previous.fingerprint().equals(fingerprint)) throw new BusinessException(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
+            if (repository.deleted(previous.exerciseId())) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
             return previous;
         }
         if (repository.current(user) != null) throw new BusinessException(WorkspaceErrorCode.ACTIVE_EXERCISE_EXISTS);
+        if (repository.retainedHistory(user) >= retention.historyLimit()) throw new BusinessException(WorkspaceErrorCode.HISTORY_LIMIT_REACHED);
         problems.find(version);
         String exercise = UUID.randomUUID().toString();
         String instance = UUID.randomUUID().toString();
         String operation = UUID.randomUUID().toString();
         repository.insert(new ExerciseEntity(exercise, user, version, instance, operation, "PREPARING", null, "[]",
             1, clock.instant(), null, null, null, null, null));
+        repository.retention(exercise, Math.multiplyExact((long) retention.days(), 86400));
         repository.bindPreparationSession(exercise, session, authorization.expiresAt());
         WorkspaceOperationEntity accepted = new WorkspaceOperationEntity(operation, user, exercise, instance,
             "PREPARE", user, key, fingerprint, "PENDING", clock.instant());
@@ -70,6 +76,7 @@ public class ExerciseTransactionService {
         ExerciseEntity exercise = repository.find(id);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
+        if (repository.deleted(id)) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
         coordination.checkControl(id, IdentitySecrets.digest(credential));
         if (repository.receipt(user, "START", id, key) != null) return exercise;
         if (!exercise.state().equals("READY")) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
@@ -89,6 +96,7 @@ public class ExerciseTransactionService {
         ExerciseEntity exercise = repository.find(id);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
+        if (repository.deleted(id)) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
         WorkspaceOperationEntity previous = repository.receipt(user, "PREPARATION_RETRY", id, key);
         if (previous != null) return previous;
         String instance = UUID.randomUUID().toString();
@@ -108,9 +116,11 @@ public class ExerciseTransactionService {
         ExerciseEntity exercise = repository.find(id);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
+        if (repository.deleted(id)) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
         WorkspaceOperationEntity previous = repository.receipt(user, "ABANDON", id, key);
         if (previous != null) return previous;
         if (repository.abandon(id) != 1) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
+        repository.endedAt(id, clock.instant());
         WorkspaceOperationEntity operation = new WorkspaceOperationEntity(UUID.randomUUID().toString(), user, id,
             exercise.workspaceInstanceId(), "ABANDON", id, key, secrets.fingerprint("ABANDON"), "PENDING", clock.instant());
         repository.insertOperation(operation);
@@ -123,6 +133,7 @@ public class ExerciseTransactionService {
         String user = identity.authorization(session).userId();
         ExerciseEntity exercise = repository.find(id);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        if (repository.deleted(id)) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
         return exercise;
     }
 
@@ -138,6 +149,7 @@ public class ExerciseTransactionService {
         String user = identity.authorization(session).userId();
         WorkspaceOperationEntity operation = repository.operation(id);
         if (operation == null || !operation.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        if (repository.deleted(operation.exerciseId())) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
         return operation;
     }
 

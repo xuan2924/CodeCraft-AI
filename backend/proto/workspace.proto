@@ -9,6 +9,8 @@ option go_package = "codecraft.local/sandbox/internal/gen;statusv1";
 service WorkspaceStorage {
   rpc PrepareWorkspace(PrepareWorkspaceRequest) returns (WorkspaceSnapshot);
   rpc QueryWorkspace(QueryWorkspaceRequest) returns (WorkspaceSnapshot);
+  // Durable deletion fence; repeated calls finish cleanup without reopening the instance.
+  rpc DeleteWorkspace(QueryWorkspaceRequest) returns (WorkspaceDeletionReceipt);
   rpc ReadWorkspaceFile(ReadWorkspaceFileRequest) returns (ReadWorkspaceFileResponse);
   rpc CancelPreparation(CancelPreparationRequest) returns (WorkspaceSnapshot);
   rpc CloseGate(CloseGateRequest) returns (GateResponse);
@@ -47,6 +49,10 @@ message PrepareWorkspaceRequest {
   int64 not_after_unix_millis = 4;
 }
 message QueryWorkspaceRequest { string workspace_instance_id = 1; }
+message WorkspaceDeletionReceipt {
+  string workspace_instance_id = 1;
+  bool complete = 2;
+}
 message ReadWorkspaceFileRequest {
   string workspace_instance_id = 1;
   string path = 2;

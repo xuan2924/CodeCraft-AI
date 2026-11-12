@@ -123,6 +123,23 @@ func (s *Service) enter(ctx context.Context) (func(), error) {
 }
 
 func (s *Service) instance(id string, create bool) (int, error) {
+	fd, err := s.rawInstance(id, create)
+	if err != nil {
+		return -1, err
+	}
+	_, err = readPath(fd, "deleted")
+	if err == nil {
+		syscall.Close(fd)
+		return -1, status.Error(codes.FailedPrecondition, "workspace deleted")
+	}
+	if !errors.Is(err, syscall.ENOENT) {
+		syscall.Close(fd)
+		return -1, storageError(err)
+	}
+	return fd, nil
+}
+
+func (s *Service) rawInstance(id string, create bool) (int, error) {
 	if !uuid.MatchString(id) {
 		return -1, status.Error(codes.InvalidArgument, "invalid workspace instance")
 	}

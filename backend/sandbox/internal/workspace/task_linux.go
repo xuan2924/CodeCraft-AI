@@ -34,6 +34,11 @@ func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) 
 	if request.HostEpoch != s.executor.HostEpoch() {
 		return nil, status.Error(codes.FailedPrecondition, "stale execution host generation")
 	}
+	check, err := s.instance(request.WorkspaceInstanceId, false)
+	if err != nil {
+		return nil, err
+	}
+	syscall.Close(check)
 	previous, err := s.executor.Query(ctx, request.ExecutionInstanceId)
 	if err == nil {
 		i := previous.Input
@@ -368,7 +373,7 @@ func (s *Service) releaseTestCopy(ctx context.Context, result execution.Result) 
 		return err
 	}
 	defer release()
-	fd, err := s.instance(result.Input.WorkspaceID, false)
+	fd, err := s.rawInstance(result.Input.WorkspaceID, false)
 	if err != nil {
 		return err
 	}

@@ -14,6 +14,9 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface ExerciseRepository {
     String EXERCISE_COLUMNS = "id::text, user_id::text, problem_version_id::text, workspace_instance_id::text, preparation_operation_id::text, state, revision, paths::text, state_version, created_at, started_at, deadline_at, preparation_failure_reason, end_reason, cleanup_state";
+    @Select("SELECT EXISTS (SELECT 1 FROM workspace_deletion WHERE exercise_id = #{id}::uuid)")
+    boolean deleted(String id);
+
     String OPERATION_COLUMNS = "id::text, user_id::text, exercise_id::text, workspace_instance_id::text, kind, target, request_key, fingerprint, state, created_at";
 
     @Select("SELECT " + EXERCISE_COLUMNS + " FROM workspace_exercise WHERE user_id = #{user}::uuid AND state = 'PREPARING' AND (#{session}::text IS NULL OR preparation_session_hash = #{session} OR preparation_session_hash IS NULL)")
@@ -33,6 +36,13 @@ public interface ExerciseRepository {
 
     @Select("SELECT " + EXERCISE_COLUMNS + " FROM workspace_exercise WHERE user_id = #{user}::uuid AND state <> 'ENDED'")
     ExerciseEntity current(String user);
+
+    @Select("SELECT count(*) FROM workspace_exercise e WHERE user_id = #{user}::uuid AND state = 'ENDED' AND NOT EXISTS (SELECT 1 FROM workspace_deletion d WHERE d.exercise_id = e.id)")
+    int retainedHistory(String user);
+    @Update("UPDATE workspace_exercise SET retention_seconds = #{seconds} WHERE id = #{id}::uuid AND state = 'PREPARING'")
+    void retention(@Param("id") String id, @Param("seconds") long seconds);
+    @Update("UPDATE workspace_exercise SET ended_at = #{now}, retain_until = #{now} + retention_seconds * interval '1 second' WHERE id = #{id}::uuid AND state = 'ENDED' AND ended_at IS NULL")
+    void endedAt(@Param("id") String id, @Param("now") Instant now);
 
     @Insert("""
         INSERT INTO workspace_exercise(id, user_id, problem_version_id, workspace_instance_id, preparation_operation_id, state, created_at)
