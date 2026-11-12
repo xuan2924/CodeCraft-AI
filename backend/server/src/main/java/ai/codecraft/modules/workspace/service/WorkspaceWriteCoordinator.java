@@ -45,7 +45,7 @@ public class WorkspaceWriteCoordinator {
         WorkspaceTransitionEntity transition = store.transition(id);
         if (transition == null || transition.phase().equals("SUCCEEDED")) return;
         store.attempted(id);
-        if (transition.kind().equals("REVOKE")) {
+        if (transition.kind().equals("REVOKE") || transition.kind().equals("END")) {
             WorkspaceControlEntity control = store.control(transition.exerciseId());
             if (control.transitionId() != null && !id.equals(control.transitionId())) drive(control.transitionId());
             if (!store.activateFence(id)) throw new IllegalStateException("Fence waiting for previous transition");

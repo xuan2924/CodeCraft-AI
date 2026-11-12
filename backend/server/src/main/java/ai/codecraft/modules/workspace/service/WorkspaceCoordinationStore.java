@@ -37,6 +37,7 @@ public class WorkspaceCoordinationStore {
         List<String> ids = new ArrayList<>();
         for (String exercise : writes.controlled(user)) {
             WorkspaceControlEntity control = writes.lock(exercise);
+            if (control.gateState().equals("FROZEN")) continue;
             String id = control.fenceId();
             if (id == null) {
                 id = UUID.randomUUID().toString();
@@ -106,7 +107,11 @@ public class WorkspaceCoordinationStore {
         if (!id.equals(control.transitionId()) || !transition.phase().equals("CLOSING")) return;
         if (!writes.unresolved(control.exerciseId()).isEmpty()) throw new IllegalStateException("Unresolved writes remain behind fence");
         writes.gate(control.exerciseId(), transition.expectedEpoch() + 1, "CLOSED");
-        if (transition.kind().equals("REVOKE")) {
+        if (transition.kind().equals("END")) {
+            writes.phase(id, "SUCCEEDED");
+            writes.activate(control.exerciseId(), null);
+            writes.holder(control.exerciseId(), null);
+        } else if (transition.kind().equals("REVOKE")) {
             writes.phase(id, "SUCCEEDED");
             writes.activate(control.exerciseId(), null);
             writes.fence(control.exerciseId(), null);

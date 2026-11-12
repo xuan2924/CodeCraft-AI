@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import WorkspaceEditor from './WorkspaceEditor.vue';
+import ClosedDrafts from './ClosedDrafts.vue';
 import * as api from './api';
 import * as drafts from './drafts';
 import { ApiError } from '../api/request';
@@ -9,7 +10,7 @@ const navigation = vi.hoisted(() => ({ guard: (): boolean | Promise<boolean> => 
 vi.mock('vue-router', () => ({ onBeforeRouteLeave: (guard: () => boolean | Promise<boolean>) => { navigation.guard = guard; } }));
 vi.mock('./CodeEditor.vue', () => ({ default: { props: ['path', 'modelValue', 'readonly'], emits: ['update:modelValue', 'save'],
   template: '<textarea aria-label="测试编辑器" :value="modelValue" :readonly="readonly" @input="$emit(\'update:modelValue\', $event.target.value)" />' } }));
-vi.mock('./drafts', () => ({ readDraftEpoch: vi.fn(async () => 0), listDrafts: vi.fn(async () => []), putDraft: vi.fn(async () => {}), removeDraft: vi.fn(async () => {}) }));
+vi.mock('./drafts', () => ({ readDraftEpoch: vi.fn(async () => 0), listDrafts: vi.fn(async () => []), listAccountDrafts: vi.fn(async () => []), putDraft: vi.fn(async () => {}), removeDraft: vi.fn(async () => {}) }));
 vi.mock('./api', async (original) => ({ ...await original<typeof api>(), save: vi.fn(), operation: vi.fn() }));
 const file = { workspaceInstanceId: 'instance', path: 'src/main/java/Main.java', revision: '0', content: 'base' };
 const exercise: api.Exercise = { exerciseId: 'exercise', problemVersionId: 'problem', workspaceInstanceId: 'instance', state: 'ACTIVE', revision: '0',
@@ -21,6 +22,45 @@ function render(owner = 'owner') {
   view = mount(WorkspaceEditor, { props: { owner, exercise, file, selected: file.path, credential: 'credential' } });
   return view;
 }
+it('retains local drafts read-only at expiry without submitting or deleting them', async () => {
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('keep after expiry');
+  await page.setProps({ answeringClosed: true });
+  await vi.advanceTimersByTimeAsync(350);
+  expect(page.get('textarea').attributes('readonly')).toBeDefined();
+  expect(page.get('textarea').element.value).toBe('keep after expiry');
+  expect(drafts.putDraft).toHaveBeenCalledWith(expect.objectContaining({ content: 'keep after expiry' }), 0);
+  expect(api.save).not.toHaveBeenCalled();
+  expect(drafts.removeDraft).not.toHaveBeenCalled();
+  expect(await page.vm.$.exposed?.prepareEnd('save')).toBe(false);
+});
+
+it('makes backed up drafts viewable after an expired editor is unmounted and the ended page is reloaded', async () => {
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('retained across page reload');
+  await vi.advanceTimersByTimeAsync(350);
+  const saved = vi.mocked(drafts.putDraft).mock.calls.at(-1)?.[0];
+  expect(saved).toBeDefined();
+  await page.setProps({ answeringClosed: true });
+  page.unmount();
+  await flushPromises();
+  vi.mocked(drafts.listAccountDrafts).mockResolvedValueOnce([saved!]);
+  view = mount(ClosedDrafts, { props: { owner: 'owner', exerciseId: 'exercise' } });
+  await flushPromises();
+  expect(view.get('pre').text()).toBe('retained across page reload');
+  expect(drafts.removeDraft).not.toHaveBeenCalled();
+  expect(api.save).not.toHaveBeenCalled();
+});
+
+it('prepares explicit discard for ending without changing the committed workspace', async () => {
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('discard me');
+  expect(await page.vm.$.exposed?.prepareEnd('discard')).toBe(true);
+  expect(page.get('textarea').element.value).toBe('base');
+  expect(api.save).not.toHaveBeenCalled();
+  expect(drafts.removeDraft).toHaveBeenCalledWith(expect.objectContaining({ content: 'discard me' }));
+});
+
 it('requires save confirmation before emitting a test start for the confirmed revision', async () => {
   const page = render(); await flushPromises();
   await page.get('textarea').setValue('changed for test');

@@ -25,8 +25,8 @@ func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) 
 		return nil, err
 	}
 	defer release()
-	if !validTaskIdentity(request.ExerciseId, request.TaskId, request.ExecutionInstanceId, request.WorkspaceInstanceId) || request.Purpose != "MANUAL" || request.Target != "base" || request.NotAfterUnixMillis <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "invalid manual task")
+	if !validTaskIdentity(request.ExerciseId, request.TaskId, request.ExecutionInstanceId, request.WorkspaceInstanceId) || !validTestPurpose(request) || request.Target != "base" || request.NotAfterUnixMillis <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "invalid test authority")
 	}
 	if s.executor == nil {
 		return nil, status.Error(codes.Unavailable, "execution is not configured")
@@ -37,6 +37,9 @@ func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) 
 	previous, err := s.executor.Query(ctx, request.ExecutionInstanceId)
 	if err == nil {
 		i := previous.Input
+		if !sameFinalAuthority(i, request) {
+			return nil, status.Error(codes.AlreadyExists, "task authority changed")
+		}
 		if i.ExerciseID != request.ExerciseId || i.TaskID != request.TaskId || i.WorkspaceID != request.WorkspaceInstanceId || i.Revision != request.ExpectedRevision || i.GateEpoch != request.GateEpoch || i.NotAfter.UnixMilli() != request.NotAfterUnixMillis || i.Target != request.Target {
 			return nil, status.Error(codes.AlreadyExists, "task identity reused")
 		}
@@ -44,6 +47,9 @@ func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) 
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, storageError(err)
+	}
+	if err := s.checkTaskGate(request); err != nil {
+		return nil, err
 	}
 	// Look up immutable runtime settings before making a copy. Neither caller
 	// commands nor resource settings cross this RPC boundary.
@@ -71,6 +77,10 @@ func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) 
 		ProblemID: identity.ProblemId, ProblemVersion: identity.Version, Revision: request.ExpectedRevision, GateEpoch: request.GateEpoch,
 		Image: identity.ExecutionImageDigest, PackageSHA256: identity.PackageSha256, Platform: identity.Platform,
 		Target: request.Target, Subpath: request.WorkspaceInstanceId + "/copy-" + request.ExecutionInstanceId + "/tree", NotAfter: time.UnixMilli(request.NotAfterUnixMillis), Limits: policy.Limits, Suite: policy.Suite, Tests: policy.Tests}
+	input.Purpose = request.Purpose
+	if final := request.FinalVerification; final != nil {
+		input.FinalizationID, input.AttemptID, input.FreezeID, input.FinalDeadline = final.FinalizationId, final.AttemptId, final.FreezeOperationId, final.DeadlineUnixMillis
+	}
 	prepare := func() error {
 		if err := ctx.Err(); err != nil {
 			return status.FromContextError(err).Err()
@@ -79,7 +89,7 @@ func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) 
 		if err := s.checkTaskGate(request); err != nil {
 			return err
 		}
-		_, err := s.prepareTestCopyLocked(ctx, &rpc.PrepareTestCopyRequest{WorkspaceInstanceId: request.WorkspaceInstanceId, ExecutionInstanceId: request.ExecutionInstanceId, ExpectedRevision: request.ExpectedRevision, GateEpoch: request.GateEpoch, NotAfterUnixMillis: request.NotAfterUnixMillis})
+		_, err := s.prepareTestCopyLocked(ctx, &rpc.PrepareTestCopyRequest{WorkspaceInstanceId: request.WorkspaceInstanceId, ExecutionInstanceId: request.ExecutionInstanceId, ExpectedRevision: request.ExpectedRevision, GateEpoch: request.GateEpoch, NotAfterUnixMillis: request.NotAfterUnixMillis, FinalVerification: request.FinalVerification})
 		return err
 	}
 	result, err := s.executor.Start(s.worker, input, prepare, s.releaseTestCopy)
@@ -111,7 +121,7 @@ func (s *Service) checkTaskGate(request *rpc.StartTestRequest) error {
 	if err != nil {
 		return storageError(err)
 	}
-	if len(gates) == 0 || gates[len(gates)-1].State != "OPEN" || gates[len(gates)-1].Epoch != request.GateEpoch || !time.Now().Before(time.UnixMilli(request.NotAfterUnixMillis)) {
+	if !copyGateAuthorized(gates, request.GateEpoch, request.ExpectedRevision, request.NotAfterUnixMillis, request.FinalVerification) || !s.now().Before(time.UnixMilli(request.NotAfterUnixMillis)) {
 		return status.Error(codes.FailedPrecondition, "task authority expired or gate closed")
 	}
 	current, _, err := latest(fd, request.WorkspaceInstanceId)
@@ -186,9 +196,9 @@ func (s *Service) StopTask(ctx context.Context, request *rpc.StopTaskRequest) (*
 		return nil, storageError(err)
 	}
 	if result == nil {
-		return &rpc.StopTaskResponse{CancelledBeforeRegistration: true}, nil
+		return &rpc.StopTaskResponse{CancelledBeforeRegistration: true, HostEpoch: s.executor.HostEpoch()}, nil
 	}
-	return &rpc.StopTaskResponse{Snapshot: taskSnapshot(*result)}, nil
+	return &rpc.StopTaskResponse{Snapshot: taskSnapshot(*result), HostEpoch: s.executor.HostEpoch()}, nil
 }
 
 // ListExecutions pages identities without buffering report/log bodies.
@@ -243,7 +253,7 @@ func (s *Service) QueryStop(ctx context.Context, request *rpc.QueryTaskRequest) 
 	if err != nil {
 		return nil, storageError(err)
 	}
-	response := &rpc.StopTaskResponse{CancelledBeforeRegistration: cancelled}
+	response := &rpc.StopTaskResponse{CancelledBeforeRegistration: cancelled, HostEpoch: s.executor.HostEpoch()}
 	if result != nil {
 		response.Snapshot = taskSnapshot(*result)
 	}

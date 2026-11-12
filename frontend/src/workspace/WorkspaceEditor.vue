@@ -8,13 +8,13 @@ import { buffer, committed, dirty, observe, useLatestBaseline, type Buffer } fro
 import { listDrafts, putDraft, readDraftEpoch, removeDraft, type Draft } from './drafts';
 import CodeEditor from './CodeEditor.vue';
 
-const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean; testBusy?: boolean }>();
+const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean; testBusy?: boolean; answeringClosed?: boolean }>();
 const emit = defineEmits<{ saved: []; select: [path: string]; 'stale-control': []; 'run-test': [revision: string] }>();
 const theme = useThemeVars();
 const buffers = reactive(new Map<string, Buffer>());
 const current = computed(() => buffers.get(props.selected));
 const edited = computed(() => [...buffers.values()].some(dirty));
-const canWrite = computed(() => !!props.credential && props.exercise.state === 'ACTIVE' &&
+const canWrite = computed(() => !props.answeringClosed && !!props.credential && props.exercise.state === 'ACTIVE' &&
   (!props.exercise.deadlineAt || Date.now() < Date.parse(props.exercise.deadlineAt)));
 const busy = ref(false);
 const notice = ref('尚未修改；编辑内容需显式保存。');
@@ -42,7 +42,7 @@ let backupQueue = Promise.resolve();
 let loadGeneration = 0;
 interface Pending { key: string; revision: string; changes: api.FileChange[]; operationId?: string; select?: string }
 const unresolved = ref<Pending | null>(null);
-const editorLocked = computed(() => props.locked || !current.value || !/^src\/(main|test)\/java\//.test(props.selected) ||
+const editorLocked = computed(() => props.locked || props.answeringClosed || props.exercise.state !== 'ACTIVE' || !current.value || !/^src\/(main|test)\/java\//.test(props.selected) ||
   unresolved.value?.changes.some((change) => change.path === props.selected && change.kind === 'DELETE') === true);
 const leaving = ref(false);
 let finishLeave: ((value: boolean) => void) | undefined;
@@ -179,7 +179,12 @@ async function saveForLogout(): Promise<boolean> {
   await flushBackup();
   return !disposed && !edited.value && !unresolved.value;
 }
-defineExpose({ saveForLogout });
+async function prepareEnd(choice: 'save' | 'discard'): Promise<boolean> {
+  if (busy.value || unresolved.value || disposed || !canWrite.value) return false;
+  if (choice === 'save') return saveForLogout();
+  return discardAll();
+}
+defineExpose({ saveForLogout, prepareEnd });
 function requestTest() {
   if (!canWrite.value || props.locked || props.testBusy || busy.value || unresolved.value) return;
   if (edited.value) { testPrompt.value = true; return; }
@@ -223,6 +228,20 @@ onBeforeRouteLeave(() => {
   leaving.value = true;
   return new Promise<boolean>((resolve) => { finishLeave = resolve; });
 });
+async function discardAll(): Promise<boolean> {
+  const confirmed = new Map([...buffers.values()].map((value) => [value.path, value.content]));
+  await flushBackup();
+  try {
+    for (const [path, text] of confirmed) await cleanMatching(path, text, false);
+  } catch { error.value = '本地草稿未能清理，请重试或取消。'; return false; }
+  await backupQueue;
+  if (disposed) return false;
+  if ([...buffers.values()].some((value) => value.content !== confirmed.get(value.path))) {
+    error.value = '丢弃期间产生了新输入，请重新确认。'; return false;
+  }
+  for (const value of buffers.values()) { value.content = value.remote?.content ?? value.baseContent; useLatestBaseline(value); }
+  return true;
+}
 async function leave(choice: 'save' | 'discard' | 'cancel') {
   if (choice === 'cancel') { finishLeave?.(false); finishLeave = undefined; leaving.value = false; return; }
   if (busy.value || unresolved.value) { error.value = '先核对在途操作；不能把离开页面当作取消保存。'; return; }
@@ -231,17 +250,7 @@ async function leave(choice: 'save' | 'discard' | 'cancel') {
     if (edited.value) { error.value = '保存期间产生了新输入，请处理后再离开。'; return; }
   }
   if (choice === 'discard') {
-    const confirmed = new Map([...buffers.values()].map((value) => [value.path, value.content]));
-    await flushBackup();
-    try {
-      for (const [path, text] of confirmed) await cleanMatching(path, text, false);
-    } catch { error.value = '本地草稿未能清理，请重试或取消离开。'; return; }
-    await backupQueue;
-    if (disposed) return;
-    if ([...buffers.values()].some((value) => value.content !== confirmed.get(value.path))) {
-      error.value = '丢弃期间产生了新输入，请处理后再离开。'; return;
-    }
-    for (const value of buffers.values()) { value.content = value.remote?.content ?? value.baseContent; useLatestBaseline(value); }
+    if (!await discardAll()) return;
   } else {
     await backupQueue;
     if (disposed || edited.value) { error.value = '保存期间产生了新输入，请处理后再离开。'; return; }
@@ -265,6 +274,9 @@ onScopeDispose(() => {
     :style="{ '--editor-border': theme.borderColor }"
   >
     <h2>{{ selected || '选择或创建文件' }}</h2>
+    <p v-if="answeringClosed || props.exercise.state !== 'ACTIVE'" role="status">
+      作答已关闭。这里保留本地内容供查看或复制，不会自动保存，也不是最终冻结代码；备份内容可展开查看。
+    </p>
     <p role="status">
       {{ busy ? '正在保存或核对…' : notice }}
     </p>

@@ -43,6 +43,9 @@ func (s *Service) CloseGate(ctx context.Context, request *rpc.CloseGateRequest) 
 			return gate, nil
 		}
 	}
+	if len(gates) > 0 && gates[len(gates)-1].State == "FROZEN" {
+		return nil, status.Error(codes.FailedPrecondition, "workspace frozen")
+	}
 	current := uint64(0)
 	if len(gates) > 0 {
 		current = gates[len(gates)-1].Epoch
@@ -83,6 +86,9 @@ func (s *Service) OpenGate(ctx context.Context, request *rpc.CloseGateRequest) (
 	gates, err := gateRecords(fd, request.WorkspaceInstanceId)
 	if err != nil {
 		return nil, storageError(err)
+	}
+	if len(gates) > 0 && gates[len(gates)-1].State == "FROZEN" {
+		return nil, status.Error(codes.FailedPrecondition, "workspace frozen")
 	}
 	for _, gate := range gates {
 		if gate.TransitionId == request.TransitionId && gate.State == "OPEN" {
@@ -163,7 +169,7 @@ func gateRecords(parent int, expectedID string) ([]*rpc.GateResponse, error) {
 		if err = json.Unmarshal(data, &gate); err != nil {
 			return nil, err
 		}
-		if gate.Epoch != epoch || gate.WorkspaceInstanceId != expectedID || !uuid.MatchString(gate.TransitionId) || (gate.State != "CLOSED" && gate.State != "OPEN") {
+		if gate.Epoch != epoch || gate.WorkspaceInstanceId != expectedID || !uuid.MatchString(gate.TransitionId) || (gate.State != "CLOSED" && gate.State != "OPEN" && gate.State != "FROZEN") {
 			return nil, fmt.Errorf("invalid gate receipt")
 		}
 		gates = append(gates, &gate)
@@ -173,6 +179,12 @@ func gateRecords(parent int, expectedID string) ([]*rpc.GateResponse, error) {
 	for index, gate := range gates {
 		if gate.Epoch != uint64(index)+1 {
 			return nil, fmt.Errorf("missing gate receipt")
+		}
+		if gate.State == "FROZEN" && (index == 0 || gates[index-1].State != "CLOSED" || index != len(gates)-1) {
+			return nil, fmt.Errorf("invalid freeze ordering")
+		}
+		if gate.State != "FROZEN" && gate.FrozenRevision != 0 {
+			return nil, fmt.Errorf("unexpected frozen revision")
 		}
 		if gate.State == "OPEN" && (index == 0 || gates[index-1].State != "CLOSED" || gates[index-1].TransitionId != gate.TransitionId) {
 			return nil, fmt.Errorf("open gate without matching close")

@@ -5,6 +5,8 @@ import ai.codecraft.modules.identity.model.entity.RevocationIntentEntity;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.modules.workspace.model.dto.ExerciseResponse;
+import ai.codecraft.modules.workspace.model.dto.FinalizationResponse;
+import ai.codecraft.modules.workspace.model.entity.FinalizationEntity;
 import ai.codecraft.modules.workspace.model.dto.WorkspaceFileResponse;
 import ai.codecraft.modules.workspace.model.dto.WorkspaceOperationResponse;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
@@ -26,14 +28,18 @@ public class ExerciseService {
     private final ProblemService problems;
     private final IdentityTransactionService identity;
     private final WorkspaceWriteTransactionService writes;
+    private final FinalizationStore finals;
+    private final FinalizationCoordinator finalization;
 
-    public ExerciseService(ExerciseTransactionService store, SandboxWorkspaceGateway sandbox, ObjectMapper json, ProblemService problems, IdentityTransactionService identity, WorkspaceWriteTransactionService writes) {
+    public ExerciseService(ExerciseTransactionService store, SandboxWorkspaceGateway sandbox, ObjectMapper json, ProblemService problems, IdentityTransactionService identity, WorkspaceWriteTransactionService writes, FinalizationStore finals, FinalizationCoordinator finalization) {
         this.store = store;
         this.sandbox = sandbox;
         this.json = json;
         this.problems = problems;
         this.identity = identity;
         this.writes = writes;
+        this.finals = finals;
+        this.finalization = finalization;
     }
 
     public WorkspaceOperationResponse create(String session, String version, String key) {
@@ -48,8 +54,22 @@ public class ExerciseService {
         }
         return writes.result(session, id);
     }
-    public ExerciseResponse find(String session, String id) { return describe(store.find(session, id)); }
-    public ExerciseResponse current(String session) { return describe(store.current(session)); }
+    public ExerciseResponse find(String session, String id) {
+        store.find(session, id);
+        finals.expire(id);
+        return describe(store.find(session, id));
+    }
+    public ExerciseResponse current(String session) {
+        ExerciseEntity exercise = store.current(session);
+        finals.expire(exercise.id());
+        return describe(store.find(session, exercise.id()));
+    }
+
+    public ExerciseResponse end(String session, String id, String key, String credential) {
+        finals.end(session, id, key, credential);
+        finalization.tryDrive(id);
+        return describe(store.find(session, id));
+    }
 
     public ExerciseResponse start(String session, String id, String key, String credential) {
         ExerciseEntity exercise = store.find(session, id);
@@ -105,10 +125,14 @@ public class ExerciseService {
     private ExerciseResponse describe(ExerciseEntity exercise) {
         try {
             List<String> paths = json.readValue(exercise.paths(), new TypeReference<List<String>>() {});
+            FinalizationEntity value = finals.find(exercise.id());
+            FinalizationResponse result = value == null ? null : new FinalizationResponse(value.id(),
+                value.finalRevision() == null ? null : value.finalRevision().toString(), value.verification(), value.resultTaskId(), value.attempts(),
+                value.maxAttempts(), value.deadlineAt(), value.endedAt(), value.frozenEpoch() == null ? "RECONCILIATION_REQUIRED" : value.endedAt() == null ? "FINAL_TESTING" : "ENDED");
             return new ExerciseResponse(exercise.id(), exercise.problemVersionId(), exercise.workspaceInstanceId(),
                 exercise.preparationOperationId(), exercise.state(), exercise.revision() == null ? null : exercise.revision().toString(),
                 Long.toString(exercise.stateVersion()), List.copyOf(paths), exercise.startedAt(), exercise.deadlineAt(), "UNAVAILABLE_NOT_IMPLEMENTED",
-                exercise.preparationFailureReason(), exercise.endReason(), exercise.cleanupState());
+                exercise.preparationFailureReason(), exercise.endReason(), exercise.cleanupState(), result);
         } catch (IOException error) {
             throw new IllegalStateException("Stored workspace paths are invalid", error);
         }

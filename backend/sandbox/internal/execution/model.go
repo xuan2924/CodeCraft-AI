@@ -20,6 +20,11 @@ type Limits struct {
 // reserve its business slot and persist identity before invoking Run. Root and
 // Volume are deployment configuration; Subpath must identify only this copy.
 type Input struct {
+	Purpose        string    `json:"purpose,omitempty"`
+	FinalizationID string    `json:"finalizationId,omitempty"`
+	AttemptID      string    `json:"attemptId,omitempty"`
+	FreezeID       string    `json:"freezeId,omitempty"`
+	FinalDeadline  int64     `json:"finalDeadline,omitempty"`
 	HostEpoch      string    `json:"hostEpoch,omitempty"`
 	ExerciseID     string    `json:"exerciseId,omitempty"`
 	TaskID         string    `json:"taskId,omitempty"`

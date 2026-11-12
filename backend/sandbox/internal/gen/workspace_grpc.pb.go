@@ -26,6 +26,8 @@ const (
 	WorkspaceStorage_CloseGate_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/CloseGate"
 	WorkspaceStorage_QueryGate_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryGate"
 	WorkspaceStorage_OpenGate_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/OpenGate"
+	WorkspaceStorage_Freeze_FullMethodName            = "/codecraft.workspace.v1.WorkspaceStorage/Freeze"
+	WorkspaceStorage_QueryFreeze_FullMethodName       = "/codecraft.workspace.v1.WorkspaceStorage/QueryFreeze"
 	WorkspaceStorage_ApplyBatch_FullMethodName        = "/codecraft.workspace.v1.WorkspaceStorage/ApplyBatch"
 	WorkspaceStorage_QueryMutation_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/QueryMutation"
 	WorkspaceStorage_PrepareTestCopy_FullMethodName   = "/codecraft.workspace.v1.WorkspaceStorage/PrepareTestCopy"
@@ -33,6 +35,7 @@ const (
 	WorkspaceStorage_StartTest_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/StartTest"
 	WorkspaceStorage_QueryTask_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryTask"
 	WorkspaceStorage_StopTask_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/StopTask"
+	WorkspaceStorage_StopSystemTask_FullMethodName    = "/codecraft.workspace.v1.WorkspaceStorage/StopSystemTask"
 	WorkspaceStorage_QueryStop_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryStop"
 	WorkspaceStorage_ListExecutions_FullMethodName    = "/codecraft.workspace.v1.WorkspaceStorage/ListExecutions"
 	WorkspaceStorage_ReconcileTask_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/ReconcileTask"
@@ -52,6 +55,8 @@ type WorkspaceStorageClient interface {
 	CloseGate(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error)
 	QueryGate(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*GateResponse, error)
 	OpenGate(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error)
+	Freeze(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error)
+	QueryFreeze(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*GateResponse, error)
 	ApplyBatch(ctx context.Context, in *ApplyBatchRequest, opts ...grpc.CallOption) (*MutationReceipt, error)
 	QueryMutation(ctx context.Context, in *QueryMutationRequest, opts ...grpc.CallOption) (*MutationReceipt, error)
 	// Internal input preparation only; these calls never register or start an execution.
@@ -60,6 +65,8 @@ type WorkspaceStorageClient interface {
 	StartTest(ctx context.Context, in *StartTestRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error)
 	QueryTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error)
 	StopTask(ctx context.Context, in *StopTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error)
+	// Trusted lifecycle cancellation; never exposed as browser-selected authority.
+	StopSystemTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error)
 	QueryStop(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error)
 	ListExecutions(ctx context.Context, in *ExecutionInventoryRequest, opts ...grpc.CallOption) (*ExecutionInventory, error)
 	ReconcileTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error)
@@ -144,6 +151,26 @@ func (c *workspaceStorageClient) OpenGate(ctx context.Context, in *CloseGateRequ
 	return out, nil
 }
 
+func (c *workspaceStorageClient) Freeze(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GateResponse)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_Freeze_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) QueryFreeze(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*GateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GateResponse)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_QueryFreeze_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *workspaceStorageClient) ApplyBatch(ctx context.Context, in *ApplyBatchRequest, opts ...grpc.CallOption) (*MutationReceipt, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(MutationReceipt)
@@ -214,6 +241,16 @@ func (c *workspaceStorageClient) StopTask(ctx context.Context, in *StopTaskReque
 	return out, nil
 }
 
+func (c *workspaceStorageClient) StopSystemTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StopTaskResponse)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_StopSystemTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *workspaceStorageClient) QueryStop(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StopTaskResponse)
@@ -276,6 +313,8 @@ type WorkspaceStorageServer interface {
 	CloseGate(context.Context, *CloseGateRequest) (*GateResponse, error)
 	QueryGate(context.Context, *QueryWorkspaceRequest) (*GateResponse, error)
 	OpenGate(context.Context, *CloseGateRequest) (*GateResponse, error)
+	Freeze(context.Context, *CloseGateRequest) (*GateResponse, error)
+	QueryFreeze(context.Context, *QueryWorkspaceRequest) (*GateResponse, error)
 	ApplyBatch(context.Context, *ApplyBatchRequest) (*MutationReceipt, error)
 	QueryMutation(context.Context, *QueryMutationRequest) (*MutationReceipt, error)
 	// Internal input preparation only; these calls never register or start an execution.
@@ -284,6 +323,8 @@ type WorkspaceStorageServer interface {
 	StartTest(context.Context, *StartTestRequest) (*TestTaskSnapshot, error)
 	QueryTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error)
 	StopTask(context.Context, *StopTaskRequest) (*StopTaskResponse, error)
+	// Trusted lifecycle cancellation; never exposed as browser-selected authority.
+	StopSystemTask(context.Context, *QueryTaskRequest) (*StopTaskResponse, error)
 	QueryStop(context.Context, *QueryTaskRequest) (*StopTaskResponse, error)
 	ListExecutions(context.Context, *ExecutionInventoryRequest) (*ExecutionInventory, error)
 	ReconcileTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error)
@@ -319,6 +360,12 @@ func (UnimplementedWorkspaceStorageServer) QueryGate(context.Context, *QueryWork
 func (UnimplementedWorkspaceStorageServer) OpenGate(context.Context, *CloseGateRequest) (*GateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method OpenGate not implemented")
 }
+func (UnimplementedWorkspaceStorageServer) Freeze(context.Context, *CloseGateRequest) (*GateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Freeze not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) QueryFreeze(context.Context, *QueryWorkspaceRequest) (*GateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method QueryFreeze not implemented")
+}
 func (UnimplementedWorkspaceStorageServer) ApplyBatch(context.Context, *ApplyBatchRequest) (*MutationReceipt, error) {
 	return nil, status.Error(codes.Unimplemented, "method ApplyBatch not implemented")
 }
@@ -339,6 +386,9 @@ func (UnimplementedWorkspaceStorageServer) QueryTask(context.Context, *QueryTask
 }
 func (UnimplementedWorkspaceStorageServer) StopTask(context.Context, *StopTaskRequest) (*StopTaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StopTask not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) StopSystemTask(context.Context, *QueryTaskRequest) (*StopTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StopSystemTask not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) QueryStop(context.Context, *QueryTaskRequest) (*StopTaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryStop not implemented")
@@ -499,6 +549,42 @@ func _WorkspaceStorage_OpenGate_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkspaceStorage_Freeze_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CloseGateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).Freeze(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_Freeze_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).Freeze(ctx, req.(*CloseGateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_QueryFreeze_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).QueryFreeze(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_QueryFreeze_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).QueryFreeze(ctx, req.(*QueryWorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _WorkspaceStorage_ApplyBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ApplyBatchRequest)
 	if err := dec(in); err != nil {
@@ -625,6 +711,24 @@ func _WorkspaceStorage_StopTask_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkspaceStorage_StopSystemTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).StopSystemTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_StopSystemTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).StopSystemTask(ctx, req.(*QueryTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _WorkspaceStorage_QueryStop_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryTaskRequest)
 	if err := dec(in); err != nil {
@@ -726,6 +830,14 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _WorkspaceStorage_OpenGate_Handler,
 		},
 		{
+			MethodName: "Freeze",
+			Handler:    _WorkspaceStorage_Freeze_Handler,
+		},
+		{
+			MethodName: "QueryFreeze",
+			Handler:    _WorkspaceStorage_QueryFreeze_Handler,
+		},
+		{
 			MethodName: "ApplyBatch",
 			Handler:    _WorkspaceStorage_ApplyBatch_Handler,
 		},
@@ -752,6 +864,10 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "StopTask",
 			Handler:    _WorkspaceStorage_StopTask_Handler,
+		},
+		{
+			MethodName: "StopSystemTask",
+			Handler:    _WorkspaceStorage_StopSystemTask_Handler,
 		},
 		{
 			MethodName: "QueryStop",

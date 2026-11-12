@@ -14,6 +14,8 @@ service WorkspaceStorage {
   rpc CloseGate(CloseGateRequest) returns (GateResponse);
   rpc QueryGate(QueryWorkspaceRequest) returns (GateResponse);
   rpc OpenGate(CloseGateRequest) returns (GateResponse);
+  rpc Freeze(CloseGateRequest) returns (GateResponse);
+  rpc QueryFreeze(QueryWorkspaceRequest) returns (GateResponse);
   rpc ApplyBatch(ApplyBatchRequest) returns (MutationReceipt);
   rpc QueryMutation(QueryMutationRequest) returns (MutationReceipt);
   // Internal input preparation only; these calls never register or start an execution.
@@ -22,6 +24,8 @@ service WorkspaceStorage {
   rpc StartTest(StartTestRequest) returns (TestTaskSnapshot);
   rpc QueryTask(QueryTaskRequest) returns (TestTaskSnapshot);
   rpc StopTask(StopTaskRequest) returns (StopTaskResponse);
+  // Trusted lifecycle cancellation; never exposed as browser-selected authority.
+  rpc StopSystemTask(QueryTaskRequest) returns (StopTaskResponse);
   rpc QueryStop(QueryTaskRequest) returns (StopTaskResponse);
   rpc ListExecutions(ExecutionInventoryRequest) returns (ExecutionInventory);
   rpc ReconcileTask(QueryTaskRequest) returns (TestTaskSnapshot);
@@ -68,6 +72,8 @@ message GateResponse {
   string transition_id = 2;
   uint64 epoch = 3;
   string state = 4;
+  // Only meaningful for FROZEN; transition_id identifies the freeze operation.
+  uint64 frozen_revision = 5;
 }
 // CREATE and DELETE together represent an atomic rename. Duplicate paths are rejected.
 message FileChange {
@@ -104,6 +110,13 @@ message PrepareTestCopyRequest {
   uint64 expected_revision = 3;
   uint64 gate_epoch = 4;
   int64 not_after_unix_millis = 5;
+  FinalVerificationAuthority final_verification = 6;
+}
+message FinalVerificationAuthority {
+  string finalization_id = 1;
+  string attempt_id = 2;
+  string freeze_operation_id = 3;
+  int64 deadline_unix_millis = 4;
 }
 message QueryTestCopyRequest {
   string workspace_instance_id = 1;
@@ -125,10 +138,11 @@ message StartTestRequest {
   string workspace_instance_id = 4;
   uint64 expected_revision = 5;
   string target = 6;
-  string purpose = 7; // MANUAL in #13; final verification has separate authority in #15.
+  string purpose = 7; // MANUAL or FINAL_VERIFICATION; never browser supplied.
   uint64 gate_epoch = 8;
   int64 not_after_unix_millis = 9;
   string host_epoch = 10; // Opaque durable boot generation; never reused after restart.
+  FinalVerificationAuthority final_verification = 11;
 }
 message QueryTaskRequest {
   string exercise_id = 1;
@@ -147,6 +161,7 @@ message StopTaskResponse {
   // Absent registration is durably cancelled; a delayed Start cannot run.
   bool cancelled_before_registration = 1;
   TestTaskSnapshot snapshot = 2;
+  string host_epoch = 3; // Generation that accepted or observed this cancellation.
 }
 message ExecutionInventoryRequest {
   string after_execution_id = 1;

@@ -57,7 +57,7 @@ func (s *Service) prepareTestCopyLocked(ctx context.Context, request *rpc.Prepar
 		return nil, storageError(err)
 	}
 	deadline := time.UnixMilli(request.NotAfterUnixMillis)
-	if request.NotAfterUnixMillis <= 0 || !time.Now().Before(deadline) {
+	if request.NotAfterUnixMillis <= 0 || !s.now().Before(deadline) {
 		return nil, status.Error(codes.FailedPrecondition, "copy authorization expired")
 	}
 	ctx, cancel := context.WithDeadline(ctx, deadline)
@@ -66,7 +66,7 @@ func (s *Service) prepareTestCopyLocked(ctx context.Context, request *rpc.Prepar
 	if err != nil {
 		return nil, storageError(err)
 	}
-	if len(gates) == 0 || gates[len(gates)-1].State != "OPEN" || gates[len(gates)-1].Epoch != request.GateEpoch {
+	if !copyGateAuthorized(gates, request.GateEpoch, request.ExpectedRevision, request.NotAfterUnixMillis, request.FinalVerification) {
 		return nil, status.Error(codes.FailedPrecondition, "copy gate closed or stale")
 	}
 	current, commit, err := latest(fd, request.WorkspaceInstanceId)

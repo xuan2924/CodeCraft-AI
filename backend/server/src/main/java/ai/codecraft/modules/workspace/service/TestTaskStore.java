@@ -16,6 +16,9 @@ import ai.codecraft.modules.workspace.model.entity.WorkspaceControlEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
 import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import ai.codecraft.modules.workspace.repository.ExerciseRepository;
+import ai.codecraft.modules.workspace.repository.FinalizationRepository;
+import ai.codecraft.modules.workspace.model.entity.FinalTaskAuthorityEntity;
+import ai.codecraft.modules.workspace.model.entity.FinalizationEntity;
 import ai.codecraft.modules.workspace.repository.TestTaskRepository;
 import ai.codecraft.modules.workspace.repository.TaskStreamRepository;
 import ai.codecraft.modules.workspace.model.entity.TaskStreamEntity;
@@ -43,13 +46,14 @@ public class TestTaskStore {
     private final ObjectMapper json;
     private final TaskStreamRepository streams;
     private final TaskStreamPublisher publisher;
+    private final FinalizationRepository finals;
 
     public TestTaskStore(IdentityTransactionService identity, IdentitySecrets secrets, ExerciseRepository exercises,
         WorkspaceWriteRepository writes, TestTaskRepository tasks, ProblemRepository problems, Clock clock, ObjectMapper json,
-        TaskStreamRepository streams, TaskStreamPublisher publisher) {
+        TaskStreamRepository streams, TaskStreamPublisher publisher, FinalizationRepository finals) {
         this.identity = identity; this.secrets = secrets; this.exercises = exercises; this.writes = writes;
         this.tasks = tasks; this.problems = problems; this.clock = clock; this.json = json;
-        this.streams = streams; this.publisher = publisher;
+        this.streams = streams; this.publisher = publisher; this.finals = finals;
     }
 
     @Transactional(readOnly = true)
@@ -145,14 +149,11 @@ public class TestTaskStore {
     public List<TestStopEntity> pendingStops() { return tasks.pendingStops(); }
 
     @Transactional
-    public void stopObserved(TestStopEntity stop, boolean accepted, boolean beforeRegistration) {
+    public void stopObserved(TestStopEntity stop, boolean accepted, boolean beforeRegistration, String cancellationHostEpoch) {
         TestTaskEntity task = tasks.find(stop.taskId());
         writes.lock(task.exerciseId());
         task = tasks.lock(task.id());
-        if (beforeRegistration && !TERMINAL.contains(task.state())) {
-            store(task, new TestTaskResponse(task.id(), task.exerciseId(), task.executionInstanceId(), task.workspaceInstanceId(), Long.toString(task.revision()),
-                task.target(), "STOPPED", "CANCELLED_BEFORE_REGISTRATION", null, clock.instant(), null, true, "SUCCEEDED", "NOT_CREATED", "0", false, List.of(), provenance(task), null));
-        }
+        if (beforeRegistration) cancelledBeforeRegistration(task, cancellationHostEpoch);
         String state = accepted ? "SUCCEEDED" : "REJECTED";
         tasks.stopState(stop.id(), state);
         exercises.operationState(stop.id(), state);
@@ -160,6 +161,29 @@ public class TestTaskStore {
 
     @Transactional
     public void stopAttempted(TestStopEntity stop) { tasks.stopState(stop.id(), "PENDING"); }
+
+    @Transactional(readOnly = true)
+    public FinalTaskAuthorityEntity finalAuthority(String taskId) { return finals.authority(taskId); }
+
+    @Transactional
+    public void systemCancelledBeforeRegistration(String taskId, String cancellationHostEpoch) {
+        TestTaskEntity task = tasks.find(taskId);
+        writes.lock(task.exerciseId());
+        task = tasks.lock(taskId);
+        cancelledBeforeRegistration(task, cancellationHostEpoch);
+    }
+
+    private void cancelledBeforeRegistration(TestTaskEntity task, String cancellationHostEpoch) {
+        if (cancellationHostEpoch == null || cancellationHostEpoch.isBlank()) throw new IllegalStateException("Missing cancellation host generation");
+        if (task.dispatched() && !cancellationHostEpoch.equals(task.hostEpoch())) {
+            if (!TERMINAL.contains(task.state())) store(task, isolated(task));
+            return;
+        }
+        if (!TERMINAL.contains(task.state())) {
+            store(task, new TestTaskResponse(task.id(), task.exerciseId(), task.executionInstanceId(), task.workspaceInstanceId(), Long.toString(task.revision()),
+                task.target(), "STOPPED", "CANCELLED_BEFORE_REGISTRATION", null, clock.instant(), null, true, "SUCCEEDED", "NOT_CREATED", "0", false, List.of(), provenance(task), null));
+        }
+    }
 
     @Transactional(readOnly = true)
     public List<TestTaskEntity> pending() { return tasks.pending(); }
@@ -185,9 +209,19 @@ public class TestTaskStore {
         tasks.attempted(task.id());
         if (current.dispatched() || !current.state().equals("ACCEPTED")) return false;
         ExerciseEntity exercise = exercises.find(task.exerciseId());
-        if (control.transitionId() != null || control.fenceId() != null) return false;
-        if (!exercise.state().equals("ACTIVE") || !clock.instant().isBefore(current.notAfter())
-            || control.gateEpoch() == null || control.gateEpoch() != current.gateEpoch() || !control.gateState().equals("OPEN")) {
+        FinalTaskAuthorityEntity authority = finals.authority(task.id());
+        boolean allowed;
+        if (authority == null) {
+            if (control.transitionId() != null || control.fenceId() != null) return false;
+            allowed = exercise.state().equals("ACTIVE") && control.gateState().equals("OPEN");
+        } else {
+            FinalizationEntity finalization = finals.find(task.exerciseId());
+            allowed = exercise.state().equals("FINAL_TESTING") && control.gateState().equals("FROZEN")
+                && finalization.endedAt() == null && authority.finalizationId().equals(finalization.id())
+                && task.id().equals(finalization.currentTaskId()) && current.notAfter().equals(finalization.deadlineAt());
+        }
+        if (!allowed || !clock.instant().isBefore(current.notAfter())
+            || control.gateEpoch() == null || control.gateEpoch() != current.gateEpoch()) {
             store(current, interrupted(current, "AUTHORITY_EXPIRED_BEFORE_DISPATCH"));
             return false;
         }
@@ -228,11 +262,16 @@ public class TestTaskStore {
         if (hostChanged) {
             // Absence after registry loss does not fence an Engine Create already
             // in flight. Keep the slot isolated; inventory may find it later.
-            result = new TestTaskResponse(result.taskId(), result.exerciseId(), result.executionInstanceId(), result.workspaceInstanceId(), result.revision(),
-                result.target(), result.state(), result.reason(), result.startedAt(), result.finishedAt(), null, false, "FAILED", "UNKNOWN",
-                "0", true, List.of(), result.problem(), null);
+            result = isolated(current);
         }
         store(current, result);
+    }
+
+    private TestTaskResponse isolated(TestTaskEntity task) {
+        TestTaskResponse result = interrupted(task, "HOST_RESTART_REGISTRATION_UNCONFIRMED");
+        return new TestTaskResponse(result.taskId(), result.exerciseId(), result.executionInstanceId(), result.workspaceInstanceId(), result.revision(),
+            result.target(), result.state(), result.reason(), result.startedAt(), result.finishedAt(), null, false, "FAILED", "UNKNOWN",
+            "0", true, List.of(), result.problem(), null);
     }
 
     private void store(TestTaskEntity task, TestTaskResponse result) {

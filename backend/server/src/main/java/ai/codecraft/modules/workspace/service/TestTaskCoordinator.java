@@ -80,13 +80,13 @@ public class TestTaskCoordinator {
             StopTaskResponse response = sandbox.stopTask(task, stop);
             if (response.hasSnapshot()) confirm(task, response.getSnapshot());
             else if (!response.getCancelledBeforeRegistration()) throw new IllegalStateException("Missing cancellation receipt");
-            store.stopObserved(stop, true, response.getCancelledBeforeRegistration());
+            store.stopObserved(stop, true, response.getCancelledBeforeRegistration(), response.getHostEpoch());
         } catch (StatusRuntimeException error) {
             if (error.getStatus().getCode() == Status.Code.FAILED_PRECONDITION) {
                 try {
                     // A previous delayed stop may have committed before the gate
                     // closed. Read its receipt AFTER the authority rejection.
-                    if (!recoverStopReceipt(store.find(stop.taskId()), stop)) store.stopObserved(stop, false, false);
+                    if (!recoverStopReceipt(store.find(stop.taskId()), stop)) store.stopObserved(stop, false, false, "");
                 } catch (RuntimeException unavailable) {
                     LOG.warn("Stop {} receipt remains unresolved ({})", stop.id(), unavailable.getClass().getSimpleName());
                 }
@@ -98,13 +98,22 @@ public class TestTaskCoordinator {
 
     private boolean recoverStopReceipt(TestTaskEntity task, TestStopEntity stop) {
         StopTaskResponse receipt = sandbox.queryStop(task);
-        if (receipt.getCancelledBeforeRegistration()) { store.stopObserved(stop, true, true); return true; }
+        if (receipt.getCancelledBeforeRegistration()) { store.stopObserved(stop, true, true, receipt.getHostEpoch()); return true; }
         if (receipt.hasSnapshot() && (receipt.getSnapshot().hasFinishedAtUnixMillis() || receipt.getSnapshot().getState().equals("STOPPING"))) {
             confirm(task, receipt.getSnapshot());
-            store.stopObserved(stop, true, false);
+            store.stopObserved(stop, true, false, receipt.getHostEpoch());
             return true;
         }
         return false;
+    }
+
+    public void stopSystem(TestTaskEntity task) {
+        StopTaskResponse response = sandbox.stopSystemTask(task);
+        if (response.hasSnapshot()) confirm(task, response.getSnapshot());
+        else if (response.getCancelledBeforeRegistration()) {
+            store.systemCancelledBeforeRegistration(task.id(), response.getHostEpoch());
+        }
+        else throw new IllegalStateException("Missing system stop receipt");
     }
 
     public void observe(TestTaskEntity original) {
@@ -113,7 +122,7 @@ public class TestTaskCoordinator {
             // A lost response remains dispatched forever. The next observation
             // queries the same ID rather than launching a replacement container.
             TestTaskEntity dispatched = store.find(original.id());
-            TestTaskSnapshot result = sandbox.startTest(dispatched);
+            TestTaskSnapshot result = sandbox.startTest(dispatched, store.finalAuthority(dispatched.id()));
             confirm(dispatched, result);
             return;
         }
@@ -136,6 +145,12 @@ public class TestTaskCoordinator {
         if (result != null) { confirm(task, result); sandbox.reconcileTask(task); return; }
         GateResponse gate = sandbox.gate(task.workspaceInstanceId());
         if (!gate.getWorkspaceInstanceId().equals(task.workspaceInstanceId())) throw new IllegalStateException("Invalid task fence identity");
+        if (store.finalAuthority(task.id()) != null) {
+            // A frozen epoch cannot be advanced by reopening/closing. An exact
+            // cancellation tombstone fences a missing system registration instead.
+            stopSystem(task);
+            return;
+        }
         if (gate.getEpoch() <= task.gateEpoch()) {
             fences.drive(coordination.reconcile(task.exerciseId()));
             gate = sandbox.gate(task.workspaceInstanceId());

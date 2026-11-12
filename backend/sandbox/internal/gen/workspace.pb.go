@@ -456,8 +456,10 @@ type GateResponse struct {
 	TransitionId        string                 `protobuf:"bytes,2,opt,name=transition_id,json=transitionId,proto3" json:"transition_id,omitempty"`
 	Epoch               uint64                 `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	State               string                 `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Only meaningful for FROZEN; transition_id identifies the freeze operation.
+	FrozenRevision uint64 `protobuf:"varint,5,opt,name=frozen_revision,json=frozenRevision,proto3" json:"frozen_revision,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GateResponse) Reset() {
@@ -516,6 +518,13 @@ func (x *GateResponse) GetState() string {
 		return x.State
 	}
 	return ""
+}
+
+func (x *GateResponse) GetFrozenRevision() uint64 {
+	if x != nil {
+		return x.FrozenRevision
+	}
+	return 0
 }
 
 // CREATE and DELETE together represent an atomic rename. Duplicate paths are rejected.
@@ -810,12 +819,13 @@ func (x *MutationReceipt) GetChanged() bool {
 }
 
 type PrepareTestCopyRequest struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceInstanceId string                 `protobuf:"bytes,1,opt,name=workspace_instance_id,json=workspaceInstanceId,proto3" json:"workspace_instance_id,omitempty"`
-	ExecutionInstanceId string                 `protobuf:"bytes,2,opt,name=execution_instance_id,json=executionInstanceId,proto3" json:"execution_instance_id,omitempty"`
-	ExpectedRevision    uint64                 `protobuf:"varint,3,opt,name=expected_revision,json=expectedRevision,proto3" json:"expected_revision,omitempty"`
-	GateEpoch           uint64                 `protobuf:"varint,4,opt,name=gate_epoch,json=gateEpoch,proto3" json:"gate_epoch,omitempty"`
-	NotAfterUnixMillis  int64                  `protobuf:"varint,5,opt,name=not_after_unix_millis,json=notAfterUnixMillis,proto3" json:"not_after_unix_millis,omitempty"`
+	state               protoimpl.MessageState      `protogen:"open.v1"`
+	WorkspaceInstanceId string                      `protobuf:"bytes,1,opt,name=workspace_instance_id,json=workspaceInstanceId,proto3" json:"workspace_instance_id,omitempty"`
+	ExecutionInstanceId string                      `protobuf:"bytes,2,opt,name=execution_instance_id,json=executionInstanceId,proto3" json:"execution_instance_id,omitempty"`
+	ExpectedRevision    uint64                      `protobuf:"varint,3,opt,name=expected_revision,json=expectedRevision,proto3" json:"expected_revision,omitempty"`
+	GateEpoch           uint64                      `protobuf:"varint,4,opt,name=gate_epoch,json=gateEpoch,proto3" json:"gate_epoch,omitempty"`
+	NotAfterUnixMillis  int64                       `protobuf:"varint,5,opt,name=not_after_unix_millis,json=notAfterUnixMillis,proto3" json:"not_after_unix_millis,omitempty"`
+	FinalVerification   *FinalVerificationAuthority `protobuf:"bytes,6,opt,name=final_verification,json=finalVerification,proto3" json:"final_verification,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -885,6 +895,81 @@ func (x *PrepareTestCopyRequest) GetNotAfterUnixMillis() int64 {
 	return 0
 }
 
+func (x *PrepareTestCopyRequest) GetFinalVerification() *FinalVerificationAuthority {
+	if x != nil {
+		return x.FinalVerification
+	}
+	return nil
+}
+
+type FinalVerificationAuthority struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	FinalizationId     string                 `protobuf:"bytes,1,opt,name=finalization_id,json=finalizationId,proto3" json:"finalization_id,omitempty"`
+	AttemptId          string                 `protobuf:"bytes,2,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	FreezeOperationId  string                 `protobuf:"bytes,3,opt,name=freeze_operation_id,json=freezeOperationId,proto3" json:"freeze_operation_id,omitempty"`
+	DeadlineUnixMillis int64                  `protobuf:"varint,4,opt,name=deadline_unix_millis,json=deadlineUnixMillis,proto3" json:"deadline_unix_millis,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *FinalVerificationAuthority) Reset() {
+	*x = FinalVerificationAuthority{}
+	mi := &file_workspace_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FinalVerificationAuthority) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FinalVerificationAuthority) ProtoMessage() {}
+
+func (x *FinalVerificationAuthority) ProtoReflect() protoreflect.Message {
+	mi := &file_workspace_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FinalVerificationAuthority.ProtoReflect.Descriptor instead.
+func (*FinalVerificationAuthority) Descriptor() ([]byte, []int) {
+	return file_workspace_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *FinalVerificationAuthority) GetFinalizationId() string {
+	if x != nil {
+		return x.FinalizationId
+	}
+	return ""
+}
+
+func (x *FinalVerificationAuthority) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *FinalVerificationAuthority) GetFreezeOperationId() string {
+	if x != nil {
+		return x.FreezeOperationId
+	}
+	return ""
+}
+
+func (x *FinalVerificationAuthority) GetDeadlineUnixMillis() int64 {
+	if x != nil {
+		return x.DeadlineUnixMillis
+	}
+	return 0
+}
+
 type QueryTestCopyRequest struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	WorkspaceInstanceId string                 `protobuf:"bytes,1,opt,name=workspace_instance_id,json=workspaceInstanceId,proto3" json:"workspace_instance_id,omitempty"`
@@ -895,7 +980,7 @@ type QueryTestCopyRequest struct {
 
 func (x *QueryTestCopyRequest) Reset() {
 	*x = QueryTestCopyRequest{}
-	mi := &file_workspace_proto_msgTypes[13]
+	mi := &file_workspace_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -907,7 +992,7 @@ func (x *QueryTestCopyRequest) String() string {
 func (*QueryTestCopyRequest) ProtoMessage() {}
 
 func (x *QueryTestCopyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[13]
+	mi := &file_workspace_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -920,7 +1005,7 @@ func (x *QueryTestCopyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryTestCopyRequest.ProtoReflect.Descriptor instead.
 func (*QueryTestCopyRequest) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{13}
+	return file_workspace_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *QueryTestCopyRequest) GetWorkspaceInstanceId() string {
@@ -951,7 +1036,7 @@ type TestCopyReceipt struct {
 
 func (x *TestCopyReceipt) Reset() {
 	*x = TestCopyReceipt{}
-	mi := &file_workspace_proto_msgTypes[14]
+	mi := &file_workspace_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -963,7 +1048,7 @@ func (x *TestCopyReceipt) String() string {
 func (*TestCopyReceipt) ProtoMessage() {}
 
 func (x *TestCopyReceipt) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[14]
+	mi := &file_workspace_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -976,7 +1061,7 @@ func (x *TestCopyReceipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestCopyReceipt.ProtoReflect.Descriptor instead.
 func (*TestCopyReceipt) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{14}
+	return file_workspace_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *TestCopyReceipt) GetWorkspaceInstanceId() string {
@@ -1016,24 +1101,25 @@ func (x *TestCopyReceipt) GetRelativePath() string {
 
 // All IDs and authority originate in Java; runtime configuration comes from publication.
 type StartTestRequest struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	ExerciseId          string                 `protobuf:"bytes,1,opt,name=exercise_id,json=exerciseId,proto3" json:"exercise_id,omitempty"`
-	TaskId              string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	ExecutionInstanceId string                 `protobuf:"bytes,3,opt,name=execution_instance_id,json=executionInstanceId,proto3" json:"execution_instance_id,omitempty"`
-	WorkspaceInstanceId string                 `protobuf:"bytes,4,opt,name=workspace_instance_id,json=workspaceInstanceId,proto3" json:"workspace_instance_id,omitempty"`
-	ExpectedRevision    uint64                 `protobuf:"varint,5,opt,name=expected_revision,json=expectedRevision,proto3" json:"expected_revision,omitempty"`
-	Target              string                 `protobuf:"bytes,6,opt,name=target,proto3" json:"target,omitempty"`
-	Purpose             string                 `protobuf:"bytes,7,opt,name=purpose,proto3" json:"purpose,omitempty"` // MANUAL in #13; final verification has separate authority in #15.
-	GateEpoch           uint64                 `protobuf:"varint,8,opt,name=gate_epoch,json=gateEpoch,proto3" json:"gate_epoch,omitempty"`
-	NotAfterUnixMillis  int64                  `protobuf:"varint,9,opt,name=not_after_unix_millis,json=notAfterUnixMillis,proto3" json:"not_after_unix_millis,omitempty"`
-	HostEpoch           string                 `protobuf:"bytes,10,opt,name=host_epoch,json=hostEpoch,proto3" json:"host_epoch,omitempty"` // Opaque durable boot generation; never reused after restart.
+	state               protoimpl.MessageState      `protogen:"open.v1"`
+	ExerciseId          string                      `protobuf:"bytes,1,opt,name=exercise_id,json=exerciseId,proto3" json:"exercise_id,omitempty"`
+	TaskId              string                      `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	ExecutionInstanceId string                      `protobuf:"bytes,3,opt,name=execution_instance_id,json=executionInstanceId,proto3" json:"execution_instance_id,omitempty"`
+	WorkspaceInstanceId string                      `protobuf:"bytes,4,opt,name=workspace_instance_id,json=workspaceInstanceId,proto3" json:"workspace_instance_id,omitempty"`
+	ExpectedRevision    uint64                      `protobuf:"varint,5,opt,name=expected_revision,json=expectedRevision,proto3" json:"expected_revision,omitempty"`
+	Target              string                      `protobuf:"bytes,6,opt,name=target,proto3" json:"target,omitempty"`
+	Purpose             string                      `protobuf:"bytes,7,opt,name=purpose,proto3" json:"purpose,omitempty"` // MANUAL or FINAL_VERIFICATION; never browser supplied.
+	GateEpoch           uint64                      `protobuf:"varint,8,opt,name=gate_epoch,json=gateEpoch,proto3" json:"gate_epoch,omitempty"`
+	NotAfterUnixMillis  int64                       `protobuf:"varint,9,opt,name=not_after_unix_millis,json=notAfterUnixMillis,proto3" json:"not_after_unix_millis,omitempty"`
+	HostEpoch           string                      `protobuf:"bytes,10,opt,name=host_epoch,json=hostEpoch,proto3" json:"host_epoch,omitempty"` // Opaque durable boot generation; never reused after restart.
+	FinalVerification   *FinalVerificationAuthority `protobuf:"bytes,11,opt,name=final_verification,json=finalVerification,proto3" json:"final_verification,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
 
 func (x *StartTestRequest) Reset() {
 	*x = StartTestRequest{}
-	mi := &file_workspace_proto_msgTypes[15]
+	mi := &file_workspace_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1045,7 +1131,7 @@ func (x *StartTestRequest) String() string {
 func (*StartTestRequest) ProtoMessage() {}
 
 func (x *StartTestRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[15]
+	mi := &file_workspace_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1058,7 +1144,7 @@ func (x *StartTestRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartTestRequest.ProtoReflect.Descriptor instead.
 func (*StartTestRequest) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{15}
+	return file_workspace_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *StartTestRequest) GetExerciseId() string {
@@ -1131,6 +1217,13 @@ func (x *StartTestRequest) GetHostEpoch() string {
 	return ""
 }
 
+func (x *StartTestRequest) GetFinalVerification() *FinalVerificationAuthority {
+	if x != nil {
+		return x.FinalVerification
+	}
+	return nil
+}
+
 type QueryTaskRequest struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	ExerciseId           string                 `protobuf:"bytes,1,opt,name=exercise_id,json=exerciseId,proto3" json:"exercise_id,omitempty"`
@@ -1144,7 +1237,7 @@ type QueryTaskRequest struct {
 
 func (x *QueryTaskRequest) Reset() {
 	*x = QueryTaskRequest{}
-	mi := &file_workspace_proto_msgTypes[16]
+	mi := &file_workspace_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1156,7 +1249,7 @@ func (x *QueryTaskRequest) String() string {
 func (*QueryTaskRequest) ProtoMessage() {}
 
 func (x *QueryTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[16]
+	mi := &file_workspace_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1169,7 +1262,7 @@ func (x *QueryTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryTaskRequest.ProtoReflect.Descriptor instead.
 func (*QueryTaskRequest) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{16}
+	return file_workspace_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *QueryTaskRequest) GetExerciseId() string {
@@ -1219,7 +1312,7 @@ type StopTaskRequest struct {
 
 func (x *StopTaskRequest) Reset() {
 	*x = StopTaskRequest{}
-	mi := &file_workspace_proto_msgTypes[17]
+	mi := &file_workspace_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1231,7 +1324,7 @@ func (x *StopTaskRequest) String() string {
 func (*StopTaskRequest) ProtoMessage() {}
 
 func (x *StopTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[17]
+	mi := &file_workspace_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1244,7 +1337,7 @@ func (x *StopTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopTaskRequest.ProtoReflect.Descriptor instead.
 func (*StopTaskRequest) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{17}
+	return file_workspace_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *StopTaskRequest) GetTask() *QueryTaskRequest {
@@ -1273,13 +1366,14 @@ type StopTaskResponse struct {
 	// Absent registration is durably cancelled; a delayed Start cannot run.
 	CancelledBeforeRegistration bool              `protobuf:"varint,1,opt,name=cancelled_before_registration,json=cancelledBeforeRegistration,proto3" json:"cancelled_before_registration,omitempty"`
 	Snapshot                    *TestTaskSnapshot `protobuf:"bytes,2,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	HostEpoch                   string            `protobuf:"bytes,3,opt,name=host_epoch,json=hostEpoch,proto3" json:"host_epoch,omitempty"` // Generation that accepted or observed this cancellation.
 	unknownFields               protoimpl.UnknownFields
 	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *StopTaskResponse) Reset() {
 	*x = StopTaskResponse{}
-	mi := &file_workspace_proto_msgTypes[18]
+	mi := &file_workspace_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1291,7 +1385,7 @@ func (x *StopTaskResponse) String() string {
 func (*StopTaskResponse) ProtoMessage() {}
 
 func (x *StopTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[18]
+	mi := &file_workspace_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1304,7 +1398,7 @@ func (x *StopTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopTaskResponse.ProtoReflect.Descriptor instead.
 func (*StopTaskResponse) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{18}
+	return file_workspace_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *StopTaskResponse) GetCancelledBeforeRegistration() bool {
@@ -1321,6 +1415,13 @@ func (x *StopTaskResponse) GetSnapshot() *TestTaskSnapshot {
 	return nil
 }
 
+func (x *StopTaskResponse) GetHostEpoch() string {
+	if x != nil {
+		return x.HostEpoch
+	}
+	return ""
+}
+
 type ExecutionInventoryRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	AfterExecutionId string                 `protobuf:"bytes,1,opt,name=after_execution_id,json=afterExecutionId,proto3" json:"after_execution_id,omitempty"`
@@ -1332,7 +1433,7 @@ type ExecutionInventoryRequest struct {
 
 func (x *ExecutionInventoryRequest) Reset() {
 	*x = ExecutionInventoryRequest{}
-	mi := &file_workspace_proto_msgTypes[19]
+	mi := &file_workspace_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1344,7 +1445,7 @@ func (x *ExecutionInventoryRequest) String() string {
 func (*ExecutionInventoryRequest) ProtoMessage() {}
 
 func (x *ExecutionInventoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[19]
+	mi := &file_workspace_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1357,7 +1458,7 @@ func (x *ExecutionInventoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionInventoryRequest.ProtoReflect.Descriptor instead.
 func (*ExecutionInventoryRequest) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{19}
+	return file_workspace_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ExecutionInventoryRequest) GetAfterExecutionId() string {
@@ -1394,7 +1495,7 @@ type ExecutionInventoryEntry struct {
 
 func (x *ExecutionInventoryEntry) Reset() {
 	*x = ExecutionInventoryEntry{}
-	mi := &file_workspace_proto_msgTypes[20]
+	mi := &file_workspace_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1406,7 +1507,7 @@ func (x *ExecutionInventoryEntry) String() string {
 func (*ExecutionInventoryEntry) ProtoMessage() {}
 
 func (x *ExecutionInventoryEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[20]
+	mi := &file_workspace_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1419,7 +1520,7 @@ func (x *ExecutionInventoryEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionInventoryEntry.ProtoReflect.Descriptor instead.
 func (*ExecutionInventoryEntry) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{20}
+	return file_workspace_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ExecutionInventoryEntry) GetTask() *QueryTaskRequest {
@@ -1468,7 +1569,7 @@ type ExecutionInventory struct {
 
 func (x *ExecutionInventory) Reset() {
 	*x = ExecutionInventory{}
-	mi := &file_workspace_proto_msgTypes[21]
+	mi := &file_workspace_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1480,7 +1581,7 @@ func (x *ExecutionInventory) String() string {
 func (*ExecutionInventory) ProtoMessage() {}
 
 func (x *ExecutionInventory) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[21]
+	mi := &file_workspace_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1493,7 +1594,7 @@ func (x *ExecutionInventory) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionInventory.ProtoReflect.Descriptor instead.
 func (*ExecutionInventory) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{21}
+	return file_workspace_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ExecutionInventory) GetHostEpoch() string {
@@ -1528,7 +1629,7 @@ type WatchTaskRequest struct {
 
 func (x *WatchTaskRequest) Reset() {
 	*x = WatchTaskRequest{}
-	mi := &file_workspace_proto_msgTypes[22]
+	mi := &file_workspace_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1540,7 +1641,7 @@ func (x *WatchTaskRequest) String() string {
 func (*WatchTaskRequest) ProtoMessage() {}
 
 func (x *WatchTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[22]
+	mi := &file_workspace_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1553,7 +1654,7 @@ func (x *WatchTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchTaskRequest.ProtoReflect.Descriptor instead.
 func (*WatchTaskRequest) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{22}
+	return file_workspace_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *WatchTaskRequest) GetTask() *QueryTaskRequest {
@@ -1596,7 +1697,7 @@ type TaskEvent struct {
 
 func (x *TaskEvent) Reset() {
 	*x = TaskEvent{}
-	mi := &file_workspace_proto_msgTypes[23]
+	mi := &file_workspace_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1608,7 +1709,7 @@ func (x *TaskEvent) String() string {
 func (*TaskEvent) ProtoMessage() {}
 
 func (x *TaskEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[23]
+	mi := &file_workspace_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1621,7 +1722,7 @@ func (x *TaskEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskEvent.ProtoReflect.Descriptor instead.
 func (*TaskEvent) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{23}
+	return file_workspace_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *TaskEvent) GetSchemaVersion() uint32 {
@@ -1711,7 +1812,7 @@ type TestLogChunk struct {
 
 func (x *TestLogChunk) Reset() {
 	*x = TestLogChunk{}
-	mi := &file_workspace_proto_msgTypes[24]
+	mi := &file_workspace_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1723,7 +1824,7 @@ func (x *TestLogChunk) String() string {
 func (*TestLogChunk) ProtoMessage() {}
 
 func (x *TestLogChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[24]
+	mi := &file_workspace_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1736,7 +1837,7 @@ func (x *TestLogChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestLogChunk.ProtoReflect.Descriptor instead.
 func (*TestLogChunk) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{24}
+	return file_workspace_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *TestLogChunk) GetChannel() string {
@@ -1764,7 +1865,7 @@ type TestEvidence struct {
 
 func (x *TestEvidence) Reset() {
 	*x = TestEvidence{}
-	mi := &file_workspace_proto_msgTypes[25]
+	mi := &file_workspace_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1776,7 +1877,7 @@ func (x *TestEvidence) String() string {
 func (*TestEvidence) ProtoMessage() {}
 
 func (x *TestEvidence) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[25]
+	mi := &file_workspace_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1789,7 +1890,7 @@ func (x *TestEvidence) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestEvidence.ProtoReflect.Descriptor instead.
 func (*TestEvidence) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{25}
+	return file_workspace_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *TestEvidence) GetKind() string {
@@ -1844,7 +1945,7 @@ type TestTaskSnapshot struct {
 
 func (x *TestTaskSnapshot) Reset() {
 	*x = TestTaskSnapshot{}
-	mi := &file_workspace_proto_msgTypes[26]
+	mi := &file_workspace_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1856,7 +1957,7 @@ func (x *TestTaskSnapshot) String() string {
 func (*TestTaskSnapshot) ProtoMessage() {}
 
 func (x *TestTaskSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[26]
+	mi := &file_workspace_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1869,7 +1970,7 @@ func (x *TestTaskSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestTaskSnapshot.ProtoReflect.Descriptor instead.
 func (*TestTaskSnapshot) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{26}
+	return file_workspace_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *TestTaskSnapshot) GetExerciseId() string {
@@ -2048,7 +2149,7 @@ type WorkspaceSnapshot struct {
 
 func (x *WorkspaceSnapshot) Reset() {
 	*x = WorkspaceSnapshot{}
-	mi := &file_workspace_proto_msgTypes[27]
+	mi := &file_workspace_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2060,7 +2161,7 @@ func (x *WorkspaceSnapshot) String() string {
 func (*WorkspaceSnapshot) ProtoMessage() {}
 
 func (x *WorkspaceSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_workspace_proto_msgTypes[27]
+	mi := &file_workspace_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2073,7 +2174,7 @@ func (x *WorkspaceSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceSnapshot.ProtoReflect.Descriptor instead.
 func (*WorkspaceSnapshot) Descriptor() ([]byte, []int) {
-	return file_workspace_proto_rawDescGZIP(), []int{27}
+	return file_workspace_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *WorkspaceSnapshot) GetWorkspaceInstanceId() string {
@@ -2159,12 +2260,13 @@ const file_workspace_proto_rawDesc = "" +
 	"\x10CloseGateRequest\x122\n" +
 	"\x15workspace_instance_id\x18\x01 \x01(\tR\x13workspaceInstanceId\x12#\n" +
 	"\rtransition_id\x18\x02 \x01(\tR\ftransitionId\x12%\n" +
-	"\x0eexpected_epoch\x18\x03 \x01(\x04R\rexpectedEpoch\"\x93\x01\n" +
+	"\x0eexpected_epoch\x18\x03 \x01(\x04R\rexpectedEpoch\"\xbc\x01\n" +
 	"\fGateResponse\x122\n" +
 	"\x15workspace_instance_id\x18\x01 \x01(\tR\x13workspaceInstanceId\x12#\n" +
 	"\rtransition_id\x18\x02 \x01(\tR\ftransitionId\x12\x14\n" +
 	"\x05epoch\x18\x03 \x01(\x04R\x05epoch\x12\x14\n" +
-	"\x05state\x18\x04 \x01(\tR\x05state\"N\n" +
+	"\x05state\x18\x04 \x01(\tR\x05state\x12'\n" +
+	"\x0ffrozen_revision\x18\x05 \x01(\x04R\x0efrozenRevision\"N\n" +
 	"\n" +
 	"FileChange\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
@@ -2191,14 +2293,21 @@ const file_workspace_proto_rawDesc = "" +
 	"\foperation_id\x18\x03 \x01(\tR\voperationId\x12 \n" +
 	"\vfingerprint\x18\x04 \x01(\tR\vfingerprint\x12\x1a\n" +
 	"\brevision\x18\x05 \x01(\x04R\brevision\x12\x18\n" +
-	"\achanged\x18\x06 \x01(\bR\achanged\"\xff\x01\n" +
+	"\achanged\x18\x06 \x01(\bR\achanged\"\xe2\x02\n" +
 	"\x16PrepareTestCopyRequest\x122\n" +
 	"\x15workspace_instance_id\x18\x01 \x01(\tR\x13workspaceInstanceId\x122\n" +
 	"\x15execution_instance_id\x18\x02 \x01(\tR\x13executionInstanceId\x12+\n" +
 	"\x11expected_revision\x18\x03 \x01(\x04R\x10expectedRevision\x12\x1d\n" +
 	"\n" +
 	"gate_epoch\x18\x04 \x01(\x04R\tgateEpoch\x121\n" +
-	"\x15not_after_unix_millis\x18\x05 \x01(\x03R\x12notAfterUnixMillis\"~\n" +
+	"\x15not_after_unix_millis\x18\x05 \x01(\x03R\x12notAfterUnixMillis\x12a\n" +
+	"\x12final_verification\x18\x06 \x01(\v22.codecraft.workspace.v1.FinalVerificationAuthorityR\x11finalVerification\"\xc6\x01\n" +
+	"\x1aFinalVerificationAuthority\x12'\n" +
+	"\x0ffinalization_id\x18\x01 \x01(\tR\x0efinalizationId\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12.\n" +
+	"\x13freeze_operation_id\x18\x03 \x01(\tR\x11freezeOperationId\x120\n" +
+	"\x14deadline_unix_millis\x18\x04 \x01(\x03R\x12deadlineUnixMillis\"~\n" +
 	"\x14QueryTestCopyRequest\x122\n" +
 	"\x15workspace_instance_id\x18\x01 \x01(\tR\x13workspaceInstanceId\x122\n" +
 	"\x15execution_instance_id\x18\x02 \x01(\tR\x13executionInstanceId\"\xfd\x01\n" +
@@ -2207,7 +2316,7 @@ const file_workspace_proto_rawDesc = "" +
 	"\x15execution_instance_id\x18\x02 \x01(\tR\x13executionInstanceId\x12\x1a\n" +
 	"\brevision\x18\x03 \x01(\x04R\brevision\x12A\n" +
 	"\aproblem\x18\x04 \x01(\v2'.codecraft.workspace.v1.ProblemIdentityR\aproblem\x12#\n" +
-	"\rrelative_path\x18\x05 \x01(\tR\frelativePath\"\x84\x03\n" +
+	"\rrelative_path\x18\x05 \x01(\tR\frelativePath\"\xe7\x03\n" +
 	"\x10StartTestRequest\x12\x1f\n" +
 	"\vexercise_id\x18\x01 \x01(\tR\n" +
 	"exerciseId\x12\x17\n" +
@@ -2222,7 +2331,8 @@ const file_workspace_proto_rawDesc = "" +
 	"\x15not_after_unix_millis\x18\t \x01(\x03R\x12notAfterUnixMillis\x12\x1d\n" +
 	"\n" +
 	"host_epoch\x18\n" +
-	" \x01(\tR\thostEpoch\"\xea\x01\n" +
+	" \x01(\tR\thostEpoch\x12a\n" +
+	"\x12final_verification\x18\v \x01(\v22.codecraft.workspace.v1.FinalVerificationAuthorityR\x11finalVerification\"\xea\x01\n" +
 	"\x10QueryTaskRequest\x12\x1f\n" +
 	"\vexercise_id\x18\x01 \x01(\tR\n" +
 	"exerciseId\x12\x17\n" +
@@ -2234,10 +2344,12 @@ const file_workspace_proto_rawDesc = "" +
 	"\x04task\x18\x01 \x01(\v2(.codecraft.workspace.v1.QueryTaskRequestR\x04task\x12\x1d\n" +
 	"\n" +
 	"gate_epoch\x18\x02 \x01(\x04R\tgateEpoch\x121\n" +
-	"\x15not_after_unix_millis\x18\x03 \x01(\x03R\x12notAfterUnixMillis\"\x9c\x01\n" +
+	"\x15not_after_unix_millis\x18\x03 \x01(\x03R\x12notAfterUnixMillis\"\xbb\x01\n" +
 	"\x10StopTaskResponse\x12B\n" +
 	"\x1dcancelled_before_registration\x18\x01 \x01(\bR\x1bcancelledBeforeRegistration\x12D\n" +
-	"\bsnapshot\x18\x02 \x01(\v2(.codecraft.workspace.v1.TestTaskSnapshotR\bsnapshot\"~\n" +
+	"\bsnapshot\x18\x02 \x01(\v2(.codecraft.workspace.v1.TestTaskSnapshotR\bsnapshot\x12\x1d\n" +
+	"\n" +
+	"host_epoch\x18\x03 \x01(\tR\thostEpoch\"~\n" +
 	"\x19ExecutionInventoryRequest\x12,\n" +
 	"\x12after_execution_id\x18\x01 \x01(\tR\x10afterExecutionId\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\rR\x05limit\x12\x1d\n" +
@@ -2314,7 +2426,7 @@ const file_workspace_proto_rawDesc = "" +
 	"\brevision\x18\x04 \x01(\x04R\brevision\x12\x1a\n" +
 	"\bprepared\x18\x05 \x01(\bR\bprepared\x12\x1c\n" +
 	"\tcancelled\x18\x06 \x01(\bR\tcancelled\x12\x14\n" +
-	"\x05paths\x18\a \x03(\tR\x05paths2\xc7\x0e\n" +
+	"\x05paths\x18\a \x03(\tR\x05paths2\xeb\x10\n" +
 	"\x10WorkspaceStorage\x12n\n" +
 	"\x10PrepareWorkspace\x12/.codecraft.workspace.v1.PrepareWorkspaceRequest\x1a).codecraft.workspace.v1.WorkspaceSnapshot\x12j\n" +
 	"\x0eQueryWorkspace\x12-.codecraft.workspace.v1.QueryWorkspaceRequest\x1a).codecraft.workspace.v1.WorkspaceSnapshot\x12x\n" +
@@ -2322,7 +2434,9 @@ const file_workspace_proto_rawDesc = "" +
 	"\x11CancelPreparation\x120.codecraft.workspace.v1.CancelPreparationRequest\x1a).codecraft.workspace.v1.WorkspaceSnapshot\x12[\n" +
 	"\tCloseGate\x12(.codecraft.workspace.v1.CloseGateRequest\x1a$.codecraft.workspace.v1.GateResponse\x12`\n" +
 	"\tQueryGate\x12-.codecraft.workspace.v1.QueryWorkspaceRequest\x1a$.codecraft.workspace.v1.GateResponse\x12Z\n" +
-	"\bOpenGate\x12(.codecraft.workspace.v1.CloseGateRequest\x1a$.codecraft.workspace.v1.GateResponse\x12`\n" +
+	"\bOpenGate\x12(.codecraft.workspace.v1.CloseGateRequest\x1a$.codecraft.workspace.v1.GateResponse\x12X\n" +
+	"\x06Freeze\x12(.codecraft.workspace.v1.CloseGateRequest\x1a$.codecraft.workspace.v1.GateResponse\x12b\n" +
+	"\vQueryFreeze\x12-.codecraft.workspace.v1.QueryWorkspaceRequest\x1a$.codecraft.workspace.v1.GateResponse\x12`\n" +
 	"\n" +
 	"ApplyBatch\x12).codecraft.workspace.v1.ApplyBatchRequest\x1a'.codecraft.workspace.v1.MutationReceipt\x12f\n" +
 	"\rQueryMutation\x12,.codecraft.workspace.v1.QueryMutationRequest\x1a'.codecraft.workspace.v1.MutationReceipt\x12j\n" +
@@ -2330,7 +2444,8 @@ const file_workspace_proto_rawDesc = "" +
 	"\rQueryTestCopy\x12,.codecraft.workspace.v1.QueryTestCopyRequest\x1a'.codecraft.workspace.v1.TestCopyReceipt\x12_\n" +
 	"\tStartTest\x12(.codecraft.workspace.v1.StartTestRequest\x1a(.codecraft.workspace.v1.TestTaskSnapshot\x12_\n" +
 	"\tQueryTask\x12(.codecraft.workspace.v1.QueryTaskRequest\x1a(.codecraft.workspace.v1.TestTaskSnapshot\x12]\n" +
-	"\bStopTask\x12'.codecraft.workspace.v1.StopTaskRequest\x1a(.codecraft.workspace.v1.StopTaskResponse\x12_\n" +
+	"\bStopTask\x12'.codecraft.workspace.v1.StopTaskRequest\x1a(.codecraft.workspace.v1.StopTaskResponse\x12d\n" +
+	"\x0eStopSystemTask\x12(.codecraft.workspace.v1.QueryTaskRequest\x1a(.codecraft.workspace.v1.StopTaskResponse\x12_\n" +
 	"\tQueryStop\x12(.codecraft.workspace.v1.QueryTaskRequest\x1a(.codecraft.workspace.v1.StopTaskResponse\x12o\n" +
 	"\x0eListExecutions\x121.codecraft.workspace.v1.ExecutionInventoryRequest\x1a*.codecraft.workspace.v1.ExecutionInventory\x12c\n" +
 	"\rReconcileTask\x12(.codecraft.workspace.v1.QueryTaskRequest\x1a(.codecraft.workspace.v1.TestTaskSnapshot\x12Z\n" +
@@ -2349,91 +2464,100 @@ func file_workspace_proto_rawDescGZIP() []byte {
 	return file_workspace_proto_rawDescData
 }
 
-var file_workspace_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_workspace_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_workspace_proto_goTypes = []any{
-	(*ProblemIdentity)(nil),           // 0: codecraft.workspace.v1.ProblemIdentity
-	(*PrepareWorkspaceRequest)(nil),   // 1: codecraft.workspace.v1.PrepareWorkspaceRequest
-	(*QueryWorkspaceRequest)(nil),     // 2: codecraft.workspace.v1.QueryWorkspaceRequest
-	(*ReadWorkspaceFileRequest)(nil),  // 3: codecraft.workspace.v1.ReadWorkspaceFileRequest
-	(*ReadWorkspaceFileResponse)(nil), // 4: codecraft.workspace.v1.ReadWorkspaceFileResponse
-	(*CancelPreparationRequest)(nil),  // 5: codecraft.workspace.v1.CancelPreparationRequest
-	(*CloseGateRequest)(nil),          // 6: codecraft.workspace.v1.CloseGateRequest
-	(*GateResponse)(nil),              // 7: codecraft.workspace.v1.GateResponse
-	(*FileChange)(nil),                // 8: codecraft.workspace.v1.FileChange
-	(*ApplyBatchRequest)(nil),         // 9: codecraft.workspace.v1.ApplyBatchRequest
-	(*QueryMutationRequest)(nil),      // 10: codecraft.workspace.v1.QueryMutationRequest
-	(*MutationReceipt)(nil),           // 11: codecraft.workspace.v1.MutationReceipt
-	(*PrepareTestCopyRequest)(nil),    // 12: codecraft.workspace.v1.PrepareTestCopyRequest
-	(*QueryTestCopyRequest)(nil),      // 13: codecraft.workspace.v1.QueryTestCopyRequest
-	(*TestCopyReceipt)(nil),           // 14: codecraft.workspace.v1.TestCopyReceipt
-	(*StartTestRequest)(nil),          // 15: codecraft.workspace.v1.StartTestRequest
-	(*QueryTaskRequest)(nil),          // 16: codecraft.workspace.v1.QueryTaskRequest
-	(*StopTaskRequest)(nil),           // 17: codecraft.workspace.v1.StopTaskRequest
-	(*StopTaskResponse)(nil),          // 18: codecraft.workspace.v1.StopTaskResponse
-	(*ExecutionInventoryRequest)(nil), // 19: codecraft.workspace.v1.ExecutionInventoryRequest
-	(*ExecutionInventoryEntry)(nil),   // 20: codecraft.workspace.v1.ExecutionInventoryEntry
-	(*ExecutionInventory)(nil),        // 21: codecraft.workspace.v1.ExecutionInventory
-	(*WatchTaskRequest)(nil),          // 22: codecraft.workspace.v1.WatchTaskRequest
-	(*TaskEvent)(nil),                 // 23: codecraft.workspace.v1.TaskEvent
-	(*TestLogChunk)(nil),              // 24: codecraft.workspace.v1.TestLogChunk
-	(*TestEvidence)(nil),              // 25: codecraft.workspace.v1.TestEvidence
-	(*TestTaskSnapshot)(nil),          // 26: codecraft.workspace.v1.TestTaskSnapshot
-	(*WorkspaceSnapshot)(nil),         // 27: codecraft.workspace.v1.WorkspaceSnapshot
+	(*ProblemIdentity)(nil),            // 0: codecraft.workspace.v1.ProblemIdentity
+	(*PrepareWorkspaceRequest)(nil),    // 1: codecraft.workspace.v1.PrepareWorkspaceRequest
+	(*QueryWorkspaceRequest)(nil),      // 2: codecraft.workspace.v1.QueryWorkspaceRequest
+	(*ReadWorkspaceFileRequest)(nil),   // 3: codecraft.workspace.v1.ReadWorkspaceFileRequest
+	(*ReadWorkspaceFileResponse)(nil),  // 4: codecraft.workspace.v1.ReadWorkspaceFileResponse
+	(*CancelPreparationRequest)(nil),   // 5: codecraft.workspace.v1.CancelPreparationRequest
+	(*CloseGateRequest)(nil),           // 6: codecraft.workspace.v1.CloseGateRequest
+	(*GateResponse)(nil),               // 7: codecraft.workspace.v1.GateResponse
+	(*FileChange)(nil),                 // 8: codecraft.workspace.v1.FileChange
+	(*ApplyBatchRequest)(nil),          // 9: codecraft.workspace.v1.ApplyBatchRequest
+	(*QueryMutationRequest)(nil),       // 10: codecraft.workspace.v1.QueryMutationRequest
+	(*MutationReceipt)(nil),            // 11: codecraft.workspace.v1.MutationReceipt
+	(*PrepareTestCopyRequest)(nil),     // 12: codecraft.workspace.v1.PrepareTestCopyRequest
+	(*FinalVerificationAuthority)(nil), // 13: codecraft.workspace.v1.FinalVerificationAuthority
+	(*QueryTestCopyRequest)(nil),       // 14: codecraft.workspace.v1.QueryTestCopyRequest
+	(*TestCopyReceipt)(nil),            // 15: codecraft.workspace.v1.TestCopyReceipt
+	(*StartTestRequest)(nil),           // 16: codecraft.workspace.v1.StartTestRequest
+	(*QueryTaskRequest)(nil),           // 17: codecraft.workspace.v1.QueryTaskRequest
+	(*StopTaskRequest)(nil),            // 18: codecraft.workspace.v1.StopTaskRequest
+	(*StopTaskResponse)(nil),           // 19: codecraft.workspace.v1.StopTaskResponse
+	(*ExecutionInventoryRequest)(nil),  // 20: codecraft.workspace.v1.ExecutionInventoryRequest
+	(*ExecutionInventoryEntry)(nil),    // 21: codecraft.workspace.v1.ExecutionInventoryEntry
+	(*ExecutionInventory)(nil),         // 22: codecraft.workspace.v1.ExecutionInventory
+	(*WatchTaskRequest)(nil),           // 23: codecraft.workspace.v1.WatchTaskRequest
+	(*TaskEvent)(nil),                  // 24: codecraft.workspace.v1.TaskEvent
+	(*TestLogChunk)(nil),               // 25: codecraft.workspace.v1.TestLogChunk
+	(*TestEvidence)(nil),               // 26: codecraft.workspace.v1.TestEvidence
+	(*TestTaskSnapshot)(nil),           // 27: codecraft.workspace.v1.TestTaskSnapshot
+	(*WorkspaceSnapshot)(nil),          // 28: codecraft.workspace.v1.WorkspaceSnapshot
 }
 var file_workspace_proto_depIdxs = []int32{
 	0,  // 0: codecraft.workspace.v1.PrepareWorkspaceRequest.problem:type_name -> codecraft.workspace.v1.ProblemIdentity
 	8,  // 1: codecraft.workspace.v1.ApplyBatchRequest.changes:type_name -> codecraft.workspace.v1.FileChange
-	0,  // 2: codecraft.workspace.v1.TestCopyReceipt.problem:type_name -> codecraft.workspace.v1.ProblemIdentity
-	16, // 3: codecraft.workspace.v1.StopTaskRequest.task:type_name -> codecraft.workspace.v1.QueryTaskRequest
-	26, // 4: codecraft.workspace.v1.StopTaskResponse.snapshot:type_name -> codecraft.workspace.v1.TestTaskSnapshot
-	16, // 5: codecraft.workspace.v1.ExecutionInventoryEntry.task:type_name -> codecraft.workspace.v1.QueryTaskRequest
-	20, // 6: codecraft.workspace.v1.ExecutionInventory.entries:type_name -> codecraft.workspace.v1.ExecutionInventoryEntry
-	16, // 7: codecraft.workspace.v1.WatchTaskRequest.task:type_name -> codecraft.workspace.v1.QueryTaskRequest
-	0,  // 8: codecraft.workspace.v1.TestTaskSnapshot.problem:type_name -> codecraft.workspace.v1.ProblemIdentity
-	24, // 9: codecraft.workspace.v1.TestTaskSnapshot.logs:type_name -> codecraft.workspace.v1.TestLogChunk
-	25, // 10: codecraft.workspace.v1.TestTaskSnapshot.evidence:type_name -> codecraft.workspace.v1.TestEvidence
-	0,  // 11: codecraft.workspace.v1.WorkspaceSnapshot.problem:type_name -> codecraft.workspace.v1.ProblemIdentity
-	1,  // 12: codecraft.workspace.v1.WorkspaceStorage.PrepareWorkspace:input_type -> codecraft.workspace.v1.PrepareWorkspaceRequest
-	2,  // 13: codecraft.workspace.v1.WorkspaceStorage.QueryWorkspace:input_type -> codecraft.workspace.v1.QueryWorkspaceRequest
-	3,  // 14: codecraft.workspace.v1.WorkspaceStorage.ReadWorkspaceFile:input_type -> codecraft.workspace.v1.ReadWorkspaceFileRequest
-	5,  // 15: codecraft.workspace.v1.WorkspaceStorage.CancelPreparation:input_type -> codecraft.workspace.v1.CancelPreparationRequest
-	6,  // 16: codecraft.workspace.v1.WorkspaceStorage.CloseGate:input_type -> codecraft.workspace.v1.CloseGateRequest
-	2,  // 17: codecraft.workspace.v1.WorkspaceStorage.QueryGate:input_type -> codecraft.workspace.v1.QueryWorkspaceRequest
-	6,  // 18: codecraft.workspace.v1.WorkspaceStorage.OpenGate:input_type -> codecraft.workspace.v1.CloseGateRequest
-	9,  // 19: codecraft.workspace.v1.WorkspaceStorage.ApplyBatch:input_type -> codecraft.workspace.v1.ApplyBatchRequest
-	10, // 20: codecraft.workspace.v1.WorkspaceStorage.QueryMutation:input_type -> codecraft.workspace.v1.QueryMutationRequest
-	12, // 21: codecraft.workspace.v1.WorkspaceStorage.PrepareTestCopy:input_type -> codecraft.workspace.v1.PrepareTestCopyRequest
-	13, // 22: codecraft.workspace.v1.WorkspaceStorage.QueryTestCopy:input_type -> codecraft.workspace.v1.QueryTestCopyRequest
-	15, // 23: codecraft.workspace.v1.WorkspaceStorage.StartTest:input_type -> codecraft.workspace.v1.StartTestRequest
-	16, // 24: codecraft.workspace.v1.WorkspaceStorage.QueryTask:input_type -> codecraft.workspace.v1.QueryTaskRequest
-	17, // 25: codecraft.workspace.v1.WorkspaceStorage.StopTask:input_type -> codecraft.workspace.v1.StopTaskRequest
-	16, // 26: codecraft.workspace.v1.WorkspaceStorage.QueryStop:input_type -> codecraft.workspace.v1.QueryTaskRequest
-	19, // 27: codecraft.workspace.v1.WorkspaceStorage.ListExecutions:input_type -> codecraft.workspace.v1.ExecutionInventoryRequest
-	16, // 28: codecraft.workspace.v1.WorkspaceStorage.ReconcileTask:input_type -> codecraft.workspace.v1.QueryTaskRequest
-	22, // 29: codecraft.workspace.v1.WorkspaceStorage.WatchTask:input_type -> codecraft.workspace.v1.WatchTaskRequest
-	27, // 30: codecraft.workspace.v1.WorkspaceStorage.PrepareWorkspace:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
-	27, // 31: codecraft.workspace.v1.WorkspaceStorage.QueryWorkspace:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
-	4,  // 32: codecraft.workspace.v1.WorkspaceStorage.ReadWorkspaceFile:output_type -> codecraft.workspace.v1.ReadWorkspaceFileResponse
-	27, // 33: codecraft.workspace.v1.WorkspaceStorage.CancelPreparation:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
-	7,  // 34: codecraft.workspace.v1.WorkspaceStorage.CloseGate:output_type -> codecraft.workspace.v1.GateResponse
-	7,  // 35: codecraft.workspace.v1.WorkspaceStorage.QueryGate:output_type -> codecraft.workspace.v1.GateResponse
-	7,  // 36: codecraft.workspace.v1.WorkspaceStorage.OpenGate:output_type -> codecraft.workspace.v1.GateResponse
-	11, // 37: codecraft.workspace.v1.WorkspaceStorage.ApplyBatch:output_type -> codecraft.workspace.v1.MutationReceipt
-	11, // 38: codecraft.workspace.v1.WorkspaceStorage.QueryMutation:output_type -> codecraft.workspace.v1.MutationReceipt
-	14, // 39: codecraft.workspace.v1.WorkspaceStorage.PrepareTestCopy:output_type -> codecraft.workspace.v1.TestCopyReceipt
-	14, // 40: codecraft.workspace.v1.WorkspaceStorage.QueryTestCopy:output_type -> codecraft.workspace.v1.TestCopyReceipt
-	26, // 41: codecraft.workspace.v1.WorkspaceStorage.StartTest:output_type -> codecraft.workspace.v1.TestTaskSnapshot
-	26, // 42: codecraft.workspace.v1.WorkspaceStorage.QueryTask:output_type -> codecraft.workspace.v1.TestTaskSnapshot
-	18, // 43: codecraft.workspace.v1.WorkspaceStorage.StopTask:output_type -> codecraft.workspace.v1.StopTaskResponse
-	18, // 44: codecraft.workspace.v1.WorkspaceStorage.QueryStop:output_type -> codecraft.workspace.v1.StopTaskResponse
-	21, // 45: codecraft.workspace.v1.WorkspaceStorage.ListExecutions:output_type -> codecraft.workspace.v1.ExecutionInventory
-	26, // 46: codecraft.workspace.v1.WorkspaceStorage.ReconcileTask:output_type -> codecraft.workspace.v1.TestTaskSnapshot
-	23, // 47: codecraft.workspace.v1.WorkspaceStorage.WatchTask:output_type -> codecraft.workspace.v1.TaskEvent
-	30, // [30:48] is the sub-list for method output_type
-	12, // [12:30] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	13, // 2: codecraft.workspace.v1.PrepareTestCopyRequest.final_verification:type_name -> codecraft.workspace.v1.FinalVerificationAuthority
+	0,  // 3: codecraft.workspace.v1.TestCopyReceipt.problem:type_name -> codecraft.workspace.v1.ProblemIdentity
+	13, // 4: codecraft.workspace.v1.StartTestRequest.final_verification:type_name -> codecraft.workspace.v1.FinalVerificationAuthority
+	17, // 5: codecraft.workspace.v1.StopTaskRequest.task:type_name -> codecraft.workspace.v1.QueryTaskRequest
+	27, // 6: codecraft.workspace.v1.StopTaskResponse.snapshot:type_name -> codecraft.workspace.v1.TestTaskSnapshot
+	17, // 7: codecraft.workspace.v1.ExecutionInventoryEntry.task:type_name -> codecraft.workspace.v1.QueryTaskRequest
+	21, // 8: codecraft.workspace.v1.ExecutionInventory.entries:type_name -> codecraft.workspace.v1.ExecutionInventoryEntry
+	17, // 9: codecraft.workspace.v1.WatchTaskRequest.task:type_name -> codecraft.workspace.v1.QueryTaskRequest
+	0,  // 10: codecraft.workspace.v1.TestTaskSnapshot.problem:type_name -> codecraft.workspace.v1.ProblemIdentity
+	25, // 11: codecraft.workspace.v1.TestTaskSnapshot.logs:type_name -> codecraft.workspace.v1.TestLogChunk
+	26, // 12: codecraft.workspace.v1.TestTaskSnapshot.evidence:type_name -> codecraft.workspace.v1.TestEvidence
+	0,  // 13: codecraft.workspace.v1.WorkspaceSnapshot.problem:type_name -> codecraft.workspace.v1.ProblemIdentity
+	1,  // 14: codecraft.workspace.v1.WorkspaceStorage.PrepareWorkspace:input_type -> codecraft.workspace.v1.PrepareWorkspaceRequest
+	2,  // 15: codecraft.workspace.v1.WorkspaceStorage.QueryWorkspace:input_type -> codecraft.workspace.v1.QueryWorkspaceRequest
+	3,  // 16: codecraft.workspace.v1.WorkspaceStorage.ReadWorkspaceFile:input_type -> codecraft.workspace.v1.ReadWorkspaceFileRequest
+	5,  // 17: codecraft.workspace.v1.WorkspaceStorage.CancelPreparation:input_type -> codecraft.workspace.v1.CancelPreparationRequest
+	6,  // 18: codecraft.workspace.v1.WorkspaceStorage.CloseGate:input_type -> codecraft.workspace.v1.CloseGateRequest
+	2,  // 19: codecraft.workspace.v1.WorkspaceStorage.QueryGate:input_type -> codecraft.workspace.v1.QueryWorkspaceRequest
+	6,  // 20: codecraft.workspace.v1.WorkspaceStorage.OpenGate:input_type -> codecraft.workspace.v1.CloseGateRequest
+	6,  // 21: codecraft.workspace.v1.WorkspaceStorage.Freeze:input_type -> codecraft.workspace.v1.CloseGateRequest
+	2,  // 22: codecraft.workspace.v1.WorkspaceStorage.QueryFreeze:input_type -> codecraft.workspace.v1.QueryWorkspaceRequest
+	9,  // 23: codecraft.workspace.v1.WorkspaceStorage.ApplyBatch:input_type -> codecraft.workspace.v1.ApplyBatchRequest
+	10, // 24: codecraft.workspace.v1.WorkspaceStorage.QueryMutation:input_type -> codecraft.workspace.v1.QueryMutationRequest
+	12, // 25: codecraft.workspace.v1.WorkspaceStorage.PrepareTestCopy:input_type -> codecraft.workspace.v1.PrepareTestCopyRequest
+	14, // 26: codecraft.workspace.v1.WorkspaceStorage.QueryTestCopy:input_type -> codecraft.workspace.v1.QueryTestCopyRequest
+	16, // 27: codecraft.workspace.v1.WorkspaceStorage.StartTest:input_type -> codecraft.workspace.v1.StartTestRequest
+	17, // 28: codecraft.workspace.v1.WorkspaceStorage.QueryTask:input_type -> codecraft.workspace.v1.QueryTaskRequest
+	18, // 29: codecraft.workspace.v1.WorkspaceStorage.StopTask:input_type -> codecraft.workspace.v1.StopTaskRequest
+	17, // 30: codecraft.workspace.v1.WorkspaceStorage.StopSystemTask:input_type -> codecraft.workspace.v1.QueryTaskRequest
+	17, // 31: codecraft.workspace.v1.WorkspaceStorage.QueryStop:input_type -> codecraft.workspace.v1.QueryTaskRequest
+	20, // 32: codecraft.workspace.v1.WorkspaceStorage.ListExecutions:input_type -> codecraft.workspace.v1.ExecutionInventoryRequest
+	17, // 33: codecraft.workspace.v1.WorkspaceStorage.ReconcileTask:input_type -> codecraft.workspace.v1.QueryTaskRequest
+	23, // 34: codecraft.workspace.v1.WorkspaceStorage.WatchTask:input_type -> codecraft.workspace.v1.WatchTaskRequest
+	28, // 35: codecraft.workspace.v1.WorkspaceStorage.PrepareWorkspace:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
+	28, // 36: codecraft.workspace.v1.WorkspaceStorage.QueryWorkspace:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
+	4,  // 37: codecraft.workspace.v1.WorkspaceStorage.ReadWorkspaceFile:output_type -> codecraft.workspace.v1.ReadWorkspaceFileResponse
+	28, // 38: codecraft.workspace.v1.WorkspaceStorage.CancelPreparation:output_type -> codecraft.workspace.v1.WorkspaceSnapshot
+	7,  // 39: codecraft.workspace.v1.WorkspaceStorage.CloseGate:output_type -> codecraft.workspace.v1.GateResponse
+	7,  // 40: codecraft.workspace.v1.WorkspaceStorage.QueryGate:output_type -> codecraft.workspace.v1.GateResponse
+	7,  // 41: codecraft.workspace.v1.WorkspaceStorage.OpenGate:output_type -> codecraft.workspace.v1.GateResponse
+	7,  // 42: codecraft.workspace.v1.WorkspaceStorage.Freeze:output_type -> codecraft.workspace.v1.GateResponse
+	7,  // 43: codecraft.workspace.v1.WorkspaceStorage.QueryFreeze:output_type -> codecraft.workspace.v1.GateResponse
+	11, // 44: codecraft.workspace.v1.WorkspaceStorage.ApplyBatch:output_type -> codecraft.workspace.v1.MutationReceipt
+	11, // 45: codecraft.workspace.v1.WorkspaceStorage.QueryMutation:output_type -> codecraft.workspace.v1.MutationReceipt
+	15, // 46: codecraft.workspace.v1.WorkspaceStorage.PrepareTestCopy:output_type -> codecraft.workspace.v1.TestCopyReceipt
+	15, // 47: codecraft.workspace.v1.WorkspaceStorage.QueryTestCopy:output_type -> codecraft.workspace.v1.TestCopyReceipt
+	27, // 48: codecraft.workspace.v1.WorkspaceStorage.StartTest:output_type -> codecraft.workspace.v1.TestTaskSnapshot
+	27, // 49: codecraft.workspace.v1.WorkspaceStorage.QueryTask:output_type -> codecraft.workspace.v1.TestTaskSnapshot
+	19, // 50: codecraft.workspace.v1.WorkspaceStorage.StopTask:output_type -> codecraft.workspace.v1.StopTaskResponse
+	19, // 51: codecraft.workspace.v1.WorkspaceStorage.StopSystemTask:output_type -> codecraft.workspace.v1.StopTaskResponse
+	19, // 52: codecraft.workspace.v1.WorkspaceStorage.QueryStop:output_type -> codecraft.workspace.v1.StopTaskResponse
+	22, // 53: codecraft.workspace.v1.WorkspaceStorage.ListExecutions:output_type -> codecraft.workspace.v1.ExecutionInventory
+	27, // 54: codecraft.workspace.v1.WorkspaceStorage.ReconcileTask:output_type -> codecraft.workspace.v1.TestTaskSnapshot
+	24, // 55: codecraft.workspace.v1.WorkspaceStorage.WatchTask:output_type -> codecraft.workspace.v1.TaskEvent
+	35, // [35:56] is the sub-list for method output_type
+	14, // [14:35] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_workspace_proto_init() }
@@ -2441,14 +2565,14 @@ func file_workspace_proto_init() {
 	if File_workspace_proto != nil {
 		return
 	}
-	file_workspace_proto_msgTypes[26].OneofWrappers = []any{}
+	file_workspace_proto_msgTypes[27].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_workspace_proto_rawDesc), len(file_workspace_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   28,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -5,6 +5,8 @@ import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
 import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
 import ai.codecraft.modules.workspace.model.entity.TestStopEntity;
+import ai.codecraft.modules.workspace.model.entity.FinalTaskAuthorityEntity;
+import ai.codecraft.workspace.v1.FinalVerificationAuthority;
 import ai.codecraft.workspace.v1.StopTaskRequest;
 import ai.codecraft.workspace.v1.ExecutionInventory;
 import ai.codecraft.workspace.v1.ExecutionInventoryRequest;
@@ -58,11 +60,26 @@ public class SandboxWorkspaceGateway {
         return page;
     }
 
-    public TestTaskSnapshot startTest(TestTaskEntity task) {
-        return client().startTest(StartTestRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+    public TestTaskSnapshot startTest(TestTaskEntity task) { return startTest(task, null); }
+
+    public TestTaskSnapshot startTest(TestTaskEntity task, FinalTaskAuthorityEntity authority) {
+        var request = StartTestRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
             .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId())
             .setExpectedRevision(task.revision()).setGateEpoch(task.gateEpoch()).setNotAfterUnixMillis(task.notAfter().toEpochMilli())
-            .setTarget(task.target()).setPurpose("MANUAL").setHostEpoch(task.hostEpoch()).build());
+            .setTarget(task.target()).setPurpose("MANUAL").setHostEpoch(task.hostEpoch());
+        if (authority != null) request.setPurpose("FINAL_VERIFICATION").setFinalVerification(FinalVerificationAuthority.newBuilder()
+            .setFinalizationId(authority.finalizationId()).setAttemptId(authority.taskId()).setFreezeOperationId(authority.freezeOperationId())
+            .setDeadlineUnixMillis(authority.deadlineAt().toEpochMilli()));
+        return client().startTest(request.build());
+    }
+
+    public StopTaskResponse stopSystemTask(TestTaskEntity task) {
+        return client().stopSystemTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+            .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()).build());
+    }
+
+    public GateResponse freeze(String instance, String operation, long epoch) {
+        return client().freeze(CloseGateRequest.newBuilder().setWorkspaceInstanceId(instance).setTransitionId(operation).setExpectedEpoch(epoch).build());
     }
 
     public TestTaskSnapshot task(TestTaskEntity task) {

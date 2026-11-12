@@ -8,6 +8,26 @@ export interface Exercise {
   exerciseId: string; problemVersionId: string; workspaceInstanceId: string; state: string;
   revision: string | null; paths: string[]; deadlineAt: string | null;
   preparationFailureReason: string | null; cleanupState: string | null;
+  finalization?: Finalization | null;
+}
+export interface Finalization {
+  operationId: string; finalRevision: string | null; verification: string; resultTaskId: string | null;
+  attempts: number; maxAttempts: number; deadlineAt: string | null; endedAt: string | null; status: string;
+}
+function finalization(value: unknown): Finalization | null {
+  if (value === undefined || value === null) return null;
+  if (!object(value) || typeof value.operationId !== 'string' || !['PENDING', 'PASSED', 'FAILED', 'TIMED_OUT', 'UNAVAILABLE'].includes(String(value.verification))
+    || (value.finalRevision !== null && (typeof value.finalRevision !== 'string' || !/^\d+$/.test(value.finalRevision)))
+    || (value.resultTaskId !== null && typeof value.resultTaskId !== 'string')
+    || typeof value.attempts !== 'number' || !Number.isInteger(value.attempts) || value.attempts < 0
+    || typeof value.maxAttempts !== 'number' || !Number.isInteger(value.maxAttempts) || value.maxAttempts < 1 || value.maxAttempts > 3 || value.attempts > value.maxAttempts
+    || !['RECONCILIATION_REQUIRED', 'FINAL_TESTING', 'ENDED'].includes(String(value.status))) return invalid();
+  for (const timestamp of [value.deadlineAt, value.endedAt]) {
+    if (timestamp !== null && (typeof timestamp !== 'string' || !Number.isFinite(Date.parse(timestamp)))) return invalid();
+  }
+  return { operationId: value.operationId, finalRevision: value.finalRevision, verification: String(value.verification), resultTaskId: value.resultTaskId,
+    attempts: value.attempts, maxAttempts: value.maxAttempts, deadlineAt: value.deadlineAt === null ? null : String(value.deadlineAt),
+    endedAt: value.endedAt === null ? null : String(value.endedAt), status: String(value.status) };
 }
 export interface WorkspaceFile { workspaceInstanceId: string; revision: string; path: string; content: string }
 function strings(value: unknown): value is string[] { return Array.isArray(value) && value.every((entry) => typeof entry === 'string'); }
@@ -29,10 +49,13 @@ export async function problems(signal: AbortSignal): Promise<Problem[]> {
       durationSeconds: value.durationSeconds, editableRoots: value.editableRoots, acceptanceFiles, executionAvailable: value.executionAvailable === true };
   });
 }
-export async function current(signal: AbortSignal): Promise<Exercise | null> {
+export async function current(signal: AbortSignal, selectedExercise?: string): Promise<Exercise | null> {
   let value: unknown;
-  try { value = await request('/api/exercises/current', signal); }
-  catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error; }
+  try { value = await request(selectedExercise ? `/api/exercises/${encodeURIComponent(selectedExercise)}` : '/api/exercises/current', signal); }
+  catch (error) {
+    if (!(error instanceof ApiError && error.status === 404) || selectedExercise) throw error;
+    return null;
+  }
   if (!object(value) || typeof value.exerciseId !== 'string' || typeof value.problemVersionId !== 'string'
     || typeof value.workspaceInstanceId !== 'string' || typeof value.state !== 'string'
     || !['PREPARING', 'READY', 'PREPARATION_FAILED', 'ACTIVE', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(value.state)
@@ -42,7 +65,8 @@ export async function current(signal: AbortSignal): Promise<Exercise | null> {
     || !strings(value.paths) || (value.deadlineAt !== null && (typeof value.deadlineAt !== 'string' || !Number.isFinite(Date.parse(value.deadlineAt))))) return invalid();
   return { exerciseId: value.exerciseId, problemVersionId: value.problemVersionId, workspaceInstanceId: value.workspaceInstanceId,
     state: value.state, revision: value.revision, paths: value.paths, deadlineAt: value.deadlineAt,
-    preparationFailureReason: value.preparationFailureReason, cleanupState: value.cleanupState === null ? null : String(value.cleanupState) };
+    preparationFailureReason: value.preparationFailureReason, cleanupState: value.cleanupState === null ? null : String(value.cleanupState),
+    finalization: finalization(value.finalization) };
 }
 export async function file(exercise: Exercise, path: string, signal: AbortSignal): Promise<WorkspaceFile> {
   const value = await request(`/api/exercises/${encodeURIComponent(exercise.exerciseId)}/files?path=${encodeURIComponent(path)}`, signal);
@@ -51,9 +75,10 @@ export async function file(exercise: Exercise, path: string, signal: AbortSignal
   return { workspaceInstanceId: exercise.workspaceInstanceId, revision: String(value.revision), path, content: value.content };
 }
 export interface Action { path: string; body: Record<string, string>; key: string }
-export async function act(action: Action, signal: AbortSignal, credential?: string): Promise<void> {
+export async function act(action: Action, signal: AbortSignal, credential?: string): Promise<{ exerciseId: string; state: string }> {
   const value = await post(action.path, action.body, signal, action.key, credential);
   if (!object(value) || typeof value.exerciseId !== 'string' || typeof value.state !== 'string') return invalid();
+  return { exerciseId: value.exerciseId, state: value.state };
 }
 export interface Control { exerciseId: string; operationId: string | null; state: string; generation: string; held: boolean; credential: string | null }
 export async function control(exercise: string, kind: 'acquire' | 'takeover' | 'release' | null, signal: AbortSignal, key?: string, credential?: string): Promise<Control> {
