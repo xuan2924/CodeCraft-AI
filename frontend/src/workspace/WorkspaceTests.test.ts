@@ -13,7 +13,8 @@ const result: TestTask = { streamId: null, cursor: null, sequence: null, firstRe
   logs: [{ channel: 'stdout', text: '<script>window.stolen = true</script>' }],
   problem: { problemId: 'cart-total', version: '1.0.1', packageSha256: 'a'.repeat(64), executionImageDigest: `sha256:${'b'.repeat(64)}`, platform: 'linux/amd64' },
   evidence: { kind: 'SUREFIRE_XML', sha256: 'c'.repeat(64), bytes: 100 } };
-const ok = (data: unknown) => new Response(JSON.stringify({ code: 'OK', data }), { status: 200 });
+const retention = { retainedCompletedLimit: 20, prunedCount: 0, cleanupPendingCount: 0 };
+const ok = (data: unknown) => new Response(JSON.stringify({ code: 'OK', data: Array.isArray(data) ? { tasks: data, retention } : data }), { status: 200 });
 let view: VueWrapper | undefined;
 let client: QueryClient | undefined;
 afterEach(() => { view?.unmount(); client?.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -24,6 +25,17 @@ it('rejects graded responses without authoritative evidence or immutable image i
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => ok(malformed)));
     await expect(testTask('exercise', 'instance', 'task', new AbortController().signal)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
   }
+});
+
+it('shows authoritative pruning and distinguishes cleanup still in progress', async () => {
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (path) => ok(String(path).endsWith('/tasks')
+    ? { tasks: [{ ...result, logs: [] }], retention: { retainedCompletedLimit: 20, prunedCount: 6, cleanupPendingCount: 2 } } : result)));
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  view = mount(WorkspaceTests, { props: { owner: 'owner', exercise, credential: '' }, global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
+  await flushPromises(); await flushPromises();
+  expect(view.text()).toContain('已精简 6 条');
+  expect(view.text()).toContain('2 条仍在后台清理');
+  expect(view.text()).not.toContain('尚未交付');
 });
 
 it('shows old revisions and truncation, renders logs as text, and only queries on mount', async () => {
@@ -108,6 +120,24 @@ it('backs off failed recovery on a controllable clock and cancels retries on unm
   view.unmount(); view = undefined;
   await vi.advanceTimersByTimeAsync(30000);
   expect(attempts).toEqual([endpoint, endpoint]);
+});
+
+it('stops stream recovery on authoritative history eviction without retrying or restarting work', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const sources: EventTarget[] = [];
+  class FakeEvents extends EventTarget { close() {} constructor() { super(); sources.push(this); } }
+  vi.stubGlobal('EventSource', FakeEvents);
+  const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ code: 'TEST_HISTORY_PRUNED' }), { status: 410 }));
+  vi.stubGlobal('fetch', fetcher);
+  const snapshot = ref<TestTask>({ ...result, streamId: 'browser-stream', cursor: 'opaque3', sequence: '3', firstRetainedSequence: '1' });
+  const host = defineComponent({ setup: () => useTaskStream(snapshot, (id) => ['task', id]), template: '<p>{{ status }}</p>' });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  view = mount(host, { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
+  sources[0]!.dispatchEvent(new Event('error'));
+  await vi.advanceTimersByTimeAsync(250);
+  expect(view.text()).toContain('较早测试记录已精简');
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
 it('reconnects from the newest cached cursor when a recovery response arrives late', async () => {

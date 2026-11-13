@@ -89,7 +89,25 @@ class SystemTaskAdmissionTest {
         assertEquals("INTERRUPTED", fixture.store.find("task").state());
     }
 
+    @Test
+    void retiredHistoryCannotReturnPrivateBodiesOrAcceptDelayedObservations() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.store.systemCancelledBeforeRegistration("task", "host");
+        var result = JsonMapper.builder().addModule(new JavaTimeModule()).build().readValue(fixture.row.snapshot(),
+            ai.codecraft.modules.workspace.model.dto.TestTaskResponse.class);
+        when(fixture.tasks.retired("task")).thenReturn(true);
+        fixture.store.observe(fixture.row, result, 1000, "stream", 1);
+        org.mockito.Mockito.verify(fixture.tasks, org.mockito.Mockito.times(1)).observed(eq("task"), anyString(), anyBoolean(), anyString());
+        org.mockito.Mockito.verify(fixture.tasks, org.mockito.Mockito.never()).updateGoVersion(anyString(), org.mockito.ArgumentMatchers.anyLong(), anyString(), org.mockito.ArgumentMatchers.anyLong());
+        when(fixture.identity.authorizePrivateDelivery("session")).thenReturn(new ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO("user", "USER", false, 1, NOW.plusSeconds(60)));
+        var failure = org.junit.jupiter.api.Assertions.assertThrows(ai.codecraft.common.exception.BusinessException.class,
+            () -> fixture.store.query("session", "exercise", "task"));
+        assertEquals("TEST_HISTORY_PRUNED", failure.code());
+        assertEquals(410, failure.status());
+    }
+
     private static final class Fixture {
+        final IdentityTransactionService identity = mock(IdentityTransactionService.class);
         final TestTaskRepository tasks = mock(TestTaskRepository.class);
         final WorkspaceWriteRepository writes = mock(WorkspaceWriteRepository.class);
         final FinalizationRepository finals = mock(FinalizationRepository.class);
@@ -111,9 +129,10 @@ class SystemTaskAdmissionTest {
                     row.target(), call.getArgument(1), row.dispatched(), call.getArgument(2), call.getArgument(3), row.hostEpoch(), row.stateVersion());
                 return null;
             }).when(tasks).observed(eq("task"), anyString(), anyBoolean(), anyString());
-            store = new TestTaskStore(mock(IdentityTransactionService.class), mock(IdentitySecrets.class), exercises, writes, tasks, problems,
+            store = new TestTaskStore(identity, mock(IdentitySecrets.class), exercises, writes, tasks, problems,
                 Clock.fixed(NOW, ZoneOffset.UTC), JsonMapper.builder().addModule(new JavaTimeModule()).build(), mock(TaskStreamRepository.class),
-                mock(TaskStreamPublisher.class), finals);
+                mock(TaskStreamPublisher.class), finals,
+                new ai.codecraft.modules.workspace.config.StorageProperties(512L * 1024 * 1024, 160L * 1024 * 1024, 20), mock(WorkspaceMaintenanceStore.class));
         }
 
         TestTaskEntity task(boolean dispatched, String host) {

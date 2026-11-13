@@ -117,6 +117,7 @@ export function message(error: unknown): string {
     if (error.code === 'WRITE_NOT_COMMITTED') return '已核对原操作未提交。请检查当前版本后显式重新保存。';
     if (error.code === 'FILE_EXISTS') return '目标文件已存在，本批次未应用。';
     if (error.code === 'EXERCISE_DELETED') return '演练已删除，不能恢复作答。';
+    if (error.code === 'TEST_HISTORY_PRUNED') return '该普通测试已移出完整历史；请查看最近记录。演练代码和草稿不受影响。';
     if (error.code === 'HISTORY_LIMIT_REACHED') return '已达到历史演练数量上限，请先删除旧演练再新建。';
     if (error.code === 'ACTIVE_EXERCISE_EXISTS') return '已有未结束演练，请刷新查看。';
     if (error.status === 409) return '状态已变化，请刷新核对；不要自动创建新的请求。';

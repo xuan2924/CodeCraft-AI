@@ -11,6 +11,63 @@ import (
 	"codecraft.local/sandbox/internal/execution"
 )
 
+func TestOrdinaryEvidencePruningPreservesFinalAndUnknownExecutions(t *testing.T) {
+	root, input, owner := t.TempDir(), recoveryInput(), identifier()
+	input.TaskID, input.ExerciseID = identifier(), identifier()
+	input.ProblemID, input.ProblemVersion = "cart-total", "1.0.1"
+	input.Purpose = "MANUAL"
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	result := execution.Result{Input: input, State: "STOPPED", StartedAt: now, FinishedAt: &now, Version: 1, Quiescent: true, Cleanup: "SUCCEEDED", CopyCleanup: "SUCCEEDED"}
+	writeRegistryFixture(t, root, input.ExecutionID+".json", result)
+	final := input
+	final.ExecutionID, final.TaskID, final.Purpose = identifier(), identifier(), "FINAL_VERIFICATION"
+	final.Subpath = final.WorkspaceID + "/copy-" + final.ExecutionID + "/tree"
+	result.Input = final
+	writeRegistryFixture(t, root, final.ExecutionID+".json", result)
+	runner, err := execution.New(context.Background(), registryEngine(t, []any{}), root, "fixture-volume", owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = runner.Close() }()
+	identity := execution.TaskIdentity{ExerciseID: input.ExerciseID, TaskID: input.TaskID, ExecutionID: input.ExecutionID, WorkspaceID: input.WorkspaceID}
+	if err = runner.PruneExecution(context.Background(), identity); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = runner.Query(context.Background(), input.ExecutionID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ordinary evidence remains: %v", err)
+	}
+	if err = runner.PruneExecution(context.Background(), identity); err != nil {
+		t.Fatalf("pruning replay: %v", err)
+	}
+	if _, cancelled, err := runner.QueryStop(context.Background(), identity); err != nil || !cancelled {
+		t.Fatalf("pruning lost replay fence: %v %v", cancelled, err)
+	}
+	identity.ExecutionID, identity.TaskID = final.ExecutionID, final.TaskID
+	identity.WorkspaceID = identifier()
+	if err = runner.PruneExecution(context.Background(), identity); err == nil {
+		t.Fatal("cross-workspace evidence was pruned")
+	}
+	identity.WorkspaceID = final.WorkspaceID
+	if err = runner.PruneExecution(context.Background(), identity); err == nil {
+		t.Fatal("final verification was pruned")
+	}
+	if _, err = runner.Query(context.Background(), final.ExecutionID); err != nil {
+		t.Fatal(err)
+	}
+	unknown := input
+	unknown.ExecutionID, unknown.TaskID = identifier(), identifier()
+	unknown.Subpath = unknown.WorkspaceID + "/copy-" + unknown.ExecutionID + "/tree"
+	result.Input, result.Quiescent, result.Cleanup, result.CopyCleanup = unknown, false, "PENDING", "PENDING"
+	writeRegistryFixture(t, root, unknown.ExecutionID+".json", result)
+	identity.ExecutionID, identity.TaskID = unknown.ExecutionID, unknown.TaskID
+	if err = runner.PruneExecution(context.Background(), identity); err == nil {
+		t.Fatal("unknown execution was pruned")
+	}
+	if _, err = runner.Query(context.Background(), unknown.ExecutionID); err != nil {
+		t.Fatalf("unknown evidence lost: %v", err)
+	}
+}
+
 func TestDeletionDoesNotHideMissingPrimaryRecoveryEvidence(t *testing.T) {
 	root, input, owner := t.TempDir(), recoveryInput(), identifier()
 	input.TaskID, input.ExerciseID = identifier(), identifier()

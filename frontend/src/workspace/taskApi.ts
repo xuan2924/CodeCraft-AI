@@ -105,10 +105,20 @@ export async function stopTest(exercise: string, workspace: string, id: string, 
   if (result.taskId !== id) return invalid();
   return result;
 }
-export async function recentTests(exercise: string, workspace: string, signal: AbortSignal): Promise<TestTask[]> {
+export interface TestHistory {
+  tasks: TestTask[];
+  retention: { retainedCompletedLimit: number; prunedCount: number; cleanupPendingCount: number };
+}
+export async function recentTests(exercise: string, workspace: string, signal: AbortSignal): Promise<TestHistory> {
   const value = await request(`/api/exercises/${encodeURIComponent(exercise)}/tasks`, signal);
-  if (!Array.isArray(value) || value.length > 20) return invalid();
-  return value.map((item: unknown) => parse(item, exercise, workspace));
+  if (!object(value) || !Array.isArray(value.tasks) || value.tasks.length > 100 || !object(value.retention)) return invalid();
+  const limits = value.retention;
+  if (typeof limits.retainedCompletedLimit !== 'number' || !Number.isSafeInteger(limits.retainedCompletedLimit) || limits.retainedCompletedLimit < 1
+    || typeof limits.prunedCount !== 'number' || !Number.isSafeInteger(limits.prunedCount) || limits.prunedCount < 0
+    || typeof limits.cleanupPendingCount !== 'number' || !Number.isSafeInteger(limits.cleanupPendingCount) || limits.cleanupPendingCount < 0
+    || limits.cleanupPendingCount > limits.prunedCount) return invalid();
+  return { tasks: value.tasks.map((item: unknown) => parse(item, exercise, workspace)),
+    retention: { retainedCompletedLimit: limits.retainedCompletedLimit, prunedCount: limits.prunedCount, cleanupPendingCount: limits.cleanupPendingCount } };
 }
 export async function testTask(exercise: string, workspace: string, id: string, signal: AbortSignal): Promise<TestTask> {
   const result = parse(await request(`/api/exercises/${encodeURIComponent(exercise)}/tasks/${encodeURIComponent(id)}`, signal), exercise, workspace);

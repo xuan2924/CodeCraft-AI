@@ -27,6 +27,10 @@ import ai.codecraft.workspace.v1.ReadWorkspaceFileRequest;
 import ai.codecraft.workspace.v1.ReadWorkspaceFileResponse;
 import ai.codecraft.workspace.v1.WorkspaceSnapshot;
 import ai.codecraft.workspace.v1.WorkspaceDeletionReceipt;
+import ai.codecraft.workspace.v1.CollectWorkspaceRequest;
+import ai.codecraft.workspace.v1.WorkspaceCollectionReceipt;
+import ai.codecraft.workspace.v1.TestEvidencePruningReceipt;
+import ai.codecraft.modules.workspace.model.dto.TestHistoryRecord;
 import ai.codecraft.workspace.v1.WorkspaceStorageGrpc;
 import io.grpc.Context;
 import ai.codecraft.workspace.v1.WatchTaskRequest;
@@ -52,6 +56,16 @@ public class SandboxWorkspaceGateway {
         Metadata metadata = new Metadata();
         metadata.put(Metadata.Key.of("x-codecraft-internal-key", Metadata.ASCII_STRING_MARSHALLER), properties.rpcKey());
         stub = WorkspaceStorageGrpc.newBlockingStub(channel).withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
+    }
+
+    public TestEvidencePruningReceipt pruneTestEvidence(String exercise, TestHistoryRecord record) {
+        return client().pruneTestEvidence(QueryTaskRequest.newBuilder().setExerciseId(exercise).setTaskId(record.taskId())
+            .setWorkspaceInstanceId(record.workspaceInstanceId()).setExecutionInstanceId(record.executionInstanceId()).build());
+    }
+
+    public WorkspaceCollectionReceipt collectWorkspace(String instance, long revision, java.util.List<Long> references) {
+        return client().collectWorkspace(CollectWorkspaceRequest.newBuilder().setWorkspaceInstanceId(instance)
+            .setExpectedRevision(revision).addAllRetainedRevisions(references).build());
     }
 
     public WorkspaceDeletionReceipt deleteWorkspace(String instance) {

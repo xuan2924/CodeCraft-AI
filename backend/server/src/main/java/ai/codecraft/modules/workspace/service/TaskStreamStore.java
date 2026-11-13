@@ -21,8 +21,10 @@ public class TaskStreamStore {
     private final ExerciseRepository exercises;
     private final TestTaskRepository tasks;
     private final TaskStreamRepository streams;
-    public TaskStreamStore(IdentityTransactionService identity, ExerciseRepository exercises, TestTaskRepository tasks, TaskStreamRepository streams) {
-        this.identity = identity; this.exercises = exercises; this.tasks = tasks; this.streams = streams;
+    private final WorkspaceMaintenanceStore maintenance;
+    public TaskStreamStore(IdentityTransactionService identity, ExerciseRepository exercises, TestTaskRepository tasks, TaskStreamRepository streams,
+        WorkspaceMaintenanceStore maintenance) {
+        this.identity = identity; this.exercises = exercises; this.tasks = tasks; this.streams = streams; this.maintenance = maintenance;
     }
     /** Authorization, resource ownership and event dequeue share the revocation user lock. */
     @Transactional(timeout = 3)
@@ -31,8 +33,10 @@ public class TaskStreamStore {
         ExerciseEntity exercise = exercises.find(exerciseId);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         if (exercises.deleted(exerciseId)) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
+        maintenance.pruningPlan(exerciseId);
         TestTaskEntity task = tasks.lock(taskId);
         if (task == null || !task.exerciseId().equals(exerciseId)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        if (tasks.retired(taskId)) throw new BusinessException(WorkspaceErrorCode.TEST_HISTORY_PRUNED);
         TaskStreamEntity stream = streams.find(taskId);
         long sequence = TaskStreamCursor.decode(stream, cursor);
         if (sequence < stream.firstSequence() - 1) throw new BusinessException(WorkspaceErrorCode.CURSOR_EXPIRED);

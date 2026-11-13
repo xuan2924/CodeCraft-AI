@@ -47,6 +47,6 @@ public interface FinalizationRepository {
     FinalTaskAuthorityEntity authority(String id);
     @Select("SELECT " + TestTaskRepository.COLUMNS + " FROM workspace_test_task WHERE exercise_id = #{exercise}::uuid AND NOT quiescent ORDER BY id LIMIT 16")
     List<TestTaskEntity> outstanding(String exercise);
-    @Select("SELECT " + TestTaskRepository.COLUMNS + " FROM workspace_test_task WHERE exercise_id = #{exercise}::uuid AND workspace_instance_id = #{instance}::uuid AND revision = #{revision} AND target = 'base' AND state IN ('PASSED', 'FAILED', 'TIMED_OUT') AND snapshot IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 1")
+    @Select("SELECT " + TestTaskRepository.COLUMNS + " FROM workspace_test_task WHERE exercise_id = #{exercise}::uuid AND workspace_instance_id = #{instance}::uuid AND revision = #{revision} AND target = 'base' AND state IN ('PASSED', 'FAILED', 'TIMED_OUT') AND snapshot IS NOT NULL AND NOT history_pruning AND history_pruned_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 1")
     TestTaskEntity reusable(@Param("exercise") String exercise, @Param("instance") String instance, @Param("revision") long revision);
 }

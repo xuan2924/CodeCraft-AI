@@ -25,9 +25,15 @@ public interface TestTaskRepository {
     List<TestTaskEntity> executions(@Param("ids") List<String> ids);
     @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE id = #{id}::uuid FOR UPDATE")
     TestTaskEntity lock(String id);
-    @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE NOT quiescent OR snapshot IS NULL OR snapshot->>'copyCleanup' IN ('PENDING', 'FAILED') OR snapshot->>'cleanup' = 'FAILED' ORDER BY last_attempt_at, id LIMIT 16")
+    @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE NOT history_pruning AND history_pruned_at IS NULL AND (NOT quiescent OR snapshot IS NULL OR snapshot->>'copyCleanup' IN ('PENDING', 'FAILED') OR snapshot->>'cleanup' = 'FAILED') ORDER BY last_attempt_at, id LIMIT 16")
     List<TestTaskEntity> pending();
-    @Select("SELECT " + SUMMARY_COLUMNS + " FROM workspace_test_task WHERE exercise_id = #{exercise}::uuid ORDER BY created_at DESC, id DESC LIMIT 20")
+    @Select("SELECT EXISTS (SELECT 1 FROM workspace_test_task WHERE id = #{id}::uuid AND (history_pruning OR history_pruned_at IS NOT NULL))")
+    boolean retired(String id);
+    @Select("SELECT count(*) FROM workspace_test_task WHERE exercise_id = #{id}::uuid AND (history_pruning OR history_pruned_at IS NOT NULL)")
+    long retiredCount(String id);
+    @Select("SELECT count(*) FROM workspace_test_task WHERE exercise_id = #{id}::uuid AND history_pruning")
+    long pruningCount(String id);
+    @Select("SELECT " + SUMMARY_COLUMNS + " FROM workspace_test_task WHERE exercise_id = #{exercise}::uuid AND NOT history_pruning AND history_pruned_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 100")
     List<TestTaskEntity> recent(String exercise);
     @Update("UPDATE workspace_test_task SET last_attempt_at = clock_timestamp() WHERE id = #{id}::uuid")
     void attempted(String id);

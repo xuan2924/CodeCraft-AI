@@ -124,7 +124,8 @@ Go 暂不可用时保持可查询的撤销操作未决，禁止新副作用，�
 | `POST /exercises/{id}/control/acquire`、`/takeover`、`/release` | 200 完成或 202 转换中；409 CONTROL_HELD/CONTROL_TRANSITION_PENDING；release 要求当前凭证 |
 | `POST /exercises/{id}/file-batches` | 已确认回执 200，未知 202；409 REVISION_CONFLICT/STALE_CONTROL，423 WORKSPACE_FROZEN |
 | `POST /exercises/{id}/tests` `{expectedRevision,target}` | 202、taskId；409 TEST_SLOT_BUSY/REVISION_CONFLICT；目标只接受题目允许值 |
-| `GET /exercises/{id}/tasks/{taskId}` | 200 快照/游标；查询不重启任务 |
+| `GET /exercises/{id}/tasks` | `{tasks, retention}`：至多 100 条摘要与普通完成窗口/累计精简/后台清理数量；普通测试窗口为 20，最终验收、未知及恢复记录豁免 |
+| `GET /exercises/{id}/tasks/{taskId}` | 200 快照/游标；查询不重启任务；已精简普通记录返回 410 `TEST_HISTORY_PRUNED`，不代表演练删除 |
 | `POST /exercises/{id}/tasks/{taskId}/stop` | 202 STOPPING；已终态 200 原结果 |
 | `POST /exercises/{id}/end` | 202 CLOSING；已收尾返回原状态，不重新冻结/验收 |
 | `GET /exercises?after={exerciseId}` | 本人已结束演练及删除进度索引，每页最多 50 条，按标识倒序；返回保留到期日 |
@@ -151,6 +152,8 @@ Go 暂不可用时保持可查询的撤销操作未决，禁止新副作用，�
 | PrepareWorkspace / QueryPreparation / CancelPreparation | exerciseId、attemptId、workspaceInstanceId、固定题目身份；返回准备状态及实例；取消墓碑先于销毁 |
 | CloseGate / OpenGate / QueryGate | 实例、transitionId、expectedEpoch；返回持久化 epoch、OPEN/CLOSED/FROZEN、转换回执 |
 | DeleteWorkspace | 不可复用的工作区实例；与所有文件/启动准入串行，先持久化不可逆墓碑；确认执行静默及清理后移除正文，返回精确实例和 complete；失败仍拒绝迟到 Prepare/Apply/Start |
+| CollectWorkspace | 当前修订及 Java 协调锁下的完整引用快照；修订不符拒绝，保留每个被引用修订的最新代表及当前完整回执；无引用提交先重命名并持久化 GC 决定，再删除，重启继续清残留 |
+| PruneTestEvidence | 完整演练/工作区/任务/执行身份；Go 再核实静默、清理及非最终验收；证据删除前持久化取消身份，副本保留仅标识的 released 墓碑以阻止迟到重建 |
 | ApplyBatch / QueryMutation | 实例、requestId、operationId、指纹、基线、gateEpoch、notAfter、变更；返回任务 04 回执/NOT_FOUND/UNKNOWN |
 | Freeze / QueryFreeze | 实例、关闭栅栏代次、operationId；返回冻结版本；不自行冻结一个仍 OPEN 的实例 |
 | StopSystemTask / QueryStop | 受信任生命周期调用，系统停止要求 CLOSED/FROZEN；返回执行快照或持久化取消回执，并绑定接受/观察取消的 hostEpoch。Java 在协调锁内重新读取派发代次，跨宿主代次的缺失登记不能据此释放隔离槽位 |
@@ -175,6 +178,8 @@ Go 暂不可用时保持可查询的撤销操作未决，禁止新副作用，�
 - Go 原子保存结果与对应事件/发布意图。Java 按 `(executionInstanceId, streamId, sequence)` 去重，持久化浏览器事件及物化快照的同一事务中推进浏览器 high-water cursor。浏览器流使用独立 streamId/sequence，不能把 Go 游标当浏览器游标混用。
 - 日志正文按题目 `runtime.logBytes` 有界保留，保留尾部或首尾策略必须在快照声明，本阶段采用尾部；丢弃正文仍持续排空 stdout/stderr，累计 droppedBytes、首尾保留位置，并持久化 `truncated=true`。控制事件/结果有独立预留容量，不能被日志撑掉。
 - 浏览器事件窗口技术初值为每任务最多 4096 条且最多 4 MiB，先到上限即淘汰最旧事件；单日志事件至多 16 KiB UTF-8 有效字节，超长行切块，不能把一行当无限对象。该窗口不是完整日志存储上限，日志上限以题目配置为准。单纯的事件窗口淘汰不删除结构化终态。
+- Java 在本人测试查询/订阅及维护 worker 中按同一策略选择精简记录；持久化选择先撤销该记录的完整查询，Go 清理成功后再擦除 Java 日志/事件、释放版本引用。失败保留引用与待清理身份，按最后尝试顺序分批重试，不因一个失败跳过其他安全记录。清理未完成的实际字节不视为已释放。
+- 文件变更完成后的请求正文可回收，指纹和结果字段仍保留；冲突基线由 `REJECTED + REVISION_CONFLICT` 识别，不发明不存在的操作状态。删除演练立即擦除日志/代码/操作凭证，非秘密测试、停止、最终化、控制和变更结果回执至少再保留 7 天，之后先删除子回执再删除业务操作；创建 PREPARE 身份不一并删除。
 - 长期测试记录另按任务 16 保留：普通测试最近 20 次已完成完整记录，最终验收各次证据单独保留至演练删除；运行中、未知或恢复引用中的记录不得淘汰。整条普通测试记录淘汰后，不再承诺其终态/日志仍可查询，界面明确较早记录已清理，不把记录消失当作任务失败或重新执行的理由。相关代码版本只在无其他引用时回收。
 - 查询快照返回任务完整状态/结果、日志保留范围与截断信息、`streamId`、`cursor`、`firstRetainedSequence`；日志可按已固定范围分页，分页途中保留窗口移动则明确 reset，不能拼接伪完整文本。
 

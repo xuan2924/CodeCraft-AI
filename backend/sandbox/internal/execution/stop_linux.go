@@ -25,6 +25,28 @@ func (i TaskIdentity) matches(input Input) bool {
 	return i.ExerciseID == input.ExerciseID && i.TaskID == input.TaskID && i.ExecutionID == input.ExecutionID && i.WorkspaceID == input.WorkspaceID
 }
 
+// InputCancelled also fences a delayed standalone copy-preparation RPC. No task
+// or result body is disclosed; workspace ownership must match the saved identity.
+func (r *Runner) InputCancelled(ctx context.Context, workspace, executionID string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if !uuid.MatchString(workspace) || !uuid.MatchString(executionID) {
+		return false, ErrConflict
+	}
+	identity, err := r.cancellation(executionID)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if identity.WorkspaceID != workspace {
+		return false, ErrConflict
+	}
+	return true, nil
+}
+
 // Stop durably orders intent with natural completion. A missing registration is
 // tombstoned under the same admission lock, so a delayed Start cannot create work.
 // nil result means cancellation preceded registration, not an unknown outcome.

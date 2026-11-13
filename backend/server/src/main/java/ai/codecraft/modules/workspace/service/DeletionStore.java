@@ -115,11 +115,9 @@ public class DeletionStore {
         deletions.eraseMutationPayloads(id);
         deletions.clearEvents(id);
         deletions.clearStreams(id);
-        deletions.clearStops(id);
         deletions.clearFinalTasks(id);
-        deletions.clearTasks(id);
-        deletions.clearFinalization(id);
-        deletions.clearTransitions(id);
+        deletions.eraseTestBodies(id);
+        deletions.eraseTransitionCredentials(id);
         deletions.clearControl(id);
         deletions.clearExercise(id);
     }
@@ -127,6 +125,10 @@ public class DeletionStore {
     public void expireReceipts() {
         Instant before = clock.instant().minus(Duration.ofDays(properties.progressDays()));
         deletions.expireMutationReceipts(before);
+        deletions.expireTestStops(before);
+        deletions.expireTestReceipts(before);
+        deletions.expireFinalizationReceipts(before);
+        deletions.expireTransitionReceipts(before);
         deletions.expireReceipts(before);
     }
 

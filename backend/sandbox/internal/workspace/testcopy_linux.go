@@ -46,6 +46,15 @@ func (s *Service) prepareTestCopyLocked(ctx context.Context, request *rpc.Prepar
 		return nil, err
 	}
 	defer syscall.Close(fd)
+	if s.executor != nil {
+		cancelled, err := s.executor.InputCancelled(ctx, request.WorkspaceInstanceId, request.ExecutionInstanceId)
+		if err != nil {
+			return nil, storageError(err)
+		}
+		if cancelled {
+			return nil, status.Error(codes.FailedPrecondition, "input preparation cancelled")
+		}
+	}
 	existing, err := readTestCopy(ctx, fd, request.WorkspaceInstanceId, request.ExecutionInstanceId)
 	if err == nil {
 		if existing.Revision != request.ExpectedRevision {

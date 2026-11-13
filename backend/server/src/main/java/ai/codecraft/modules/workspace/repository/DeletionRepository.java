@@ -14,6 +14,15 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface DeletionRepository {
+    String EXPIRED_EXERCISES = "SELECT exercise_id FROM workspace_deletion d WHERE d.state = 'SUCCEEDED' AND d.completed_at <= #{before} AND NOT EXISTS (SELECT 1 FROM workspace_operation o WHERE o.exercise_id = d.exercise_id AND o.state IN ('PENDING', 'PENDING_RECONCILIATION'))";
+    @Delete("DELETE FROM workspace_test_stop WHERE task_id IN (SELECT id FROM workspace_test_task WHERE exercise_id IN (" + EXPIRED_EXERCISES + "))")
+    void expireTestStops(Instant before);
+    @Delete("DELETE FROM workspace_test_task WHERE exercise_id IN (" + EXPIRED_EXERCISES + ")")
+    void expireTestReceipts(Instant before);
+    @Delete("DELETE FROM workspace_finalization WHERE exercise_id IN (" + EXPIRED_EXERCISES + ")")
+    void expireFinalizationReceipts(Instant before);
+    @Delete("DELETE FROM workspace_transition WHERE exercise_id IN (" + EXPIRED_EXERCISES + ")")
+    void expireTransitionReceipts(Instant before);
     String COLUMNS = "exercise_id::text, user_id::text, workspace_instance_id::text, state, requested_at, completed_at, attempts, next_attempt_at, first_failure_at, failure_code";
     @Select("SELECT e.id::text AS exercise_id, e.ended_at, e.retain_until, d.state AS deletion_state FROM workspace_exercise e LEFT JOIN workspace_deletion d ON d.exercise_id = e.id WHERE e.user_id = #{user}::uuid AND e.state = 'ENDED' AND (#{after}::uuid IS NULL OR e.id < #{after}::uuid) AND (d.completed_at IS NULL OR d.completed_at > #{before}) ORDER BY e.id DESC LIMIT 50")
     List<ExerciseHistoryResponse> history(@Param("user") String user, @Param("after") String after, @Param("before") Instant before);
@@ -51,16 +60,12 @@ public interface DeletionRepository {
     void clearEvents(String id);
     @Delete("DELETE FROM workspace_task_stream WHERE task_id IN (SELECT id FROM workspace_test_task WHERE exercise_id = #{id}::uuid)")
     void clearStreams(String id);
-    @Delete("DELETE FROM workspace_test_stop WHERE task_id IN (SELECT id FROM workspace_test_task WHERE exercise_id = #{id}::uuid)")
-    void clearStops(String id);
+    @Update("UPDATE workspace_test_task SET snapshot = jsonb_set(snapshot, '{logs}', '[]') WHERE exercise_id = #{id}::uuid")
+    void eraseTestBodies(String id);
     @Delete("DELETE FROM workspace_final_task WHERE task_id IN (SELECT id FROM workspace_test_task WHERE exercise_id = #{id}::uuid)")
     void clearFinalTasks(String id);
-    @Delete("DELETE FROM workspace_test_task WHERE exercise_id = #{id}::uuid")
-    void clearTasks(String id);
-    @Delete("DELETE FROM workspace_finalization WHERE exercise_id = #{id}::uuid")
-    void clearFinalization(String id);
-    @Delete("DELETE FROM workspace_transition WHERE exercise_id = #{id}::uuid")
-    void clearTransitions(String id);
+    @Update("UPDATE workspace_transition SET target_hash = NULL, phase = 'SUCCEEDED' WHERE exercise_id = #{id}::uuid")
+    void eraseTransitionCredentials(String id);
     @Delete("DELETE FROM workspace_control WHERE exercise_id = #{id}::uuid")
     void clearControl(String id);
     @Update("UPDATE workspace_exercise SET revision = NULL, paths = '[]', preparation_session_hash = NULL, preparation_not_after = NULL, cleanup_state = 'SUCCEEDED' WHERE id = #{id}::uuid")

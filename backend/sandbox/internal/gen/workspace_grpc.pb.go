@@ -22,6 +22,8 @@ const (
 	WorkspaceStorage_PrepareWorkspace_FullMethodName  = "/codecraft.workspace.v1.WorkspaceStorage/PrepareWorkspace"
 	WorkspaceStorage_QueryWorkspace_FullMethodName    = "/codecraft.workspace.v1.WorkspaceStorage/QueryWorkspace"
 	WorkspaceStorage_DeleteWorkspace_FullMethodName   = "/codecraft.workspace.v1.WorkspaceStorage/DeleteWorkspace"
+	WorkspaceStorage_CollectWorkspace_FullMethodName  = "/codecraft.workspace.v1.WorkspaceStorage/CollectWorkspace"
+	WorkspaceStorage_PruneTestEvidence_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/PruneTestEvidence"
 	WorkspaceStorage_ReadWorkspaceFile_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/ReadWorkspaceFile"
 	WorkspaceStorage_CancelPreparation_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/CancelPreparation"
 	WorkspaceStorage_CloseGate_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/CloseGate"
@@ -53,6 +55,9 @@ type WorkspaceStorageClient interface {
 	QueryWorkspace(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceSnapshot, error)
 	// Durable deletion fence; repeated calls finish cleanup without reopening the instance.
 	DeleteWorkspace(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceDeletionReceipt, error)
+	// Java supplies a consistent reference snapshot; a stale current revision rejects collection.
+	CollectWorkspace(ctx context.Context, in *CollectWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceCollectionReceipt, error)
+	PruneTestEvidence(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestEvidencePruningReceipt, error)
 	ReadWorkspaceFile(ctx context.Context, in *ReadWorkspaceFileRequest, opts ...grpc.CallOption) (*ReadWorkspaceFileResponse, error)
 	CancelPreparation(ctx context.Context, in *CancelPreparationRequest, opts ...grpc.CallOption) (*WorkspaceSnapshot, error)
 	CloseGate(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error)
@@ -108,6 +113,26 @@ func (c *workspaceStorageClient) DeleteWorkspace(ctx context.Context, in *QueryW
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WorkspaceDeletionReceipt)
 	err := c.cc.Invoke(ctx, WorkspaceStorage_DeleteWorkspace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) CollectWorkspace(ctx context.Context, in *CollectWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceCollectionReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkspaceCollectionReceipt)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_CollectWorkspace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) PruneTestEvidence(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestEvidencePruningReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TestEvidencePruningReceipt)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_PruneTestEvidence_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -323,6 +348,9 @@ type WorkspaceStorageServer interface {
 	QueryWorkspace(context.Context, *QueryWorkspaceRequest) (*WorkspaceSnapshot, error)
 	// Durable deletion fence; repeated calls finish cleanup without reopening the instance.
 	DeleteWorkspace(context.Context, *QueryWorkspaceRequest) (*WorkspaceDeletionReceipt, error)
+	// Java supplies a consistent reference snapshot; a stale current revision rejects collection.
+	CollectWorkspace(context.Context, *CollectWorkspaceRequest) (*WorkspaceCollectionReceipt, error)
+	PruneTestEvidence(context.Context, *QueryTaskRequest) (*TestEvidencePruningReceipt, error)
 	ReadWorkspaceFile(context.Context, *ReadWorkspaceFileRequest) (*ReadWorkspaceFileResponse, error)
 	CancelPreparation(context.Context, *CancelPreparationRequest) (*WorkspaceSnapshot, error)
 	CloseGate(context.Context, *CloseGateRequest) (*GateResponse, error)
@@ -362,6 +390,12 @@ func (UnimplementedWorkspaceStorageServer) QueryWorkspace(context.Context, *Quer
 }
 func (UnimplementedWorkspaceStorageServer) DeleteWorkspace(context.Context, *QueryWorkspaceRequest) (*WorkspaceDeletionReceipt, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteWorkspace not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) CollectWorkspace(context.Context, *CollectWorkspaceRequest) (*WorkspaceCollectionReceipt, error) {
+	return nil, status.Error(codes.Unimplemented, "method CollectWorkspace not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) PruneTestEvidence(context.Context, *QueryTaskRequest) (*TestEvidencePruningReceipt, error) {
+	return nil, status.Error(codes.Unimplemented, "method PruneTestEvidence not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) ReadWorkspaceFile(context.Context, *ReadWorkspaceFileRequest) (*ReadWorkspaceFileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadWorkspaceFile not implemented")
@@ -491,6 +525,42 @@ func _WorkspaceStorage_DeleteWorkspace_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WorkspaceStorageServer).DeleteWorkspace(ctx, req.(*QueryWorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_CollectWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CollectWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).CollectWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_CollectWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).CollectWorkspace(ctx, req.(*CollectWorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_PruneTestEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).PruneTestEvidence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_PruneTestEvidence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).PruneTestEvidence(ctx, req.(*QueryTaskRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -848,6 +918,14 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteWorkspace",
 			Handler:    _WorkspaceStorage_DeleteWorkspace_Handler,
+		},
+		{
+			MethodName: "CollectWorkspace",
+			Handler:    _WorkspaceStorage_CollectWorkspace_Handler,
+		},
+		{
+			MethodName: "PruneTestEvidence",
+			Handler:    _WorkspaceStorage_PruneTestEvidence_Handler,
 		},
 		{
 			MethodName: "ReadWorkspaceFile",

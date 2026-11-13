@@ -4,13 +4,13 @@ import ai.codecraft.common.model.ApiResponse;
 import ai.codecraft.modules.identity.security.IdentityHttp;
 import ai.codecraft.modules.workspace.model.dto.StartTestRequest;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
+import ai.codecraft.modules.workspace.model.dto.TestHistoryResponse;
 import ai.codecraft.modules.workspace.service.TestTaskService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import org.springframework.web.bind.annotation.RequestParam;
 import ai.codecraft.modules.workspace.stream.TaskEventTransport;
-import java.util.List;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -56,7 +56,7 @@ public class TestTaskController {
     }
 
     @GetMapping("/api/exercises/{id}/tasks")
-    public ApiResponse<List<TestTaskResponse>> recent(@PathVariable UUID id, HttpServletRequest request) {
+    public ApiResponse<TestHistoryResponse> recent(@PathVariable UUID id, HttpServletRequest request) {
         return ApiResponse.success(tasks.recent(IdentityHttp.sessionHash(request), id.toString()));
     }
 }

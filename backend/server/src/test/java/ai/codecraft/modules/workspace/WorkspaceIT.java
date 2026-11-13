@@ -123,7 +123,7 @@ class WorkspaceIT {
         assertThat(result.path("quiescent").asBoolean()).isTrue();
         assertThat(result.path("cleanup").asText()).isEqualTo("SUCCEEDED");
         assertThat(request("POST", base + "/tests", input, "same-key", 202, newCredential).path("data").path("taskId")).isEqualTo(accepted.path("taskId"));
-        assertThat(request("GET", base + "/tasks", null, null, 200).path("data")).hasSize(1);
+        assertThat(request("GET", base + "/tasks", null, null, 200).path("data").path("tasks")).hasSize(1);
         seedDisposableIdentity();
         request("GET", taskUrl, null, null, 404);
         request("GET", base + "/tasks", null, null, 404);
@@ -264,7 +264,7 @@ class WorkspaceIT {
         }
         jdbc.update("UPDATE workspace_exercise SET deadline_at = now() - interval '1 second' WHERE id = ?::uuid", exercise);
         request("POST", base + "/tests", Map.of("expectedRevision", "0", "target", "base"), "expired", 409, credential);
-        assertThat(request("GET", base + "/tasks", null, null, 200).path("data")).isEmpty();
+        assertThat(request("GET", base + "/tasks", null, null, 200).path("data").path("tasks")).isEmpty();
     }
 
     @Test

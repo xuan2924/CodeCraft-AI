@@ -39,7 +39,7 @@ public class WorkspaceWriteService {
         if (operation == null) {
             String restore = store.ensureOpen(session, exercise, credential);
             if (restore != null) coordinator.tryDrive(restore);
-            operation = store.batch(session, exercise, key, credential, payload);
+            operation = store.batch(session, exercise, key, credential, payload, Long.parseLong(batch.expectedRevision()));
         }
         if (operation.state().equals("PENDING") || operation.state().equals("PENDING_RECONCILIATION")) coordinator.tryMutation(operation);
         WorkspaceOperationResponse result = store.result(session, operation.id());

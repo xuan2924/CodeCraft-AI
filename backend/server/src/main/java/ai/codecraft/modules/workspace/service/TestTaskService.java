@@ -2,8 +2,8 @@ package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.modules.workspace.model.dto.StartTestRequest;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
+import ai.codecraft.modules.workspace.model.dto.TestHistoryResponse;
 import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
-import java.util.List;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -34,5 +34,5 @@ public class TestTaskService {
     }
 
     public TestTaskResponse query(String session, String exercise, String task) { return store.query(session, exercise, task); }
-    public List<TestTaskResponse> recent(String session, String exercise) { return store.recent(session, exercise); }
+    public TestHistoryResponse recent(String session, String exercise) { return store.recent(session, exercise); }
 }

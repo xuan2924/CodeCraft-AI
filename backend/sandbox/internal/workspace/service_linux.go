@@ -522,6 +522,10 @@ func latest(parent int, expectedID string) (*record, string, error) {
 	if name == "" {
 		return nil, "", errNoCommit
 	}
+	return readCommit(parent, expectedID, name)
+}
+
+func readCommit(parent int, expectedID, name string) (*record, string, error) {
 	data, err := readPath(parent, name+"/manifest.json")
 	if err != nil {
 		return nil, "", err

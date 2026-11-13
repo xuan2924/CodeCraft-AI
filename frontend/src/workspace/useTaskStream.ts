@@ -40,8 +40,8 @@ export function useTaskStream(task: Ref<TestTask | undefined>, key: (id: string)
       } catch (error) {
         if (!active()) return;
         recovering = false;
-        if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
-          status.value = '订阅已关闭，请重新登录或确认资源访问权限。';
+        if (error instanceof ApiError && ([401, 403, 404].includes(error.status) || error.code === 'TEST_HISTORY_PRUNED')) {
+          status.value = error.code === 'TEST_HISTORY_PRUNED' ? '较早测试记录已精简，订阅已关闭。' : '订阅已关闭，请重新登录或确认资源访问权限。';
           client.removeQueries({ queryKey: key(initial!.taskId), exact: true });
           return;
         }

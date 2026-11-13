@@ -11,6 +11,9 @@ service WorkspaceStorage {
   rpc QueryWorkspace(QueryWorkspaceRequest) returns (WorkspaceSnapshot);
   // Durable deletion fence; repeated calls finish cleanup without reopening the instance.
   rpc DeleteWorkspace(QueryWorkspaceRequest) returns (WorkspaceDeletionReceipt);
+  // Java supplies a consistent reference snapshot; a stale current revision rejects collection.
+  rpc CollectWorkspace(CollectWorkspaceRequest) returns (WorkspaceCollectionReceipt);
+  rpc PruneTestEvidence(QueryTaskRequest) returns (TestEvidencePruningReceipt);
   rpc ReadWorkspaceFile(ReadWorkspaceFileRequest) returns (ReadWorkspaceFileResponse);
   rpc CancelPreparation(CancelPreparationRequest) returns (WorkspaceSnapshot);
   rpc CloseGate(CloseGateRequest) returns (GateResponse);
@@ -52,6 +55,23 @@ message QueryWorkspaceRequest { string workspace_instance_id = 1; }
 message WorkspaceDeletionReceipt {
   string workspace_instance_id = 1;
   bool complete = 2;
+}
+message CollectWorkspaceRequest {
+  string workspace_instance_id = 1;
+  uint64 expected_revision = 2;
+  repeated uint64 retained_revisions = 3;
+}
+message WorkspaceCollectionReceipt {
+  string workspace_instance_id = 1;
+  uint64 revision = 2;
+  uint64 removed_versions = 3;
+  uint64 reclaimed_bytes = 4;
+}
+message TestEvidencePruningReceipt {
+  string workspace_instance_id = 1;
+  string task_id = 2;
+  string execution_instance_id = 3;
+  bool complete = 4;
 }
 message ReadWorkspaceFileRequest {
   string workspace_instance_id = 1;

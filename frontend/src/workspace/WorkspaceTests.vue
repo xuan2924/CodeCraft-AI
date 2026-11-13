@@ -17,7 +17,7 @@ const workspaceId = props.exercise.workspaceInstanceId;
 const recent = useQuery({ queryKey: scope, queryFn: ({ signal }) => api.recentTests(exerciseId, workspaceId, signal),
   retry: false, refetchInterval: 2000, gcTime: 0 });
 const chosen = ref('');
-watch(() => recent.data.value, (tasks) => { if (!chosen.value && tasks?.length) chosen.value = tasks[0]!.taskId; });
+watch(() => recent.data.value?.tasks, (tasks) => { if (!chosen.value && tasks?.length) chosen.value = tasks[0]!.taskId; });
 const detail = useQuery({ queryKey: [...scope, 'detail', chosen], enabled: computed(() => !!chosen.value),
   queryFn: async ({ signal }) => {
     const id = chosen.value;
@@ -33,7 +33,7 @@ const stopUnknown = ref<{ task: string; key: string } | null>(null);
 const error = ref('');
 const unknown = ref<{ key: string; revision: string } | null>(null);
 const locked = computed(() => sending.value || !!unknown.value || recent.isPending.value || recent.isError.value ||
-  recent.data.value?.some((task) => !task.quiescent) === true);
+  recent.data.value?.tasks.some((task) => !task.quiescent) === true);
 watch(locked, (value) => emit('locked', value), { immediate: true });
 const controller = new globalThis.AbortController();
 let disposed = false;
@@ -46,12 +46,12 @@ async function dispatch(input: { key: string; revision: string }) {
     unknown.value = null;
     chosen.value = result.taskId;
     client.setQueryData<api.TestTask>([...scope, 'detail', result.taskId], (current) => api.latestTaskSnapshot(current, result));
-    client.setQueryData<api.TestTask[]>(scope, (old) => [result, ...(old ?? []).filter((item) => item.taskId !== result.taskId)].slice(0, 20));
+    client.setQueryData<api.TestHistory>(scope, (old) => old ? { ...old, tasks: [result, ...old.tasks.filter((item) => item.taskId !== result.taskId)].slice(0, 100) } : undefined);
     await client.invalidateQueries({ queryKey: scope, exact: true });
   } catch (failure) {
     if (disposed) return;
     error.value = message(failure);
-    if (failure instanceof ApiError && [400, 404, 409, 429].includes(failure.status)) unknown.value = null;
+    if (failure instanceof ApiError && [400, 404, 409, 410, 429].includes(failure.status)) unknown.value = null;
     if (failure instanceof ApiError && failure.code === 'STALE_CONTROL') emit('stale-control');
   } finally { if (!disposed) sending.value = false; }
 }
@@ -69,7 +69,7 @@ async function stop(input = stopUnknown.value ?? { task: chosen.value, key: glob
   } catch (failure) {
     if (disposed) return;
     error.value = message(failure);
-    if (failure instanceof ApiError && [400, 404, 409, 429].includes(failure.status)) stopUnknown.value = null;
+    if (failure instanceof ApiError && [400, 404, 409, 410, 429].includes(failure.status)) stopUnknown.value = null;
     if (failure instanceof ApiError && failure.code === 'STALE_CONTROL') emit('stale-control');
   } finally { if (!disposed) stopping.value = false; }
 }
@@ -93,16 +93,20 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
     <NButton v-if="unknown" :disabled="sending || !credential" @click="dispatch(unknown)">核对并重试原测试请求</NButton>
     <p v-if="recent.isPending.value" role="status">正在查询测试任务…</p>
     <p v-else-if="recent.isError.value" role="alert">无法确认测试状态。{{ message(recent.error.value) }}</p>
-    <p v-else-if="!recent.data.value?.length">尚未运行测试。</p>
+    <p v-else-if="!recent.data.value?.tasks.length">尚未运行测试。</p>
     <NButton @click="recent.refetch(); chosen && detail.refetch()">刷新测试结果</NButton>
     <ul>
-      <li v-for="task in recent.data.value" :key="task.taskId">
+      <li v-for="task in recent.data.value?.tasks" :key="task.taskId">
         <button type="button" :aria-pressed="chosen === task.taskId" @click="chosen = task.taskId">
           修订 {{ task.revision }} · {{ labels[task.state] }}
         </button>
       </li>
     </ul>
-    <p v-if="recent.data.value?.length === 20">此处仅展示最近 20 条记录；历史回收策略尚未交付。</p>
+    <p v-if="recent.data.value">
+      普通测试保留最近 {{ recent.data.value.retention.retainedCompletedLimit }} 次完整记录；最终验收及需要恢复的任务不受此窗口淘汰。
+      已精简 {{ recent.data.value.retention.prunedCount }} 条较早记录。
+      <span v-if="recent.data.value.retention.cleanupPendingCount">{{ recent.data.value.retention.cleanupPendingCount }} 条仍在后台清理。</span>
+    </p>
     <p v-if="chosen && detail.isPending.value" role="status">正在读取测试结果…</p>
     <p v-if="detail.isError.value" role="alert">结果查询失败，先前数据不代表当前状态。{{ message(detail.error.value) }}</p>
     <article v-if="detail.data.value" aria-label="当前测试结果">

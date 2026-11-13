@@ -16,6 +16,8 @@ public interface ExerciseRepository {
     String EXERCISE_COLUMNS = "id::text, user_id::text, problem_version_id::text, workspace_instance_id::text, preparation_operation_id::text, state, revision, paths::text, state_version, created_at, started_at, deadline_at, preparation_failure_reason, end_reason, cleanup_state";
     @Select("SELECT EXISTS (SELECT 1 FROM workspace_deletion WHERE exercise_id = #{id}::uuid)")
     boolean deleted(String id);
+    @Select("SELECT EXISTS (SELECT 1 FROM workspace_deletion WHERE exercise_id = #{id}::uuid AND state = 'SUCCEEDED')")
+    boolean payloadPurged(String id);
 
     String OPERATION_COLUMNS = "id::text, user_id::text, exercise_id::text, workspace_instance_id::text, kind, target, request_key, fingerprint, state, created_at";
 

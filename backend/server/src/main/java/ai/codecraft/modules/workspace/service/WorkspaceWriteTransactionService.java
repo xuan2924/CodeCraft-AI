@@ -84,7 +84,7 @@ public class WorkspaceWriteTransactionService {
     }
 
     @Transactional
-    public WorkspaceOperationEntity batch(String session, String exerciseId, String key, String credential, String payload) {
+    public WorkspaceOperationEntity batch(String session, String exerciseId, String key, String credential, String payload, long expectedRevision) {
         SessionAuthorizationDTO authorization = identity.authorizeMutation(session);
         ExerciseEntity exercise = owned(authorization.userId(), exerciseId);
         key(key);
@@ -99,6 +99,10 @@ public class WorkspaceWriteTransactionService {
         writable(exercise, true);
         idle(control);
         if (!control.gateState().equals("OPEN") || control.gateEpoch() == null) throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE);
+        // A new request may only pin the current Java baseline. A stale browser
+        // draft cannot resurrect an old version that was already unreferenced
+        // and collected. Existing request keys above still return their receipt.
+        if (exercise.revision() == null || exercise.revision() != expectedRevision) throw new BusinessException(WorkspaceErrorCode.REVISION_CONFLICT);
         WorkspaceOperationEntity operation = operation(exercise, "FILE_BATCH", key, fingerprint);
         Instant deadline = authorization.expiresAt().isBefore(exercise.deadlineAt()) ? authorization.expiresAt() : exercise.deadlineAt();
         writes.insertMutation(new WorkspaceMutationEntity(operation.id(), payload, control.gateEpoch(), deadline, false, null, null, null));

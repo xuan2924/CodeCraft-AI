@@ -62,7 +62,8 @@ class LifecycleConvergenceTest {
         when(problems.find("problem")).thenReturn(new ProblemVersionEntity("problem", "cart", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", "{}"));
         TestTaskStore admission = new TestTaskStore(mock(IdentityTransactionService.class), mock(IdentitySecrets.class), fixture.exercises, fixture.writes,
             fixture.tasks, problems, Clock.fixed(DEADLINE, ZoneOffset.UTC), JsonMapper.builder().addModule(new JavaTimeModule()).build(),
-            mock(TaskStreamRepository.class), mock(TaskStreamPublisher.class), fixture.finals);
+            mock(TaskStreamRepository.class), mock(TaskStreamPublisher.class), fixture.finals,
+            new ai.codecraft.modules.workspace.config.StorageProperties(512L * 1024 * 1024, 160L * 1024 * 1024, 20), mock(WorkspaceMaintenanceStore.class));
         assertFalse(admission.claim(manual, "A".repeat(26)));
         verify(fixture.tasks, never()).dispatch(anyString(), anyString());
         fixture.store.expire("exercise");

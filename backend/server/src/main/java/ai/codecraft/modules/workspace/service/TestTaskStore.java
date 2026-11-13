@@ -5,6 +5,9 @@ import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.model.dto.StartTestRequest;
+import ai.codecraft.modules.workspace.model.dto.TestHistoryRetentionResponse;
+import ai.codecraft.modules.workspace.model.dto.TestHistoryResponse;
+import ai.codecraft.modules.workspace.config.StorageProperties;
 import ai.codecraft.modules.workspace.model.dto.TestProblemResponse;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
@@ -47,13 +50,16 @@ public class TestTaskStore {
     private final TaskStreamRepository streams;
     private final TaskStreamPublisher publisher;
     private final FinalizationRepository finals;
+    private final StorageProperties storageLimits;
+    private final WorkspaceMaintenanceStore maintenance;
 
     public TestTaskStore(IdentityTransactionService identity, IdentitySecrets secrets, ExerciseRepository exercises,
         WorkspaceWriteRepository writes, TestTaskRepository tasks, ProblemRepository problems, Clock clock, ObjectMapper json,
-        TaskStreamRepository streams, TaskStreamPublisher publisher, FinalizationRepository finals) {
+        TaskStreamRepository streams, TaskStreamPublisher publisher, FinalizationRepository finals,
+        StorageProperties storageLimits, WorkspaceMaintenanceStore maintenance) {
         this.identity = identity; this.secrets = secrets; this.exercises = exercises; this.writes = writes;
         this.tasks = tasks; this.problems = problems; this.clock = clock; this.json = json;
-        this.streams = streams; this.publisher = publisher; this.finals = finals;
+        this.streams = streams; this.publisher = publisher; this.finals = finals; this.storageLimits = storageLimits; this.maintenance = maintenance;
     }
 
     @Transactional(readOnly = true)
@@ -65,6 +71,7 @@ public class TestTaskStore {
         WorkspaceOperationEntity previous = exercises.receipt(user, "START_TEST", exercise, key);
         if (previous == null) return null;
         if (!previous.fingerprint().equals(fingerprint)) throw new BusinessException(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
+        if (tasks.retired(previous.id())) throw new BusinessException(WorkspaceErrorCode.TEST_HISTORY_PRUNED);
         return tasks.find(previous.id());
     }
 
@@ -78,6 +85,7 @@ public class TestTaskStore {
         WorkspaceOperationEntity previous = exercises.receipt(authorization.userId(), "START_TEST", exerciseId, key);
         if (previous != null) {
             if (!previous.fingerprint().equals(fingerprint)) throw new BusinessException(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
+            if (tasks.retired(previous.id())) throw new BusinessException(WorkspaceErrorCode.TEST_HISTORY_PRUNED);
             return tasks.find(previous.id());
         }
         if (!exercise.state().equals("ACTIVE")) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
@@ -102,18 +110,22 @@ public class TestTaskStore {
 
     @Transactional
     public TestTaskResponse query(String session, String exercise, String task) {
-        owned(identity.authorization(session).userId(), exercise);
+        owned(identity.authorizePrivateDelivery(session).userId(), exercise);
+        maintenance.pruningPlan(exercise);
         TestTaskEntity value = tasks.lock(task);
         if (value == null || !value.exerciseId().equals(exercise)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        if (tasks.retired(task)) throw new BusinessException(WorkspaceErrorCode.TEST_HISTORY_PRUNED);
         TaskStreamEntity stream = streams.find(task);
         return response(value).withStream(stream.streamId(), TaskStreamCursor.encode(stream, stream.sequence()), Long.toString(stream.firstSequence()), Long.toString(stream.sequence()));
     }
 
-    @Transactional(readOnly = true)
-    public List<TestTaskResponse> recent(String session, String exercise) {
-        ExerciseEntity owner = owned(identity.authorization(session).userId(), exercise);
+    @Transactional(timeout = 3)
+    public TestHistoryResponse recent(String session, String exercise) {
+        ExerciseEntity owner = owned(identity.authorizePrivateDelivery(session).userId(), exercise);
+        maintenance.pruningPlan(exercise);
         TestProblemResponse problem = TestTaskMapper.problem(problems.find(owner.problemVersionId()));
-        return tasks.recent(exercise).stream().map(task -> response(task, problem)).toList();
+        return new TestHistoryResponse(tasks.recent(exercise).stream().map(task -> response(task, problem)).toList(),
+            new TestHistoryRetentionResponse(storageLimits.completedTests(), tasks.retiredCount(exercise), tasks.pruningCount(exercise)));
     }
 
     @Transactional
@@ -124,6 +136,7 @@ public class TestTaskStore {
         credential(control, credential);
         TestTaskEntity task = tasks.lock(taskId);
         if (task == null || !task.exerciseId().equals(exerciseId)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        if (tasks.retired(taskId)) throw new BusinessException(WorkspaceErrorCode.TEST_HISTORY_PRUNED);
         if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
         WorkspaceOperationEntity previous = exercises.receipt(authorization.userId(), "STOP_TEST", taskId, key);
         if (previous != null) {
@@ -151,6 +164,7 @@ public class TestTaskStore {
     @Transactional
     public void stopObserved(TestStopEntity stop, boolean accepted, boolean beforeRegistration, String cancellationHostEpoch) {
         TestTaskEntity task = tasks.find(stop.taskId());
+        if (task == null) return;
         writes.lock(task.exerciseId());
         task = tasks.lock(task.id());
         if (beforeRegistration) cancelledBeforeRegistration(task, cancellationHostEpoch);
@@ -168,12 +182,14 @@ public class TestTaskStore {
     @Transactional
     public void systemCancelledBeforeRegistration(String taskId, String cancellationHostEpoch) {
         TestTaskEntity task = tasks.find(taskId);
+        if (task == null) return;
         writes.lock(task.exerciseId());
         task = tasks.lock(taskId);
         cancelledBeforeRegistration(task, cancellationHostEpoch);
     }
 
     private void cancelledBeforeRegistration(TestTaskEntity task, String cancellationHostEpoch) {
+        if (task == null || tasks.retired(task.id())) return;
         if (cancellationHostEpoch == null || cancellationHostEpoch.isBlank()) throw new IllegalStateException("Missing cancellation host generation");
         if (task.dispatched() && !cancellationHostEpoch.equals(task.hostEpoch())) {
             if (!TERMINAL.contains(task.state())) store(task, isolated(task));
@@ -233,7 +249,7 @@ public class TestTaskStore {
     public void observe(TestTaskEntity expected, TestTaskResponse result, long stateVersion, String goStream, long goSequence) {
         writes.lock(expected.exerciseId());
         TestTaskEntity current = tasks.lock(expected.id());
-        if (current == null) return;
+        if (current == null || exercises.payloadPurged(current.exerciseId()) || tasks.retired(current.id())) return;
         if (!result.taskId().equals(current.id()) || !result.exerciseId().equals(current.exerciseId())
             || !result.executionInstanceId().equals(current.executionInstanceId()) || !result.workspaceInstanceId().equals(current.workspaceInstanceId())
             || !result.revision().equals(Long.toString(current.revision())) || !result.target().equals(current.target())) throw new IllegalStateException("Mismatched execution receipt");
@@ -276,6 +292,7 @@ public class TestTaskStore {
     }
 
     private void store(TestTaskEntity task, TestTaskResponse result) {
+        if (exercises.payloadPurged(task.exerciseId()) || tasks.retired(task.id())) return;
         publisher.checkpoint(response(task), result);
         try { tasks.observed(task.id(), result.state(), result.quiescent(), json.writeValueAsString(result)); }
         catch (JsonProcessingException error) { throw new IllegalStateException("Cannot persist execution snapshot", error); }
