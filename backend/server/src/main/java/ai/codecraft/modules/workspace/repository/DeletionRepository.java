@@ -2,6 +2,7 @@ package ai.codecraft.modules.workspace.repository;
 
 import ai.codecraft.modules.workspace.model.entity.DeletionEntity;
 import ai.codecraft.modules.workspace.model.dto.ExerciseHistoryResponse;
+import ai.codecraft.modules.workspace.model.dto.ExecutionCleanupDTO;
 import java.time.Instant;
 import java.util.List;
 import org.apache.ibatis.annotations.Delete;
@@ -36,16 +37,16 @@ public interface DeletionRepository {
     List<String> workspaceInstances(String id);
     @Select("SELECT count(*) FROM workspace_operation WHERE exercise_id = #{id}::uuid AND state IN ('PENDING', 'PENDING_RECONCILIATION')")
     int unresolved(String id);
-    @Select("SELECT count(*) FROM workspace_test_task WHERE exercise_id = #{id}::uuid AND (NOT quiescent OR snapshot IS NULL OR snapshot->>'cleanup' IS DISTINCT FROM 'SUCCEEDED' OR snapshot->>'copyCleanup' IS DISTINCT FROM 'SUCCEEDED')")
-    int unclean(String id);
+    @Select("SELECT quiescent, snapshot->>'cleanup' AS cleanup, snapshot->>'copyCleanup' AS copy_cleanup FROM workspace_test_task WHERE exercise_id = #{id}::uuid")
+    List<ExecutionCleanupDTO> cleanupStates(String id);
+    @Delete("DELETE FROM workspace_mutation m USING workspace_operation o, workspace_deletion d WHERE m.operation_id = o.id AND o.exercise_id = d.exercise_id AND d.completed_at <= #{before} AND d.state = 'SUCCEEDED' AND o.state NOT IN ('PENDING', 'PENDING_RECONCILIATION')")
+    void expireMutationReceipts(Instant before);
     @Delete("DELETE FROM workspace_operation o USING workspace_deletion d WHERE o.exercise_id = d.exercise_id AND d.completed_at <= #{before} AND d.state = 'SUCCEEDED' AND o.kind <> 'PREPARE' AND o.state NOT IN ('PENDING', 'PENDING_RECONCILIATION')")
     void expireReceipts(Instant before);
     @Select("SELECT retain_until FROM workspace_exercise WHERE id = #{id}::uuid")
     Instant retainUntil(String id);
-    @Select("SELECT id::text FROM identity_user WHERE id = #{user}::uuid FOR UPDATE")
-    String lockOwner(String user);
-    @Delete("DELETE FROM workspace_mutation WHERE operation_id IN (SELECT id FROM workspace_operation WHERE exercise_id = #{id}::uuid)")
-    void clearMutations(String id);
+    @Update("UPDATE workspace_mutation SET payload = '{}' WHERE operation_id IN (SELECT id FROM workspace_operation WHERE exercise_id = #{id}::uuid)")
+    void eraseMutationPayloads(String id);
     @Delete("DELETE FROM workspace_task_event WHERE task_id IN (SELECT id FROM workspace_test_task WHERE exercise_id = #{id}::uuid)")
     void clearEvents(String id);
     @Delete("DELETE FROM workspace_task_stream WHERE task_id IN (SELECT id FROM workspace_test_task WHERE exercise_id = #{id}::uuid)")

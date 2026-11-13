@@ -65,6 +65,15 @@ public class IdentityTransactionService {
             auth.user().authVersion(), auth.identity().expiresAt());
     }
 
+    /** Orders trusted resource lifecycle cleanup with identity revocation and
+     * private delivery. This does not authorize an HTTP request; callers must
+     * independently establish the resource's owner before requesting the lock.
+     */
+    @Transactional
+    public void lockResourceOwner(String userId) {
+        if (mapper.lockUser(userId) == null) throw new IdentityFailure(IdentityErrorCode.UNAUTHENTICATED);
+    }
+
     // Joins the caller's short transaction so mutations and identity revocation share the user lock.
     @Transactional
     public SessionAuthorizationDTO authorizeMutation(String sessionHash) { return lockedAuthorization(sessionHash); }

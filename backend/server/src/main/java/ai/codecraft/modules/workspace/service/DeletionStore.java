@@ -14,6 +14,7 @@ import ai.codecraft.modules.workspace.repository.DeletionRepository;
 import ai.codecraft.modules.workspace.repository.ExerciseRepository;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -80,7 +81,7 @@ public class DeletionStore {
     public void expire(String id) {
         ExerciseEntity exercise = exercises.find(id);
         if (exercise == null) return;
-        deletions.lockOwner(exercise.userId());
+        identity.lockResourceOwner(exercise.userId());
         if (!exercise.state().equals("ENDED") || deletions.retainUntil(id) == null || clock.instant().isBefore(deletions.retainUntil(id))) return;
         deletions.insert(new DeletionEntity(id, exercise.userId(), exercise.workspaceInstanceId(), "PENDING", clock.instant(), null, 0, clock.instant(), null, null));
     }
@@ -96,7 +97,11 @@ public class DeletionStore {
     @Transactional(readOnly = true)
     public List<String> workspaceInstances(String id) { return deletions.workspaceInstances(id); }
     @Transactional(readOnly = true)
-    public boolean reconciled(String id) { return deletions.unresolved(id) == 0 && deletions.unclean(id) == 0; }
+    public boolean reconciled(String id) {
+        return deletions.unresolved(id) == 0 && deletions.cleanupStates(id).stream().allMatch(value ->
+            value.quiescent() && "SUCCEEDED".equals(value.cleanup())
+                && ("SUCCEEDED".equals(value.copyCleanup()) || "NOT_CREATED".equals(value.copyCleanup())));
+    }
     @Transactional
     public void failed(DeletionEntity value, String token, String code) {
         deletions.failed(value.exerciseId(), token, clock.instant(), clock.instant().plus(properties.retryDelay(value.attempts())), code);
@@ -104,10 +109,10 @@ public class DeletionStore {
     @Transactional
     public void complete(String id, String token) {
         // The same coordination lock orders cleanup with delayed task observations.
-        deletions.lockOwner(deletions.find(id).userId());
+        identity.lockResourceOwner(deletions.find(id).userId());
         deletions.lockControl(id);
         if (deletions.complete(id, token, clock.instant()) != 1) return;
-        deletions.clearMutations(id);
+        deletions.eraseMutationPayloads(id);
         deletions.clearEvents(id);
         deletions.clearStreams(id);
         deletions.clearStops(id);
@@ -119,7 +124,11 @@ public class DeletionStore {
         deletions.clearExercise(id);
     }
     @Transactional
-    public void expireReceipts() { deletions.expireReceipts(clock.instant().minus(Duration.ofDays(properties.progressDays()))); }
+    public void expireReceipts() {
+        Instant before = clock.instant().minus(Duration.ofDays(properties.progressDays()));
+        deletions.expireMutationReceipts(before);
+        deletions.expireReceipts(before);
+    }
 
     private void validateKey(String key) {
         if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);

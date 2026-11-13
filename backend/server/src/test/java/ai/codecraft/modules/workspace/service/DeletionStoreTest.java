@@ -13,6 +13,7 @@ import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.workspace.config.RetentionProperties;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
+import ai.codecraft.modules.workspace.model.dto.ExecutionCleanupDTO;
 import ai.codecraft.workspace.v1.WorkspaceDeletionReceipt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -139,10 +140,34 @@ class DeletionStoreTest {
         assertEquals("FAILED", restarted.status("session", "exercise").state());
         clock.now = clock.instant().plusSeconds(60);
         when(deletions.unresolved("exercise")).thenReturn(0);
+        when(deletions.cleanupStates("exercise")).thenReturn(List.of(new ExecutionCleanupDTO(true, "SUCCEEDED", "NOT_CREATED")));
         worker.drive(value[0]);
         assertEquals("SUCCEEDED", restarted.status("session", "exercise").state());
         verify(sandbox).deleteWorkspace("workspace");
         verify(sandbox).deleteWorkspace("previous-preparation");
+        verify(identity).lockResourceOwner("owner");
+        verify(deletions).eraseMutationPayloads("exercise");
+        verify(deletions, never()).expireMutationReceipts(any());
+        Instant completed = clock.instant();
+        clock.now = completed.plusSeconds(7 * 86400);
+        restarted.expireReceipts();
+        var expiry = org.mockito.Mockito.inOrder(deletions);
+        expiry.verify(deletions).expireMutationReceipts(completed);
+        expiry.verify(deletions).expireReceipts(completed);
+    }
+
+    @Test
+    void confirmedCancellationWithoutRegistrationAllowsDeletionButUnknownExecutionDoesNot() {
+        MutableClock clock = new MutableClock();
+        DeletionRepository deletions = mock(DeletionRepository.class);
+        DeletionStore service = new DeletionStore(deletions, mock(ExerciseRepository.class), mock(IdentityTransactionService.class), clock,
+            new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60));
+        when(deletions.cleanupStates("exercise")).thenReturn(List.of(new ExecutionCleanupDTO(true, "SUCCEEDED", "NOT_CREATED")));
+        assertEquals(true, service.reconciled("exercise"));
+        when(deletions.cleanupStates("exercise")).thenReturn(List.of(new ExecutionCleanupDTO(false, "FAILED", "UNKNOWN")));
+        assertEquals(false, service.reconciled("exercise"));
+        when(deletions.cleanupStates("exercise")).thenReturn(List.of(new ExecutionCleanupDTO(true, null, null)));
+        assertEquals(false, service.reconciled("exercise"));
     }
 
     @Test
