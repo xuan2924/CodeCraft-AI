@@ -39,10 +39,19 @@ public class WorkspaceMaintenanceStore {
     public List<TestHistoryRecord> pruningPlan(String id) {
         if (lockEligible(id) == null) return List.of();
         var selected = new ArrayList<TestHistoryRecord>();
+        var newlyRetired = new ArrayList<String>();
         int completed = 0;
         for (var record : maintenance.historyInventory(id)) {
             if (!completedOrdinary(record)) continue;
-            if (record.pruning() || completed++ >= limits.completedTests() && maintenance.markPruning(record.taskId()) == 1) selected.add(record);
+            if (record.pruning()) selected.add(record);
+            else if (completed++ >= limits.completedTests()) {
+                selected.add(record);
+                newlyRetired.add(record.taskId());
+            }
+        }
+        for (int offset = 0; offset < newlyRetired.size(); offset += 1000) {
+            var ids = newlyRetired.subList(offset, Math.min(offset + 1000, newlyRetired.size()));
+            if (maintenance.markPruningBatch(ids) != ids.size()) throw new IllegalStateException("History selection changed under coordination lock");
         }
         var batch = selected.stream().sorted(Comparator.comparing(TestHistoryRecord::cleanupAttemptedAt,
             Comparator.nullsFirst(Comparator.naturalOrder()))).limit(16).toList();

@@ -81,8 +81,9 @@ class WorkspaceMaintenanceTest {
         records.add(history("recovery", false, true, "SUCCEEDED", false, true));
         for (int i = 24; i >= 0; i--) records.add(history(Integer.toString(i), false, true, "SUCCEEDED", false, false));
         when(repository.historyInventory("exercise")).thenReturn(records);
-        when(repository.markPruning(anyString())).thenReturn(1);
+        when(repository.markPruningBatch(anyList())).thenAnswer(call -> ((List<?>) call.getArgument(0)).size());
         assertEquals(List.of("4", "3", "2", "1", "0"), store.pruningPlan("exercise").stream().map(TestHistoryRecord::taskId).toList());
+        verify(repository).markPruningBatch(List.of("4", "3", "2", "1", "0"));
         records.clear();
         records.add(history("previous-attempt", false, true, "NOT_CREATED", true, false));
         records.add(history("latest", false, true, "NOT_CREATED", false, false));

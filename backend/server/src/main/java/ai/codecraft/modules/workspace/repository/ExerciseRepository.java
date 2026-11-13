@@ -43,7 +43,7 @@ public interface ExerciseRepository {
     int retainedHistory(String user);
     @Update("UPDATE workspace_exercise SET retention_seconds = #{seconds} WHERE id = #{id}::uuid AND state = 'PREPARING'")
     void retention(@Param("id") String id, @Param("seconds") long seconds);
-    @Update("UPDATE workspace_exercise SET ended_at = #{now}, retain_until = #{now} + retention_seconds * interval '1 second' WHERE id = #{id}::uuid AND state = 'ENDED' AND ended_at IS NULL")
+    @Update("UPDATE workspace_exercise SET ended_at = #{now}, retain_until = #{now}::timestamptz + retention_seconds * interval '1 second' WHERE id = #{id}::uuid AND state = 'ENDED' AND ended_at IS NULL")
     void endedAt(@Param("id") String id, @Param("now") Instant now);
 
     @Insert("""

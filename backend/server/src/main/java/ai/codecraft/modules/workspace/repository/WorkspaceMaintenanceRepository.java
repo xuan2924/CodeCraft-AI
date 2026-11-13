@@ -15,16 +15,16 @@ public interface WorkspaceMaintenanceRepository {
     @Select("SELECT revision FROM workspace_test_task WHERE exercise_id = #{id}::uuid AND history_pruned_at IS NULL UNION SELECT final_revision FROM workspace_finalization WHERE exercise_id = #{id}::uuid AND final_revision IS NOT NULL UNION SELECT (m.payload::jsonb->>'expectedRevision')::bigint FROM workspace_mutation m JOIN workspace_operation o ON o.id = m.operation_id WHERE o.exercise_id = #{id}::uuid AND (o.state IN ('PENDING', 'PENDING_RECONCILIATION') OR (o.state = 'REJECTED' AND m.failure_code = 'REVISION_CONFLICT')) AND m.payload::jsonb->>'expectedRevision' IS NOT NULL")
     List<Long> referencedRevisions(String id);
 
-    @Select("SELECT t.id::text AS task_id, t.execution_instance_id::text, t.workspace_instance_id::text, t.revision, EXISTS (SELECT 1 FROM workspace_final_task f WHERE f.task_id = t.id) AS final_attempt, t.quiescent, t.state, t.snapshot->>'cleanup' AS cleanup, t.snapshot->>'copyCleanup' AS copy_cleanup, t.history_pruning AS pruning, EXISTS (SELECT 1 FROM workspace_test_stop s WHERE s.task_id = t.id AND s.state = 'PENDING') AS recovery_required, (t.snapshot->>'finishedAt')::timestamptz AS finished_at, t.history_cleanup_attempted_at AS cleanup_attempted_at FROM workspace_test_task t WHERE t.exercise_id = #{id}::uuid AND t.history_pruned_at IS NULL ORDER BY (t.snapshot->>'finishedAt')::timestamptz DESC NULLS FIRST, t.id DESC")
+    @Select("SELECT t.id::text AS task_id, t.execution_instance_id::text, t.workspace_instance_id::text, t.revision, (EXISTS (SELECT 1 FROM workspace_final_task f WHERE f.task_id = t.id) OR EXISTS (SELECT 1 FROM workspace_finalization v WHERE v.result_task_id = t.id)) AS final_attempt, t.quiescent, t.state, t.snapshot->>'cleanup' AS cleanup, t.snapshot->>'copyCleanup' AS copy_cleanup, t.history_pruning AS pruning, EXISTS (SELECT 1 FROM workspace_test_stop s WHERE s.task_id = t.id AND s.state = 'PENDING') AS recovery_required, (t.snapshot->>'finishedAt')::timestamptz AS finished_at, t.history_cleanup_attempted_at AS cleanup_attempted_at FROM workspace_test_task t WHERE t.exercise_id = #{id}::uuid AND t.history_pruned_at IS NULL ORDER BY (t.snapshot->>'finishedAt')::timestamptz DESC NULLS FIRST, t.id DESC")
     List<TestHistoryRecord> historyInventory(String id);
 
     @Update("UPDATE workspace_test_task SET history_cleanup_attempted_at = #{now} WHERE id = #{id}::uuid AND history_pruning")
     void pruningAttempted(String id, Instant now);
 
-    @Update("UPDATE workspace_test_task SET history_pruning = true WHERE id = #{id}::uuid AND NOT history_pruning AND history_pruned_at IS NULL AND NOT EXISTS (SELECT 1 FROM workspace_final_task f WHERE f.task_id = workspace_test_task.id)")
-    int markPruning(String id);
+    @Update("<script>UPDATE workspace_test_task SET history_pruning = true WHERE id IN <foreach item='id' collection='ids' open='(' separator=',' close=')'>#{id}::uuid</foreach> AND NOT history_pruning AND history_pruned_at IS NULL AND NOT EXISTS (SELECT 1 FROM workspace_final_task f WHERE f.task_id = workspace_test_task.id) AND NOT EXISTS (SELECT 1 FROM workspace_finalization v WHERE v.result_task_id = workspace_test_task.id)</script>")
+    int markPruningBatch(@org.apache.ibatis.annotations.Param("ids") List<String> ids);
 
-    @Update("UPDATE workspace_test_task SET history_pruning = false, history_pruned_at = #{now}, snapshot = jsonb_set(jsonb_set(snapshot, '{logs}', '[]'), '{evidence}', 'null') WHERE id = #{id}::uuid AND history_pruning")
+    @Update("UPDATE workspace_test_task SET history_pruning = false, history_pruned_at = #{now}, snapshot = jsonb_set(jsonb_set(snapshot, '{logs}', '[]'), '{evidence}', 'null') WHERE id = #{id}::uuid AND history_pruning AND NOT EXISTS (SELECT 1 FROM workspace_final_task f WHERE f.task_id = workspace_test_task.id) AND NOT EXISTS (SELECT 1 FROM workspace_finalization v WHERE v.result_task_id = workspace_test_task.id)")
     int finishPruning(String id, Instant now);
 
     @org.apache.ibatis.annotations.Delete("DELETE FROM workspace_task_event WHERE task_id = #{id}::uuid")

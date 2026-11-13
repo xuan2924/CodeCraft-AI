@@ -14,6 +14,8 @@ import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.config.RetentionProperties;
+import ai.codecraft.modules.workspace.config.FinalizationProperties;
+import ai.codecraft.modules.workspace.model.dto.TestEvidenceResponse;
 import ai.codecraft.modules.workspace.config.StorageProperties;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.modules.workspace.model.dto.TestHistoryRecord;
@@ -75,6 +77,8 @@ class WorkspaceRetentionPersistenceIT {
     private WorkspaceMaintenanceStore maintenance;
     private DeletionStore deletion;
     private TestTaskStore tasks;
+    private ProblemRepository problems;
+    private IdentityTransactionService identity;
     private String exercise;
     private String owner;
     private String workspace;
@@ -109,7 +113,7 @@ class WorkspaceRetentionPersistenceIT {
         jdbc.update("INSERT INTO workspace_control(exercise_id,gate_epoch,gate_state) VALUES (?::uuid,1,'FROZEN')", exercise);
         exercises = sql.getMapper(ExerciseRepository.class);
         deletions = sql.getMapper(DeletionRepository.class);
-        var identity = mock(IdentityTransactionService.class);
+        identity = mock(IdentityTransactionService.class);
         var authorization = new SessionAuthorizationDTO(owner, "USER", false, 1, clock.now.plusSeconds(60));
         when(identity.authorization("session")).thenReturn(authorization);
         when(identity.authorizeMutation("session")).thenReturn(authorization);
@@ -117,7 +121,7 @@ class WorkspaceRetentionPersistenceIT {
         var limits = new StorageProperties(512L * 1024 * 1024, 160L * 1024 * 1024, 20);
         maintenance = transactional(new WorkspaceMaintenanceStore(sql.getMapper(WorkspaceMaintenanceRepository.class), exercises, deletions, identity, clock, limits), WorkspaceMaintenanceStore.class);
         deletion = transactional(new DeletionStore(deletions, exercises, identity, clock, new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60)), DeletionStore.class);
-        var problems = mock(ProblemRepository.class);
+        problems = mock(ProblemRepository.class);
         when(problems.find(problem)).thenReturn(new ProblemVersionEntity(problem, "cart-total", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", "{}"));
         tasks = transactional(new TestTaskStore(identity, mock(IdentitySecrets.class), exercises, sql.getMapper(WorkspaceWriteRepository.class), sql.getMapper(TestTaskRepository.class),
             problems, clock, json, sql.getMapper(TaskStreamRepository.class), mock(TaskStreamPublisher.class), sql.getMapper(FinalizationRepository.class), limits, maintenance), TestTaskStore.class);
@@ -154,6 +158,27 @@ class WorkspaceRetentionPersistenceIT {
     }
 
     @Test
+    void ordinaryResultReusedByFinalizationIsNoLongerSubjectToOrdinaryWindow() throws Exception {
+        String passed = task(30, true, 0, true);
+        for (int i = 1; i <= 20; i++) task(30, true, i);
+        String finalization = id();
+        operation(finalization, "END", "PENDING");
+        jdbc.update("UPDATE workspace_exercise SET state = 'FINAL_TESTING' WHERE id = ?::uuid", exercise);
+        jdbc.update("INSERT INTO workspace_finalization(id,exercise_id,frozen_epoch,final_revision,started_at,deadline_at,max_attempts,budget_seconds,first_retry_seconds,second_retry_seconds) VALUES (?::uuid,?::uuid,1,30,?,?,3,600,5,30)",
+            finalization, exercise, java.sql.Timestamp.from(clock.now), java.sql.Timestamp.from(clock.now.plusSeconds(600)));
+        var finals = transactional(new FinalizationStore(sql.getMapper(FinalizationRepository.class), exercises, sql.getMapper(WorkspaceWriteRepository.class),
+            sql.getMapper(TestTaskRepository.class), sql.getMapper(TaskStreamRepository.class), problems, identity, mock(IdentitySecrets.class), clock,
+            new FinalizationProperties(3, 600, 5, 30), new FinalVerificationPolicy(clock), json), FinalizationStore.class);
+        assertThat(finals.advance(exercise)).isNull();
+        assertThat(finals.find(exercise).resultTaskId()).isEqualTo(passed);
+        var history = tasks.recent("session", exercise);
+        assertThat(history.tasks()).hasSize(21);
+        assertThat(history.retention().prunedCount()).isZero();
+        assertThat(tasks.query("session", exercise, passed).evidence()).isNotNull();
+        assertThat(maintenance.pruningPlan(exercise)).isEmpty();
+    }
+
+    @Test
     void deletionErasesBodiesImmediatelyAndRetainsOutcomeReceiptsForSevenDays() throws Exception {
         String task = task(1, true, 1);
         String mutation = mutation(1, false);
@@ -179,15 +204,19 @@ class WorkspaceRetentionPersistenceIT {
         assertThat(exercises.deleted(exercise)).isTrue();
     }
 
-    private String task(int revision, boolean quiescent, int seconds) throws Exception {
+    private String task(int revision, boolean quiescent, int seconds) throws Exception { return task(revision, quiescent, seconds, false); }
+
+    private String task(int revision, boolean quiescent, int seconds, boolean passed) throws Exception {
         String task = id();
         operation(task, "START_TEST", "SUCCEEDED");
         String execution = id();
-        String snapshot = json.writeValueAsString(new TestTaskResponse(task, exercise, execution, workspace, Integer.toString(revision), "base", "STOPPED", "USER_STOPPED",
-            clock.now.minusSeconds(120), clock.now.minusSeconds(60).plusSeconds(seconds), null, quiescent, quiescent ? "SUCCEEDED" : "FAILED", quiescent ? "SUCCEEDED" : "UNKNOWN", "0", false,
-            List.of(new TestLogResponse("stdout", "private fixture log")), new TestProblemResponse("cart-total", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64"), null));
-        jdbc.update("INSERT INTO workspace_test_task(id,execution_instance_id,exercise_id,workspace_instance_id,revision,gate_epoch,not_after,target,state,quiescent,snapshot) VALUES (?::uuid,?::uuid,?::uuid,?::uuid,?,1,?,'base','STOPPED',?,?::jsonb)",
-            task, execution, exercise, workspace, revision, java.sql.Timestamp.from(clock.now.plusSeconds(60)), quiescent, snapshot);
+        String state = passed ? "PASSED" : "STOPPED";
+        String snapshot = json.writeValueAsString(new TestTaskResponse(task, exercise, execution, workspace, Integer.toString(revision), "base", state, passed ? "authority_report" : "USER_STOPPED",
+            clock.now.minusSeconds(120), clock.now.minusSeconds(60).plusSeconds(seconds), passed ? 0 : null, quiescent, quiescent ? "SUCCEEDED" : "FAILED", quiescent ? "SUCCEEDED" : "UNKNOWN", "0", false,
+            List.of(new TestLogResponse("stdout", "private fixture log")), new TestProblemResponse("cart-total", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64"), passed ? new TestEvidenceResponse("SUREFIRE_XML", "c".repeat(64), 100) : null));
+        jdbc.update("INSERT INTO workspace_test_task(id,execution_instance_id,exercise_id,workspace_instance_id,revision,gate_epoch,not_after,target,state,quiescent,snapshot) VALUES (?::uuid,?::uuid,?::uuid,?::uuid,?,1,?,'base',?,?,?::jsonb)",
+            task, execution, exercise, workspace, revision, java.sql.Timestamp.from(clock.now.plusSeconds(60)), state, quiescent, snapshot);
+        sql.getMapper(TaskStreamRepository.class).create(task, id());
         return task;
     }
 
