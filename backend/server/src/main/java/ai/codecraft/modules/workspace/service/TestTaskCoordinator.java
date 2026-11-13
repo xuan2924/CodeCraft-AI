@@ -77,12 +77,12 @@ public class TestTaskCoordinator {
             store.stopAttempted(stop);
             TestTaskEntity task = store.find(stop.taskId());
             if (recoverStopReceipt(task, stop)) return;
-            StopTaskResponse response = sandbox.stopTask(task, stop);
+            StopTaskResponse response = stop.ownerRecovery() ? sandbox.stopSystemTask(task) : sandbox.stopTask(task, stop);
             if (response.hasSnapshot()) confirm(task, response.getSnapshot());
             else if (!response.getCancelledBeforeRegistration()) throw new IllegalStateException("Missing cancellation receipt");
             store.stopObserved(stop, true, response.getCancelledBeforeRegistration(), response.getHostEpoch());
         } catch (StatusRuntimeException error) {
-            if (error.getStatus().getCode() == Status.Code.FAILED_PRECONDITION) {
+            if (error.getStatus().getCode() == Status.Code.FAILED_PRECONDITION && !stop.ownerRecovery()) {
                 try {
                     // A previous delayed stop may have committed before the gate
                     // closed. Read its receipt AFTER the authority rejection.
@@ -187,11 +187,12 @@ public class TestTaskCoordinator {
             evidence = new TestEvidenceResponse(source.getKind(), source.getSha256(), source.getBytes());
         }
         if (Set.of("PASSED", "FAILED").contains(snapshot.getState()) && evidence == null) throw new IllegalStateException("Grading evidence missing");
+        // jsonb cannot represent NUL; keep original bytes in Go and make NUL visible in this text projection.
         TestTaskResponse result = new TestTaskResponse(snapshot.getTaskId(), snapshot.getExerciseId(), snapshot.getExecutionInstanceId(), snapshot.getWorkspaceInstanceId(),
             Long.toString(snapshot.getRevision()), snapshot.getTarget(), snapshot.getState(), snapshot.getReason(), Instant.ofEpochMilli(snapshot.getStartedAtUnixMillis()),
             snapshot.hasFinishedAtUnixMillis() ? Instant.ofEpochMilli(snapshot.getFinishedAtUnixMillis()) : null,
             snapshot.hasExitCode() ? snapshot.getExitCode() : null, snapshot.getQuiescent(), snapshot.getCleanup(), snapshot.getCopyCleanup(),
-            Long.toString(snapshot.getDroppedBytes()), snapshot.getLogsIncomplete(), snapshot.getLogsList().stream().map(log -> new TestLogResponse(log.getChannel(), log.getData().toStringUtf8())).toList(), TestTaskMapper.problem(expected), evidence);
+            Long.toString(snapshot.getDroppedBytes()), snapshot.getLogsIncomplete(), snapshot.getLogsList().stream().map(log -> new TestLogResponse(log.getChannel(), log.getData().toStringUtf8().replace('\0', '\u2400'))).toList(), TestTaskMapper.problem(expected), evidence);
         store.observe(task, result, snapshot.getStateVersion(), snapshot.getStreamId(), snapshot.getSequence());
     }
 }

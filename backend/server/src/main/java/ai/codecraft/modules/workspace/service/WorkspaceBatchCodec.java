@@ -17,11 +17,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 @Component
 public class WorkspaceBatchCodec {
     private final ObjectMapper json;
-    public WorkspaceBatchCodec(ObjectMapper json) { this.json = json; }
+    public WorkspaceBatchCodec(@Qualifier("workspaceJson") ObjectMapper json) { this.json = json; }
 
     public String encode(FileBatchRequest input) {
         if (input == null || input.expectedRevision() == null || !input.expectedRevision().matches("0|[1-9][0-9]{0,18}")) invalid();

@@ -192,6 +192,34 @@ it('stops only on explicit action and retains the original stop key after a lost
   expect(view.text()).toContain('正在停止');
 });
 
+it('offers explicit owner recovery without page control and retries only the same stop intent after a lost response', async () => {
+  const keys: string[] = [];
+  let complete = false;
+  const running: TestTask = { ...result, state: 'RUNNING', reason: '', finishedAt: null, exitCode: null, quiescent: false, cleanup: 'PENDING', copyCleanup: 'PENDING', evidence: null };
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (path, options) => {
+    if (String(path) === '/api/auth/csrf') return ok({ token: 'csrf' });
+    if (options?.method === 'POST') {
+      expect(String(path)).toBe('/api/exercises/exercise/tasks/task/recovery-stop');
+      expect(new Headers(options.headers).has('X-Operation-Credential')).toBe(false);
+      keys.push(new Headers(options.headers).get('Idempotency-Key')!);
+      if (keys.length === 1) throw new TypeError('lost response');
+      complete = true;
+    }
+    const current = complete ? { ...running, state: 'STOPPED', finishedAt: result.finishedAt, quiescent: true, cleanup: 'SUCCEEDED', copyCleanup: 'SUCCEEDED' } : running;
+    return ok(String(path).endsWith('/tasks') ? [current] : current);
+  }));
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  view = mount(WorkspaceTests, { props: { owner: 'owner', exercise, credential: '', recoveryAllowed: true }, global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
+  await flushPromises(); await flushPromises();
+  expect(keys).toHaveLength(0);
+  await view.findAll('button').find((button) => button.text() === '恢复停止任务')!.trigger('click');
+  await flushPromises();
+  await view.findAll('button').find((button) => button.text() === '恢复并核对原停止请求')!.trigger('click');
+  await flushPromises();
+  expect(keys).toHaveLength(2); expect(keys[0]).toBe(keys[1]);
+  expect(view.text()).toContain('已停止');
+});
+
 it('does not replace a terminal stream snapshot with a delayed stop response', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const sources: EventTarget[] = [];

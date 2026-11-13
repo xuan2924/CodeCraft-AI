@@ -103,15 +103,15 @@ class WorkspaceMaintenanceTest {
             "[]", 1, now, now, now.plusSeconds(3600), null, null, null));
         when(writes.lock("exercise")).thenReturn(new ai.codecraft.modules.workspace.model.entity.WorkspaceControlEntity("exercise", 1, 1L, "OPEN",
             ai.codecraft.modules.identity.service.IdentitySecrets.digest("A".repeat(43)), null, null));
-        var service = new WorkspaceWriteTransactionService(identity, mock(ai.codecraft.modules.identity.service.IdentitySecrets.class), exercises, writes, Clock.fixed(now, ZoneOffset.UTC));
+        var service = new WorkspaceWriteTransactionService(identity, mock(ai.codecraft.modules.identity.service.IdentitySecrets.class), exercises, writes, Clock.fixed(now, ZoneOffset.UTC), mock(StorageCapacityStore.class));
         var failure = org.junit.jupiter.api.Assertions.assertThrows(ai.codecraft.common.exception.BusinessException.class,
-            () -> service.batch("session", "exercise", "new-key", "A".repeat(43), "{\"expectedRevision\":\"2\"}", 2));
+            () -> service.batch("session", "exercise", "new-key", "A".repeat(43), "{\"expectedRevision\":\"2\"}", 2, null));
         assertEquals("REVISION_CONFLICT", failure.code());
         verify(exercises, never()).insertOperation(org.mockito.ArgumentMatchers.any());
         verify(writes, never()).insertMutation(org.mockito.ArgumentMatchers.any());
     }
 
-    private StorageProperties limits() { return new StorageProperties(512L * 1024 * 1024, 160L * 1024 * 1024, 20); }
+    private StorageProperties limits() { return new StorageProperties(512L * 1024 * 1024, 256L * 1024 * 1024, 20); }
 
     private TestHistoryRecord history(String id, boolean finalAttempt, boolean quiescent, String copy, boolean pruning, boolean recovery) {
         return new TestHistoryRecord(id, "execution-" + id, "workspace", 1, finalAttempt, quiescent, "STOPPED", "SUCCEEDED", copy, pruning, recovery, Instant.EPOCH, Instant.EPOCH);

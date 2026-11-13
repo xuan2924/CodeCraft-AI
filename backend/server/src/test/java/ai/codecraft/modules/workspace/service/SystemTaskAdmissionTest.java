@@ -60,7 +60,7 @@ class SystemTaskAdmissionTest {
         when(sandbox.queryStop(fixture.row)).thenReturn(StopTaskResponse.newBuilder()
             .setCancelledBeforeRegistration(true).setHostEpoch("NEW_HOST").build());
         TestTaskCoordinator coordinator = new TestTaskCoordinator(fixture.store, sandbox, mock(WorkspaceCoordinationStore.class), mock(WorkspaceWriteCoordinator.class));
-        coordinator.tryStop(new TestStopEntity("stop", "task", 3, NOW, "PENDING"));
+        coordinator.tryStop(new TestStopEntity("stop", "task", 3, NOW, "PENDING", false));
         assertFalse(fixture.store.find("task").quiescent());
         assertEquals("INTERRUPTED", fixture.store.find("task").state());
     }
@@ -73,7 +73,7 @@ class SystemTaskAdmissionTest {
         when(sandbox.queryStop(fixture.row)).thenReturn(StopTaskResponse.newBuilder()
             .setCancelledBeforeRegistration(true).setHostEpoch("SAME_HOST").build());
         new TestTaskCoordinator(fixture.store, sandbox, mock(WorkspaceCoordinationStore.class), mock(WorkspaceWriteCoordinator.class))
-            .tryStop(new TestStopEntity("stop", "task", 3, NOW, "PENDING"));
+            .tryStop(new TestStopEntity("stop", "task", 3, NOW, "PENDING", false));
         assertEquals(true, fixture.store.find("task").quiescent());
         assertEquals("STOPPED", fixture.store.find("task").state());
     }
@@ -106,6 +106,20 @@ class SystemTaskAdmissionTest {
         assertEquals(410, failure.status());
     }
 
+    @Test
+    void persistedOwnerRecoveryUsesSystemCancellationWithoutGrantingPageAuthority() {
+        Fixture fixture = new Fixture();
+        fixture.row = fixture.task(true, "SAME_HOST");
+        SandboxWorkspaceGateway sandbox = mock(SandboxWorkspaceGateway.class);
+        when(sandbox.queryStop(fixture.row)).thenReturn(StopTaskResponse.getDefaultInstance());
+        when(sandbox.stopSystemTask(fixture.row)).thenReturn(StopTaskResponse.newBuilder().setCancelledBeforeRegistration(true).setHostEpoch("SAME_HOST").build());
+        new TestTaskCoordinator(fixture.store, sandbox, mock(WorkspaceCoordinationStore.class), mock(WorkspaceWriteCoordinator.class))
+            .tryStop(new TestStopEntity("stop", "task", 3, NOW, "PENDING", true));
+        assertEquals(true, fixture.store.find("task").quiescent());
+        org.mockito.Mockito.verify(sandbox).stopSystemTask(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(sandbox, org.mockito.Mockito.never()).stopTask(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
     private static final class Fixture {
         final IdentityTransactionService identity = mock(IdentityTransactionService.class);
         final TestTaskRepository tasks = mock(TestTaskRepository.class);
@@ -132,7 +146,7 @@ class SystemTaskAdmissionTest {
             store = new TestTaskStore(identity, mock(IdentitySecrets.class), exercises, writes, tasks, problems,
                 Clock.fixed(NOW, ZoneOffset.UTC), JsonMapper.builder().addModule(new JavaTimeModule()).build(), mock(TaskStreamRepository.class),
                 mock(TaskStreamPublisher.class), finals,
-                new ai.codecraft.modules.workspace.config.StorageProperties(512L * 1024 * 1024, 160L * 1024 * 1024, 20), mock(WorkspaceMaintenanceStore.class));
+                new ai.codecraft.modules.workspace.config.StorageProperties(512L * 1024 * 1024, 256L * 1024 * 1024, 20), mock(WorkspaceMaintenanceStore.class), mock(StorageCapacityStore.class));
         }
 
         TestTaskEntity task(boolean dispatched, String host) {

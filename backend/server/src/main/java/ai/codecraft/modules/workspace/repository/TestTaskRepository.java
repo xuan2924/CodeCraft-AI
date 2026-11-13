@@ -25,7 +25,7 @@ public interface TestTaskRepository {
     List<TestTaskEntity> executions(@Param("ids") List<String> ids);
     @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE id = #{id}::uuid FOR UPDATE")
     TestTaskEntity lock(String id);
-    @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE NOT history_pruning AND history_pruned_at IS NULL AND (NOT quiescent OR snapshot IS NULL OR snapshot->>'copyCleanup' IN ('PENDING', 'FAILED') OR snapshot->>'cleanup' = 'FAILED') ORDER BY last_attempt_at, id LIMIT 16")
+    @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE NOT history_pruning AND history_pruned_at IS NULL AND (NOT quiescent OR snapshot IS NULL OR coalesce(snapshot->>'copyCleanup', 'UNKNOWN') NOT IN ('SUCCEEDED', 'NOT_CREATED') OR snapshot->>'cleanup' IS DISTINCT FROM 'SUCCEEDED') ORDER BY last_attempt_at, id LIMIT 16")
     List<TestTaskEntity> pending();
     @Select("SELECT EXISTS (SELECT 1 FROM workspace_test_task WHERE id = #{id}::uuid AND (history_pruning OR history_pruned_at IS NOT NULL))")
     boolean retired(String id);
@@ -47,12 +47,16 @@ public interface TestTaskRepository {
     @Update("UPDATE workspace_test_task SET go_state_version = #{version}, go_stream_id = #{stream}, go_sequence = #{sequence} WHERE id = #{id}::uuid")
     void updateGoVersion(@Param("id") String id, @Param("version") long version, @Param("stream") String stream, @Param("sequence") long sequence);
 
-    @Insert("INSERT INTO workspace_test_stop(id, task_id, gate_epoch, not_after) VALUES (#{id}::uuid, #{taskId}::uuid, #{gateEpoch}, #{notAfter})")
+    @Insert("INSERT INTO workspace_test_stop(id, task_id, gate_epoch, not_after, owner_recovery) VALUES (#{id}::uuid, #{taskId}::uuid, #{gateEpoch}, #{notAfter}, #{ownerRecovery})")
     void insertStop(TestStopEntity stop);
-    @Select("SELECT id::text, task_id::text, gate_epoch, not_after, state FROM workspace_test_stop WHERE id = #{id}::uuid")
+    @Select("SELECT id::text, task_id::text, gate_epoch, not_after, state, owner_recovery FROM workspace_test_stop WHERE task_id = #{task}::uuid AND state IN ('PENDING', 'SUCCEEDED') ORDER BY not_after, id LIMIT 1")
+    TestStopEntity acceptedStop(String task);
+    @Select("SELECT id::text, task_id::text, gate_epoch, not_after, state, owner_recovery FROM workspace_test_stop WHERE id = #{id}::uuid")
     TestStopEntity stop(String id);
-    @Select("SELECT id::text, task_id::text, gate_epoch, not_after, state FROM workspace_test_stop WHERE state = 'PENDING' ORDER BY last_attempt_at, id LIMIT 16")
+    @Select("SELECT id::text, task_id::text, gate_epoch, not_after, state, owner_recovery FROM workspace_test_stop WHERE state = 'PENDING' ORDER BY last_attempt_at, id LIMIT 16")
     List<TestStopEntity> pendingStops();
+    @Update("UPDATE workspace_test_stop SET owner_recovery = true WHERE id = #{id}::uuid AND state = 'PENDING'")
+    void recoverStopAuthority(String id);
     @Update("UPDATE workspace_test_stop SET state = #{state}, last_attempt_at = clock_timestamp() WHERE id = #{id}::uuid AND state = 'PENDING'")
     void stopState(@Param("id") String id, @Param("state") String state);
 }

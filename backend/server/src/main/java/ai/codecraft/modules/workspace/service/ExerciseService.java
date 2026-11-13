@@ -19,6 +19,7 @@ import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.util.List;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 @Service
 public class ExerciseService {
@@ -30,8 +31,9 @@ public class ExerciseService {
     private final WorkspaceWriteTransactionService writes;
     private final FinalizationStore finals;
     private final FinalizationCoordinator finalization;
+    private final StorageCapacityService capacity;
 
-    public ExerciseService(ExerciseTransactionService store, SandboxWorkspaceGateway sandbox, ObjectMapper json, ProblemService problems, IdentityTransactionService identity, WorkspaceWriteTransactionService writes, FinalizationStore finals, FinalizationCoordinator finalization) {
+    public ExerciseService(ExerciseTransactionService store, SandboxWorkspaceGateway sandbox, @Qualifier("workspaceJson") ObjectMapper json, ProblemService problems, IdentityTransactionService identity, WorkspaceWriteTransactionService writes, FinalizationStore finals, FinalizationCoordinator finalization, StorageCapacityService capacity) {
         this.store = store;
         this.sandbox = sandbox;
         this.json = json;
@@ -39,7 +41,7 @@ public class ExerciseService {
         this.identity = identity;
         this.writes = writes;
         this.finals = finals;
-        this.finalization = finalization;
+        this.finalization = finalization; this.capacity = capacity;
     }
 
     public WorkspaceOperationResponse create(String session, String version, String key) {
@@ -71,6 +73,12 @@ public class ExerciseService {
         return describe(store.find(session, id));
     }
 
+    public ExerciseResponse recoveryEnd(String session, String id, String key) {
+        finals.recoveryEnd(session, id, key);
+        finalization.tryDrive(id);
+        return describe(store.find(session, id));
+    }
+
     public ExerciseResponse start(String session, String id, String key, String credential) {
         ExerciseEntity exercise = store.find(session, id);
         int duration = problems.describe(exercise.problemVersionId()).durationSeconds();
@@ -78,7 +86,8 @@ public class ExerciseService {
     }
 
     public WorkspaceOperationResponse retry(String session, String id, String key) {
-        return describe(store.retry(session, id, key));
+        var previous = store.existingRetry(session, id, key);
+        return describe(previous != null ? previous : capacity.admit(session, id, measured -> store.retry(session, id, key, measured)));
     }
 
     public WorkspaceOperationResponse abandon(String session, String id, String key) {

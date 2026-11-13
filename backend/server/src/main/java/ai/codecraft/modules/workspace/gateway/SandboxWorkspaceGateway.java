@@ -31,6 +31,9 @@ import ai.codecraft.workspace.v1.CollectWorkspaceRequest;
 import ai.codecraft.workspace.v1.WorkspaceCollectionReceipt;
 import ai.codecraft.workspace.v1.TestEvidencePruningReceipt;
 import ai.codecraft.modules.workspace.model.dto.TestHistoryRecord;
+import ai.codecraft.modules.workspace.model.dto.StorageScope;
+import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
+import ai.codecraft.workspace.v1.MeasureExerciseStorageRequest;
 import ai.codecraft.workspace.v1.WorkspaceStorageGrpc;
 import io.grpc.Context;
 import ai.codecraft.workspace.v1.WatchTaskRequest;
@@ -56,6 +59,26 @@ public class SandboxWorkspaceGateway {
         Metadata metadata = new Metadata();
         metadata.put(Metadata.Key.of("x-codecraft-internal-key", Metadata.ASCII_STRING_MARSHALLER), properties.rpcKey());
         stub = WorkspaceStorageGrpc.newBlockingStub(channel).withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
+    }
+
+    public StorageMeasurement measureStorage(StorageScope scope) {
+        ai.codecraft.workspace.v1.StorageMeasurement measured = null;
+        int size = Math.max(1, Math.max(scope.workspaceInstances().size(), scope.executions().size()));
+        for (int offset = 0; offset < size; offset += 1000) {
+            var request = MeasureExerciseStorageRequest.newBuilder().setExerciseId(scope.exerciseId());
+            if (offset < scope.workspaceInstances().size()) request.addAllWorkspaceInstanceIds(scope.workspaceInstances().subList(offset, Math.min(offset + 1000, scope.workspaceInstances().size())));
+            if (offset < scope.executions().size()) {
+                for (var execution : scope.executions().subList(offset, Math.min(offset + 1000, scope.executions().size()))) {
+                    request.addExecutions(QueryTaskRequest.newBuilder().setExerciseId(execution.exerciseId()).setTaskId(execution.taskId())
+                        .setWorkspaceInstanceId(execution.workspaceInstanceId()).setExecutionInstanceId(execution.executionInstanceId()));
+                }
+            }
+            measured = client().measureExerciseStorage(request.build());
+            if (!measured.getExerciseId().equals(scope.exerciseId()) || !measured.getMeterEpoch().matches("[A-Z2-7]{26}")
+                || measured.getSequence() < 1 || measured.getBytes() < 0) throw new IllegalStateException("Invalid storage measurement");
+        }
+        if (measured == null) throw new IllegalStateException("Missing storage measurement");
+        return new StorageMeasurement(measured.getExerciseId(), measured.getMeterEpoch(), measured.getSequence(), measured.getBytes());
     }
 
     public TestEvidencePruningReceipt pruneTestEvidence(String exercise, TestHistoryRecord record) {

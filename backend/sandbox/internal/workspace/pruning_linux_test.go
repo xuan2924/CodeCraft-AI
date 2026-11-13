@@ -36,7 +36,8 @@ func TestPruningRemovesOrphanCopyAndCancelledIdentityFencesDelayedPreparation(t 
 		t.Fatal(err)
 	}
 	defer docker.Close()
-	runner, err := executor.New(context.Background(), docker, t.TempDir(), "fixture-volume", operation)
+	evidenceRoot := t.TempDir()
+	runner, err := executor.New(context.Background(), docker, evidenceRoot, "fixture-volume", operation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,5 +73,17 @@ func TestPruningRemovesOrphanCopyAndCancelledIdentityFencesDelayedPreparation(t 
 	}
 	if _, err = storage.PruneTestEvidence(authorized(t), identity); err != nil {
 		t.Fatalf("pruning retry: %v", err)
+	}
+	measured, err := storage.MeasureExerciseStorage(authorized(t), &rpc.MeasureExerciseStorageRequest{ExerciseId: operation,
+		WorkspaceInstanceIds: []string{instance}, Executions: []*rpc.QueryTaskRequest{identity}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancellation, err := os.Stat(filepath.Join(evidenceRoot, executionIDForFinalTest+".cancel"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if measured.GetBytes() != physicalBytes(t, root)+uint64(cancellation.Size()) {
+		t.Fatalf("execution residual omitted: %v", measured)
 	}
 }

@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Durable lifecycle transactions. No RPC is performed while database locks are held. */
@@ -47,17 +48,27 @@ public class FinalizationStore {
     private final FinalizationProperties properties;
     private final FinalVerificationPolicy policy;
     private final ObjectMapper json;
+    private final StorageCapacityStore capacity;
 
     public FinalizationStore(FinalizationRepository finals, ExerciseRepository exercises, WorkspaceWriteRepository writes,
         TestTaskRepository tasks, TaskStreamRepository streams, ProblemRepository problems, IdentityTransactionService identity,
-        IdentitySecrets secrets, Clock clock, FinalizationProperties properties, FinalVerificationPolicy policy, ObjectMapper json) {
+        IdentitySecrets secrets, Clock clock, FinalizationProperties properties, FinalVerificationPolicy policy, @Qualifier("workspaceJson") ObjectMapper json, StorageCapacityStore capacity) {
         this.finals = finals; this.exercises = exercises; this.writes = writes; this.tasks = tasks; this.streams = streams;
         this.problems = problems; this.identity = identity; this.secrets = secrets; this.clock = clock;
-        this.properties = properties; this.policy = policy; this.json = json;
+        this.properties = properties; this.policy = policy; this.json = json; this.capacity = capacity;
+    }
+
+    @Transactional
+    public FinalizationEntity recoveryEnd(String session, String exerciseId, String key) {
+        return end(session, exerciseId, key, null, true);
     }
 
     @Transactional
     public FinalizationEntity end(String session, String exerciseId, String key, String credential) {
+        return end(session, exerciseId, key, credential, false);
+    }
+
+    private FinalizationEntity end(String session, String exerciseId, String key, String credential, boolean ownerRecovery) {
         String user = identity.authorizeMutation(session).userId();
         ExerciseEntity exercise = exercises.find(exerciseId);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
@@ -68,7 +79,7 @@ public class FinalizationStore {
         // Ended/closing is an observation, not fresh answering authority.
         if (existing != null) return existing;
         String hash = IdentitySecrets.digest(credential);
-        if (control == null || hash == null || !hash.equals(control.credentialHash())) throw new BusinessException(WorkspaceErrorCode.STALE_CONTROL);
+        if (!ownerRecovery && (control == null || hash == null || !hash.equals(control.credentialHash()))) throw new BusinessException(WorkspaceErrorCode.STALE_CONTROL);
         String reason = exercise.deadlineAt() != null && !clock.instant().isBefore(exercise.deadlineAt()) ? "DEADLINE_EXPIRED" : "USER_ENDED";
         return begin(exerciseId, reason, key);
     }
@@ -175,8 +186,11 @@ public class FinalizationStore {
         if (finals.allocate(exerciseId, id) != 1) return null;
         TestTaskEntity task = new TestTaskEntity(id, UUID.randomUUID().toString(), exerciseId, exercise.workspaceInstanceId(), value.finalRevision(),
             value.frozenEpoch(), value.deadlineAt(), "base", "ACCEPTED", false, false, null, null, 0);
-        exercises.insertOperation(new WorkspaceOperationEntity(id, exercise.userId(), exerciseId, exercise.workspaceInstanceId(),
-            "FINAL_TEST", value.id(), id, secrets.fingerprint(value.id() + "\n" + id), "PENDING", clock.instant()));
+        var operation = new WorkspaceOperationEntity(id, exercise.userId(), exerciseId, exercise.workspaceInstanceId(),
+            "FINAL_TEST", value.id(), id, secrets.fingerprint(value.id() + "\n" + id), "PENDING", clock.instant());
+        capacity.admitFinal(operation);
+        capacity.registerExecution(task);
+        exercises.insertOperation(operation);
         tasks.insert(task);
         finals.bind(new FinalTaskAuthorityEntity(id, value.id(), value.id(), value.deadlineAt()));
         streams.create(id, UUID.randomUUID().toString());

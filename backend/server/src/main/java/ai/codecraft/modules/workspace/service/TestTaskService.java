@@ -12,9 +12,10 @@ public class TestTaskService {
     private final WorkspaceWriteTransactionService writes;
     private final WorkspaceWriteCoordinator fences;
     private final TestTaskCoordinator coordinator;
+    private final StorageCapacityService capacity;
 
-    public TestTaskService(TestTaskStore store, WorkspaceWriteTransactionService writes, WorkspaceWriteCoordinator fences, TestTaskCoordinator coordinator) {
-        this.store = store; this.writes = writes; this.fences = fences; this.coordinator = coordinator;
+    public TestTaskService(TestTaskStore store, WorkspaceWriteTransactionService writes, WorkspaceWriteCoordinator fences, TestTaskCoordinator coordinator, StorageCapacityService capacity) {
+        this.store = store; this.writes = writes; this.fences = fences; this.coordinator = coordinator; this.capacity = capacity;
     }
 
     public TestTaskResponse start(String session, String exercise, String key, String credential, StartTestRequest input) {
@@ -22,7 +23,7 @@ public class TestTaskService {
         if (task == null) {
             String transition = writes.ensureOpen(session, exercise, credential);
             if (transition != null) fences.tryDrive(transition);
-            task = store.accept(session, exercise, key, credential, input);
+            task = capacity.admit(session, exercise, measured -> store.accept(session, exercise, key, credential, input, measured));
         }
         // Dispatch belongs to the durable worker, never to this request lifetime.
         return store.query(session, exercise, task.id());
@@ -30,6 +31,11 @@ public class TestTaskService {
 
     public TestTaskResponse stop(String session, String exercise, String task, String key, String credential) {
         coordinator.tryStop(store.acceptStop(session, exercise, task, key, credential));
+        return store.query(session, exercise, task);
+    }
+
+    public TestTaskResponse recoveryStop(String session, String exercise, String task, String key) {
+        coordinator.tryStop(store.acceptRecoveryStop(session, exercise, task, key));
         return store.query(session, exercise, task);
     }
 

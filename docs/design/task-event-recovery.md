@@ -128,6 +128,9 @@ Go 暂不可用时保持可查询的撤销操作未决，禁止新副作用，�
 | `GET /exercises/{id}/tasks/{taskId}` | 200 快照/游标；查询不重启任务；已精简普通记录返回 410 `TEST_HISTORY_PRUNED`，不代表演练删除 |
 | `POST /exercises/{id}/tasks/{taskId}/stop` | 202 STOPPING；已终态 200 原结果 |
 | `POST /exercises/{id}/end` | 202 CLOSING；已收尾返回原状态，不重新冻结/验收 |
+| `POST /exercises/{id}/tasks/{taskId}/recovery-stop` | 当前归属用户显式恢复停止普通测试，无需页面凭证；持久化并复用同一停止意图，异步以系统取消收敛，不授予新作答权限 |
+| `POST /exercises/{id}/recovery-end` | 当前归属用户显式恢复结束，无需页面凭证；不提交/删除本地草稿，按每场唯一收尾意图关闭、核对并冻结 |
+| `GET /exercises/{id}/storage` | 本人实际 Go/数据库字节、在途预留、收尾保留和计量时间；阻塞计量后重新授权再交付 |
 | `GET /exercises?after={exerciseId}` | 本人已结束演练及删除进度索引，每页最多 50 条，按标识倒序；返回保留到期日 |
 | `DELETE /exercises/{id}` | 202，已结束才允许；以不可复用的 exerciseId 作为删除操作身份，不同键也返回同一受理事实；之后本人私有资源 404 `EXERCISE_DELETED`，跨用户仍为普通 404 |
 | `GET /exercises/{id}/deletion`、`POST /exercises/{id}/deletion/retry` | 本人最小删除进度、手动推动原清理；重试要求幂等键，不并行清理；完成后 7 天进度查询返回普通 404 |
@@ -176,6 +179,7 @@ Go 暂不可用时保持可查询的撤销操作未决，禁止新副作用，�
 
 - Go 每 task execution 持久化 `streamId` 和递增 `sequence`，事件含 schemaVersion、taskId、executionInstanceId、streamId、sequence、type、occurredAt、payload；type 为 `log`（channel=stdout/stderr）、`progress`、`log_truncated`、`task_result`。序号是去重/顺序依据，时间戳不是。
 - Go 原子保存结果与对应事件/发布意图。Java 按 `(executionInstanceId, streamId, sequence)` 去重，持久化浏览器事件及物化快照的同一事务中推进浏览器 high-water cursor。浏览器流使用独立 streamId/sequence，不能把 Go 游标当浏览器游标混用。
+- Go 保留原始日志字节；Java 的查询/事件文本投影以 UTF-8 解码（非法序列替换），NUL 显示为 `␀`，避免 PostgreSQL jsonb 不支持 NUL 阻断权威结果持久化。这不是日志截断，不改变 Go 原始证据或计量。
 - 日志正文按题目 `runtime.logBytes` 有界保留，保留尾部或首尾策略必须在快照声明，本阶段采用尾部；丢弃正文仍持续排空 stdout/stderr，累计 droppedBytes、首尾保留位置，并持久化 `truncated=true`。控制事件/结果有独立预留容量，不能被日志撑掉。
 - 浏览器事件窗口技术初值为每任务最多 4096 条且最多 4 MiB，先到上限即淘汰最旧事件；单日志事件至多 16 KiB UTF-8 有效字节，超长行切块，不能把一行当无限对象。该窗口不是完整日志存储上限，日志上限以题目配置为准。单纯的事件窗口淘汰不删除结构化终态。
 - Java 在本人测试查询/订阅及维护 worker 中按同一策略选择精简记录；持久化选择先撤销该记录的完整查询，Go 清理成功后再擦除 Java 日志/事件、释放版本引用。失败保留引用与待清理身份，按最后尝试顺序分批重试，不因一个失败跳过其他安全记录。清理未完成的实际字节不视为已释放。

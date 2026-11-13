@@ -37,8 +37,28 @@ it('requires confirmation and revokes local access on acceptance, before physica
   expect(view!.findAll('button').find((button) => button.text() === '确认删除')!.attributes('disabled')).toBeDefined();
   resolve(ok(progress));
   await flushPromises();
-  expect(view!.emitted('deleted')).toEqual([['old']]);
+  expect(view!.emitted('deleted')).toEqual([['old', 'owner']]);
   expect(view!.text()).toContain('正在删除');
+});
+
+it('ignores a deletion response whose account scope changed while it was in flight', async () => {
+  let resolve!: (response: Response) => void;
+  await render(vi.fn<typeof fetch>(async (path, options) => {
+    if (String(path) === '/api/auth/csrf') return ok({ token: 'csrf' });
+    if (options?.method === 'DELETE') return new Promise<Response>((done) => { resolve = done; });
+    return ok(progress);
+  }));
+  await click('删除演练'); await click('确认删除');
+  await view!.setProps({ owner: 'new-owner' });
+  resolve(ok(progress)); await flushPromises();
+  expect(view!.emitted('deleted')).toBeUndefined();
+});
+
+it('propagates an authoritative deleted result even after detailed progress has expired', async () => {
+  await render(vi.fn<typeof fetch>(async (path) => String(path) === '/api/auth/csrf' ? ok({ token: 'csrf' })
+    : new Response(JSON.stringify({ code: 'EXERCISE_DELETED', data: null }), { status: 404 })));
+  await click('删除演练'); await click('确认删除');
+  expect(view!.emitted('deleted')).toEqual([['old', 'owner']]);
 });
 
 it.each([401, 404, 503])('does not treat an ambiguous %s as accepted deletion', async (status) => {

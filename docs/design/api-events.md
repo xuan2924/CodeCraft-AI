@@ -1,6 +1,6 @@
 # 接口、身份与事件设计
 
-状态：身份产品规则、页面操作权及恢复行为已确认。账号登录与密码重置已实现，运行证据见[任务 07](../validation/account-login-07.md)及[任务 08](../validation/password-revocation-08.md)；工作区及跨 Go 撤销已有 [#09](../validation/problem-workspace-09.md)、[#10–#12](../validation/workspace-write-browser-10-12.md) 证据，SSE 的阶段进展见 [#14](../validation/stream-stop-recover-14.md)（整票未完成）；不能将下文契约当作运行证据。
+状态：身份产品规则、页面操作权及恢复行为已确认。账号登录与密码重置已实现，运行证据见[任务 07](../validation/account-login-07.md)及[任务 08](../validation/password-revocation-08.md)；工作区及跨 Go 撤销已有 [#09](../validation/problem-workspace-09.md)、[#10–#12](../validation/workspace-write-browser-10-12.md) 证据，SSE 的阶段进展见 [#14](../validation/stream-stop-recover-14.md)；#14 已按其最新任务记录的 L1 边界收口，不能将历史验证记录或下文契约当作新增真实运行证据。
 
 ## 身份与授权
 
@@ -92,6 +92,7 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - 服务端签发操作凭证，页面内存保存，不放入会跨标签页共享的 Cookie/localStorage。
 - 显式接管原子地转移操作权并使旧凭证失效。旧页面即使未收到只读通知，后续写请求也被拒绝。
 - 接管不停止后台任务，不搬运旧页面草稿；刷新重新申请，不静默抢占另一页面。
+- 本人恢复停止/结束是显式安全终止权限，不是页面写权限：仍检查当前登录/密码状态、CSRF 和演练归属，但不需要页面凭证、不签发新凭证、不授权保存/新测试或取消系统最终验收。取消意图按测试去重、收尾按演练去重，因此普通容量耗尽或刷新后仍可安全终止，不允许无限免费接管挤占救援空间。见 [ADR 0007](../adr/0007-owner-recovery-stop-and-end.md)。
 - 身份、归属与业务状态校验独立于操作凭证，用户不能借凭证绕过授权。
 - 操作权切换与在途写入必须有确定顺序，不能仅在请求入口校验一次。首期不设自动续租/抢占的页面租约；刷新无凭证时只读并显式接管，跨重启栅栏协议见 [任务 05](task-event-recovery.md#页面操作权与可恢复栅栏)。
 

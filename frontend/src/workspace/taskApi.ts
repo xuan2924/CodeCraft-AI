@@ -105,6 +105,11 @@ export async function stopTest(exercise: string, workspace: string, id: string, 
   if (result.taskId !== id) return invalid();
   return result;
 }
+export async function recoveryStopTest(exercise: string, workspace: string, id: string, key: string, signal: AbortSignal): Promise<TestTask> {
+  const result = parse(await post(`/api/exercises/${encodeURIComponent(exercise)}/tasks/${encodeURIComponent(id)}/recovery-stop`, {}, signal, key), exercise, workspace);
+  if (result.taskId !== id) return invalid();
+  return result;
+}
 export interface TestHistory {
   tasks: TestTask[];
   retention: { retainedCompletedLimit: number; prunedCount: number; cleanupPendingCount: number };

@@ -10,6 +10,9 @@ import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ai.codecraft.common.web.RequestBodyAdmission;
+import ai.codecraft.common.web.RequestBodyLimitException;
+import org.springframework.http.MediaType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -41,7 +44,7 @@ public class IdentitySecurity {
 
     @Bean
     SecurityFilterChain identityChain(HttpSecurity http, IdentityTransactionService store, IdentitySecrets secrets,
-                                     IdentitySettings settings, ObjectMapper json) throws Exception {
+                                     IdentitySettings settings, ObjectMapper json, RequestBodyAdmission bodies) throws Exception {
         http.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .requestCache(cache -> cache.disable()).formLogin(form -> form.disable()).httpBasic(basic -> basic.disable())
             .logout(logout -> logout.disable()).cors(cors -> cors.disable())
@@ -74,12 +77,23 @@ public class IdentitySecurity {
                     ApiErrorWriter.write(response, json, IdentityErrorCode.CSRF_REJECTED);
                     return;
                 }
-                if (request.getContentLengthLong() > 16384) {
-                    ApiErrorWriter.write(response, json, IdentityErrorCode.REQUEST_TOO_LARGE);
-                    return;
+                if (!safe && request.getContentType() != null) {
+                    try {
+                        MediaType type = MediaType.parseMediaType(request.getContentType());
+                        if (!MediaType.APPLICATION_JSON.isCompatibleWith(type) && !MediaType.valueOf("application/*+json").isCompatibleWith(type)) {
+                            ApiErrorWriter.write(response, json, IdentityErrorCode.INVALID_REQUEST);
+                            return;
+                        }
+                    } catch (IllegalArgumentException malformed) {
+                        ApiErrorWriter.write(response, json, IdentityErrorCode.INVALID_REQUEST);
+                        return;
+                    }
                 }
-                try { chain.doFilter(request, response); }
-                catch (BusinessException failure) {
+                try (var admission = bodies.admit(request, bodies.maximumBytes(request))) {
+                    chain.doFilter(admission.request(), response);
+                } catch (RequestBodyLimitException failure) {
+                    ApiErrorWriter.write(response, json, failure.errorCode());
+                } catch (BusinessException failure) {
                     ApiErrorWriter.write(response, json, failure.errorCode());
                 } catch (DataAccessException failure) {
                     // JDBC exceptions can include rejected rows containing secrets; never log their messages.

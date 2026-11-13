@@ -6,7 +6,7 @@ import { ApiError } from '../api/request';
 import * as api from './retentionApi';
 import { message } from './api';
 const props = defineProps<{ owner: string; entry: api.HistoryEntry }>();
-const emit = defineEmits<{ deleted: [id: string]; select: [id: string] }>();
+const emit = defineEmits<{ deleted: [id: string, owner: string]; select: [id: string] }>();
 const client = useQueryClient();
 const confirmed = ref(false);
 const revoked = ref(props.entry.deletionState !== null);
@@ -18,27 +18,34 @@ const controller = new globalThis.AbortController();
 const progress = useQuery({ queryKey: ['workspace', props.owner, 'deletion', props.entry.exerciseId],
   queryFn: ({ signal }) => api.progress(props.entry.exerciseId, signal), enabled: revoked, retry: false,
   refetchInterval: (query) => query.state.data?.state === 'SUCCEEDED' ? false : 3000 });
-watch(() => props.entry.deletionState, (state) => { if (state !== null) revoked.value = true; });
-watch(revoked, (value) => { if (value) emit('deleted', props.entry.exerciseId); }, { immediate: true });
+watch(() => props.entry.deletionState, (state) => {
+  if (state !== null) { revoked.value = true; emit('deleted', props.entry.exerciseId, props.owner); }
+}, { immediate: true });
 onScopeDispose(() => { disposed = true; controller.abort(); });
 async function perform(kind: 'delete' | 'retry') {
   if (busy.value || disposed) return;
   if (unresolved && unresolved.kind !== kind) return;
   unresolved ??= { kind, key: globalThis.crypto.randomUUID() };
+  const owner = props.owner; const exercise = props.entry.exerciseId;
+  const current = () => !disposed && props.owner === owner && props.entry.exerciseId === exercise;
   busy.value = true;
   error.value = '';
   try {
-    const value = await (kind === 'delete' ? api.deleteExercise : api.retry)(props.entry.exerciseId, unresolved.key, controller.signal);
-    if (disposed) return;
+    const value = await (kind === 'delete' ? api.deleteExercise : api.retry)(exercise, unresolved.key, controller.signal);
+    if (!current()) return;
     unresolved = undefined;
     revoked.value = true;
     confirmed.value = false;
-    client.setQueryData(['workspace', props.owner, 'deletion', props.entry.exerciseId], value);
-    await client.invalidateQueries({ queryKey: ['workspace', props.owner, 'history'] });
+    emit('deleted', exercise, owner);
+    client.setQueryData(['workspace', owner, 'deletion', exercise], value);
+    await client.invalidateQueries({ queryKey: ['workspace', owner, 'history'] });
   } catch (failure) {
-    if (disposed) return;
+    if (!current()) return;
     error.value = message(failure);
-    if (failure instanceof ApiError && [400, 401, 403, 404, 409].includes(failure.status)) unresolved = undefined;
+    if (failure instanceof ApiError && failure.status === 404 && failure.code === 'EXERCISE_DELETED') {
+      revoked.value = true; confirmed.value = false; emit('deleted', exercise, owner);
+    }
+    if (failure instanceof ApiError && [400, 401, 403, 404, 409, 429].includes(failure.status)) unresolved = undefined;
   } finally { if (!disposed) busy.value = false; }
 }
 </script>
@@ -85,7 +92,7 @@ async function perform(kind: 'delete' | 'retry') {
       v-if="revoked"
       role="status"
     >
-      {{ progress.data.value?.state === 'SUCCEEDED' ? '删除完成' : progress.data.value?.state === 'FAILED' ? '删除失败，访问仍已撤销' : '正在删除，访问已撤销' }}
+      {{ progress.isError.value ? '访问已撤销，暂不能读取清理进度' : progress.data.value?.state === 'SUCCEEDED' ? '删除完成' : progress.data.value?.state === 'FAILED' ? '删除失败，访问仍已撤销' : '正在删除，访问已撤销' }}
     </p>
     <p v-if="progress.data.value?.failureCode">
       {{ progress.data.value.failureCode === 'RECONCILIATION_REQUIRED' ? '等待在途操作或执行清理完成核对。' : '存储清理失败，后台将继续重试。' }}

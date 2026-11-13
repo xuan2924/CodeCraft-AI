@@ -179,7 +179,9 @@ async function saveForLogout(): Promise<boolean> {
   await flushBackup();
   return !disposed && !edited.value && !unresolved.value;
 }
-async function prepareEnd(choice: 'save' | 'discard'): Promise<boolean> {
+async function prepareEnd(choice: 'save' | 'discard' | 'retain'): Promise<boolean> {
+  if (disposed) return false;
+  if (choice === 'retain') { await flushBackup(); return !disposed; }
   if (busy.value || unresolved.value || disposed || !canWrite.value) return false;
   if (choice === 'save') return saveForLogout();
   return discardAll();

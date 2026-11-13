@@ -107,14 +107,24 @@ func TestDeletionPurgesEvidenceAndOwnedFailureStagesButPreservesCancellationOnRe
 			_ = runner.Close()
 		}
 	}()
-	if err = os.WriteFile(filepath.Join(root, stage), []byte("private partial log"), 0600); err != nil {
-		t.Fatal(err)
+	quarantined := ".corrupt-meta-" + input.ExecutionID + "-fixture"
+	otherQuarantine := ".corrupt-meta-" + identifier() + "-fixture"
+	for _, name := range []string{stage, quarantined, otherQuarantine} {
+		if err = os.WriteFile(filepath.Join(root, name), []byte("private partial log"), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err = runner.DeleteWorkspace(context.Background(), input.WorkspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = os.Stat(filepath.Join(root, stage)); !os.IsNotExist(err) {
 		t.Fatalf("failure stage survived deletion: %v", err)
+	}
+	if _, err = os.Stat(filepath.Join(root, quarantined)); !os.IsNotExist(err) {
+		t.Fatalf("quarantined metadata survived deletion: %v", err)
+	}
+	if _, err = os.Stat(filepath.Join(root, otherQuarantine)); err != nil {
+		t.Fatalf("another execution's quarantined metadata removed: %v", err)
 	}
 	if _, err = runner.Query(context.Background(), input.ExecutionID); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("evidence remains: %v", err)

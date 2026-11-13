@@ -5,6 +5,8 @@ import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.model.dto.ControlResponse;
+import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
+import java.nio.charset.StandardCharsets;
 import ai.codecraft.modules.workspace.model.dto.WorkspaceOperationResponse;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceControlEntity;
@@ -29,18 +31,20 @@ public class WorkspaceWriteTransactionService {
     private final ExerciseRepository exercises;
     private final WorkspaceWriteRepository writes;
     private final Clock clock;
+    private final StorageCapacityStore capacity;
 
     public WorkspaceWriteTransactionService(IdentityTransactionService identity, IdentitySecrets secrets,
-        ExerciseRepository exercises, WorkspaceWriteRepository writes, Clock clock) {
+        ExerciseRepository exercises, WorkspaceWriteRepository writes, Clock clock, StorageCapacityStore capacity) {
         this.identity = identity;
         this.secrets = secrets;
         this.exercises = exercises;
         this.writes = writes;
         this.clock = clock;
+        this.capacity = capacity;
     }
 
     @Transactional
-    public WorkspaceOperationEntity control(String session, String exerciseId, String kind, String key, String credential, String targetHash) {
+    public WorkspaceOperationEntity control(String session, String exerciseId, String kind, String key, String credential, String targetHash, StorageMeasurement measurement) {
         String user = identity.authorizeMutation(session).userId();
         ExerciseEntity exercise = owned(user, exerciseId);
         key(key);
@@ -54,9 +58,18 @@ public class WorkspaceWriteTransactionService {
         if (kind.equals("RELEASE")) credential(control, credential);
         if (!List.of("ACQUIRE", "TAKEOVER", "RELEASE").contains(kind)) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
         WorkspaceOperationEntity operation = operation(exercise, kind, key, secrets.fingerprint(kind));
+        if (!kind.equals("RELEASE")) capacity.admit(operation, measurement, StorageCapacityStore.CONTROL_GROWTH);
         writes.insertTransition(new WorkspaceTransitionEntity(operation.id(), exerciseId, kind, null, "CLOSING", targetHash));
         writes.activate(exerciseId, operation.id());
         return operation;
+    }
+
+    @Transactional(readOnly = true)
+    public WorkspaceOperationEntity existingControl(String session, String exerciseId, String kind, String key) {
+        String user = identity.authorization(session).userId();
+        owned(user, exerciseId);
+        key(key);
+        return exercises.receipt(user, kind, exerciseId, key);
     }
 
     @Transactional(readOnly = true)
@@ -84,7 +97,7 @@ public class WorkspaceWriteTransactionService {
     }
 
     @Transactional
-    public WorkspaceOperationEntity batch(String session, String exerciseId, String key, String credential, String payload, long expectedRevision) {
+    public WorkspaceOperationEntity batch(String session, String exerciseId, String key, String credential, String payload, long expectedRevision, StorageMeasurement measurement) {
         SessionAuthorizationDTO authorization = identity.authorizeMutation(session);
         ExerciseEntity exercise = owned(authorization.userId(), exerciseId);
         key(key);
@@ -104,6 +117,7 @@ public class WorkspaceWriteTransactionService {
         // and collected. Existing request keys above still return their receipt.
         if (exercise.revision() == null || exercise.revision() != expectedRevision) throw new BusinessException(WorkspaceErrorCode.REVISION_CONFLICT);
         WorkspaceOperationEntity operation = operation(exercise, "FILE_BATCH", key, fingerprint);
+        capacity.admit(operation, measurement, Math.addExact(payload.getBytes(StandardCharsets.UTF_8).length, StorageCapacityStore.MUTATION_OVERHEAD));
         Instant deadline = authorization.expiresAt().isBefore(exercise.deadlineAt()) ? authorization.expiresAt() : exercise.deadlineAt();
         writes.insertMutation(new WorkspaceMutationEntity(operation.id(), payload, control.gateEpoch(), deadline, false, null, null, null));
         return operation;

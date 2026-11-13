@@ -19,30 +19,31 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	WorkspaceStorage_PrepareWorkspace_FullMethodName  = "/codecraft.workspace.v1.WorkspaceStorage/PrepareWorkspace"
-	WorkspaceStorage_QueryWorkspace_FullMethodName    = "/codecraft.workspace.v1.WorkspaceStorage/QueryWorkspace"
-	WorkspaceStorage_DeleteWorkspace_FullMethodName   = "/codecraft.workspace.v1.WorkspaceStorage/DeleteWorkspace"
-	WorkspaceStorage_CollectWorkspace_FullMethodName  = "/codecraft.workspace.v1.WorkspaceStorage/CollectWorkspace"
-	WorkspaceStorage_PruneTestEvidence_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/PruneTestEvidence"
-	WorkspaceStorage_ReadWorkspaceFile_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/ReadWorkspaceFile"
-	WorkspaceStorage_CancelPreparation_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/CancelPreparation"
-	WorkspaceStorage_CloseGate_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/CloseGate"
-	WorkspaceStorage_QueryGate_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryGate"
-	WorkspaceStorage_OpenGate_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/OpenGate"
-	WorkspaceStorage_Freeze_FullMethodName            = "/codecraft.workspace.v1.WorkspaceStorage/Freeze"
-	WorkspaceStorage_QueryFreeze_FullMethodName       = "/codecraft.workspace.v1.WorkspaceStorage/QueryFreeze"
-	WorkspaceStorage_ApplyBatch_FullMethodName        = "/codecraft.workspace.v1.WorkspaceStorage/ApplyBatch"
-	WorkspaceStorage_QueryMutation_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/QueryMutation"
-	WorkspaceStorage_PrepareTestCopy_FullMethodName   = "/codecraft.workspace.v1.WorkspaceStorage/PrepareTestCopy"
-	WorkspaceStorage_QueryTestCopy_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/QueryTestCopy"
-	WorkspaceStorage_StartTest_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/StartTest"
-	WorkspaceStorage_QueryTask_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryTask"
-	WorkspaceStorage_StopTask_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/StopTask"
-	WorkspaceStorage_StopSystemTask_FullMethodName    = "/codecraft.workspace.v1.WorkspaceStorage/StopSystemTask"
-	WorkspaceStorage_QueryStop_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryStop"
-	WorkspaceStorage_ListExecutions_FullMethodName    = "/codecraft.workspace.v1.WorkspaceStorage/ListExecutions"
-	WorkspaceStorage_ReconcileTask_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/ReconcileTask"
-	WorkspaceStorage_WatchTask_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/WatchTask"
+	WorkspaceStorage_PrepareWorkspace_FullMethodName       = "/codecraft.workspace.v1.WorkspaceStorage/PrepareWorkspace"
+	WorkspaceStorage_QueryWorkspace_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/QueryWorkspace"
+	WorkspaceStorage_DeleteWorkspace_FullMethodName        = "/codecraft.workspace.v1.WorkspaceStorage/DeleteWorkspace"
+	WorkspaceStorage_CollectWorkspace_FullMethodName       = "/codecraft.workspace.v1.WorkspaceStorage/CollectWorkspace"
+	WorkspaceStorage_PruneTestEvidence_FullMethodName      = "/codecraft.workspace.v1.WorkspaceStorage/PruneTestEvidence"
+	WorkspaceStorage_MeasureExerciseStorage_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/MeasureExerciseStorage"
+	WorkspaceStorage_ReadWorkspaceFile_FullMethodName      = "/codecraft.workspace.v1.WorkspaceStorage/ReadWorkspaceFile"
+	WorkspaceStorage_CancelPreparation_FullMethodName      = "/codecraft.workspace.v1.WorkspaceStorage/CancelPreparation"
+	WorkspaceStorage_CloseGate_FullMethodName              = "/codecraft.workspace.v1.WorkspaceStorage/CloseGate"
+	WorkspaceStorage_QueryGate_FullMethodName              = "/codecraft.workspace.v1.WorkspaceStorage/QueryGate"
+	WorkspaceStorage_OpenGate_FullMethodName               = "/codecraft.workspace.v1.WorkspaceStorage/OpenGate"
+	WorkspaceStorage_Freeze_FullMethodName                 = "/codecraft.workspace.v1.WorkspaceStorage/Freeze"
+	WorkspaceStorage_QueryFreeze_FullMethodName            = "/codecraft.workspace.v1.WorkspaceStorage/QueryFreeze"
+	WorkspaceStorage_ApplyBatch_FullMethodName             = "/codecraft.workspace.v1.WorkspaceStorage/ApplyBatch"
+	WorkspaceStorage_QueryMutation_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/QueryMutation"
+	WorkspaceStorage_PrepareTestCopy_FullMethodName        = "/codecraft.workspace.v1.WorkspaceStorage/PrepareTestCopy"
+	WorkspaceStorage_QueryTestCopy_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/QueryTestCopy"
+	WorkspaceStorage_StartTest_FullMethodName              = "/codecraft.workspace.v1.WorkspaceStorage/StartTest"
+	WorkspaceStorage_QueryTask_FullMethodName              = "/codecraft.workspace.v1.WorkspaceStorage/QueryTask"
+	WorkspaceStorage_StopTask_FullMethodName               = "/codecraft.workspace.v1.WorkspaceStorage/StopTask"
+	WorkspaceStorage_StopSystemTask_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/StopSystemTask"
+	WorkspaceStorage_QueryStop_FullMethodName              = "/codecraft.workspace.v1.WorkspaceStorage/QueryStop"
+	WorkspaceStorage_ListExecutions_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/ListExecutions"
+	WorkspaceStorage_ReconcileTask_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/ReconcileTask"
+	WorkspaceStorage_WatchTask_FullMethodName              = "/codecraft.workspace.v1.WorkspaceStorage/WatchTask"
 )
 
 // WorkspaceStorageClient is the client API for WorkspaceStorage service.
@@ -58,6 +59,8 @@ type WorkspaceStorageClient interface {
 	// Java supplies a consistent reference snapshot; a stale current revision rejects collection.
 	CollectWorkspace(ctx context.Context, in *CollectWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceCollectionReceipt, error)
 	PruneTestEvidence(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestEvidencePruningReceipt, error)
+	// Scope is monotonic at the durable meter; delayed subset requests never forget old owners.
+	MeasureExerciseStorage(ctx context.Context, in *MeasureExerciseStorageRequest, opts ...grpc.CallOption) (*StorageMeasurement, error)
 	ReadWorkspaceFile(ctx context.Context, in *ReadWorkspaceFileRequest, opts ...grpc.CallOption) (*ReadWorkspaceFileResponse, error)
 	CancelPreparation(ctx context.Context, in *CancelPreparationRequest, opts ...grpc.CallOption) (*WorkspaceSnapshot, error)
 	CloseGate(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error)
@@ -133,6 +136,16 @@ func (c *workspaceStorageClient) PruneTestEvidence(ctx context.Context, in *Quer
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TestEvidencePruningReceipt)
 	err := c.cc.Invoke(ctx, WorkspaceStorage_PruneTestEvidence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) MeasureExerciseStorage(ctx context.Context, in *MeasureExerciseStorageRequest, opts ...grpc.CallOption) (*StorageMeasurement, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StorageMeasurement)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_MeasureExerciseStorage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -351,6 +364,8 @@ type WorkspaceStorageServer interface {
 	// Java supplies a consistent reference snapshot; a stale current revision rejects collection.
 	CollectWorkspace(context.Context, *CollectWorkspaceRequest) (*WorkspaceCollectionReceipt, error)
 	PruneTestEvidence(context.Context, *QueryTaskRequest) (*TestEvidencePruningReceipt, error)
+	// Scope is monotonic at the durable meter; delayed subset requests never forget old owners.
+	MeasureExerciseStorage(context.Context, *MeasureExerciseStorageRequest) (*StorageMeasurement, error)
 	ReadWorkspaceFile(context.Context, *ReadWorkspaceFileRequest) (*ReadWorkspaceFileResponse, error)
 	CancelPreparation(context.Context, *CancelPreparationRequest) (*WorkspaceSnapshot, error)
 	CloseGate(context.Context, *CloseGateRequest) (*GateResponse, error)
@@ -396,6 +411,9 @@ func (UnimplementedWorkspaceStorageServer) CollectWorkspace(context.Context, *Co
 }
 func (UnimplementedWorkspaceStorageServer) PruneTestEvidence(context.Context, *QueryTaskRequest) (*TestEvidencePruningReceipt, error) {
 	return nil, status.Error(codes.Unimplemented, "method PruneTestEvidence not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) MeasureExerciseStorage(context.Context, *MeasureExerciseStorageRequest) (*StorageMeasurement, error) {
+	return nil, status.Error(codes.Unimplemented, "method MeasureExerciseStorage not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) ReadWorkspaceFile(context.Context, *ReadWorkspaceFileRequest) (*ReadWorkspaceFileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadWorkspaceFile not implemented")
@@ -561,6 +579,24 @@ func _WorkspaceStorage_PruneTestEvidence_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WorkspaceStorageServer).PruneTestEvidence(ctx, req.(*QueryTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_MeasureExerciseStorage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MeasureExerciseStorageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).MeasureExerciseStorage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_MeasureExerciseStorage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).MeasureExerciseStorage(ctx, req.(*MeasureExerciseStorageRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -926,6 +962,10 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PruneTestEvidence",
 			Handler:    _WorkspaceStorage_PruneTestEvidence_Handler,
+		},
+		{
+			MethodName: "MeasureExerciseStorage",
+			Handler:    _WorkspaceStorage_MeasureExerciseStorage_Handler,
 		},
 		{
 			MethodName: "ReadWorkspaceFile",

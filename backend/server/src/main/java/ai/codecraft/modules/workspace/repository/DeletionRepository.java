@@ -14,6 +14,10 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface DeletionRepository {
+    @Update("UPDATE workspace_deletion SET last_manual_retry_at = #{now} WHERE exercise_id = #{id}::uuid AND state IN ('PENDING', 'FAILED') AND (last_manual_retry_at IS NULL OR last_manual_retry_at <= #{now}::timestamptz - interval '1 minute')")
+    int admitManualRetry(String id, Instant now);
+    @Delete("DELETE FROM workspace_operation WHERE exercise_id = #{id}::uuid AND kind = 'RETRY_DELETE' AND state = 'SUCCEEDED' AND created_at <= #{before}")
+    void expireManualRetryReceipts(String id, Instant before);
     String EXPIRED_EXERCISES = "SELECT exercise_id FROM workspace_deletion d WHERE d.state = 'SUCCEEDED' AND d.completed_at <= #{before} AND NOT EXISTS (SELECT 1 FROM workspace_operation o WHERE o.exercise_id = d.exercise_id AND o.state IN ('PENDING', 'PENDING_RECONCILIATION'))";
     @Delete("DELETE FROM workspace_test_stop WHERE task_id IN (SELECT id FROM workspace_test_task WHERE exercise_id IN (" + EXPIRED_EXERCISES + "))")
     void expireTestStops(Instant before);

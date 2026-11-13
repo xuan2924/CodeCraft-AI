@@ -12,6 +12,7 @@ import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
 import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import ai.codecraft.modules.workspace.repository.ExerciseRepository;
+import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -28,9 +29,10 @@ public class ExerciseTransactionService {
     private final IdentitySecrets secrets;
     private final WorkspaceCoordinationStore coordination;
     private final RetentionProperties retention;
+    private final StorageCapacityStore capacity;
 
     public ExerciseTransactionService(ExerciseRepository repository, IdentityTransactionService identity,
-                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination, RetentionProperties retention) {
+                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination, RetentionProperties retention, StorageCapacityStore capacity) {
         this.repository = repository;
         this.identity = identity;
         this.problems = problems;
@@ -38,6 +40,7 @@ public class ExerciseTransactionService {
         this.secrets = secrets;
         this.coordination = coordination;
         this.retention = retention;
+        this.capacity = capacity;
     }
 
     @Transactional
@@ -66,6 +69,7 @@ public class ExerciseTransactionService {
         repository.bindPreparationSession(exercise, session, authorization.expiresAt());
         WorkspaceOperationEntity accepted = new WorkspaceOperationEntity(operation, user, exercise, instance,
             "PREPARE", user, key, fingerprint, "PENDING", clock.instant());
+        capacity.initialize(accepted);
         repository.insertOperation(accepted);
         return accepted;
     }
@@ -89,8 +93,15 @@ public class ExerciseTransactionService {
         return repository.find(id);
     }
 
+    @Transactional(readOnly = true)
+    public WorkspaceOperationEntity existingRetry(String session, String id, String key) {
+        ExerciseEntity exercise = find(session, id);
+        if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
+        return repository.receipt(exercise.userId(), "PREPARATION_RETRY", id, key);
+    }
+
     @Transactional
-    public WorkspaceOperationEntity retry(String session, String id, String key) {
+    public WorkspaceOperationEntity retry(String session, String id, String key, StorageMeasurement measurement) {
         SessionAuthorizationDTO authorization = identity.authorizeMutation(session);
         String user = authorization.userId();
         ExerciseEntity exercise = repository.find(id);
@@ -106,6 +117,8 @@ public class ExerciseTransactionService {
         repository.bindPreparationSession(id, session, authorization.expiresAt());
         WorkspaceOperationEntity operation = new WorkspaceOperationEntity(operationId, user, id,
             instance, "PREPARATION_RETRY", id, key, secrets.fingerprint("PREPARATION_RETRY"), "PENDING", clock.instant());
+        capacity.registerInstance(id, instance);
+        capacity.admit(operation, measurement, StorageCapacityStore.PREPARATION_GROWTH);
         repository.insertOperation(operation);
         return operation;
     }

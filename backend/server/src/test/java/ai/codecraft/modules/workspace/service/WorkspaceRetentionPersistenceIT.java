@@ -13,9 +13,16 @@ import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
+import ai.codecraft.modules.identity.service.IdentityRevocationNotifier;
+import ai.codecraft.modules.identity.service.IdentityRevocationBarrier;
+import ai.codecraft.modules.identity.repository.IdentityRepository;
+import ai.codecraft.modules.identity.repository.RevocationIntentRepository;
 import ai.codecraft.modules.workspace.config.RetentionProperties;
 import ai.codecraft.modules.workspace.config.FinalizationProperties;
 import ai.codecraft.modules.workspace.model.dto.TestEvidenceResponse;
+import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
+import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
+import ai.codecraft.modules.workspace.repository.StorageCapacityRepository;
 import ai.codecraft.modules.workspace.config.StorageProperties;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.modules.workspace.model.dto.TestHistoryRecord;
@@ -45,6 +52,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.apache.ibatis.session.LocalCacheScope;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
@@ -79,6 +90,8 @@ class WorkspaceRetentionPersistenceIT {
     private TestTaskStore tasks;
     private ProblemRepository problems;
     private IdentityTransactionService identity;
+    private StorageCapacityStore capacityStore;
+    private String problemId;
     private String exercise;
     private String owner;
     private String workspace;
@@ -93,7 +106,8 @@ class WorkspaceRetentionPersistenceIT {
         var configuration = new org.apache.ibatis.session.Configuration();
         configuration.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(ExerciseRepository.class, DeletionRepository.class, WorkspaceMaintenanceRepository.class,
-            WorkspaceWriteRepository.class, TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class)) {
+            WorkspaceWriteRepository.class, TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class,
+            IdentityRepository.class, StorageCapacityRepository.class)) {
             configuration.addMapper(mapper);
         }
         var factory = new SqlSessionFactoryBean();
@@ -104,9 +118,13 @@ class WorkspaceRetentionPersistenceIT {
 
     @BeforeEach
     void seedOwnedExercise() {
+        // The host execution slot is global, so unresolved fixture tasks cannot leak between cases.
+        jdbc.execute("TRUNCATE workspace_test_stop, workspace_test_task CASCADE");
         clock = new MutableClock();
         exercise = id(); owner = id(); workspace = id(); prepare = id();
         String problem = id();
+        problemId = problem;
+        jdbc.update("INSERT INTO identity_user(id,username,password_hash,role,password_change_required) VALUES (?::uuid,?,'fixture-only','USER',false)", owner, "u_" + owner.substring(0, 8));
         jdbc.update("INSERT INTO workspace_exercise(id,user_id,problem_version_id,workspace_instance_id,preparation_operation_id,state,revision,created_at,ended_at,retain_until) VALUES (?::uuid,?::uuid,?::uuid,?::uuid,?::uuid,'ENDED',30,?,?,?)",
             exercise, owner, problem, workspace, prepare, java.sql.Timestamp.from(clock.now), java.sql.Timestamp.from(clock.now), java.sql.Timestamp.from(clock.now.plusSeconds(30 * 86400)));
         operation(prepare, "PREPARE", "SUCCEEDED");
@@ -116,15 +134,19 @@ class WorkspaceRetentionPersistenceIT {
         identity = mock(IdentityTransactionService.class);
         var authorization = new SessionAuthorizationDTO(owner, "USER", false, 1, clock.now.plusSeconds(60));
         when(identity.authorization("session")).thenReturn(authorization);
-        when(identity.authorizeMutation("session")).thenReturn(authorization);
-        when(identity.authorizePrivateDelivery("session")).thenReturn(authorization);
-        var limits = new StorageProperties(512L * 1024 * 1024, 160L * 1024 * 1024, 20);
+        var ownerLocks = transactional(new IdentityTransactionService(sql.getMapper(IdentityRepository.class), clock,
+            mock(IdentityRevocationNotifier.class), mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class)), IdentityTransactionService.class);
+        org.mockito.Mockito.doAnswer(call -> { ownerLocks.lockResourceOwner(call.getArgument(0)); return null; }).when(identity).lockResourceOwner(anyString());
+        when(identity.authorizeMutation("session")).thenAnswer(call -> { ownerLocks.lockResourceOwner(owner); return authorization; });
+        when(identity.authorizePrivateDelivery("session")).thenAnswer(call -> { ownerLocks.lockResourceOwner(owner); return authorization; });
+        var limits = new StorageProperties(512L * 1024 * 1024, 256L * 1024 * 1024, 20);
+        capacityStore = transactional(new StorageCapacityStore(sql.getMapper(StorageCapacityRepository.class), exercises, sql.getMapper(WorkspaceWriteRepository.class), identity, limits, clock), StorageCapacityStore.class);
         maintenance = transactional(new WorkspaceMaintenanceStore(sql.getMapper(WorkspaceMaintenanceRepository.class), exercises, deletions, identity, clock, limits), WorkspaceMaintenanceStore.class);
         deletion = transactional(new DeletionStore(deletions, exercises, identity, clock, new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60)), DeletionStore.class);
         problems = mock(ProblemRepository.class);
         when(problems.find(problem)).thenReturn(new ProblemVersionEntity(problem, "cart-total", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", "{}"));
-        tasks = transactional(new TestTaskStore(identity, mock(IdentitySecrets.class), exercises, sql.getMapper(WorkspaceWriteRepository.class), sql.getMapper(TestTaskRepository.class),
-            problems, clock, json, sql.getMapper(TaskStreamRepository.class), mock(TaskStreamPublisher.class), sql.getMapper(FinalizationRepository.class), limits, maintenance), TestTaskStore.class);
+        tasks = transactional(new TestTaskStore(identity, fingerprints(), exercises, sql.getMapper(WorkspaceWriteRepository.class), sql.getMapper(TestTaskRepository.class),
+            problems, clock, json, sql.getMapper(TaskStreamRepository.class), mock(TaskStreamPublisher.class), sql.getMapper(FinalizationRepository.class), limits, maintenance, mock(StorageCapacityStore.class)), TestTaskStore.class);
     }
 
     @Test
@@ -168,7 +190,7 @@ class WorkspaceRetentionPersistenceIT {
             finalization, exercise, java.sql.Timestamp.from(clock.now), java.sql.Timestamp.from(clock.now.plusSeconds(600)));
         var finals = transactional(new FinalizationStore(sql.getMapper(FinalizationRepository.class), exercises, sql.getMapper(WorkspaceWriteRepository.class),
             sql.getMapper(TestTaskRepository.class), sql.getMapper(TaskStreamRepository.class), problems, identity, mock(IdentitySecrets.class), clock,
-            new FinalizationProperties(3, 600, 5, 30), new FinalVerificationPolicy(clock), json), FinalizationStore.class);
+            new FinalizationProperties(3, 600, 5, 30), new FinalVerificationPolicy(clock), json, mock(StorageCapacityStore.class)), FinalizationStore.class);
         assertThat(finals.advance(exercise)).isNull();
         assertThat(finals.find(exercise).resultTaskId()).isEqualTo(passed);
         var history = tasks.recent("session", exercise);
@@ -202,6 +224,165 @@ class WorkspaceRetentionPersistenceIT {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_test_task WHERE id = ?::uuid", Integer.class, task)).isZero();
         assertThat(exercises.operation(prepare)).isNotNull();
         assertThat(exercises.deleted(exercise)).isTrue();
+    }
+
+    @Test
+    void unconfirmedCopyCleanupRemainsInRecoveryEvenAfterExecutionQuiescence() throws Exception {
+        String recovering = task(1, true, 1);
+        jdbc.update("UPDATE workspace_test_task SET snapshot=jsonb_set(snapshot,'{copyCleanup}','\"UNKNOWN\"') WHERE id=?::uuid", recovering);
+        assertThat(tasks.pending().stream().map(ai.codecraft.modules.workspace.model.entity.TestTaskEntity::id)).contains(recovering);
+        assertThat(maintenance.pruningPlan(exercise)).isEmpty();
+        assertThat(deletion.reconciled(exercise)).isFalse();
+    }
+
+    @Test
+    void binaryLogProjectionDoesNotPreventAuthoritativeResultPersistenceInJsonb() throws Exception {
+        String id = task(1, true, 1);
+        jdbc.update("UPDATE workspace_test_task SET dispatched=true, host_epoch=? WHERE id=?::uuid", "A".repeat(26), id);
+        var original = tasks.find(id);
+        var expected = tasks.problem(original);
+        var gateway = mock(ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway.class);
+        var snapshot = ai.codecraft.workspace.v1.TestTaskSnapshot.newBuilder().setExerciseId(exercise).setTaskId(id).setExecutionInstanceId(original.executionInstanceId())
+            .setWorkspaceInstanceId(workspace).setRevision(original.revision()).setTarget(original.target()).setState("STOPPED").setReason("USER_STOPPED")
+            .setStartedAtUnixMillis(clock.instant().minusSeconds(1).toEpochMilli()).setFinishedAtUnixMillis(clock.instant().toEpochMilli())
+            .setQuiescent(true).setCleanup("SUCCEEDED").setCopyCleanup("SUCCEEDED").setStateVersion(2).setStreamId("S".repeat(26))
+            .setProblem(ai.codecraft.workspace.v1.ProblemIdentity.newBuilder().setProblemId(expected.problemId()).setVersion(expected.version())
+                .setPackageSha256(expected.packageSha256()).setExecutionImageDigest(expected.executionImageDigest()).setPlatform(expected.platform()))
+            .addLogs(ai.codecraft.workspace.v1.TestLogChunk.newBuilder().setChannel("stdout").setData(com.google.protobuf.ByteString.copyFrom(new byte[]{0, (byte) 255}))).build();
+        when(gateway.task(original)).thenReturn(snapshot);
+        new TestTaskCoordinator(tasks, gateway, mock(WorkspaceCoordinationStore.class), mock(WorkspaceWriteCoordinator.class)).observe(original);
+        assertThat(jdbc.queryForObject("SELECT snapshot#>>'{logs,0,text}' FROM workspace_test_task WHERE id=?::uuid", String.class, id)).isEqualTo("\u2400\ufffd");
+    }
+
+    @Test
+    void exhaustedOrdinaryBudgetStillAllowsOwnerRecoveryAfterLosingThePageCredential() throws Exception {
+        String task = task(30, false, 1);
+        jdbc.update("UPDATE workspace_exercise SET state='ACTIVE', ended_at=NULL, retain_until=NULL, started_at=?, deadline_at=? WHERE id=?::uuid",
+            java.sql.Timestamp.from(clock.now), java.sql.Timestamp.from(clock.now.plusSeconds(2700)), exercise);
+        jdbc.update("UPDATE workspace_control SET gate_state='OPEN', credential_hash=? WHERE exercise_id=?::uuid", IdentitySecrets.digest("lost-credential"), exercise);
+        var full = new StorageMeasurement(exercise, "A".repeat(26), 1, 256L * 1024 * 1024);
+        capacityStore.reconcile(capacityStore.plan(exercise), full);
+        var writes = transactional(new WorkspaceWriteTransactionService(identity, fingerprints(), exercises, sql.getMapper(WorkspaceWriteRepository.class), clock, capacityStore), WorkspaceWriteTransactionService.class);
+        assertThatThrownBy(() -> writes.control("session", exercise, "TAKEOVER", "blocked-takeover", null, "a".repeat(64), full))
+            .isInstanceOfSatisfying(BusinessException.class, failure -> assertThat(failure.code()).isEqualTo("STORAGE_BUDGET_EXCEEDED"));
+        var stop = tasks.acceptRecoveryStop("session", exercise, task, "first-stop");
+        assertThat(stop.ownerRecovery()).isTrue();
+        assertThat(tasks.acceptRecoveryStop("session", exercise, task, "second-stop").id()).isEqualTo(stop.id());
+        var finalization = transactional(new FinalizationStore(sql.getMapper(FinalizationRepository.class), exercises, sql.getMapper(WorkspaceWriteRepository.class),
+            sql.getMapper(TestTaskRepository.class), sql.getMapper(TaskStreamRepository.class), problems, identity, fingerprints(), clock,
+            new FinalizationProperties(3, 600, 5, 30), new FinalVerificationPolicy(clock), json, capacityStore), FinalizationStore.class);
+        var end = finalization.recoveryEnd("session", exercise, "first-end");
+        assertThat(finalization.recoveryEnd("session", exercise, "second-end").id()).isEqualTo(end.id());
+        assertThat(exercises.find(exercise).state()).isEqualTo("CLOSING");
+        assertThat(sql.getMapper(TestTaskRepository.class).pendingStops()).anyMatch(value -> value.id().equals(stop.id()) && value.ownerRecovery());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_operation WHERE exercise_id=?::uuid AND kind='STOP_TEST'", Integer.class, exercise)).isEqualTo(1);
+    }
+
+    @Test
+    void databaseMeasurementIncludesOutOfLinePayloadValuesRatherThanOnlyToastPointers() {
+        var first = capacityStore.reconcile(capacityStore.plan(exercise), new StorageMeasurement(exercise, "A".repeat(26), 1, 0));
+        byte[] entropy = new byte[512 * 1024];
+        new java.util.Random(1).nextBytes(entropy);
+        String content = java.util.Base64.getEncoder().encodeToString(entropy);
+        String operation = mutation(1, false);
+        jdbc.update("UPDATE workspace_mutation SET payload=? WHERE operation_id=?::uuid", "{\"expectedRevision\":\"1\",\"changes\":[{\"content\":\"" + content + "\"}]}", operation);
+        long storedValue = jdbc.queryForObject("SELECT pg_column_size(payload)::bigint FROM workspace_mutation WHERE operation_id=?::uuid", Long.class, operation);
+        var after = capacityStore.reconcile(capacityStore.plan(exercise), new StorageMeasurement(exercise, "A".repeat(26), 2, 0));
+        assertThat(storedValue).isGreaterThan(100000);
+        assertThat(after.databaseBytes() - first.databaseBytes()).isGreaterThanOrEqualTo(storedValue);
+    }
+
+    @Test
+    void acceptedDeletionReleasesHistorySlotBeforePhysicalCleanupUnderConcurrentCreation() throws Exception {
+        for (int i = 1; i < 20; i++) seedEndedExercise();
+        var creates = creationStore();
+        var locked = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var entered = new CountDownLatch(1);
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var deleting = pool.submit(() -> tx(() -> {
+                identity.lockResourceOwner(owner);
+                locked.countDown();
+                await(release);
+                return deletion.request("session", exercise, "delete-concurrently");
+            }));
+            try {
+                assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
+                var creating = pool.submit(() -> { entered.countDown(); return creates.create("session", problemId, "create-concurrently"); });
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(creating.isDone()).isFalse();
+                release.countDown();
+                assertThat(deleting.get(5, TimeUnit.SECONDS).state()).isEqualTo("PENDING");
+                assertThat(creating.get(5, TimeUnit.SECONDS).kind()).isEqualTo("PREPARE");
+            } finally { release.countDown(); }
+        }
+        assertThat(exercises.retainedHistory(owner)).isEqualTo(19);
+        assertThat(exercises.current(owner)).isNotNull();
+    }
+
+    @Test
+    void twoConcurrentCreationsCannotConsumeTwoUnfinishedSlots() throws Exception {
+        var creates = creationStore();
+        var results = race(() -> creates.create("session", problemId, "first"), () -> creates.create("session", problemId, "second"));
+        assertThat(results.stream().filter(WorkspaceOperationEntity.class::isInstance).count()).isEqualTo(1);
+        assertThat(results).contains("ACTIVE_EXERCISE_EXISTS");
+    }
+
+    @Test
+    void concurrentSpaceReservationsAndBusinessIntentRollbackAreAtomic() throws Exception {
+        jdbc.update("UPDATE workspace_exercise SET state='ACTIVE', ended_at=NULL, retain_until=NULL, started_at=?, deadline_at=? WHERE id=?::uuid",
+            java.sql.Timestamp.from(clock.now), java.sql.Timestamp.from(clock.now.plusSeconds(3600)), exercise);
+        String credential = "A".repeat(43);
+        jdbc.update("UPDATE workspace_control SET gate_state='OPEN', credential_hash=? WHERE exercise_id=?::uuid", IdentitySecrets.digest(credential), exercise);
+        var first = new StorageMeasurement(exercise, "A".repeat(26), 1, 236L * 1024 * 1024);
+        assertThat(capacityStore.reconcile(capacityStore.plan(exercise), first).databaseBytes()).isGreaterThan(0);
+        var writes = transactional(new WorkspaceWriteTransactionService(identity, fingerprints(), exercises, sql.getMapper(WorkspaceWriteRepository.class), clock, capacityStore), WorkspaceWriteTransactionService.class);
+        String payload = "{\"expectedRevision\":\"30\",\"changes\":[{\"path\":\"src/main/java/Main.java\",\"kind\":\"UPDATE\",\"content\":\"class Main {}\"}]}";
+        var results = race(() -> writes.batch("session", exercise, "space-one", credential, payload, 30, first),
+            () -> writes.batch("session", exercise, "space-two", credential, payload, 30, first));
+        assertThat(results.stream().filter(WorkspaceOperationEntity.class::isInstance).count()).isEqualTo(1);
+        assertThat(results).contains("STORAGE_BUDGET_EXCEEDED");
+        var repository = sql.getMapper(StorageCapacityRepository.class);
+        long reserved = repository.reservedBytes(exercise);
+        assertThat(reserved).isEqualTo(StorageCapacityStore.MUTATION_OVERHEAD + payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+        var afterCollection = new StorageMeasurement(exercise, first.meterEpoch(), 2, 216L * 1024 * 1024);
+        capacityStore.reconcile(capacityStore.plan(exercise), afterCollection);
+        assertThatThrownBy(() -> tx(() -> {
+            writes.batch("session", exercise, "rollback", credential, payload, 30, afterCollection);
+            throw new IllegalStateException("injected business rollback");
+        })).hasMessage("injected business rollback");
+        assertThat(repository.reservedBytes(exercise)).isEqualTo(reserved);
+        assertThat(writes.existingBatch("session", exercise, "rollback", payload)).isNull();
+    }
+
+    private ExerciseTransactionService creationStore() {
+        return transactional(new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock, fingerprints(),
+            mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore), ExerciseTransactionService.class);
+    }
+    private IdentitySecrets fingerprints() {
+        var secrets = mock(IdentitySecrets.class);
+        when(secrets.fingerprint(anyString())).thenReturn("f".repeat(64));
+        return secrets;
+    }
+    private void seedEndedExercise() {
+        jdbc.update("INSERT INTO workspace_exercise(id,user_id,problem_version_id,workspace_instance_id,preparation_operation_id,state,created_at,ended_at,retain_until) VALUES (?::uuid,?::uuid,?::uuid,?::uuid,?::uuid,'ENDED',?,?,?)",
+            id(), owner, problemId, id(), id(), java.sql.Timestamp.from(clock.now), java.sql.Timestamp.from(clock.now), java.sql.Timestamp.from(clock.now.plusSeconds(30 * 86400)));
+    }
+    private List<Object> race(Supplier<Object> first, Supplier<Object> second) throws Exception {
+        var barrier = new CyclicBarrier(2);
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var left = pool.submit(() -> { barrier.await(5, TimeUnit.SECONDS); return outcome(first); });
+            var right = pool.submit(() -> { barrier.await(5, TimeUnit.SECONDS); return outcome(second); });
+            return List.of(left.get(5, TimeUnit.SECONDS), right.get(5, TimeUnit.SECONDS));
+        }
+    }
+    private Object outcome(Supplier<Object> action) {
+        try { return action.get(); }
+        catch (BusinessException rejected) { return rejected.code(); }
+    }
+    private void await(CountDownLatch latch) {
+        try { if (!latch.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("fixture coordination timed out"); }
+        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IllegalStateException(interrupted); }
     }
 
     private String task(int revision, boolean quiescent, int seconds) throws Exception { return task(revision, quiescent, seconds, false); }

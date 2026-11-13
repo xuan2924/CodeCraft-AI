@@ -7,6 +7,7 @@ import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.model.dto.StartTestRequest;
 import ai.codecraft.modules.workspace.model.dto.TestHistoryRetentionResponse;
 import ai.codecraft.modules.workspace.model.dto.TestHistoryResponse;
+import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
 import ai.codecraft.modules.workspace.config.StorageProperties;
 import ai.codecraft.modules.workspace.model.dto.TestProblemResponse;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
@@ -34,6 +35,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -52,14 +54,15 @@ public class TestTaskStore {
     private final FinalizationRepository finals;
     private final StorageProperties storageLimits;
     private final WorkspaceMaintenanceStore maintenance;
+    private final StorageCapacityStore capacity;
 
     public TestTaskStore(IdentityTransactionService identity, IdentitySecrets secrets, ExerciseRepository exercises,
-        WorkspaceWriteRepository writes, TestTaskRepository tasks, ProblemRepository problems, Clock clock, ObjectMapper json,
+        WorkspaceWriteRepository writes, TestTaskRepository tasks, ProblemRepository problems, Clock clock, @Qualifier("workspaceJson") ObjectMapper json,
         TaskStreamRepository streams, TaskStreamPublisher publisher, FinalizationRepository finals,
-        StorageProperties storageLimits, WorkspaceMaintenanceStore maintenance) {
+        StorageProperties storageLimits, WorkspaceMaintenanceStore maintenance, StorageCapacityStore capacity) {
         this.identity = identity; this.secrets = secrets; this.exercises = exercises; this.writes = writes;
         this.tasks = tasks; this.problems = problems; this.clock = clock; this.json = json;
-        this.streams = streams; this.publisher = publisher; this.finals = finals; this.storageLimits = storageLimits; this.maintenance = maintenance;
+        this.streams = streams; this.publisher = publisher; this.finals = finals; this.storageLimits = storageLimits; this.maintenance = maintenance; this.capacity = capacity;
     }
 
     @Transactional(readOnly = true)
@@ -76,7 +79,7 @@ public class TestTaskStore {
     }
 
     @Transactional
-    public TestTaskEntity accept(String session, String exerciseId, String key, String credential, StartTestRequest input) {
+    public TestTaskEntity accept(String session, String exerciseId, String key, String credential, StartTestRequest input, StorageMeasurement measurement) {
         SessionAuthorizationDTO authorization = identity.authorizeMutation(session);
         ExerciseEntity exercise = owned(authorization.userId(), exerciseId);
         WorkspaceControlEntity control = writes.lock(exerciseId);
@@ -99,10 +102,13 @@ public class TestTaskStore {
         if (tasks.occupied() != 0) throw new BusinessException(WorkspaceErrorCode.TEST_SLOT_BUSY);
         Instant notAfter = authorization.expiresAt().isBefore(exercise.deadlineAt()) ? authorization.expiresAt() : exercise.deadlineAt();
         String id = UUID.randomUUID().toString();
-        exercises.insertOperation(new WorkspaceOperationEntity(id, authorization.userId(), exerciseId, exercise.workspaceInstanceId(),
-            "START_TEST", exerciseId, key, fingerprint, "PENDING", clock.instant()));
+        var operation = new WorkspaceOperationEntity(id, authorization.userId(), exerciseId, exercise.workspaceInstanceId(),
+            "START_TEST", exerciseId, key, fingerprint, "PENDING", clock.instant());
+        capacity.admit(operation, measurement, StorageCapacityStore.ORDINARY_TEST_GROWTH);
+        exercises.insertOperation(operation);
         TestTaskEntity task = new TestTaskEntity(id, UUID.randomUUID().toString(), exerciseId, exercise.workspaceInstanceId(), revision,
             control.gateEpoch(), notAfter, input.target(), "ACCEPTED", false, false, null, null, 0);
+        capacity.registerExecution(task);
         tasks.insert(task);
         streams.create(task.id(), UUID.randomUUID().toString());
         return task;
@@ -129,33 +135,52 @@ public class TestTaskStore {
     }
 
     @Transactional
+    public TestStopEntity acceptRecoveryStop(String session, String exerciseId, String taskId, String key) {
+        return acceptStop(session, exerciseId, taskId, key, null, true);
+    }
+
+    @Transactional
     public TestStopEntity acceptStop(String session, String exerciseId, String taskId, String key, String credential) {
+        return acceptStop(session, exerciseId, taskId, key, credential, false);
+    }
+
+    private TestStopEntity acceptStop(String session, String exerciseId, String taskId, String key, String credential, boolean ownerRecovery) {
         SessionAuthorizationDTO authorization = identity.authorizeMutation(session);
         ExerciseEntity exercise = owned(authorization.userId(), exerciseId);
         WorkspaceControlEntity control = writes.lock(exerciseId);
-        credential(control, credential);
+        if (!ownerRecovery) credential(control, credential);
         TestTaskEntity task = tasks.lock(taskId);
         if (task == null || !task.exerciseId().equals(exerciseId)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         if (tasks.retired(taskId)) throw new BusinessException(WorkspaceErrorCode.TEST_HISTORY_PRUNED);
+        if (ownerRecovery && finals.authority(taskId) != null) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
         if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
         WorkspaceOperationEntity previous = exercises.receipt(authorization.userId(), "STOP_TEST", taskId, key);
         if (previous != null) {
             if (previous.state().equals("REJECTED")) throw new BusinessException(WorkspaceErrorCode.STALE_CONTROL);
-            return tasks.stop(previous.id());
+            return recoverAuthority(tasks.stop(previous.id()), ownerRecovery);
         }
         if (!exercise.state().equals("ACTIVE")) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
-        if (!clock.instant().isBefore(exercise.deadlineAt())) throw new BusinessException(WorkspaceErrorCode.EXERCISE_EXPIRED);
-        if (control.transitionId() != null || control.fenceId() != null) throw new BusinessException(WorkspaceErrorCode.CONTROL_TRANSITION_PENDING);
-        if (!control.gateState().equals("OPEN") || control.gateEpoch() == null) throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE);
+        if (!ownerRecovery) {
+            if (!clock.instant().isBefore(exercise.deadlineAt())) throw new BusinessException(WorkspaceErrorCode.EXERCISE_EXPIRED);
+            if (control.transitionId() != null || control.fenceId() != null) throw new BusinessException(WorkspaceErrorCode.CONTROL_TRANSITION_PENDING);
+            if (!control.gateState().equals("OPEN") || control.gateEpoch() == null) throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE);
+        }
+        if (TERMINAL.contains(task.state()) && (!ownerRecovery || task.quiescent())) return null;
+        TestStopEntity accepted = tasks.acceptedStop(taskId);
+        if (accepted != null) return recoverAuthority(accepted, ownerRecovery);
         String id = UUID.randomUUID().toString();
-        boolean terminal = TERMINAL.contains(task.state());
         exercises.insertOperation(new WorkspaceOperationEntity(id, authorization.userId(), exerciseId, task.workspaceInstanceId(),
-            "STOP_TEST", taskId, key, secrets.fingerprint(taskId), terminal ? "SUCCEEDED" : "PENDING", clock.instant()));
-        if (terminal) return null;
-        Instant notAfter = authorization.expiresAt().isBefore(exercise.deadlineAt()) ? authorization.expiresAt() : exercise.deadlineAt();
-        TestStopEntity stop = new TestStopEntity(id, taskId, control.gateEpoch(), notAfter, "PENDING");
+            "STOP_TEST", taskId, key, secrets.fingerprint(taskId), "PENDING", clock.instant()));
+        Instant notAfter = ownerRecovery || authorization.expiresAt().isBefore(exercise.deadlineAt()) ? authorization.expiresAt() : exercise.deadlineAt();
+        TestStopEntity stop = new TestStopEntity(id, taskId, ownerRecovery ? task.gateEpoch() : control.gateEpoch(), notAfter, "PENDING", ownerRecovery);
         tasks.insertStop(stop);
         return stop;
+    }
+
+    private TestStopEntity recoverAuthority(TestStopEntity stop, boolean ownerRecovery) {
+        if (!ownerRecovery || stop.ownerRecovery() || !stop.state().equals("PENDING")) return stop;
+        tasks.recoverStopAuthority(stop.id());
+        return new TestStopEntity(stop.id(), stop.taskId(), stop.gateEpoch(), stop.notAfter(), stop.state(), true);
     }
 
     @Transactional(readOnly = true)
@@ -167,6 +192,8 @@ public class TestTaskStore {
         if (task == null) return;
         writes.lock(task.exerciseId());
         task = tasks.lock(task.id());
+        TestStopEntity currentStop = tasks.stop(stop.id());
+        if (!accepted && currentStop != null && currentStop.ownerRecovery()) return;
         if (beforeRegistration) cancelledBeforeRegistration(task, cancellationHostEpoch);
         String state = accepted ? "SUCCEEDED" : "REJECTED";
         tasks.stopState(stop.id(), state);

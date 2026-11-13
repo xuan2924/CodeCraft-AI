@@ -63,7 +63,7 @@ class LifecycleConvergenceTest {
         TestTaskStore admission = new TestTaskStore(mock(IdentityTransactionService.class), mock(IdentitySecrets.class), fixture.exercises, fixture.writes,
             fixture.tasks, problems, Clock.fixed(DEADLINE, ZoneOffset.UTC), JsonMapper.builder().addModule(new JavaTimeModule()).build(),
             mock(TaskStreamRepository.class), mock(TaskStreamPublisher.class), fixture.finals,
-            new ai.codecraft.modules.workspace.config.StorageProperties(512L * 1024 * 1024, 160L * 1024 * 1024, 20), mock(WorkspaceMaintenanceStore.class));
+            new ai.codecraft.modules.workspace.config.StorageProperties(512L * 1024 * 1024, 256L * 1024 * 1024, 20), mock(WorkspaceMaintenanceStore.class), mock(StorageCapacityStore.class));
         assertFalse(admission.claim(manual, "A".repeat(26)));
         verify(fixture.tasks, never()).dispatch(anyString(), anyString());
         fixture.store.expire("exercise");
@@ -128,7 +128,7 @@ class LifecycleConvergenceTest {
             Clock clock = Clock.fixed(DEADLINE, ZoneOffset.UTC);
             // One attempt is an allowed bound; environmental failure must release business activity.
             store = new FinalizationStore(finals, exercises, writes, tasks, mock(TaskStreamRepository.class), mock(ProblemRepository.class), identity,
-                mock(IdentitySecrets.class), clock, new FinalizationProperties(1, 600, 5, 30), new FinalVerificationPolicy(clock), json);
+                mock(IdentitySecrets.class), clock, new FinalizationProperties(1, 600, 5, 30), new FinalVerificationPolicy(clock), json, mock(StorageCapacityStore.class));
             coordination = new WorkspaceCoordinationStore(writes, exercises, json);
             when(finals.find("exercise")).thenAnswer(call -> finalization);
             when(exercises.find("exercise")).thenAnswer(call -> exercise());
@@ -191,7 +191,7 @@ class LifecycleConvergenceTest {
         }
 
         FinalizationCoordinator coordinator() {
-            return new FinalizationCoordinator(store, coordination, new WorkspaceWriteCoordinator(coordination, sandbox, codec), mock(TestTaskCoordinator.class), sandbox);
+            return new FinalizationCoordinator(store, coordination, new WorkspaceWriteCoordinator(coordination, sandbox, codec), mock(TestTaskCoordinator.class), sandbox, mock(StorageCapacityService.class));
         }
         GateResponse closed() { calls.add("close"); return gate(finalization.id(), 3, "CLOSED"); }
         WorkspaceControlEntity control(long epoch, String gate, String holder, String transition, String fence) {

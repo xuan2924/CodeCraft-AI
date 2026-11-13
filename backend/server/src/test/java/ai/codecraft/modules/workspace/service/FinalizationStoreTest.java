@@ -137,7 +137,7 @@ class FinalizationStoreTest {
         when(sandbox.freeze("workspace", "final", 3)).thenThrow(Status.UNAVAILABLE.asRuntimeException()).thenReturn(receipt);
         WorkspaceCoordinationStore coordination = new WorkspaceCoordinationStore(fixture.writes, fixture.exercises, fixture.json);
         WorkspaceWriteCoordinator fences = new WorkspaceWriteCoordinator(coordination, sandbox, mock(WorkspaceBatchCodec.class));
-        FinalizationCoordinator coordinator = new FinalizationCoordinator(fixture.service(), coordination, fences, mock(TestTaskCoordinator.class), sandbox);
+        FinalizationCoordinator coordinator = new FinalizationCoordinator(fixture.service(), coordination, fences, mock(TestTaskCoordinator.class), sandbox, mock(StorageCapacityService.class));
         assertThrows(RuntimeException.class, () -> coordinator.drive("exercise"));
         assertNull(fixture.service().find("exercise").deadlineAt());
         fixture.clock.now = START.plusSeconds(10);
@@ -169,6 +169,29 @@ class FinalizationStoreTest {
         assertThrows(IllegalStateException.class, () -> fixture.service().frozen("exercise", receipt));
     }
 
+    @Test
+    void ownerRecoveryEndsWithoutALostPageCredentialAndAllRetryKeysJoinTheSameIntent() {
+        var fixture = new Fixture(0, null);
+        fixture.value = null;
+        when(fixture.identity.authorizeMutation("session")).thenReturn(new ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO("user", "USER", false, 1, START.plusSeconds(60)));
+        when(fixture.exercises.find("exercise")).thenReturn(fixture.exercise("ACTIVE"));
+        when(fixture.writes.lock("exercise")).thenReturn(new WorkspaceControlEntity("exercise", 1, 1L, "OPEN", IdentitySecrets.digest("lost-credential"), null, null));
+        when(fixture.finals.closing("exercise", "USER_ENDED")).thenReturn(1);
+        doAnswer(call -> { fixture.value = call.getArgument(0); return null; }).when(fixture.finals).insert(any());
+        var accepted = fixture.service().recoveryEnd("session", "exercise", "first");
+        assertEquals(accepted, fixture.service().recoveryEnd("session", "exercise", "second"));
+        org.mockito.Mockito.verify(fixture.finals, org.mockito.Mockito.times(1)).insert(any());
+    }
+
+    @Test
+    void ownerRecoveryCannotExposeOrEndAnotherOwnersExistingFinalization() {
+        var fixture = new Fixture(0, null);
+        when(fixture.identity.authorizeMutation("session")).thenReturn(new ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO("other", "USER", false, 1, START.plusSeconds(60)));
+        var failure = assertThrows(ai.codecraft.common.exception.BusinessException.class, () -> fixture.service().recoveryEnd("session", "exercise", "recovery"));
+        assertEquals("RESOURCE_NOT_FOUND", failure.code());
+        org.mockito.Mockito.verify(fixture.finals, org.mockito.Mockito.never()).insert(any());
+    }
+
     private static final class MutableClock extends Clock {
         private Instant now = START;
         @Override public Instant instant() { return now; }
@@ -179,6 +202,7 @@ class FinalizationStoreTest {
     /** Storage substitute retains rows across service recreation; no RPC is mocked as business success. */
     private static final class Fixture {
         final MutableClock clock = new MutableClock();
+        final IdentityTransactionService identity = mock(IdentityTransactionService.class);
         final FinalizationRepository finals = mock(FinalizationRepository.class);
         final ExerciseRepository exercises = mock(ExerciseRepository.class);
         final WorkspaceWriteRepository writes = mock(WorkspaceWriteRepository.class);
@@ -210,8 +234,8 @@ class FinalizationStoreTest {
 
         FinalizationStore service() {
             return new FinalizationStore(finals, exercises, writes, tasks, mock(TaskStreamRepository.class), problems,
-                mock(IdentityTransactionService.class), mock(IdentitySecrets.class), clock, new FinalizationProperties(3, 600, 5, 30),
-                new FinalVerificationPolicy(clock), json);
+                identity, mock(IdentitySecrets.class), clock, new FinalizationProperties(3, 600, 5, 30),
+                new FinalVerificationPolicy(clock), json, mock(StorageCapacityStore.class));
         }
 
         ExerciseEntity exercise(String state) {

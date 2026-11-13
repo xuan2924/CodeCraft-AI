@@ -85,3 +85,7 @@
 - 最终 `scripts/verify.mjs` 通过：真实 Docker/Linux 工作区测试、Java 本地测试、Windows race、前端 9 文件/62 测试、类型检查/lint/build/audit。单独完整 `scripts/test-tracer.mjs --workspace` 通过：22 项 WorkspaceIT、1 项 WorkspaceCrashRecoveryIT、1 项 StatusIT、两个工作区浏览器用例及依赖故障/重启探针。日志 `.runtime/task13-verify-final.log`、`.runtime/task13-full-chain-final.log`。
 - 最终双轴审查均 OK with notes；未发现新阻断项，要求的最终 tracer 复验已通过。既有 AGENTS.md 用户改动不纳入提交。
 - #14 主动停止/SSE/执行重启重接/清理重试、#15 结束/最终验收、#16 容量/保留/删除与阶段总验收不在本票交付中。未宣称 Linux race、实际 daemon 宕机、磁盘耗尽完整矩阵或生产宿主复验通过。
+
+### #16 联动发现的日志持久化缺陷
+
+最小真实 PostgreSQL 回归重现：合法原始日志含 NUL 时，Java UTF-8 文本投影的 `\u0000` 被 jsonb 拒绝，阻断权威终态持久化。现将 NUL 显示为 `␀`，非法 UTF-8 仍按替换字符显示，Go 原始字节/证据不变；公开 `TestTaskCoordinator.observe` 加实际 MyBatis/jsonb 用例已红绿通过。此修复纳入 #16，未为本问题重跑完整 Docker/浏览器链路，也不改变既有完成边界。

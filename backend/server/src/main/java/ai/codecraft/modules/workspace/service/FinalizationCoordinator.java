@@ -1,6 +1,8 @@
 package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
+import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import ai.codecraft.modules.workspace.model.entity.FinalizationEntity;
 import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
 import org.slf4j.Logger;
@@ -17,10 +19,11 @@ public class FinalizationCoordinator {
     private final WorkspaceWriteCoordinator fences;
     private final TestTaskCoordinator tests;
     private final SandboxWorkspaceGateway sandbox;
+    private final StorageCapacityService capacity;
 
     public FinalizationCoordinator(FinalizationStore store, WorkspaceCoordinationStore coordination,
-        WorkspaceWriteCoordinator fences, TestTaskCoordinator tests, SandboxWorkspaceGateway sandbox) {
-        this.store = store; this.coordination = coordination; this.fences = fences; this.tests = tests; this.sandbox = sandbox;
+        WorkspaceWriteCoordinator fences, TestTaskCoordinator tests, SandboxWorkspaceGateway sandbox, StorageCapacityService capacity) {
+        this.store = store; this.coordination = coordination; this.fences = fences; this.tests = tests; this.sandbox = sandbox; this.capacity = capacity;
     }
 
     @Scheduled(fixedDelay = 1000)
@@ -52,7 +55,13 @@ public class FinalizationCoordinator {
             var exercise = coordination.exercise(exerciseId);
             store.frozen(exerciseId, sandbox.freeze(exercise.workspaceInstanceId(), value.id(), control.gateEpoch()));
         }
-        TestTaskEntity allocated = store.advance(exerciseId);
+        TestTaskEntity allocated;
+        try { allocated = store.advance(exerciseId); }
+        catch (BusinessException denied) {
+            if (denied.errorCode() != WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED && denied.errorCode() != WorkspaceErrorCode.STORAGE_METER_UNAVAILABLE) throw denied;
+            capacity.reconcile(exerciseId);
+            allocated = store.advance(exerciseId);
+        }
         value = store.find(exerciseId);
         boolean cancelled = cancelOutstanding(value);
         if (value.endedAt() != null && cancelled) store.cancelled(exerciseId);

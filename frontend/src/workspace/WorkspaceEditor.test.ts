@@ -22,6 +22,30 @@ function render(owner = 'owner') {
   view = mount(WorkspaceEditor, { props: { owner, exercise, file, selected: file.path, credential: 'credential' } });
   return view;
 }
+it('keeps the editable draft and backup after unified storage admission is denied', async () => {
+  vi.mocked(api.save).mockRejectedValueOnce(new ApiError(429, 'STORAGE_BUDGET_EXCEEDED'));
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('keep on quota denial');
+  await vi.advanceTimersByTimeAsync(350);
+  await page.findAll('button').find((button) => button.text() === '保存文件')!.trigger('click');
+  await flushPromises();
+  expect(page.get('textarea').element.value).toBe('keep on quota denial');
+  expect(page.text()).toContain('单场数据容量不足');
+  expect(drafts.putDraft).toHaveBeenCalledWith(expect.objectContaining({ content: 'keep on quota denial' }), 0);
+  expect(drafts.removeDraft).not.toHaveBeenCalled();
+  expect(api.operation).not.toHaveBeenCalled();
+});
+
+it('backs up but never submits or deletes dirty content for owner recovery ending without page control', async () => {
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('retain on recovery end');
+  await page.setProps({ credential: '' });
+  expect(await page.vm.$.exposed?.prepareEnd('retain')).toBe(true);
+  expect(page.get('textarea').element.value).toBe('retain on recovery end');
+  expect(drafts.putDraft).toHaveBeenCalledWith(expect.objectContaining({ content: 'retain on recovery end' }), 0);
+  expect(api.save).not.toHaveBeenCalled(); expect(drafts.removeDraft).not.toHaveBeenCalled();
+});
+
 it('retains local drafts read-only at expiry without submitting or deleting them', async () => {
   const page = render(); await flushPromises();
   await page.get('textarea').setValue('keep after expiry');

@@ -6,9 +6,9 @@ import WorkspacePage from './WorkspacePage.vue';
 import * as drafts from './drafts';
 vi.mock('./drafts', async (original) => ({ ...await original<typeof drafts>(), listAccountDrafts: vi.fn(async () => []), confirmExerciseDeletion: vi.fn(async () => {}) }));
 
-const endPreparation = vi.hoisted(() => vi.fn<() => Promise<boolean>>());
+const endPreparation = vi.hoisted(() => vi.fn<(choice: 'save' | 'discard' | 'retain') => Promise<boolean>>());
 vi.mock('./WorkspaceEditor.vue', () => ({ __esModule: true, default: { props: ['credential'], data: () => ({ draft: '' }),
-  methods: { prepareEnd: () => endPreparation() },
+  methods: { prepareEnd: (choice: 'save' | 'discard' | 'retain') => endPreparation(choice) },
   template: '<textarea aria-label="草稿夹具" v-model="draft" :data-can-write="!!credential" />' } }));
 
 const ok = (data: unknown) => new Response(JSON.stringify({ code: 'OK', data }), { status: 200 });
@@ -18,8 +18,12 @@ let client: QueryClient | undefined;
 afterEach(() => { page?.unmount(); client?.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); endPreparation.mockReset(); vi.mocked(drafts.listAccountDrafts).mockReset().mockResolvedValue([]); vi.mocked(drafts.confirmExerciseDeletion).mockClear(); });
 
 async function render(fetcher: typeof fetch, initial = '/') {
-  vi.stubGlobal('fetch', (input: RequestInfo | URL, options?: RequestInit) =>
-    String(input) === '/api/exercises' && !options?.method ? Promise.resolve(ok([])) : fetcher(input, options));
+  vi.stubGlobal('fetch', (input: RequestInfo | URL, options?: RequestInit) => {
+    if (String(input) === '/api/exercises' && !options?.method) return Promise.resolve(ok([]));
+    if (String(input).endsWith('/storage') && !options?.method) return Promise.resolve(ok({ limitBytes: 536870912, recoveryBytes: 268435456,
+      goBytes: 0, databaseBytes: 0, reservedBytes: 0, measuredAt: '2026-01-01T00:00:00Z' }));
+    return fetcher(input, options);
+  });
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/', name: 'workspace', component: WorkspacePage },
@@ -258,6 +262,35 @@ it('requires draft handling before ending and retains the ended result by exerci
   expect(view.text()).toContain('最终验收结果不可用');
   expect(view.text()).toContain('AI 报告尚未接入');
   expect(view.find('[data-testid="end-exercise"]').exists()).toBe(false);
+});
+
+it('can explicitly retain drafts and end after reload without reacquiring ordinary page authority', async () => {
+  let ended = false;
+  const exercise = { exerciseId: 'full', problemVersionId: 'v1', workspaceInstanceId: 'ws1', state: 'ACTIVE', revision: '7', paths: [],
+    deadlineAt: new Date(Date.now() + 60000).toISOString(), preparationFailureReason: null, cleanupState: null };
+  endPreparation.mockResolvedValue(true);
+  const view = await render(vi.fn<typeof fetch>(async (input, options) => {
+    const path = String(input);
+    if (path === '/api/auth/session') return ok({ id: 'owner', username: 'invited', role: 'USER', passwordChangeRequired: false, expiresAt: '2030-01-01T00:00:00Z' });
+    if (path === '/api/auth/csrf') return ok({ token: 'fixture' });
+    if (path === '/api/problems') return ok([]);
+    if (path === '/api/exercises/current' || path === '/api/exercises/full') return ok(ended ? { ...exercise, state: 'CLOSING' } : exercise);
+    if (path.endsWith('/control')) return ok({ exerciseId: 'full', operationId: null, state: 'SUCCEEDED', generation: '1', held: true, credential: null });
+    if (path.endsWith('/recovery-end')) {
+      expect(new Headers(options?.headers).has('X-Operation-Credential')).toBe(false);
+      ended = true; return ok({ exerciseId: 'full', state: 'CLOSING' });
+    }
+    if (path.endsWith('/tasks')) return ok({ tasks: [], retention: { retainedCompletedLimit: 20, prunedCount: 0, cleanupPendingCount: 0 } });
+    throw new Error('Unexpected ordinary action: ' + path);
+  }));
+  await view.get('textarea').setValue('retain this local draft');
+  expect(view.get('[data-testid="end-exercise"]').attributes('disabled')).toBeUndefined();
+  await view.get('[data-testid="end-exercise"]').trigger('click');
+  await view.findAll('button').find((button) => button.text() === '保留草稿并结束')!.trigger('click');
+  await flushPromises();
+  expect(ended).toBe(true); expect(endPreparation).toHaveBeenCalledWith('retain');
+  expect(view.get('textarea').element.value).toBe('retain this local draft');
+  expect(drafts.confirmExerciseDeletion).not.toHaveBeenCalled();
 });
 
 it('reopens an ended result and its draft backups even when another exercise is active', async () => {

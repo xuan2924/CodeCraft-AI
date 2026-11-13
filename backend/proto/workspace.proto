@@ -14,6 +14,8 @@ service WorkspaceStorage {
   // Java supplies a consistent reference snapshot; a stale current revision rejects collection.
   rpc CollectWorkspace(CollectWorkspaceRequest) returns (WorkspaceCollectionReceipt);
   rpc PruneTestEvidence(QueryTaskRequest) returns (TestEvidencePruningReceipt);
+  // Scope is monotonic at the durable meter; delayed subset requests never forget old owners.
+  rpc MeasureExerciseStorage(MeasureExerciseStorageRequest) returns (StorageMeasurement);
   rpc ReadWorkspaceFile(ReadWorkspaceFileRequest) returns (ReadWorkspaceFileResponse);
   rpc CancelPreparation(CancelPreparationRequest) returns (WorkspaceSnapshot);
   rpc CloseGate(CloseGateRequest) returns (GateResponse);
@@ -72,6 +74,17 @@ message TestEvidencePruningReceipt {
   string task_id = 2;
   string execution_instance_id = 3;
   bool complete = 4;
+}
+message MeasureExerciseStorageRequest {
+  string exercise_id = 1;
+  repeated string workspace_instance_ids = 2;
+  repeated QueryTaskRequest executions = 3;
+}
+message StorageMeasurement {
+  string exercise_id = 1;
+  string meter_epoch = 2;
+  uint64 sequence = 3;
+  uint64 bytes = 4;
 }
 message ReadWorkspaceFileRequest {
   string workspace_instance_id = 1;

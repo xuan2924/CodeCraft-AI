@@ -50,6 +50,13 @@ public class TestTaskController {
         return ResponseEntity.status(result.finishedAt() == null ? 202 : 200).header("Cache-Control", "no-store").body(ApiResponse.success(result));
     }
 
+    @PostMapping("/api/exercises/{id}/tasks/{taskId}/recovery-stop")
+    public ResponseEntity<ApiResponse<TestTaskResponse>> recoveryStop(@PathVariable UUID id, @PathVariable UUID taskId,
+        @RequestHeader(value = "Idempotency-Key", required = false) String key, HttpServletRequest request) {
+        TestTaskResponse result = tasks.recoveryStop(IdentityHttp.sessionHash(request), id.toString(), taskId.toString(), key);
+        return ResponseEntity.status(result.finishedAt() == null ? 202 : 200).header("Cache-Control", "no-store").body(ApiResponse.success(result));
+    }
+
     @GetMapping("/api/exercises/{id}/tasks/{taskId}")
     public ApiResponse<TestTaskResponse> query(@PathVariable UUID id, @PathVariable UUID taskId, HttpServletRequest request) {
         return ApiResponse.success(tasks.query(IdentityHttp.sessionHash(request), id.toString(), taskId.toString()));

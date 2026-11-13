@@ -41,7 +41,7 @@ public class DeletionStore {
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         if (!exercise.state().equals("ENDED")) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
         DeletionEntity previous = deletions.find(id);
-        if (previous != null) return describe(previous);
+        if (previous != null) return visibleConfirmation(previous);
         DeletionEntity accepted = new DeletionEntity(id, user, exercise.workspaceInstanceId(), "PENDING", clock.instant(), null, 0, clock.instant(), null, null);
         deletions.insert(accepted);
         return describe(deletions.find(id));
@@ -56,8 +56,7 @@ public class DeletionStore {
     public DeletionResponse status(String session, String id) {
         String user = identity.authorization(session).userId();
         DeletionEntity value = deletions.find(id);
-        if (value == null || !value.userId().equals(user) || value.completedAt() != null
-            && !clock.instant().isBefore(value.completedAt().plus(Duration.ofDays(properties.progressDays())))) {
+        if (value == null || !value.userId().equals(user) || progressExpired(value)) {
             throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         }
         return describe(value);
@@ -69,8 +68,10 @@ public class DeletionStore {
         validateKey(key);
         DeletionEntity value = deletions.find(id);
         if (value == null || !value.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
-        if (value.completedAt() != null) return describe(value);
+        if (value.completedAt() != null) return visibleConfirmation(value);
+        deletions.expireManualRetryReceipts(id, clock.instant().minus(Duration.ofDays(7)));
         if (exercises.receipt(user, "RETRY_DELETE", id, key) != null) return describe(value);
+        if (deletions.admitManualRetry(id, clock.instant()) != 1) throw new BusinessException(WorkspaceErrorCode.DELETION_RETRY_THROTTLED);
         exercises.insertOperation(new WorkspaceOperationEntity(UUID.randomUUID().toString(), user, id, value.workspaceInstanceId(),
             "RETRY_DELETE", id, key, "RETRY_DELETE", "SUCCEEDED", clock.instant()));
         deletions.retry(id, clock.instant());
@@ -134,6 +135,15 @@ public class DeletionStore {
 
     private void validateKey(String key) {
         if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
+    }
+
+    private boolean progressExpired(DeletionEntity value) {
+        return value.completedAt() != null && !clock.instant().isBefore(value.completedAt().plus(Duration.ofDays(properties.progressDays())));
+    }
+
+    private DeletionResponse visibleConfirmation(DeletionEntity value) {
+        if (progressExpired(value)) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
+        return describe(value);
     }
 
     private DeletionResponse describe(DeletionEntity value) {

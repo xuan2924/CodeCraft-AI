@@ -5,7 +5,7 @@ import { NButton } from 'naive-ui';
 import ExerciseRetentionEntry from './ExerciseRetentionEntry.vue';
 import { history } from './retentionApi';
 const props = defineProps<{ owner: string }>();
-const emit = defineEmits<{ deleted: [id: string]; select: [id: string] }>();
+const emit = defineEmits<{ deleted: [id: string, owner: string]; select: [id: string] }>();
 const after = ref<string>();
 const query = useQuery({ queryKey: ['workspace', props.owner, 'history', after],
   queryFn: ({ signal }) => history(signal, after.value), retry: false, refetchInterval: 5000 });
@@ -34,7 +34,7 @@ const query = useQuery({ queryKey: ['workspace', props.owner, 'history', after],
       :key="`${owner}:${entry.exerciseId}`"
       :owner="owner"
       :entry="entry"
-      @deleted="emit('deleted', $event)"
+      @deleted="(id, user) => emit('deleted', id, user)"
       @select="emit('select', $event)"
     />
     <NButton

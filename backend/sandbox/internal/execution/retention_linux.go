@@ -148,7 +148,7 @@ func (r *Runner) deleteEvidence(ctx context.Context, workspace string, exact *Ta
 			return err
 		}
 		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), ".corrupt-"+id+"-") || strings.HasPrefix(entry.Name(), ".stage-"+id+".") {
+			if storedExecutionID(entry.Name()) == id && (strings.HasPrefix(entry.Name(), ".corrupt-") || strings.HasPrefix(entry.Name(), ".stage-")) {
 				if err = root.Remove(entry.Name()); err != nil && !os.IsNotExist(err) {
 					return err
 				}

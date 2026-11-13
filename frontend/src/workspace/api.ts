@@ -113,6 +113,11 @@ export function message(error: unknown): string {
     if (error.code === 'EXERCISE_EXPIRED') return '作答已到期，本地内容不会自动提交。';
     if (error.code === 'TEST_TARGET_UNAVAILABLE') return '这个固定题目版本尚未配备正式执行配置，不会替换已有工作区版本，请联系维护者。';
     if (error.code === 'TEST_SLOT_BUSY') return '已有测试占用执行名额，不会排队。请查询原任务，确认结束后再运行。';
+    if (error.code === 'STORAGE_BUDGET_EXCEEDED') return '单场数据容量不足，新增操作未受理，草稿已保留；仍可恢复停止、保留草稿结束或删除已结束演练。';
+    if (error.code === 'STORAGE_METER_UNAVAILABLE') return '暂时无法核对数据容量，不会按零占用受理；草稿已保留。';
+    if (error.code === 'REQUEST_TOO_LARGE') return '请求内容过大，本次未受理；请减少本批次改动，草稿已保留。';
+    if (error.code === 'REQUEST_CAPACITY') return '大文本处理繁忙，本次未受理，草稿已保留；请稍后重试。';
+    if (error.code === 'DELETION_RETRY_THROTTLED') return '清理正在执行或距上次手动推进不足一分钟；后台会继续重试，不会创建并行清理。';
     if (error.code === 'WORKSPACE_CAPACITY') return '工作区容量不足，本批次未保存，草稿已保留。';
     if (error.code === 'WRITE_NOT_COMMITTED') return '已核对原操作未提交。请检查当前版本后显式重新保存。';
     if (error.code === 'FILE_EXISTS') return '目标文件已存在，本批次未应用。';
