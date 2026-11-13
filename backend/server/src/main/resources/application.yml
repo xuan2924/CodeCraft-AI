@@ -44,3 +44,7 @@ identity:
   fingerprint-key: ${IDENTITY_FINGERPRINT_KEY:}
   bootstrap-username: ${BOOTSTRAP_ADMIN_USERNAME:}
   bootstrap-password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+model:
+  security:
+    active-key-id: ${MODEL_CREDENTIAL_ACTIVE_KEY_ID:}
+    keys: ${MODEL_CREDENTIAL_KEYS:}
