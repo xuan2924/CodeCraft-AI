@@ -9,6 +9,7 @@ const image = 'maven@sha256:d6e32a254897415a445654a3c43c30fbc731a4d946cf5c66d1cb
 export async function linuxJavaTests({ directory, project, values, database, mode, sandbox, test, url }) {
   const selection = test ?? { workspace: 'WorkspaceIT', identity: 'IdentityIT', recovery: 'WorkspaceCrashRecoveryIT', tracer: 'StatusIT' }[mode];
   if (!selection) throw new Error('Unknown Java integration-test mode');
+  if (mode === 'copilot' && !process.env.DeepSeek?.trim()) throw new Error('Paid Copilot validation requires the DeepSeek environment credential');
   const work = join(directory, `java-tests-${mode}`);
   await mkdir(join(work, 'server/target'), { recursive: true });
   await mkdir(join(work, 'bin'));
@@ -33,7 +34,8 @@ export async function linuxJavaTests({ directory, project, values, database, mod
     env.WORKSPACE_IT_RUN = 'disposable';
     env.SANDBOX_TEST_CONTAINER = sandbox;
     await copyFile(join(root, 'scripts/test-support/docker-control.sh'), join(work, 'bin/docker'));
-  } else if (mode === 'identity') env.IDENTITY_IT_RUN = 'disposable';
+  } else if (mode === 'copilot') env.COPILOT_WORKSPACE_IT_RUN = 'disposable';
+  else if (mode === 'identity') env.IDENTITY_IT_RUN = 'disposable';
   else if (mode === 'recovery') env.WORKSPACE_CRASH_IT_RUN = 'disposable';
   else env.TRACER_IT_URL = url;
   const envFile = join(work, '.env');
@@ -42,7 +44,7 @@ export async function linuxJavaTests({ directory, project, values, database, mod
   const failures = [];
   try {
     run('docker', ['run', '--rm', '--name', name, '--network', `${project}_default`,
-      '--env-file', envFile, '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
+      '--env-file', envFile, ...(mode === 'copilot' ? ['--env', 'DeepSeek'] : []), '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
       '--mount', `type=bind,source=${work},target=/tests`,
       '--mount', `type=bind,source=${join(homedir(), '.m2/repository')},target=/root/.m2/repository,readonly`,
       ...(mode === 'workspace' ? ['--mount', 'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock'] : []),

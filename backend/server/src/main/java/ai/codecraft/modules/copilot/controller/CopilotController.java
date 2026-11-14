@@ -25,14 +25,23 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import ai.codecraft.modules.copilot.service.CopilotTestTools;
+import ai.codecraft.modules.copilot.model.dto.CopilotTestResponse;
+import java.util.List;
 
 @RestController
 public class CopilotController {
     private final CopilotTaskService tasks;
     private final TaskEventTransport transport;
     private final CopilotProposalService proposals;
-    public CopilotController(CopilotTaskService tasks, TaskEventTransport transport, CopilotProposalService proposals) {
-        this.tasks = tasks; this.transport = transport; this.proposals = proposals;
+    private final CopilotTestTools tests;
+    public CopilotController(CopilotTaskService tasks, TaskEventTransport transport, CopilotProposalService proposals, CopilotTestTools tests) {
+        this.tasks = tasks; this.transport = transport; this.proposals = proposals; this.tests = tests;
+    }
+
+    @GetMapping("/api/copilot-tasks/{task}/tests")
+    public ApiResponse<List<CopilotTestResponse>> tests(@PathVariable UUID task, HttpServletRequest request) {
+        return ApiResponse.success(tests.recent(IdentityHttp.sessionHash(request), task.toString()));
     }
 
     @GetMapping("/api/copilot-tasks/{task}/proposals")

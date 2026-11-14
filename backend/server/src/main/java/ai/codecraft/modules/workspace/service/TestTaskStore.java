@@ -11,6 +11,9 @@ import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
 import ai.codecraft.modules.workspace.config.StorageProperties;
 import ai.codecraft.modules.workspace.model.dto.TestProblemResponse;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
+import ai.codecraft.modules.workspace.model.dto.TestResultEvidenceDTO;
+import ai.codecraft.modules.identity.model.exception.IdentityFailure;
+import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
 import ai.codecraft.modules.workspace.repository.ProblemRepository;
@@ -37,6 +40,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 @Service
 public class TestTaskStore {
@@ -80,13 +84,27 @@ public class TestTaskStore {
 
     @Transactional
     public TestTaskEntity accept(String session, String exerciseId, String key, String credential, StartTestRequest input, StorageMeasurement measurement) {
+        return accept(session, exerciseId, key, credential, input, measurement, false);
+    }
+
+    /** Only the trusted Copilot admission transaction may use this entry; it must persist its parent binding atomically. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public TestTaskEntity acceptCopilot(String session, String exerciseId, String key, StartTestRequest input, StorageMeasurement measurement) {
+        return accept(session, exerciseId, key, null, input, measurement, true);
+    }
+
+    private TestTaskEntity accept(String session, String exerciseId, String key, String credential, StartTestRequest input, StorageMeasurement measurement, boolean background) {
         SessionAuthorizationDTO authorization = identity.authorizeMutation(session);
+        if (background && !"USER".equals(authorization.role())) throw new IdentityFailure(IdentityErrorCode.FORBIDDEN);
         ExerciseEntity exercise = owned(authorization.userId(), exerciseId);
         WorkspaceControlEntity control = writes.lock(exerciseId);
-        credential(control, credential);
+        if (!background) credential(control, credential);
+        else if (control == null) throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE);
         String fingerprint = fingerprint(key, input);
         WorkspaceOperationEntity previous = exercises.receipt(authorization.userId(), "START_TEST", exerciseId, key);
         if (previous != null) {
+            // Copilot reuses its own durable binding/result, never adopts an unrelated manual receipt.
+            if (background) throw new BusinessException(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
             if (!previous.fingerprint().equals(fingerprint)) throw new BusinessException(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
             if (tasks.retired(previous.id())) throw new BusinessException(WorkspaceErrorCode.TEST_HISTORY_PRUNED);
             return tasks.find(previous.id());
@@ -112,6 +130,47 @@ public class TestTaskStore {
         tasks.insert(task);
         streams.create(task.id(), UUID.randomUUID().toString());
         return task;
+    }
+
+    /** Internal convergence after parent stop/expiry; cannot start work and does not depend on an old browser credential. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void requestSystemStop(String exerciseId, String taskId, String key) {
+        var exercise = exercises.find(exerciseId);
+        if (exercise == null) throw new IllegalStateException("Owned test exercise is missing");
+        identity.lockResourceOwner(exercise.userId());
+        writes.lock(exerciseId);
+        var task = tasks.lock(taskId);
+        if (task == null || !exerciseId.equals(task.exerciseId()) || finals.authority(taskId) != null) throw new IllegalStateException("Owned ordinary test identity mismatch");
+        if (TERMINAL.contains(task.state()) && task.quiescent()) return;
+        var accepted = tasks.acceptedStop(taskId);
+        if (accepted != null) { recoverAuthority(accepted, true); return; }
+        if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) throw new IllegalArgumentException("Invalid internal stop key");
+        var previous = exercises.receipt(exercise.userId(), "STOP_TEST", taskId, key);
+        if (previous != null) throw new IllegalStateException("Owned test stop receipt is inconsistent");
+        String id = UUID.randomUUID().toString();
+        exercises.insertOperation(new WorkspaceOperationEntity(id, exercise.userId(), exerciseId, task.workspaceInstanceId(),
+            "STOP_TEST", taskId, key, secrets.fingerprint(taskId), "PENDING", clock.instant()));
+        tasks.insertStop(new TestStopEntity(id, taskId, task.gateEpoch(), task.notAfter(), "PENDING", true));
+    }
+
+    /** Existing execution evidence only; no RPC and no replacement test. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public TestResultEvidenceDTO confirmedResult(String exerciseId, String taskId) {
+        writes.lock(exerciseId);
+        var task = tasks.lock(taskId);
+        if (task == null || !exerciseId.equals(task.exerciseId())) throw new IllegalStateException("Owned test identity mismatch");
+        if (!task.quiescent() || !TERMINAL.contains(task.state())) return null;
+        if (tasks.retired(taskId)) throw new IllegalStateException("Pending parent test evidence was pruned");
+        if (task.snapshot() == null) throw new IllegalStateException("Confirmed test has no stored evidence");
+        return new TestResultEvidenceDTO(task.stateVersion(), task.state(), task.snapshot());
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public boolean resultUnchanged(String exerciseId, String taskId, long version) {
+        writes.lock(exerciseId);
+        var checkpoint = tasks.resultCheckpoint(taskId);
+        return checkpoint != null && exerciseId.equals(checkpoint.exerciseId()) && checkpoint.quiescent() && !checkpoint.retired()
+            && checkpoint.version() == version && TERMINAL.contains(checkpoint.state());
     }
 
     @Transactional
@@ -251,6 +310,8 @@ public class TestTaskStore {
         TestTaskEntity current = tasks.lock(task.id());
         tasks.attempted(task.id());
         if (current == null || current.dispatched() || !current.state().equals("ACCEPTED")) return false;
+        // Stop admission and this claim share the workspace lock; stop-first must not dispatch a new Start.
+        if (tasks.acceptedStop(task.id()) != null) return false;
         ExerciseEntity exercise = exercises.find(task.exerciseId());
         FinalTaskAuthorityEntity authority = finals.authority(task.id());
         boolean allowed;

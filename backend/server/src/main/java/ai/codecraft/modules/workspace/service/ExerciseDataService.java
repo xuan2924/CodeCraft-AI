@@ -1,6 +1,8 @@
 package ai.codecraft.modules.workspace.service;
 
 import java.util.List;
+import java.util.Set;
+import java.util.HashSet;
 import org.springframework.stereotype.Service;
 
 /** Keeps capacity/deletion orchestration independent from the storage of attached domains. */
@@ -17,6 +19,12 @@ public class ExerciseDataService {
             total = Math.addExact(total, bytes);
         }
         return total;
+    }
+
+    public Set<String> protectedTestRecords(String exerciseId) {
+        var protectedRecords = new HashSet<String>();
+        for (var contributor : contributors) protectedRecords.addAll(contributor.protectedTestRecords(exerciseId));
+        return Set.copyOf(protectedRecords);
     }
 
     public boolean quiescent(String exerciseId) {

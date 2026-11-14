@@ -7,6 +7,8 @@ const messages: Record<string, string> = {
   COPILOT_PROPOSAL_NOT_FOUND: '提案不存在或不可访问。',
   COPILOT_PROPOSAL_DECIDED: '提案已有决定，请核对原提案状态，不会重复应用。',
   APPROVAL_REQUIRED: '提案等待你核对整批 Diff 并批准或拒绝。',
+  TEST_RUNNING: '等待关联测试的确定结果；你仍可编辑和保存，结果仅对应测试标明的版本。',
+  AUTHORIZATION_ENDED: '原任务登录授权已失效，关联测试已收敛，不会继续请求模型。',
   WRITE_RECONCILIATION: '审批已保存，等待权威写入回执；不会重复应用。',
   PROPOSAL_REJECTED: '用户已拒绝此批修改，任务将基于拒绝继续。',
   TASK_STOPPED: '任务已停止，此提案没有获得写入授权。',

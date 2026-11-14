@@ -20,6 +20,7 @@ import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotTaskResponse;
 import ai.codecraft.modules.copilot.service.CopilotTaskService;
 import ai.codecraft.modules.copilot.service.CopilotProposalService;
+import ai.codecraft.modules.copilot.service.CopilotTestTools;
 import ai.codecraft.modules.workspace.stream.TaskEventTransport;
 import ai.codecraft.modules.identity.config.IdentitySettings;
 import ai.codecraft.modules.identity.model.dto.AuthenticatedIdentityDTO;
@@ -63,18 +64,20 @@ class CopilotHttpTest {
     private MockMvc mvc;
     private CopilotTaskService tasks;
     private CopilotProposalService proposals;
+    private CopilotTestTools tests;
     private IdentityTransactionService identity;
 
     @BeforeAll void initialize() {
         context = new AnnotationConfigWebApplicationContext(); context.setServletContext(new MockServletContext());
         context.register(Fixture.class); context.refresh();
         proposals = context.getBean(CopilotProposalService.class);
+        tests = context.getBean(CopilotTestTools.class);
         tasks = context.getBean(CopilotTaskService.class); identity = context.getBean(IdentityTransactionService.class);
         mvc = MockMvcBuilders.webAppContextSetup(context).addFilters(context.getBean("springSecurityFilterChain", Filter.class)).build();
     }
     @AfterAll void close() { context.close(); }
     @BeforeEach void authorize() {
-        reset(tasks, proposals, identity);
+        reset(tasks, proposals, tests, identity);
         var user = mock(UserEntity.class); when(user.role()).thenReturn("USER");
         var auth = new AuthenticatedIdentityDTO(user, null, new SessionResponse("owner", "fixture", "USER", false, Instant.parse("2030-01-01T00:00:00Z")));
         when(identity.authenticate(any())).thenAnswer(call -> {
@@ -93,6 +96,17 @@ class CopilotHttpTest {
             .content("{\"text\":\"Inspect\",\"feeAcknowledged\":true}"))
             .andExpect(status().isAccepted()).andExpect(header().string("Cache-Control", "no-store")).andExpect(jsonPath("$.data.state").value("QUEUED"));
         verify(tasks).start(HASH, ID, "control", "original", new CopilotStartRequest("Inspect", true));
+    }
+    @Test void linkedTestsAreOwnerBoundNoStoreReadsWithoutExecutionSideEffects() throws Exception {
+        String path = "/api/copilot-tasks/" + ID + "/tests";
+        mvc.perform(get(path).servletPath(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header("X-Codecraft-Owner", "old-owner"))
+            .andExpect(status().isUnauthorized());
+        verify(tests, never()).recent(any(), any());
+        mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)))
+            .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"));
+        verify(tests).recent(HASH, ID);
+        verify(tests, never()).execute(any(), any(), any());
     }
     @Test void privateHistoryCannotBeReadByAnAnonymousOrStaleOwnerAndReadsNeverStartWork() throws Exception {
         String path = PATH + "/latest";
@@ -142,6 +156,7 @@ class CopilotHttpTest {
     static class Fixture {
         @Bean TaskEventTransport transport() { return mock(TaskEventTransport.class); }
         @Bean CopilotTaskService tasks() { return mock(CopilotTaskService.class); }
+        @Bean CopilotTestTools tests() { return mock(CopilotTestTools.class); }
         @Bean CopilotProposalService proposals() { return mock(CopilotProposalService.class); }
         @Bean IdentityTransactionService identity() { return mock(IdentityTransactionService.class); }
         @Bean IdentitySecrets secrets() { return mock(IdentitySecrets.class); }

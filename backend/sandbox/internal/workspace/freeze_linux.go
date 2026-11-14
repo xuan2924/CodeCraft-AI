@@ -114,8 +114,11 @@ func (s *Service) StopSystemTask(ctx context.Context, request *rpc.QueryTaskRequ
 	if err != nil {
 		return nil, storageError(err)
 	}
-	if len(gates) == 0 || (gates[len(gates)-1].State != "CLOSED" && gates[len(gates)-1].State != "FROZEN") {
-		return nil, status.Error(codes.FailedPrecondition, "lifecycle cancellation requires closed gate")
+	// Trusted exact-task cancellation only removes work. Ordinary owner/Copilot
+	// stops must also work while OPEN, without revoking unrelated editor authority.
+	// The execution registry still verifies the complete immutable task identity.
+	if len(gates) == 0 {
+		return nil, status.Error(codes.FailedPrecondition, "lifecycle cancellation requires initialized gate")
 	}
 	result, err := s.executor.Stop(ctx, execution.TaskIdentity{ExerciseID: request.ExerciseId, TaskID: request.TaskId, ExecutionID: request.ExecutionInstanceId, WorkspaceID: request.WorkspaceInstanceId})
 	if errors.Is(err, execution.ErrConflict) {

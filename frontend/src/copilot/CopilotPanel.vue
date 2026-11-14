@@ -7,9 +7,10 @@ import { useCommand } from '../api/useCommand';
 import * as api from './api';
 import { commandPolicy, errorMessage } from './errors';
 import CopilotProposals from './CopilotProposals.vue';
+import CopilotTests from './CopilotTests.vue';
 
 const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
-const emit = defineEmits<{ unauthorized: []; changed: [] }>();
+const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string] }>();
 const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.credential}`);
 const text = ref('');
@@ -76,15 +77,15 @@ watch([() => props.owner, () => props.exerciseId, () => task.value?.id, running]
   connect();
   cleanup(() => { disposed = true; controller.abort(); close(); if (timer !== undefined) globalThis.clearTimeout(timer); });
 }, { immediate: true });
-const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待派发', RUNNING: '正在执行', PAUSED: '已暂停，等待处理', WAITING_APPROVAL: '等待修改审批', WAITING_WRITE: '等待写入回执', STOPPING: '正在停止，等待当前操作收敛', STOPPED: '已停止', SUCCEEDED: '已完成', FAILED: '失败', INTERRUPTED: '已中断，不会自动重发' };
+const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待派发', RUNNING: '正在执行', PAUSED: '已暂停，等待处理', WAITING_APPROVAL: '等待修改审批', WAITING_WRITE: '等待写入回执', WAITING_TEST: '等待测试确定结果', STOPPING: '正在停止，等待当前操作收敛', STOPPED: '已停止', SUCCEEDED: '已完成', FAILED: '失败', INTERRUPTED: '已中断，不会自动重发' };
 </script>
 <template>
   <section
     class="copilot-panel"
     aria-label="Copilot 对话"
   >
-    <h2>Copilot · 读取与修改提案</h2>
-    <p>模型读取服务端已保存代码，可提出整批修改，默认须经你审批后写入。测试工具尚未开放。</p>
+    <h2>Copilot · 读取、修改提案与测试</h2>
+    <p>模型读取服务端已保存代码，可提出整批修改，默认须经你审批后写入；可对指定保存版本运行基础测试，结果不代表后续版本或未保存草稿。</p>
     <p>请求可能收费，多轮任务可能持续调用模型。关闭页面不停止后台任务；停止后已发出的请求仍可能收费。</p>
     <p
       v-if="latest.isPending.value"
@@ -132,6 +133,14 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     <p v-if="task?.state === 'PAUSED'">
       请处理模型配置或容量问题；可先停止当前任务，再显式发起新请求。不会自动回退或重发。
     </p>
+    <CopilotTests
+      v-if="task"
+      :key="owner + task.id + ':tests'"
+      :owner="owner"
+      :task-id="task.id"
+      :running="running"
+      @inspect="emit('inspect-test', $event)"
+    />
     <CopilotProposals
       v-if="task"
       :key="owner + task.id"

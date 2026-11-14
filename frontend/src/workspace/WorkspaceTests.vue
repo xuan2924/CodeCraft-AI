@@ -78,7 +78,8 @@ function recoverStop() { void stop({ task: chosen.value, key: globalThis.crypto.
 function start(revision: string) {
   if (!locked.value) void dispatch({ revision, key: globalThis.crypto.randomUUID() });
 }
-defineExpose({ start });
+function inspect(taskId: string) { if (!disposed) chosen.value = taskId; }
+defineExpose({ start, inspect });
 onScopeDispose(() => { disposed = true; controller.abort(); });
 const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登记', STARTING: '正在启动', RUNNING: '正在测试', STOPPING: '正在停止', PASSED: '通过',
   FAILED: '测试失败', TIMED_OUT: '执行超时', STOPPED: '已停止', ENVIRONMENT_ERROR: '环境错误', INTERRUPTED: '执行中断' };

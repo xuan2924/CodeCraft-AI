@@ -42,7 +42,10 @@ public class CopilotRequestFactory {
                     .addEnumProperty("kind", List.of("CREATE", "UPDATE", "DELETE"))
                     .addStringProperty("content", "Complete UTF-8 file text for CREATE/UPDATE; omit for DELETE")
                     .required("path", "kind").additionalProperties(false).build()).build())
-                .required("expected_revision", "changes").additionalProperties(false).build()).build());
+                .required("expected_revision", "changes").additionalProperties(false).build()).build(),
+        ToolSpecification.builder().name("run_tests").description("Run the published base tests on a stable copy of the exact saved revision. No shell or custom command. Wait for the confirmed result; failures are normal tool results. The same goal/revision/target reuses its previous confirmed result; a busy slot does not queue a test.")
+            .parameters(JsonObjectSchema.builder().addStringProperty("expected_revision", "Exact saved revision as a decimal string")
+                .addEnumProperty("target", List.of("base")).required("expected_revision", "target").additionalProperties(false).build()).build());
 
     public CopilotRequestFactory() {
         try { system = SystemMessage.from(new ClassPathResource("prompts/copilot/system.txt").getContentAsString(StandardCharsets.UTF_8)); }

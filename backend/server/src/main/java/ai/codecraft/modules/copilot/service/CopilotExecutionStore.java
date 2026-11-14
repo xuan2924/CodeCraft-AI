@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 /** Durable dispatch markers are committed before any model/network IO. */
 @Service
@@ -53,12 +54,13 @@ public class CopilotExecutionStore {
     private final CopilotRequestFactory requests;
     private final CopilotProposalRepository proposals;
     private final IdentitySecrets secrets;
+    private final CopilotTestLifecycle tests;
 
     public CopilotExecutionStore(CopilotTaskRepository tasks, IdentityTransactionService identity,
         WorkspaceCoordinationStore workspace, ExerciseModelService models, WorkspaceAiOperationService operations,
-        CopilotProperties limits, Clock clock, CopilotRequestFactory requests, CopilotProposalRepository proposals, IdentitySecrets secrets) {
+        CopilotProperties limits, Clock clock, CopilotRequestFactory requests, CopilotProposalRepository proposals, IdentitySecrets secrets, CopilotTestLifecycle tests) {
         this.tasks = tasks; this.identity = identity; this.workspace = workspace; this.models = models;
-        this.operations = operations; this.limits = limits; this.clock = clock; this.requests = requests; this.proposals = proposals; this.secrets = secrets;
+        this.operations = operations; this.limits = limits; this.clock = clock; this.requests = requests; this.proposals = proposals; this.secrets = secrets; this.tests = tests;
     }
 
     @Transactional
@@ -150,7 +152,8 @@ public class CopilotExecutionStore {
         if (tasks.toolAt(turnId, turn.toolPosition()) != null) return null;
         String operation = UUID.randomUUID().toString();
         boolean proposal = "propose_changes".equals(request.name());
-        operations.reserve(task.sessionHash(), task.exerciseId(), operation, proposal ? "COPILOT_PROPOSAL" : "COPILOT_READ", measurement,
+        String kind = proposal ? "COPILOT_PROPOSAL" : "run_tests".equals(request.name()) ? "COPILOT_TEST" : "COPILOT_READ";
+        operations.reserve(task.sessionHash(), task.exerciseId(), operation, kind, measurement,
             proposal ? CopilotProposalPreparation.PREPARATION_CREDIT : 512 * 1024);
         var tool = new CopilotToolEntity(operation, turnId, id, task.exerciseId(), turn.toolPosition(), request.id(), request.name(), request.arguments(), "RUNNING", null, clock.instant(), null);
         tasks.tool(tool);
@@ -169,15 +172,24 @@ public class CopilotExecutionStore {
 
     @Transactional
     public void parkProposal(String id, String worker, String toolId) {
+        parkTool(id, worker, toolId, "WAITING_APPROVAL", "APPROVAL_REQUIRED", true);
+    }
+
+    @Transactional
+    public void parkTest(String id, String worker, String toolId) {
+        parkTool(id, worker, toolId, "WAITING_TEST", "TEST_RUNNING", false);
+    }
+
+    private void parkTool(String id, String worker, String toolId, String state, String reason, boolean settlePreparation) {
         var task = owned(id, worker);
         var tool = tasks.toolById(toolId);
         if (task == null || task.stopRequested() || tool == null || !id.equals(tool.taskId()) || !"RUNNING".equals(tool.state())) {
             throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
         }
-        if (tasks.waitTool(toolId, "WAITING_APPROVAL") != 1 || tasks.park(id, worker, "WAITING_APPROVAL", "APPROVAL_REQUIRED") != 1) {
-            throw new IllegalStateException("Proposal did not acquire its durable wait state");
+        if (tasks.waitTool(toolId, state) != 1 || tasks.park(id, worker, state, reason) != 1) {
+            throw new IllegalStateException("Tool did not acquire its durable wait state");
         }
-        operations.settle(task.exerciseId(), toolId, true);
+        if (settlePreparation) operations.settle(task.exerciseId(), toolId, true);
     }
 
     @Transactional
@@ -193,27 +205,30 @@ public class CopilotExecutionStore {
         }
     }
 
-    /** Called in the same transaction that makes the proposal outcome final. */
-    @Transactional
-    public void resolveProposal(String id, String toolId, String body) {
+    /** Called in the transaction that makes the child outcome final. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void resolveWaitingTool(String id, String toolId, String body) {
         var initial = tasks.find(id);
-        if (initial == null) throw new IllegalStateException("Proposal task is missing");
+        if (initial == null) throw new IllegalStateException("Waiting tool task is missing");
         identity.lockResourceOwner(initial.userId());
         var task = tasks.find(id);
         var tool = tasks.toolById(toolId);
         var turn = tasks.latestTurn(id);
-        if (task.workerId() != null || proposals.applying(id) || tool == null || turn == null || !id.equals(tool.taskId())
+        if (task.workerId() != null || proposals.pending(id) != null || tests.waiting(id) || tool == null || turn == null || !id.equals(tool.taskId())
             || !turn.id().equals(tool.turnId()) || turn.toolPosition() != tool.position() || !"TOOLS".equals(turn.state())) {
-            throw new IllegalStateException("Proposal no longer matches its pending batch");
+            throw new IllegalStateException("Waiting tool no longer matches its pending batch");
         }
         var assistant = (AiMessage) ChatMessageDeserializer.messageFromJson(tasks.messageById(turn.assistantMessageId()).payload());
         var request = assistant.toolExecutionRequests().get(tool.position());
         if (!request.id().equals(tool.callId()) || !request.name().equals(tool.name()) || !request.arguments().equals(tool.arguments())) {
-            throw new IllegalStateException("Proposal tool identity changed");
+            throw new IllegalStateException("Waiting tool identity changed");
         }
         if (!recordTool(task, turn, tool, ChatMessageSerializer.messageToJson(ToolExecutionResultMessage.from(request, body)),
-            tool.position() + 1 == assistant.toolExecutionRequests().size())) throw new IllegalStateException("Proposal result did not advance");
-        tasks.wake(id);
+            tool.position() + 1 == assistant.toolExecutionRequests().size())) throw new IllegalStateException("Waiting tool result did not advance");
+        var exercise = workspace.exercise(task.exerciseId());
+        if (exercise == null || !"ACTIVE".equals(exercise.state()) || exercise.deadlineAt() == null || !clock.instant().isBefore(exercise.deadlineAt())) {
+            tasks.haltIdle(id, "EXERCISE_ENDED");
+        } else tasks.wake(id);
     }
 
     private boolean recordTool(CopilotTaskEntity task, CopilotTurnEntity turn, CopilotToolEntity tool, String payload, boolean last) {
@@ -233,7 +248,7 @@ public class CopilotExecutionStore {
 
     /** Unknown writes must be reconciled before remaining protocol results can be synthesized. */
     private void interruptBatch(CopilotTaskEntity task, CopilotTurnEntity turn, String reason) {
-        if (proposals.applying(task.id())) throw new IllegalStateException("Unconfirmed proposal write cannot be interrupted");
+        if (proposals.applying(task.id()) || tests.waiting(task.id())) throw new IllegalStateException("Unconfirmed child operation cannot be interrupted");
         proposals.cancelPending(task.id(), reason, clock.instant());
         var assistant = (AiMessage) ChatMessageDeserializer.messageFromJson(tasks.messageById(turn.assistantMessageId()).payload());
         for (int position = turn.toolPosition(); position < assistant.toolExecutionRequests().size(); position++) {
@@ -268,7 +283,7 @@ public class CopilotExecutionStore {
     @Transactional
     public void finish(String id, String worker, String state, String reason) {
         var task = owned(id, worker);
-        if (task == null || proposals.applying(id)) return;
+        if (task == null || proposals.applying(id) || tests.waiting(id)) return;
         var turn = tasks.latestTurn(id);
         if (turn != null && "DISPATCHED".equals(turn.state())) {
             tasks.failTurn(turn.id(), "FAILED", reason, clock.instant());
@@ -288,7 +303,7 @@ public class CopilotExecutionStore {
         tasks.checked(id, clock.instant());
         if (task.workerId() == null) { recoverIdle(task); return; }
         if (task.workerId() == null || task.workerNotAfter() == null || clock.instant().isBefore(task.workerNotAfter())) return;
-        if (proposals.applying(id)) return;
+        if (proposals.applying(id) || tests.waiting(id)) return;
         var turn = tasks.latestTurn(id);
         if (turn != null && "DISPATCHED".equals(turn.state())) {
             tasks.failTurn(turn.id(), "INTERRUPTED", "MODEL_RESULT_UNKNOWN", clock.instant());
@@ -299,7 +314,7 @@ public class CopilotExecutionStore {
     }
 
     private void recoverIdle(CopilotTaskEntity task) {
-        if (!Set.of("QUEUED", "PAUSED", "WAITING_APPROVAL", "WAITING_WRITE", "STOPPING").contains(task.state())) return;
+        if (!Set.of("QUEUED", "PAUSED", "WAITING_APPROVAL", "WAITING_WRITE", "WAITING_TEST", "STOPPING").contains(task.state())) return;
         var exercise = workspace.exercise(task.exerciseId());
         boolean ended = exercise == null || !"ACTIVE".equals(exercise.state()) || exercise.deadlineAt() == null || !clock.instant().isBefore(exercise.deadlineAt());
         if (!task.stopRequested() && !ended) return;
@@ -313,10 +328,11 @@ public class CopilotExecutionStore {
             if ("PENDING".equals(outcome.state()) || "PENDING_RECONCILIATION".equals(outcome.state())) workspace.reconcile(task.exerciseId());
             return;
         }
-        String reason = "EXERCISE_ENDED".equals(task.reason()) ? "EXERCISE_ENDED" : "USER_STOP";
+        if (tests.waiting(task.id())) { tests.stop(task.id()); return; }
+        String reason = task.reason() == null ? "USER_STOP" : task.reason();
         var turn = tasks.latestTurn(task.id());
         if (turn != null && "TOOLS".equals(turn.state())) interruptBatch(task, turn, reason);
-        tasks.finishIdle(task.id(), "EXERCISE_ENDED".equals(reason) ? "INTERRUPTED" : "STOPPED", reason, clock.instant());
+        tasks.finishIdle(task.id(), "USER_STOP".equals(reason) ? "STOPPED" : "INTERRUPTED", reason, clock.instant());
     }
 
     private String evidencePayload(Object value) {

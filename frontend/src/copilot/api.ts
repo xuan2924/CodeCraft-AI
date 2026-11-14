@@ -1,6 +1,6 @@
 import { ApiError, events, object, ownerHeaders, post, request } from '../api/request';
 
-const states = ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'STOPPING', 'STOPPED', 'SUCCEEDED', 'FAILED', 'INTERRUPTED'] as const;
+const states = ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'STOPPING', 'STOPPED', 'SUCCEEDED', 'FAILED', 'INTERRUPTED'] as const;
 export interface Task { id: string; exerciseId: string; state: typeof states[number]; reason: string | null; stopRequested: boolean; createdAt: string; completedAt: string | null }
 export interface Snapshot { task: Task; lastSequence: string; textHistory: boolean; partial: { turnId: string | null; sequence: string; text: string; truncated: boolean } }
 export interface Message { sequence: string; id: string; taskId: string; kind: 'USER' | 'ASSISTANT' | 'TOOL'; text: string }
@@ -25,7 +25,7 @@ function snapshot(value: unknown, exercise: string): Snapshot {
     partial: { turnId: partial.turnId === null ? null : uuid(partial.turnId), sequence: sequence(partial.sequence), text: partial.text, truncated: partial.truncated } };
 }
 function path(id: string) { return encodeURIComponent(uuid(id)); }
-export function active(task: Task | null | undefined) { return !!task && ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'STOPPING'].includes(task.state); }
+export function active(task: Task | null | undefined) { return !!task && ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'STOPPING'].includes(task.state); }
 export async function latest(owner: string, exercise: string, signal: AbortSignal): Promise<Snapshot | null> {
   const value = await request(`/api/exercises/${path(exercise)}/copilot/tasks/latest`, signal, { headers: ownerHeaders(owner) });
   return value === null ? null : snapshot(value, exercise);
@@ -53,6 +53,25 @@ export async function messages(owner: string, exercise: string, after: string, s
   const nextCursor = value.nextCursor === null ? null : sequence(value.nextCursor);
   if (nextCursor !== null && nextCursor !== items.at(-1)?.sequence) return invalid();
   return { messages: items, nextCursor };
+}
+const testResults = ['PASSED', 'FAILED', 'TIMED_OUT', 'STOPPED', 'ENVIRONMENT_ERROR', 'INTERRUPTED'] as const;
+export interface TestRun {
+  toolId: string; taskId: string; testTaskId: string; revision: string; target: 'base'; state: 'WAITING' | 'RESOLVED';
+  resultState: typeof testResults[number] | null; createdAt: string; completedAt: string | null;
+}
+export async function tests(owner: string, taskId: string, signal: AbortSignal): Promise<TestRun[]> {
+  const value = await request(`/api/copilot-tasks/${path(taskId)}/tests`, signal, { headers: ownerHeaders(owner) });
+  if (!Array.isArray(value) || value.length > 20) return invalid();
+  const ids = new Set<string>();
+  return value.map((entry: unknown): TestRun => {
+    if (!object(entry) || entry.taskId !== taskId || entry.target !== 'base' || entry.state !== 'WAITING' && entry.state !== 'RESOLVED') return invalid();
+    const resultState = testResults.find((state) => state === entry.resultState) ?? null;
+    if (entry.state === 'WAITING' ? entry.resultState !== null || entry.completedAt !== null : !resultState || entry.completedAt === null) return invalid();
+    const testTaskId = uuid(entry.testTaskId);
+    if (ids.has(testTaskId)) return invalid(); ids.add(testTaskId);
+    return { toolId: uuid(entry.toolId), taskId: uuid(entry.taskId), testTaskId, revision: sequence(entry.revision), target: 'base', state: entry.state,
+      resultState, createdAt: date(entry.createdAt), completedAt: entry.completedAt === null ? null : date(entry.completedAt) };
+  });
 }
 const proposalStates = ['PENDING', 'APPLYING', 'APPLIED', 'REJECTED', 'INVALIDATED', 'FAILED', 'CANCELLED'] as const;
 export interface Proposal {

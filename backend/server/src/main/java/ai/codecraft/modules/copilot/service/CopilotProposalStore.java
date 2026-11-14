@@ -185,7 +185,7 @@ public class CopilotProposalStore {
         if (proposals.finish(proposal.id(), state, revision, changed, "APPLIED".equals(state) ? null : code, clock.instant()) != 1) return;
         String body = revision == null ? encode(Map.of("code", code, "reason", reason))
             : encode(Map.of("code", code, "revision", revision.toString(), "changed", changed));
-        execution.resolveProposal(proposal.taskId(), proposal.toolId(), body);
+        execution.resolveWaitingTool(proposal.taskId(), proposal.toolId(), body);
     }
 
     private CopilotPendingProposalDTO owned(String session, String id) {

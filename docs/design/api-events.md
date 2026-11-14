@@ -127,6 +127,12 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - `WAITING_APPROVAL`/`WAITING_WRITE` 属于活动任务，但不占 worker；保存原批次位置和已完成工具。新会话的显式有效审批可为原任务后续调用更新授权，单纯登录、查询或重复读取原审批回执不能重新授权。
 - 应用后前端失效工作区查询，沿用编辑器原有修订冲突处理；不自动保存、覆盖或清除本地草稿。停止在未知写入收敛前保持 `STOPPING`，不将未知结果伪报未应用。
 
+### Copilot 关联测试
+
+- `GET /api/copilot-tasks/{taskId}/tests`：返回最近 20 条绑定元数据（父任务、工具、原测试 ID、保存修订、`base`、`WAITING`/`RESOLVED`、确定终态与时间）。只读、归属校验、no-store，不触发执行或回填；完整记录沿用 `/api/exercises/{exerciseId}/tasks/{testTaskId}`。
+- `WAITING_TEST` 是活动父任务，但不占 worker。等待时允许用户继续编辑和保存；页面标出原测试修订，不能把其结果归给新修订或草稿。
+- 停止父任务仅对持久绑定的普通子测试登记取消。`STOPPING` 保留到原执行终态且 quiescent；系统取消 RPC 接受不等于进程退出。结束或授权失效后不会因迟到结果自动恢复模型请求。
+
 ## 保存与恢复
 
 业务动作被服务端确认时持续保存，不依赖浏览器关闭事件作为保存点。

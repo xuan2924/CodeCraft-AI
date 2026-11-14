@@ -37,12 +37,13 @@ public class CopilotTaskStore {
     private final WorkspaceAiOperationService operations;
     private final Clock clock;
     private final CopilotProposalRepository proposals;
+    private final CopilotTestLifecycle tests;
 
     public CopilotTaskStore(CopilotTaskRepository tasks, IdentityTransactionService identity, IdentitySecrets secrets,
         ExerciseTransactionService exercises, WorkspaceCoordinationStore control, ExerciseModelService models,
-        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals) {
+        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests) {
         this.tasks = tasks; this.identity = identity; this.secrets = secrets; this.exercises = exercises;
-        this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals;
+        this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals; this.tests = tests;
     }
 
     @Transactional
@@ -109,6 +110,7 @@ public class CopilotTaskStore {
         var task = authorize(session, id);
         validateKey(key);
         tasks.stop(task.id(), clock.instant());
+        tests.stop(task.id());
         var pending = proposals.pending(task.id());
         if (pending != null && "APPLYING".equals(pending.state())) {
             var outcome = operations.mutationOutcome(task.exerciseId(), pending.operationId());

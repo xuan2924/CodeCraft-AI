@@ -27,6 +27,23 @@ it('rejects graded responses without authoritative evidence or immutable image i
   }
 });
 
+it('opens an exact linked test outside the recent page without starting or stopping work', async () => {
+  const fetcher = vi.fn<typeof fetch>(async (path, options) => {
+    expect(options?.method ?? 'GET').toBe('GET');
+    return ok(String(path).endsWith('/tasks') ? [] : { ...result, taskId: 'linked-task' });
+  });
+  vi.stubGlobal('fetch', fetcher);
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const host = defineComponent({ components: { WorkspaceTests }, setup() {
+    const panel = ref<{ inspect: (id: string) => void }>();
+    return { panel, exercise };
+  }, template: '<button @click="panel?.inspect(\'linked-task\')">inspect</button><WorkspaceTests ref="panel" owner="owner" :exercise="exercise" credential="" />' });
+  view = mount(host, { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
+  await flushPromises(); await view.get('button').trigger('click'); await flushPromises(); await flushPromises();
+  expect(fetcher.mock.calls.some(([path]) => String(path).endsWith('/tasks/linked-task'))).toBe(true);
+  expect(view.text()).toContain('旧版本结果');
+});
+
 it('shows authoritative pruning and distinguishes cleanup still in progress', async () => {
   vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (path) => ok(String(path).endsWith('/tasks')
     ? { tasks: [{ ...result, logs: [] }], retention: { retainedCompletedLimit: 20, prunedCount: 6, cleanupPendingCount: 2 } } : result)));

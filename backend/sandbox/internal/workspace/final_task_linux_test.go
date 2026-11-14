@@ -65,6 +65,27 @@ func TestFinalTaskAdmitsFrozenInputWithoutOpeningAnswerGate(t *testing.T) {
 	storage, close := connectRuntime(t, t.TempDir(), published, &workspace.ExecutionRuntime{Runner: runner, Worker: worker})
 	defer close()
 	epoch := writable(t, storage)
+	t.Run("ordinary cancellation preserves open editor authority", func(t *testing.T) {
+		identity := &rpc.QueryTaskRequest{ExerciseId: operation, TaskId: "90000000-0000-0000-0000-000000000001", ExecutionInstanceId: "90000000-0000-0000-0000-000000000002", WorkspaceInstanceId: instance}
+		cancelled, stopErr := storage.StopSystemTask(authorized(t), identity)
+		if stopErr != nil || !cancelled.GetCancelledBeforeRegistration() {
+			t.Fatalf("exact owned cancellation while open: %v %v", cancelled, stopErr)
+		}
+		gate, gateErr := storage.QueryGate(authorized(t), &rpc.QueryWorkspaceRequest{WorkspaceInstanceId: instance})
+		if gateErr != nil || gate.State != "OPEN" || gate.Epoch != epoch {
+			t.Fatalf("cancellation changed editor authority: %v %v", gate, gateErr)
+		}
+		late := &rpc.StartTestRequest{ExerciseId: operation, TaskId: identity.TaskId, ExecutionInstanceId: identity.ExecutionInstanceId, WorkspaceInstanceId: instance,
+			Target: "base", Purpose: "MANUAL", GateEpoch: epoch, ExpectedRevision: 0, HostEpoch: runner.HostEpoch(), NotAfterUnixMillis: time.Now().Add(time.Minute).UnixMilli()}
+		if _, startErr := storage.StartTest(authorized(t), late); status.Code(startErr) != codes.FailedPrecondition {
+			t.Fatalf("cancelled identity accepted a late start: %v", startErr)
+		}
+		forged := proto.Clone(identity).(*rpc.QueryTaskRequest)
+		forged.TaskId = mutation
+		if _, readErr := storage.QueryStop(authorized(t), forged); status.Code(readErr) != codes.NotFound {
+			t.Fatalf("another task borrowed cancellation: %v", readErr)
+		}
+	})
 	closed, err := storage.CloseGate(authorized(t), &rpc.CloseGateRequest{WorkspaceInstanceId: instance, TransitionId: nextTransition, ExpectedEpoch: epoch})
 	if err != nil {
 		t.Fatal(err)

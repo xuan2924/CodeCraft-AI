@@ -193,6 +193,9 @@ node scripts/test-tracer.mjs --workspace --boundary-only
 # 仅精确 JVM 崩溃恢复 / 单项撤销准备恢复测试
 node scripts/test-tracer.mjs --workspace --boundary-only --workspace-recovery-only
 node scripts/test-tracer.mjs --workspace --boundary-only --workspace-test=revokedPreparationIsCleanedAfterSandboxRecovery
+# 显式收费：需环境变量 DeepSeek；真实模型检查、稳定版本测试续答及联动停止，最多 9 次调用
+# 凭证仅传给可信 Java 测试容器，不传给 Go/题目容器；独立库/卷在 finally 清理
+node scripts/test-tracer.mjs --workspace --boundary-only --copilot-tests
 ```
 
 Java 集成测试使用已有 `~/.m2/repository` 的只读挂载，以离线 Maven 运行预先编译的 classes/test-classes；首次先完成本机 Maven 构建。每次/每种模式的 Failsafe 输出放在其 `.runtime/cc-tracer-*/java-tests-*`，缺失产物/依赖、零执行或跳过所选测试均失败。工作区故障测试容器临时挂载 Docker socket，通过受限命令适配器真实暂停/恢复本次 Go 容器并注入损坏文件；**它是可信测试夹具，拥有 Docker 管理权限，不是用户代码沙箱**。Java 应用及题目容器不获得该挂载。

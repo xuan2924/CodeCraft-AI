@@ -60,7 +60,7 @@ watch(() => exercise.value?.exerciseId, (id) => {
 watch(() => exercise.value?.state, (state) => { if (state === 'ACTIVE') hasEditor.value = true; });
 watch(expired, (value) => { if (value) { endPrompt.value = false; void active.refetch(); } });
 const logoutBusy = ref(false);
-const testView = ref<{ start: (revision: string) => void }>();
+const testView = ref<{ start: (revision: string) => void; inspect: (taskId: string) => void }>();
 const testBusy = ref(true);
 const editorGeneration = ref(0);
 async function saveForLogout() {
@@ -496,6 +496,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :credential="credential"
             :disabled="!writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy"
             :prepare="prepareCopilot"
+            @inspect-test="testView?.inspect($event)"
             @changed="refreshWorkspace"
             @unauthorized="credential = ''; account.refetch()"
           />

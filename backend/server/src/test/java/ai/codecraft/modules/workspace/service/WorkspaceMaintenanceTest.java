@@ -25,6 +25,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class WorkspaceMaintenanceTest {
@@ -36,7 +37,7 @@ class WorkspaceMaintenanceTest {
         var deletions = mock(DeletionRepository.class);
         var sandbox = mock(SandboxWorkspaceGateway.class);
         Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
-        var store = new WorkspaceMaintenanceStore(repository, exercises, deletions, identity, clock, limits());
+        var store = new WorkspaceMaintenanceStore(repository, exercises, deletions, identity, clock, limits(), new ExerciseDataService(List.of()));
         var coordinator = new WorkspaceMaintenanceCoordinator(store, sandbox);
         when(exercises.find("exercise")).thenReturn(exercise(5));
         when(repository.referencedRevisions("exercise")).thenReturn(List.of(2L, 3L, 5L));
@@ -58,7 +59,7 @@ class WorkspaceMaintenanceTest {
         var exercises = mock(ExerciseRepository.class);
         var sandbox = mock(SandboxWorkspaceGateway.class);
         var store = new WorkspaceMaintenanceStore(repository, exercises, mock(DeletionRepository.class),
-            mock(IdentityTransactionService.class), Clock.systemUTC(), limits());
+            mock(IdentityTransactionService.class), Clock.systemUTC(), limits(), new ExerciseDataService(List.of()));
         when(exercises.find("exercise")).thenReturn(exercise(5));
         when(exercises.deleted("exercise")).thenReturn(true);
         assertNull(store.plan("exercise"));
@@ -73,7 +74,7 @@ class WorkspaceMaintenanceTest {
         var repository = mock(WorkspaceMaintenanceRepository.class);
         var exercises = mock(ExerciseRepository.class);
         var store = new WorkspaceMaintenanceStore(repository, exercises, mock(DeletionRepository.class),
-            mock(IdentityTransactionService.class), Clock.systemUTC(), limits());
+            mock(IdentityTransactionService.class), Clock.systemUTC(), limits(), new ExerciseDataService(List.of()));
         when(exercises.find("exercise")).thenReturn(exercise(30));
         var records = new ArrayList<TestHistoryRecord>();
         records.add(history("final", true, true, "SUCCEEDED", false, false));
@@ -90,6 +91,25 @@ class WorkspaceMaintenanceTest {
         assertEquals(List.of("previous-attempt"), store.pruningPlan("exercise").stream().map(TestHistoryRecord::taskId).toList());
         when(exercises.deleted("exercise")).thenReturn(true);
         assertEquals(List.of(), store.pruningPlan("exercise"));
+    }
+
+    @Test
+    void pendingDomainResultsProtectTheirTestRecordUntilTheirOwnEvidenceIsCommitted() {
+        var repository = mock(WorkspaceMaintenanceRepository.class);
+        var exercises = mock(ExerciseRepository.class);
+        var domain = mock(ExerciseDataContributor.class);
+        var store = new WorkspaceMaintenanceStore(repository, exercises, mock(DeletionRepository.class),
+            mock(IdentityTransactionService.class), Clock.systemUTC(), limits(), new ExerciseDataService(List.of(domain)));
+        when(exercises.find("exercise")).thenReturn(exercise(30));
+        var records = new ArrayList<TestHistoryRecord>();
+        for (int index = 20; index >= 0; index--) records.add(history(Integer.toString(index), false, true, "SUCCEEDED", false, false));
+        when(repository.historyInventory("exercise")).thenReturn(records);
+        when(domain.protectedTestRecords("exercise")).thenReturn(Set.of("0"));
+        assertEquals(List.of(), store.pruningPlan("exercise"));
+        verify(repository, never()).markPruningBatch(anyList());
+        when(domain.protectedTestRecords("exercise")).thenReturn(Set.of());
+        when(repository.markPruningBatch(anyList())).thenAnswer(call -> ((List<?>) call.getArgument(0)).size());
+        assertEquals(List.of("0"), store.pruningPlan("exercise").stream().map(TestHistoryRecord::taskId).toList());
     }
 
     @Test

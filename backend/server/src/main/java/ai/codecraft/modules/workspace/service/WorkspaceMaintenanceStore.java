@@ -25,11 +25,12 @@ public class WorkspaceMaintenanceStore {
     private final IdentityTransactionService identity;
     private final Clock clock;
     private final StorageProperties limits;
+    private final ExerciseDataService data;
 
     public WorkspaceMaintenanceStore(WorkspaceMaintenanceRepository maintenance, ExerciseRepository exercises,
-        DeletionRepository deletions, IdentityTransactionService identity, Clock clock, StorageProperties limits) {
+        DeletionRepository deletions, IdentityTransactionService identity, Clock clock, StorageProperties limits, ExerciseDataService data) {
         this.maintenance = maintenance; this.exercises = exercises; this.deletions = deletions;
-        this.identity = identity; this.clock = clock; this.limits = limits;
+        this.identity = identity; this.clock = clock; this.limits = limits; this.data = data;
     }
 
     @Transactional(readOnly = true)
@@ -41,8 +42,9 @@ public class WorkspaceMaintenanceStore {
         var selected = new ArrayList<TestHistoryRecord>();
         var newlyRetired = new ArrayList<String>();
         int completed = 0;
+        var protectedRecords = data.protectedTestRecords(id);
         for (var record : maintenance.historyInventory(id)) {
-            if (!completedOrdinary(record)) continue;
+            if (!completedOrdinary(record) || protectedRecords.contains(record.taskId())) continue;
             if (record.pruning()) selected.add(record);
             else if (completed++ >= limits.completedTests()) {
                 selected.add(record);

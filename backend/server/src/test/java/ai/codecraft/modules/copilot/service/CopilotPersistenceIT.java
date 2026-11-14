@@ -20,13 +20,36 @@ import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotTaskResponse;
 import ai.codecraft.modules.workspace.model.dto.FileChangeRequest;
 import ai.codecraft.workspace.v1.ApplyBatchRequest;
+import ai.codecraft.workspace.v1.ExecutionInventory;
+import ai.codecraft.workspace.v1.TestTaskSnapshot;
+import ai.codecraft.workspace.v1.TestLogChunk;
+import ai.codecraft.workspace.v1.TestEvidence;
+import ai.codecraft.workspace.v1.ProblemIdentity;
+import ai.codecraft.workspace.v1.StopTaskResponse;
+import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
+import ai.codecraft.modules.workspace.model.dto.StartTestRequest;
+import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
+import com.google.protobuf.ByteString;
 import ai.codecraft.workspace.v1.GateResponse;
 import ai.codecraft.workspace.v1.MutationReceipt;
 import ai.codecraft.workspace.v1.WorkspaceSnapshot;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import ai.codecraft.modules.copilot.repository.CopilotRetentionRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
 import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
+import ai.codecraft.modules.copilot.repository.CopilotTestRepository;
+import ai.codecraft.modules.workspace.repository.TestTaskRepository;
+import ai.codecraft.modules.workspace.repository.TaskStreamRepository;
+import ai.codecraft.modules.workspace.repository.FinalizationRepository;
+import ai.codecraft.modules.workspace.repository.WorkspaceMaintenanceRepository;
+import ai.codecraft.modules.workspace.repository.DeletionRepository;
+import ai.codecraft.modules.workspace.repository.ProblemRepository;
+import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
+import ai.codecraft.modules.workspace.service.TestTaskStore;
+import ai.codecraft.modules.workspace.service.TestTaskCoordinator;
+import ai.codecraft.modules.workspace.service.TaskStreamPublisher;
+import ai.codecraft.modules.workspace.service.WorkspaceMaintenanceStore;
 import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.repository.IdentityRepository;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
@@ -83,6 +106,7 @@ import ai.codecraft.modules.workspace.service.WorkspaceWriteCoordinator;
 import ai.codecraft.modules.workspace.service.WorkspaceMaintenanceCoordinator;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
@@ -109,6 +133,7 @@ import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.LocalCacheScope;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -130,14 +155,17 @@ import org.springframework.transaction.support.TransactionTemplate;
 class CopilotPersistenceIT {
     private static final String SESSION = "fixture-session";
     private static final String CONTROL = "c".repeat(43);
+    private final String database = "copilot_it_" + UUID.randomUUID().toString().replace("-", "");
+    private JdbcTemplate bootstrap;
     private final MutableClock clock = new MutableClock();
-    private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
+    private final ObjectMapper json = new ObjectMapper().findAndRegisterModules().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     private final CopilotProperties limits = new CopilotProperties(2, 262144, 1048576, 16, 3, Duration.ofSeconds(130));
     private final ModelCallProperties calls = new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144);
     private SqlSessionTemplate sql;
     private JdbcTemplate jdbc;
     private DataSourceTransactionManager transactions;
     private CopilotTaskStore tasks;
+    private CopilotTaskRepository repository;
     private CopilotExecutionStore execution;
     private CopilotRunner runner;
     private ModelCallDriver driver;
@@ -159,22 +187,42 @@ class CopilotPersistenceIT {
     private WorkspaceWriteCoordinator writeCoordinator;
     private StorageCapacityService capacity;
     private CopilotToolExecutor executor;
+    private TestTaskStore childExecutions;
+    private TestTaskCoordinator testCoordinator;
+    private CopilotTestLifecycle childLifecycle;
+    private CopilotTestStore testRuns;
+    private CopilotTestTools testTools;
+    private WorkspaceMaintenanceStore maintenance;
 
     @BeforeAll
     void migrate() throws Exception {
-        var source = new DriverManagerDataSource(System.getenv("COPILOT_IT_JDBC_URL"), "fixture", "fixture");
-        Flyway.configure().dataSource(source).locations("classpath:db/migration").load().migrate();
+        String url = System.getenv("COPILOT_IT_JDBC_URL");
+        int pathEnd = url.indexOf('?') < 0 ? url.length() : url.indexOf('?');
+        int separator = url.lastIndexOf('/', pathEnd - 1);
+        if (!url.startsWith("jdbc:postgresql://") || separator < "jdbc:postgresql://".length()) throw new IllegalArgumentException("Fixture requires a PostgreSQL database URL");
+        bootstrap = new JdbcTemplate(new DriverManagerDataSource(url, "fixture", "fixture"));
+        bootstrap.execute("CREATE DATABASE " + database);
+        var source = new DriverManagerDataSource(url.substring(0, separator + 1) + database + url.substring(pathEnd), "fixture", "fixture");
         jdbc = new JdbcTemplate(source); transactions = new DataSourceTransactionManager(source);
+        assertThat(jdbc.queryForObject("SELECT current_database()", String.class)).isEqualTo(database);
+        Flyway.configure().dataSource(source).locations("classpath:db/migration").load().migrate();
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
             ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
-            CopilotTaskRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class)) config.addMapper(mapper);
+            CopilotTaskRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class,
+            TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
     }
 
+    @AfterAll
+    void eraseOwnedDatabase() {
+        if (bootstrap != null) bootstrap.execute("DROP DATABASE IF EXISTS " + database);
+    }
+
     @BeforeEach
     void seed() throws Exception {
+        jdbc.execute("TRUNCATE copilot_test_run,copilot_proposal,copilot_tool,copilot_message,copilot_turn,copilot_task,workspace_task_event,workspace_task_stream,workspace_test_stop,workspace_test_task");
         clock.now = "1".equals(System.getenv("COPILOT_LIVE_DEEPSEEK")) ? Instant.now() : Instant.parse("2026-01-01T00:00:00Z");
         String owner = UUID.randomUUID().toString(); exercise = UUID.randomUUID().toString();
         String instance = UUID.randomUUID().toString(); String preparation = UUID.randomUUID().toString();
@@ -221,12 +269,23 @@ class CopilotPersistenceIT {
         var capacityRepository = sql.getMapper(StorageCapacityRepository.class);
         capacityRepository.initialize(exercise);
         var capacityStore = proxy(new StorageCapacityStore(capacityRepository, exercises, writes, identity, budget, clock, data), StorageCapacityStore.class);
+        maintenance = proxy(new WorkspaceMaintenanceStore(sql.getMapper(WorkspaceMaintenanceRepository.class), exercises,
+            sql.getMapper(DeletionRepository.class), identity, clock, budget, data), WorkspaceMaintenanceStore.class);
+        var executionProblems = mock(ProblemRepository.class);
+        String problemId = exercises.find(exercise).problemVersionId();
+        when(executionProblems.find(problemId)).thenReturn(new ProblemVersionEntity(problemId, "fixture", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", "{}"));
+        when(executionProblems.executionAvailable(problemId)).thenReturn(true);
+        var streams = sql.getMapper(TaskStreamRepository.class);
+        var publisher = proxy(new TaskStreamPublisher(streams, json, clock), TaskStreamPublisher.class);
+        childExecutions = proxy(new TestTaskStore(identity, secrets, exercises, writes, sql.getMapper(TestTaskRepository.class), executionProblems, clock, json,
+            streams, publisher, sql.getMapper(FinalizationRepository.class), budget, maintenance, capacityStore), TestTaskStore.class);
+        childLifecycle = proxy(new CopilotTestLifecycle(sql.getMapper(CopilotTestRepository.class), childExecutions), CopilotTestLifecycle.class);
         var lifecycle = proxy(new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock, secrets, coordination,
             new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, selection), ExerciseTransactionService.class);
         var operations = proxy(new WorkspaceAiOperationService(identity, exercises, writes, capacityStore, clock), WorkspaceAiOperationService.class);
-        var repository = sql.getMapper(CopilotTaskRepository.class);
-        tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class)), CopilotTaskStore.class);
-        execution = proxy(new CopilotExecutionStore(repository, identity, coordination, selection, operations, limits, clock, new CopilotRequestFactory(), sql.getMapper(CopilotProposalRepository.class), secrets), CopilotExecutionStore.class);
+        repository = sql.getMapper(CopilotTaskRepository.class);
+        tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle), CopilotTaskStore.class);
+        execution = proxy(new CopilotExecutionStore(repository, identity, coordination, selection, operations, limits, clock, new CopilotRequestFactory(), sql.getMapper(CopilotProposalRepository.class), secrets, childLifecycle), CopilotExecutionStore.class);
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 1, 0);
         sandbox = mock(SandboxWorkspaceGateway.class);
         when(sandbox.measureStorage(any())).thenAnswer(call -> measurement);
@@ -241,10 +300,14 @@ class CopilotPersistenceIT {
         var codec = new WorkspaceBatchCodec(json);
         var writeStore = proxy(new WorkspaceWriteTransactionService(identity, secrets, exercises, writes, clock, capacityStore), WorkspaceWriteTransactionService.class);
         writeCoordinator = new WorkspaceWriteCoordinator(coordination, sandbox, codec);
+        testCoordinator = new TestTaskCoordinator(childExecutions, sandbox, coordination, writeCoordinator);
         proposals = proxy(new CopilotProposalStore(sql.getMapper(CopilotProposalRepository.class), repository, tasks, execution, identity, secrets,
             lifecycle, coordination, writeStore, operations, codec, json, clock), CopilotProposalStore.class);
         proposalViews = new CopilotProposalService(proposals, capacity, json);
-        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json);
+        testRuns = proxy(new CopilotTestStore(sql.getMapper(CopilotTestRepository.class), repository, execution, tasks, childLifecycle,
+            childExecutions, identity, lifecycle, coordination, clock), CopilotTestStore.class);
+        testTools = new CopilotTestTools(testRuns, capacity, new CopilotTestResultFormatter(), json);
+        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools);
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls);
     }
 
@@ -664,6 +727,194 @@ class CopilotPersistenceIT {
             for (var sample : samples) assertThat(sample.get("usage_payload")).isNotNull();
             System.out.println("DeepSeek live proposal usage (Go is a deterministic fixture; no credentials or request bodies): " + samples);
         } finally { connections.delete(SESSION, connection.id(), "live-cleanup", connection.version()); }
+    }
+
+    @Test
+    void testWaitReleasesWorkerAndLostStartResponseRecoversWithoutStartingAgain() throws Exception {
+        var sandboxTest = new TestExecution();
+        sandboxTest.loseStart = true;
+        var task = beginTest(true);
+        var binding = sql.getMapper(CopilotTestRepository.class).pending(task.id());
+        assertThat(repository.find(task.id()).workerId()).isNull();
+        assertThatThrownBy(() -> testCoordinator.observe(childExecutions.find(binding.testTaskId()))).isInstanceOf(StatusRuntimeException.class);
+        testTools.recoverTask(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_TEST");
+        sandboxTest.finish("FAILED", true);
+        testCoordinator.observe(childExecutions.find(binding.testTaskId()));
+        testTools.recoverTask(task.id());
+        testTools.recoverTask(task.id());
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(sandboxTest.starts.get()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_test_run WHERE task_id=?::uuid", Integer.class, task.id())).isEqualTo(1);
+        var results = repository.context(exercise).stream().filter(message -> message.kind().equals("TOOL")).toList();
+        assertThat(results).hasSize(2);
+        assertThat(results.getFirst().payload()).contains("FAILED", "TEST_RESULT");
+        assertThat(results.getLast().payload()).contains("reused\\\":true");
+        verify(driver, times(2)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void parentStopBeforeChildDispatchDoesNotStartAndWaitsForItsExactCancellationReceipt() throws Exception {
+        var sandboxTest = new TestExecution();
+        var task = beginTest(false);
+        var binding = sql.getMapper(CopilotTestRepository.class).pending(task.id());
+        tasks.stop(SESSION, task.id(), "stop");
+        testCoordinator.observe(childExecutions.find(binding.testTaskId()));
+        execution.recover(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPING");
+        assertThat(sandboxTest.starts.get()).isZero();
+        testCoordinator.recover();
+        testTools.recoverTask(task.id());
+        execution.recover(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
+        assertThat(childExecutions.find(binding.testTaskId()).quiescent()).isTrue();
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void stopAcceptanceIsNotProcessExitAndResultVersionMustStillMatchAtCommit() throws Exception {
+        var sandboxTest = new TestExecution();
+        var task = beginTest(false);
+        var binding = sql.getMapper(CopilotTestRepository.class).pending(task.id());
+        testCoordinator.observe(childExecutions.find(binding.testTaskId()));
+        tasks.stop(SESSION, task.id(), "stop");
+        sandboxTest.finish("STOPPED", false);
+        testCoordinator.recover();
+        testTools.recoverTask(task.id());
+        execution.recover(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPING");
+        sandboxTest.finish("STOPPED", true);
+        testCoordinator.observe(childExecutions.find(binding.testTaskId()));
+        var captured = testRuns.recovery(task.id());
+        sandboxTest.version++;
+        testCoordinator.observe(childExecutions.find(binding.testTaskId()));
+        testRuns.complete(captured, json.writeValueAsString(new CopilotTestResultFormatter().format(json.readValue(captured.evidence().payload(), TestTaskResponse.class), false)));
+        assertThat(sql.getMapper(CopilotTestRepository.class).waiting(task.id())).isTrue();
+        testTools.recoverTask(task.id());
+        execution.recover(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
+        assertThat(sandboxTest.starts.get()).isEqualTo(1);
+    }
+
+    @Test
+    void anIndependentManualTestProducesBusyWithoutBeingAdoptedOrStopped() throws Exception {
+        var sandboxTest = new TestExecution();
+        var manual = childExecutions.accept(SESSION, exercise, "manual", CONTROL, new StartTestRequest("1", "base"), measurement);
+        var task = beginTestAttempt(false);
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(repository.context(exercise).stream().filter(message -> message.kind().equals("TOOL")).findFirst().orElseThrow().payload()).contains("TEST_SLOT_BUSY");
+        tasks.stop(SESSION, task.id(), "stop");
+        assertThat(sql.getMapper(TestTaskRepository.class).acceptedStop(manual.id())).isNull();
+        assertThat(sql.getMapper(CopilotTestRepository.class).recent(task.id())).isEmpty();
+        assertThat(sandboxTest.starts.get()).isZero();
+    }
+
+    @Test
+    void revokedAuthorizationStopsOnlyTheBoundChildAndNeverResumesTheModel() throws Exception {
+        new TestExecution();
+        var task = beginTest(false);
+        when(identity.authorization(SESSION)).thenThrow(new IdentityFailure(IdentityErrorCode.UNAUTHENTICATED));
+        testTools.recoverTask(task.id());
+        testCoordinator.recover();
+        testTools.recoverTask(task.id());
+        execution.recover(task.id());
+        assertThat(repository.find(task.id()).state()).isEqualTo("INTERRUPTED");
+        assertThat(repository.find(task.id()).reason()).isEqualTo("AUTHORIZATION_ENDED");
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void completedChildEvidenceIsProtectedUntilTheParentToolMessageIsCommitted() throws Exception {
+        var sandboxTest = new TestExecution();
+        var task = beginTest(false);
+        var child = sql.getMapper(CopilotTestRepository.class).pending(task.id());
+        sandboxTest.finish("PASSED", true);
+        testCoordinator.observe(childExecutions.find(child.testTaskId()));
+        jdbc.update("""
+            INSERT INTO workspace_test_task(id,execution_instance_id,exercise_id,workspace_instance_id,revision,gate_epoch,not_after,target,state,quiescent,snapshot)
+            SELECT gen_random_uuid(),gen_random_uuid(),exercise_id,workspace_instance_id,revision,gate_epoch,not_after,target,state,true,
+                jsonb_set(snapshot,'{finishedAt}',to_jsonb(?::text))
+            FROM workspace_test_task CROSS JOIN generate_series(1,21) WHERE id=?::uuid
+            """, clock.instant().plusSeconds(1).toString(), child.testTaskId());
+        assertThat(maintenance.pruningPlan(exercise)).noneMatch(record -> record.taskId().equals(child.testTaskId()));
+        assertThat(sql.getMapper(TestTaskRepository.class).retired(child.testTaskId())).isFalse();
+        testTools.recoverTask(task.id());
+        assertThat(maintenance.pruningPlan(exercise)).anyMatch(record -> record.taskId().equals(child.testTaskId()));
+        assertThat(sql.getMapper(CopilotTestRepository.class).forTool(child.toolId()).resultPayload()).contains("test log");
+    }
+
+    @Test
+    void expiredExerciseNeverWakesTheModelAfterAChildResultAndPairsRemainingCalls() throws Exception {
+        var sandboxTest = new TestExecution();
+        var task = beginTest(true);
+        var child = sql.getMapper(CopilotTestRepository.class).pending(task.id());
+        testCoordinator.observe(childExecutions.find(child.testTaskId()));
+        clock.now = clock.now.plusSeconds(3601);
+        sandboxTest.finish("PASSED", true);
+        testCoordinator.observe(childExecutions.find(child.testTaskId()));
+        testTools.recoverTask(task.id());
+        assertThat(repository.find(task.id()).state()).isEqualTo("STOPPING");
+        runner.run(task.id(), UUID.randomUUID().toString());
+        execution.recover(task.id());
+        assertThat(repository.find(task.id()).state()).isEqualTo("INTERRUPTED");
+        assertThat(repository.find(task.id()).reason()).isEqualTo("EXERCISE_ENDED");
+        assertThat(repository.context(exercise).stream().filter(message -> message.kind().equals("TOOL"))).hasSize(2);
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    private CopilotTaskResponse beginTest(boolean repeat) throws Exception {
+        var task = beginTestAttempt(repeat);
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_TEST");
+        return task;
+    }
+
+    private CopilotTaskResponse beginTestAttempt(boolean repeat) throws Exception {
+        var first = ToolExecutionRequest.builder().id("test-first").name("run_tests").arguments("{\"expected_revision\":\"1\",\"target\":\"base\"}").build();
+        var second = ToolExecutionRequest.builder().id("test-repeat").name("run_tests").arguments(first.arguments()).build();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(repeat ? List.of(first, second) : List.of(first))).build(), 100),
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Confirmed test result received.")).build(), 100));
+        var task = tasks.accept(SESSION, exercise, CONTROL, "test-start", "Run the base tests", true, measurement);
+        runner.run(task.id(), UUID.randomUUID().toString());
+        return task;
+    }
+
+    private final class TestExecution {
+        final AtomicInteger starts = new AtomicInteger();
+        String state = "RUNNING";
+        boolean quiescent;
+        boolean loseStart;
+        long version = 1;
+        TestExecution() {
+            when(sandbox.inventory(anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
+            when(sandbox.startTest(any(), any())).thenAnswer(call -> {
+                starts.incrementAndGet();
+                if (loseStart) throw Status.UNAVAILABLE.asRuntimeException();
+                return snapshot(call.getArgument(0));
+            });
+            when(sandbox.task(any())).thenAnswer(call -> snapshot(call.getArgument(0)));
+            when(sandbox.queryStop(any())).thenReturn(StopTaskResponse.getDefaultInstance());
+            when(sandbox.stopSystemTask(any())).thenAnswer(call -> {
+                TestTaskEntity task = call.getArgument(0);
+                var response = StopTaskResponse.newBuilder().setHostEpoch("A".repeat(26));
+                return task.dispatched() ? response.setSnapshot(snapshot(task)).build() : response.setCancelledBeforeRegistration(true).build();
+            });
+        }
+        void finish(String result, boolean quiet) { state = result; quiescent = quiet; version++; }
+        TestTaskSnapshot snapshot(TestTaskEntity task) {
+            var problem = childExecutions.problem(task);
+            var value = TestTaskSnapshot.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id()).setExecutionInstanceId(task.executionInstanceId())
+                .setWorkspaceInstanceId(task.workspaceInstanceId()).setRevision(task.revision()).setTarget(task.target()).setState(state).setReason("fixture_result")
+                .setStartedAtUnixMillis(clock.instant().minusSeconds(1).toEpochMilli()).setQuiescent(quiescent)
+                .setCleanup(quiescent ? "SUCCEEDED" : "PENDING").setCopyCleanup(quiescent ? "SUCCEEDED" : "PENDING").setStateVersion(version).setStreamId("S".repeat(26))
+                .setProblem(ProblemIdentity.newBuilder().setProblemId(problem.problemId()).setVersion(problem.version()).setPackageSha256(problem.packageSha256())
+                    .setExecutionImageDigest(problem.executionImageDigest()).setPlatform(problem.platform()))
+                .addLogs(TestLogChunk.newBuilder().setChannel("stdout").setData(ByteString.copyFromUtf8("test log")));
+            if (!state.equals("RUNNING")) value.setFinishedAtUnixMillis(clock.instant().toEpochMilli());
+            if (state.equals("PASSED") || state.equals("FAILED")) value.setEvidence(TestEvidence.newBuilder().setKind("SUREFIRE_XML").setSha256("e".repeat(64)).setBytes(100));
+            return value.build();
+        }
     }
 
     private CopilotTaskResponse beginProposal(ProposalWorkspace workspace, boolean trailingRead) throws Exception {
