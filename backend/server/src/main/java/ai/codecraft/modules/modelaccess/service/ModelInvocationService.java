@@ -2,6 +2,8 @@ package ai.codecraft.modules.modelaccess.service;
 
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
+import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
+import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationResolutionDTO;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.modelaccess.model.ModelProtocol;
 import ai.codecraft.modules.modelaccess.model.ModelProviderPreset;
@@ -33,7 +35,19 @@ public class ModelInvocationService {
 
     @Transactional
     public ModelInvocationDTO resolve(String session, ModelInvocationReferenceDTO reference) {
-        var grant = identity.authorizeMutation(session);
+        return resolve(identity.authorizeMutation(session), reference);
+    }
+
+    /** Expected invalidation does not mark a caller's recovery transaction rollback-only. */
+    @Transactional
+    public ModelInvocationResolutionDTO tryResolve(String session, ModelInvocationReferenceDTO reference) {
+        var grant = identity.tryAuthorizeMutation(session);
+        if (grant == null) return new ModelInvocationResolutionDTO(null, IdentityErrorCode.UNAUTHENTICATED);
+        try { return new ModelInvocationResolutionDTO(resolve(grant, reference), null); }
+        catch (BusinessException unavailable) { return new ModelInvocationResolutionDTO(null, unavailable.errorCode()); }
+    }
+
+    private ModelInvocationDTO resolve(SessionAuthorizationDTO grant, ModelInvocationReferenceDTO reference) {
         if (!"USER".equals(grant.role())) throw new BusinessException(IdentityErrorCode.FORBIDDEN);
         var model = models.find(reference.modelConfigurationId());
         if (model == null || !model.userId().equals(grant.userId()) || model.deletedAt() != null) throw new BusinessException(ModelAccessErrorCode.MODEL_CONFIGURATION_NOT_FOUND);

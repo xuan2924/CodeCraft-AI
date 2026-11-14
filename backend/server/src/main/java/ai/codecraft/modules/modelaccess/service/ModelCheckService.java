@@ -6,6 +6,7 @@ import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckResponse;
 import ai.codecraft.modules.modelaccess.model.entity.ModelCheckEntity;
+import ai.codecraft.modules.modelaccess.model.entity.ModelCheckAuthorityEntity;
 import ai.codecraft.modules.modelaccess.model.exception.ModelAccessErrorCode;
 import ai.codecraft.modules.modelaccess.repository.ModelCheckRepository;
 import ai.codecraft.modules.modelaccess.repository.ModelConfigurationRepository;
@@ -50,6 +51,7 @@ public class ModelCheckService {
         if (checks.startsSince(owner, clock.instant().minus(properties.startWindow())) >= properties.startsPerWindow()) throw new BusinessException(ModelAccessErrorCode.MODEL_CHECK_RATE_LIMITED);
         var check = new ModelCheckEntity(UUID.randomUUID().toString(), owner, connection.id(), model.id(), connection.configurationVersion(), model.configurationVersion(), "QUEUED", clock.instant());
         checks.insert(check);
+        checks.insertAuthority(new ModelCheckAuthorityEntity(check.id(), owner, session, grant.authVersion(), grant.expiresAt(), null));
         return receipts.complete(owner, "START_MODEL_CHECK", modelId, key, fingerprint,
             new ModelCheckResponse(check.id(), model.id(), Long.toString(check.connectionConfigurationVersion()), Long.toString(check.modelConfigurationVersion()), check.status(), check.startedAt()));
     }

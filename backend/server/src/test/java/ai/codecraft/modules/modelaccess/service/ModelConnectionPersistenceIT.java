@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
 import ai.codecraft.common.exception.BusinessException;
@@ -16,6 +17,7 @@ import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.modelaccess.config.ModelSecurityProperties;
 import ai.codecraft.modules.modelaccess.config.ModelCheckProperties;
+import ai.codecraft.modules.modelaccess.config.ModelCallProperties;
 import ai.codecraft.modules.modelaccess.repository.ModelCheckRepository;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckResponse;
 import java.time.Duration;
@@ -76,6 +78,8 @@ class ModelConnectionPersistenceIT {
     private ModelConnectionService service;
     private ModelConfigurationService models;
     private ModelCheckService checks;
+    private ModelCheckExecutionStore dispatches;
+    private ModelCheckExecutionStore expiredDispatches;
     private String owner;
 
     @BeforeAll
@@ -98,8 +102,10 @@ class ModelConnectionPersistenceIT {
         var identity = mock(IdentityTransactionService.class);
         var locks = transactional(new IdentityTransactionService(sql.getMapper(IdentityRepository.class), clock, mock(IdentityRevocationNotifier.class),
             mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class)), IdentityTransactionService.class);
+        doAnswer(call -> { locks.lockResourceOwner(call.getArgument(0)); return null; }).when(identity).lockResourceOwner(anyString());
         var grant = new SessionAuthorizationDTO(owner, "USER", false, 1, NOW.plusSeconds(3600));
         when(identity.authorizeMutation("session")).thenAnswer(call -> { locks.lockResourceOwner(owner); return grant; });
+        when(identity.tryAuthorizeMutation("session")).thenAnswer(call -> { locks.lockResourceOwner(owner); return grant; });
         when(identity.authorizePrivateDelivery("session")).thenAnswer(call -> { locks.lockResourceOwner(owner); return grant; });
         var secrets = mock(IdentitySecrets.class);
         when(secrets.fingerprint(anyString())).thenAnswer(call -> HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(call.<String>getArgument(0).getBytes(StandardCharsets.UTF_8))));
@@ -110,7 +116,124 @@ class ModelConnectionPersistenceIT {
         models = transactional(new ModelConfigurationService(sql.getMapper(ModelConfigurationRepository.class), repository, identity,
             new ModelConnectionValidator(), receipts, clock), ModelConfigurationService.class);
         checks = transactional(new ModelCheckService(sql.getMapper(ModelCheckRepository.class), sql.getMapper(ModelConfigurationRepository.class), repository,
-            identity, receipts, clock, new ModelCheckProperties(Duration.ofMinutes(5), 3)), ModelCheckService.class);
+            identity, receipts, clock, new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536)), ModelCheckService.class);
+        var invocations = transactional(new ModelInvocationService(identity, repository, sql.getMapper(ModelConfigurationRepository.class), cipher), ModelInvocationService.class);
+        dispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
+            new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
+            new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), clock), ModelCheckExecutionStore.class);
+        expiredDispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
+            new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
+            new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), Clock.offset(clock, Duration.ofSeconds(120))), ModelCheckExecutionStore.class);
+    }
+
+    @Test
+    void competingWorkersCannotBothAcquireTheSamePaidRequest() throws Exception {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var check = checks.start("session", model.id(), "check", true);
+        var results = race(() -> dispatches.begin(check.id(), 1, UUID.randomUUID().toString()) != null,
+            () -> dispatches.begin(check.id(), 1, UUID.randomUUID().toString()) != null);
+        assertThat(results).containsExactlyInAnyOrder(true, false);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM personal_model_check_request WHERE check_id=?::uuid", Integer.class, check.id())).isEqualTo(1);
+    }
+
+    @Test
+    void dispatchRollbackDoesNotConsumeTheRequestOrWorkerClaim() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var check = checks.start("session", model.id(), "check", true);
+        assertThatThrownBy(() -> transactions.execute(status -> {
+            dispatches.begin(check.id(), 1, UUID.randomUUID().toString()); throw new IllegalStateException("injected rollback");
+        })).hasMessage("injected rollback");
+        assertThat(dispatches.begin(check.id(), 1, UUID.randomUUID().toString())).isNotNull();
+    }
+
+    @Test
+    void expiredContinuationAndRecoveryConvergeInEitherTransactionOrder() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        for (boolean recoveryFirst : new boolean[] {false, true}) {
+            var check = checks.start("session", model.id(), "check-" + recoveryFirst, true);
+            String worker = UUID.randomUUID().toString();
+            var first = dispatches.begin(check.id(), 1, worker);
+            assertThat(dispatches.complete(first.requestId(), worker, 100, null)).isTrue();
+            if (recoveryFirst) assertThat(expiredDispatches.recoverExpired(check.id())).isTrue();
+            assertThat(expiredDispatches.begin(check.id(), 2, worker)).isNull();
+            assertThat(expiredDispatches.recoverExpired(check.id())).isFalse();
+            assertThat(jdbc.queryForObject("SELECT status FROM personal_model_check WHERE id=?::uuid", String.class, check.id())).isEqualTo("INTERRUPTED");
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM personal_model_check_request WHERE check_id=?::uuid", Integer.class, check.id())).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void completedThreeRequestGroupCannotBeRepeatedAndCountsDecodedBytesAcrossPhases() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var check = checks.start("session", model.id(), "check", true);
+        String worker = UUID.randomUUID().toString();
+        for (int step = 1; step <= 3; step++) {
+            var request = dispatches.begin(check.id(), step, worker);
+            assertThat(request.remainingDecodedBytes()).isEqualTo(65536 - (step - 1) * 100);
+            assertThat(dispatches.complete(request.requestId(), worker, 100, null)).isTrue();
+            assertThat(dispatches.complete(request.requestId(), worker, 100, null)).isFalse();
+        }
+        assertThat(jdbc.queryForObject("SELECT status FROM personal_model_check WHERE id=?::uuid", String.class, check.id())).isEqualTo("SUCCEEDED");
+        assertThat(dispatches.begin(check.id(), 3, worker)).isNull();
+        assertThat(sql.getMapper(ModelCheckRepository.class).decodedBytes(check.id())).isEqualTo(300);
+    }
+
+    @Test
+    void expiredRecoveryIsDurableAndLateCompletionCannotReopenTheGroup() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var check = checks.start("session", model.id(), "check", true);
+        String worker = UUID.randomUUID().toString();
+        var request = dispatches.begin(check.id(), 1, worker);
+        assertThat(sql.getMapper(ModelCheckRepository.class).expired(NOW)).doesNotContain(check.id());
+        assertThat(sql.getMapper(ModelCheckRepository.class).expired(NOW.plusSeconds(120))).contains(check.id());
+        assertThat(dispatches.recoverExpired(check.id())).isFalse();
+        assertThat(expiredDispatches.recoverExpired(check.id())).isTrue();
+        assertThat(expiredDispatches.recoverExpired(check.id())).isFalse();
+        assertThat(dispatches.complete(request.requestId(), worker, 100, null)).isFalse();
+        assertThat(sql.getMapper(ModelCheckRepository.class).request(request.requestId()).status()).isEqualTo("INTERRUPTED");
+    }
+
+    @Test
+    void configurationEditedAfterDispatchCannotBeCertifiedByItsLateSuccess() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var check = checks.start("session", model.id(), "check", true);
+        String worker = UUID.randomUUID().toString();
+        var request = dispatches.begin(check.id(), 1, worker);
+        service.delete("session", connection.id(), "delete", connection.version());
+        assertThat(dispatches.complete(request.requestId(), worker, 100, null)).isFalse();
+        assertThat(jdbc.queryForObject("SELECT status FROM personal_model_check WHERE id=?::uuid", String.class, check.id())).isEqualTo("SUPERSEDED");
+    }
+
+    @Test
+    void durableDispatchIsSingleUseAndKeepsCredentialsOutOfTheLedger() throws Exception {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var check = checks.start("session", model.id(), "check", true);
+        String worker = UUID.randomUUID().toString();
+        var dispatched = dispatches.begin(check.id(), 1, worker);
+        assertThat(dispatched.invocation().credential()).isEqualTo(input.apiKey());
+        assertThat(dispatched.notAfter()).isEqualTo(NOW.plusSeconds(120));
+        assertThat(dispatched.remainingDecodedBytes()).isEqualTo(65536);
+        assertThat(dispatches.begin(check.id(), 1, worker)).isNull();
+        assertThat(dispatches.begin(check.id(), 2, worker)).isNull();
+        assertThat(jdbc.queryForObject("SELECT row_to_json(r)::text FROM personal_model_check_request r WHERE check_id=?::uuid", String.class, check.id())).doesNotContain(input.apiKey());
+    }
+
+    @Test
+    void editBetweenAdmissionAndDispatchCommitsFailureWithoutRollbackPoisoning() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var check = checks.start("session", model.id(), "check", true);
+        models.update("session", model.id(), "edit", new ModelConfigurationRequest("Fixture", "changed-model", 10000, 4096, ModelThinkingMode.OFF, null, null, null, model.version()));
+        assertThat(dispatches.begin(check.id(), 1, UUID.randomUUID().toString())).isNull();
+        assertThat(jdbc.queryForObject("SELECT status FROM personal_model_check WHERE id=?::uuid", String.class, check.id())).isEqualTo("FAILED");
+        assertThat(checks.start("session", model.id(), "new-check", true).status()).isEqualTo("QUEUED");
     }
 
     @Test

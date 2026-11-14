@@ -35,7 +35,7 @@ class ModelCheckServiceTest {
     private final ModelConnectionRepository connections = mock(ModelConnectionRepository.class);
     private final IdentityTransactionService identity = mock(IdentityTransactionService.class);
     private final ModelCommandReceipts receipts = mock(ModelCommandReceipts.class);
-    private final ModelCheckService service = new ModelCheckService(checks, models, connections, identity, receipts, Clock.fixed(NOW, ZoneOffset.UTC), new ModelCheckProperties(Duration.ofMinutes(5), 3));
+    private final ModelCheckService service = new ModelCheckService(checks, models, connections, identity, receipts, Clock.fixed(NOW, ZoneOffset.UTC), new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536));
 
     @BeforeEach
     void setup() {
