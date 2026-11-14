@@ -72,7 +72,7 @@ public interface DeletionRepository {
     void eraseTransitionCredentials(String id);
     @Delete("DELETE FROM workspace_control WHERE exercise_id = #{id}::uuid")
     void clearControl(String id);
-    @Update("UPDATE workspace_exercise SET revision = NULL, paths = '[]', preparation_session_hash = NULL, preparation_not_after = NULL, cleanup_state = 'SUCCEEDED' WHERE id = #{id}::uuid")
+    @Update("UPDATE workspace_exercise SET revision = NULL, paths = '[]', preparation_session_hash = NULL, preparation_not_after = NULL, selected_connection_id = NULL, selected_model_id = NULL, selected_connection_version = NULL, selected_model_version = NULL, cleanup_state = 'SUCCEEDED' WHERE id = #{id}::uuid")
     void clearExercise(String id);
     @Select("SELECT e.id::text FROM workspace_exercise e WHERE state = 'ENDED' AND retain_until <= #{now} AND NOT EXISTS (SELECT 1 FROM workspace_deletion d WHERE d.exercise_id = e.id) ORDER BY retain_until, e.id LIMIT 16")
     List<String> expired(Instant now);

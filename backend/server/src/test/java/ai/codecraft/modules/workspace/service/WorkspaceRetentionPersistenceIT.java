@@ -204,6 +204,7 @@ class WorkspaceRetentionPersistenceIT {
     void deletionErasesBodiesImmediatelyAndRetainsOutcomeReceiptsForSevenDays() throws Exception {
         String task = task(1, true, 1);
         String mutation = mutation(1, false);
+        jdbc.update("UPDATE workspace_exercise SET selected_connection_id=?::uuid, selected_model_id=?::uuid, selected_connection_version=1, selected_model_version=1 WHERE id=?::uuid", id(), id(), exercise);
         var coordination = new WorkspaceCoordinationStore(sql.getMapper(WorkspaceWriteRepository.class), exercises, json);
         tx(() -> deletion.request("session", exercise, "delete"));
         assertThatThrownBy(() -> tx(() -> tasks.query("session", exercise, task))).hasMessage("EXERCISE_DELETED");
@@ -211,6 +212,7 @@ class WorkspaceRetentionPersistenceIT {
         String claim = id();
         assertThat(tx(() -> deletion.claim(exercise, claim))).isTrue();
         tx(() -> { deletion.complete(exercise, claim); return null; });
+        assertThat(jdbc.queryForObject("SELECT selected_model_id IS NULL AND selected_connection_id IS NULL AND selected_model_version IS NULL AND selected_connection_version IS NULL FROM workspace_exercise WHERE id=?::uuid", Boolean.class, exercise)).isTrue();
         assertThat(tx(() -> coordination.mutation(mutation)).payload()).isEqualTo("{}");
         assertThat(tx(() -> coordination.mutation(mutation)).revision()).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT snapshot->'logs' FROM workspace_test_task WHERE id = ?::uuid", String.class, task)).isEqualTo("[]");
