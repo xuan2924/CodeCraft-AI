@@ -95,6 +95,24 @@ function page<T>(value: unknown, key: string, parse: (value: unknown) => T): Pag
 function path(id: string): string { return encodeURIComponent(uuid(id)); }
 function after(cursor: string | null): string { return cursor ? `?after=${path(cursor)}` : ''; }
 
+export interface ModelReference {
+  connectionId: string; modelConfigurationId: string; connectionConfigurationVersion: string; modelConfigurationVersion: string;
+}
+export interface ExerciseModel { selected: ModelReference | null; availability: string }
+function exerciseModel(value: unknown): ExerciseModel {
+  const item = record(value);
+  const selected = item.selected === null ? null : record(item.selected);
+  return { selected: selected ? { connectionId: uuid(selected.connectionId), modelConfigurationId: uuid(selected.modelConfigurationId),
+    connectionConfigurationVersion: version(selected.connectionConfigurationVersion), modelConfigurationVersion: version(selected.modelConfigurationVersion) } : null,
+  availability: text(item.availability, 128) };
+}
+export async function exerciseSelection(id: string, signal: AbortSignal, owner: string): Promise<ExerciseModel> {
+  return exerciseModel(await request(`/api/exercises/${path(id)}/model`, signal, { headers: ownerHeaders(owner) }));
+}
+export async function selectExerciseModel(id: string, reference: ModelReference, credential: string, key: string, signal: AbortSignal, owner: string): Promise<ExerciseModel> {
+  return exerciseModel(await post(`/api/exercises/${path(id)}/model`, reference, signal, key, credential, owner));
+}
+
 export async function connections(cursor: string | null, signal: AbortSignal, owner?: string): Promise<Page<Connection>> {
   return page(await request(`/api/model-connections${after(cursor)}`, signal, { headers: ownerHeaders(owner) }), 'connections', connection);
 }

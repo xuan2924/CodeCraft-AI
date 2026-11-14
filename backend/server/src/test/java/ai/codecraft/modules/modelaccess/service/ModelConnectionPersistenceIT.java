@@ -12,6 +12,16 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationReferenceDTO;
+import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
+import ai.codecraft.modules.workspace.repository.ExerciseModelRepository;
+import ai.codecraft.modules.workspace.repository.ExerciseRepository;
+import ai.codecraft.modules.workspace.service.ExerciseModelService;
+import ai.codecraft.modules.workspace.service.ExerciseTransactionService;
+import ai.codecraft.modules.workspace.service.ProblemTransactionService;
+import ai.codecraft.modules.workspace.service.StorageCapacityStore;
+import ai.codecraft.modules.workspace.config.RetentionProperties;
+import ai.codecraft.modules.workspace.service.WorkspaceCoordinationStore;
 import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.repository.IdentityRepository;
 import ai.codecraft.modules.identity.repository.RevocationIntentRepository;
@@ -102,6 +112,8 @@ class ModelConnectionPersistenceIT {
     private ModelCheckRetentionService retention;
     private ModelCredentialCipher rotatedCipher;
     private String owner;
+    private ExerciseModelService exerciseModels;
+    private ExerciseTransactionService exerciseLifecycle;
 
     @BeforeAll
     void migrate() throws Exception {
@@ -112,6 +124,8 @@ class ModelConnectionPersistenceIT {
         configuration.setLocalCacheScope(LocalCacheScope.STATEMENT);
         configuration.addMapper(IdentityRepository.class); configuration.addMapper(ModelConnectionRepository.class); configuration.addMapper(ModelConfigurationRepository.class);
         configuration.addMapper(ModelCheckRepository.class);
+        configuration.addMapper(ExerciseModelRepository.class);
+        configuration.addMapper(ExerciseRepository.class);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(configuration);
         sql = new SqlSessionTemplate(factory.getObject());
     }
@@ -125,6 +139,7 @@ class ModelConnectionPersistenceIT {
             mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class)), IdentityTransactionService.class);
         doAnswer(call -> { locks.lockResourceOwner(call.getArgument(0)); return null; }).when(identity).lockResourceOwner(anyString());
         var grant = new SessionAuthorizationDTO(owner, "USER", false, 1, NOW.plusSeconds(3600));
+        when(identity.authorization("session")).thenReturn(grant);
         when(identity.authorizeMutation("session")).thenAnswer(call -> { locks.lockResourceOwner(owner); return grant; });
         when(identity.tryAuthorizeMutation("session")).thenAnswer(call -> { locks.lockResourceOwner(owner); return grant; });
         when(identity.authorizePrivateDelivery("session")).thenAnswer(call -> { locks.lockResourceOwner(owner); return grant; });
@@ -145,12 +160,53 @@ class ModelConnectionPersistenceIT {
         checksAfterValidity = transactional(new ModelCheckService(sql.getMapper(ModelCheckRepository.class), sql.getMapper(ModelConfigurationRepository.class), repository,
             identity, receipts, Clock.offset(clock, Duration.ofMinutes(30)), new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536)), ModelCheckService.class);
         var invocations = transactional(new ModelInvocationService(identity, repository, sql.getMapper(ModelConfigurationRepository.class), cipher), ModelInvocationService.class);
+        exerciseModels = transactional(new ExerciseModelService(sql.getMapper(ExerciseModelRepository.class), sql.getMapper(ExerciseRepository.class), identity,
+            mock(WorkspaceCoordinationStore.class), invocations, checks, clock, secrets), ExerciseModelService.class);
+        exerciseLifecycle = transactional(new ExerciseTransactionService(sql.getMapper(ExerciseRepository.class), identity, mock(ProblemTransactionService.class), clock, secrets,
+            mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), exerciseModels), ExerciseTransactionService.class);
         dispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
             new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
             new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), clock), ModelCheckExecutionStore.class);
         expiredDispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
             new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
             new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), Clock.offset(clock, Duration.ofSeconds(120))), ModelCheckExecutionStore.class);
+    }
+
+    @Test
+    void exerciseSelectionRequiresChecksOnlyAtStartAndDoesNotFollowEditsOrReplayOldSelection() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", model("Fixture", "fixture", null));
+        var second = models.create("session", connection.id(), "second", model("Second", "second", null));
+        String exercise = UUID.randomUUID().toString();
+        sql.getMapper(ExerciseRepository.class).insert(new ExerciseEntity(exercise, owner, UUID.randomUUID().toString(), UUID.randomUUID().toString(),
+            UUID.randomUUID().toString(), "READY", null, "[]", 1, NOW, null, null, null, null, null));
+        var prepared = sql.getMapper(ExerciseRepository.class).find(exercise);
+        sql.getMapper(ExerciseRepository.class).prepared(exercise, prepared.workspaceInstanceId(), prepared.preparationOperationId(), 1, "[]");
+        var firstReference = new ModelInvocationReferenceDTO(connection.id(), model.id(), 1, 1);
+        var secondReference = new ModelInvocationReferenceDTO(connection.id(), second.id(), 1, 1);
+        assertThatThrownBy(() -> exerciseModels.requireReady("session", exercise)).isInstanceOf(BusinessException.class);
+        exerciseModels.select("session", exercise, "fixture-control", "first", firstReference);
+        assertThatThrownBy(() -> exerciseLifecycle.start("session", exercise, "start", 600, "fixture-control")).isInstanceOf(BusinessException.class);
+        assertThat(exerciseLifecycle.find("session", exercise).state()).isEqualTo("READY");
+        assertThatThrownBy(() -> exerciseModels.requireReady("session", exercise)).isInstanceOf(BusinessException.class);
+        var check = checks.start("session", model.id(), "check", true);
+        String worker = UUID.randomUUID().toString();
+        for (int ordinal = 1; ordinal <= 3; ordinal++) {
+            var request = dispatches.begin(check.id(), ordinal, worker);
+            assertThat(dispatches.complete(request.requestId(), worker, 100, null)).isTrue();
+        }
+        exerciseModels.requireReady("session", exercise);
+        assertThat(exerciseLifecycle.start("session", exercise, "start", 600, "fixture-control").state()).isEqualTo("ACTIVE");
+        exerciseModels.select("session", exercise, "fixture-control", "second", secondReference);
+        exerciseModels.select("session", exercise, "fixture-control", "first", firstReference);
+        assertThat(exerciseModels.current("session", exercise).selected()).isEqualTo(secondReference);
+        assertThatThrownBy(() -> exerciseModels.select("session", exercise, "fixture-control", "first", secondReference)).isInstanceOf(BusinessException.class);
+        service.update("session", connection.id(), "update-key", new ModelConnectionRequest(input.name(), input.baseUrl(), input.protocol(), input.preset(), "new-fixture-key", connection.version()));
+        assertThat(exerciseModels.current("session", exercise).availability()).isEqualTo("MODEL_VERSION_CONFLICT");
+        assertThatThrownBy(() -> exerciseModels.requireReady("session", exercise)).isInstanceOf(BusinessException.class);
+        models.delete("session", second.id(), "delete", second.version());
+        assertThat(exerciseModels.current("session", exercise).availability()).isEqualTo("MODEL_CONFIGURATION_NOT_FOUND");
+        assertThat(exerciseLifecycle.start("session", exercise, "start", 600, "fixture-control").deadlineAt()).isEqualTo(NOW.plusSeconds(600));
     }
 
     @Test

@@ -28,6 +28,7 @@ async function render(fetcher: typeof fetch, initial = '/') {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/', name: 'workspace', component: WorkspacePage },
     { path: '/account', name: 'account', component: { template: '<div />' } },
+    { path: '/models', name: 'models', component: { template: '<div />' } },
   ] });
   await router.push(initial);
   page = mount(WorkspacePage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
@@ -179,11 +180,11 @@ it('selects a published version and displays only confirmed workspace files', as
   });
   vi.stubGlobal('fetch', fetcher);
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workspace', component: WorkspacePage }, { path: '/account', name: 'account', component: { template: '<div />' } }] });
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workspace', component: WorkspacePage }, { path: '/account', name: 'account', component: { template: '<div />' } }, { path: '/models', name: 'models', component: { template: '<div />' } }] });
   await router.push('/');
   page = mount(WorkspacePage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
   await flushPromises();
-  expect(page.text()).toContain('工程底座');
+  expect(page.text()).toContain('第二阶段工程练习');
   await page.get('[data-testid="create-workspace"]').trigger('click');
   await flushPromises();
   expect(page.text()).toContain('已准备，仅可浏览');

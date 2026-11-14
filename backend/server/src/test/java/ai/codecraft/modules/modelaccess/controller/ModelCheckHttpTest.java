@@ -16,6 +16,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.modules.workspace.controller.ExerciseModelController;
+import ai.codecraft.modules.workspace.service.ExerciseModelService;
+import ai.codecraft.modules.workspace.model.dto.ExerciseModelResponse;
+import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationReferenceDTO;
 import ai.codecraft.common.exception.GlobalExceptionHandler;
 import ai.codecraft.common.web.RequestBodyAdmission;
 import ai.codecraft.modules.identity.config.IdentitySettings;
@@ -80,7 +84,7 @@ class ModelCheckHttpTest {
 
     @BeforeEach
     void authorizeFixture() {
-        reset(checks, identity);
+        reset(checks, identity, context.getBean(ExerciseModelService.class));
         var user = mock(UserEntity.class);
         when(user.role()).thenReturn("USER");
         var auth = new AuthenticatedIdentityDTO(user, null, new SessionResponse("owner", "fixture", "USER", false, Instant.parse("2030-01-01T00:00:00Z")));
@@ -183,6 +187,27 @@ class ModelCheckHttpTest {
         assertFalse(result.getResponse().getContentAsString().contains("fixture-private-database-row"));
     }
 
+    @Test
+    void exerciseSelectionRequiresCsrfAndOwnerAndTransmitsExactNonSecretVersions() throws Exception {
+        String path = "/api/exercises/" + CHECK + "/model";
+        var models = context.getBean(ExerciseModelService.class);
+        var reference = new ModelInvocationReferenceDTO(CHECK, MODEL, 2, 3);
+        when(models.select(HASH, CHECK, "control", "select", reference)).thenReturn(new ExerciseModelResponse(reference, "SELECTED"));
+        String body = "{\"connectionId\":\"" + CHECK + "\",\"modelConfigurationId\":\"" + MODEL + "\",\"connectionConfigurationVersion\":\"2\",\"modelConfigurationVersion\":\"3\"}";
+        mvc.perform(post(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN))
+            .header("Origin", "https://app.example.test").contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(post(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN))
+            .header("Origin", "https://app.example.test").header(IdentityHttp.CSRF_HEADER, "fixture-csrf")
+            .header("X-Codecraft-Owner", "other").contentType("application/json").content(body)).andExpect(status().isUnauthorized());
+        verify(models, never()).select(any(), any(), any(), any(), any());
+        mvc.perform(post(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN))
+            .header("Origin", "https://app.example.test").header(IdentityHttp.CSRF_HEADER, "fixture-csrf")
+            .header("X-Codecraft-Owner", "owner").header("X-Operation-Credential", "control").header("Idempotency-Key", "select")
+            .contentType("application/json").content(body)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.selected.modelConfigurationVersion").value("3"))
+            .andExpect(header().string("Cache-Control", "no-store"));
+    }
+
     private MockHttpServletRequestBuilder start() {
         return post(PATH).servletPath(PATH).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN))
             .header("Origin", "https://app.example.test").header("Idempotency-Key", "request").contentType("application/json");
@@ -191,8 +216,9 @@ class ModelCheckHttpTest {
     @Configuration
     @EnableWebMvc
     @EnableWebSecurity
-    @Import({IdentitySecurity.class, ModelCheckController.class, ModelConnectionController.class, ModelAccessErrors.class, GlobalExceptionHandler.class})
+    @Import({IdentitySecurity.class, ExerciseModelController.class, ModelCheckController.class, ModelConnectionController.class, ModelAccessErrors.class, GlobalExceptionHandler.class})
     static class Fixture {
+        @Bean ExerciseModelService exerciseModels() { return mock(ExerciseModelService.class); }
         @Bean ModelCheckService checks() { return mock(ModelCheckService.class); }
         @Bean ModelConnectionService connections() { return mock(ModelConnectionService.class); }
         @Bean IdentityTransactionService identity() { return mock(IdentityTransactionService.class); }

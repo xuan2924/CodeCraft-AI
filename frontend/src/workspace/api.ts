@@ -108,6 +108,10 @@ export async function operation(id: string, signal: AbortSignal): Promise<Mutati
 export function message(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401 || error.code === 'PASSWORD_CHANGE_REQUIRED') return '登录已失效或需要改密，请前往账号页面。';
+    if (error.code === 'MODEL_SELECTION_REQUIRED') return '请先显式选择本次演练使用的模型。';
+    if (error.code === 'MODEL_CHECK_REQUIRED') return '所选版本的基础连接与工具闭环检查尚未通过或已过期，请确认费用后重新检查；尚未开始计时。';
+    if (error.code === 'MODEL_VERSION_CONFLICT') return '所选配置已更新，请显式应用更新版本并在开始计时前完成检查。';
+    if (error.code === 'MODEL_CONNECTION_NOT_FOUND' || error.code === 'MODEL_CONFIGURATION_NOT_FOUND') return '所选配置已删除，请重新选择。';
     if (error.code === 'REVISION_CONFLICT') return '工作区版本已变化。草稿已保留，请比较服务端内容后再保存。';
     if (error.code === 'STALE_CONTROL' || error.code === 'CONTROL_HELD') return '当前页面没有操作权，请显式接管；草稿不会自动清除。';
     if (error.code === 'EXERCISE_EXPIRED') return '作答已到期，本地内容不会自动提交。';

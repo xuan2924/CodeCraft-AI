@@ -357,7 +357,7 @@ class WorkspaceRetentionPersistenceIT {
 
     private ExerciseTransactionService creationStore() {
         return transactional(new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock, fingerprints(),
-            mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore), ExerciseTransactionService.class);
+            mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, mock(ExerciseModelService.class)), ExerciseTransactionService.class);
     }
     private IdentitySecrets fingerprints() {
         var secrets = mock(IdentitySecrets.class);

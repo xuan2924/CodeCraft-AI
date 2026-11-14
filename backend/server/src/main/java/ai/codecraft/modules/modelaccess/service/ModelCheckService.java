@@ -41,6 +41,26 @@ public class ModelCheckService {
         this.identity = identity; this.receipts = receipts; this.clock = clock; this.properties = properties;
     }
 
+    /** Caller holds its exercise admission transaction; the shared owner lock orders configuration edits. */
+    @Transactional
+    public void requireValid(String session, ModelInvocationReferenceDTO reference) {
+        var grant = identity.authorizeMutation(session);
+        if (!"USER".equals(grant.role())) throw new BusinessException(IdentityErrorCode.FORBIDDEN);
+        var model = models.find(reference.modelConfigurationId());
+        var connection = connections.find(reference.connectionId());
+        if (model == null || connection == null || model.deletedAt() != null || connection.deletedAt() != null
+            || !model.userId().equals(grant.userId()) || !connection.userId().equals(grant.userId())
+            || !model.connectionId().equals(connection.id()) || model.configurationVersion() != reference.modelConfigurationVersion()
+            || connection.configurationVersion() != reference.connectionConfigurationVersion()) {
+            throw new BusinessException(ModelAccessErrorCode.MODEL_VERSION_CONFLICT);
+        }
+        var since = clock.instant().minus(ModelCheckProperties.SUCCESS_VALIDITY);
+        if (checks.reusable(grant.userId(), reference, 1, since) == null
+            || checks.reusable(grant.userId(), reference, 3, since) == null) {
+            throw new BusinessException(ModelAccessErrorCode.MODEL_CHECK_REQUIRED);
+        }
+    }
+
     @Transactional
     public ModelCheckStatusResponse status(String session, String id) {
         var grant = identity.authorizePrivateDelivery(session);

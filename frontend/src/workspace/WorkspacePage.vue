@@ -9,6 +9,7 @@ import * as api from './api';
 import WorkspaceLogout from './WorkspaceLogout.vue';
 import WorkspaceTests from './WorkspaceTests.vue';
 import WorkspaceStorage from './WorkspaceStorage.vue';
+import ExerciseModelPicker from '../modelaccess/ExerciseModelPicker.vue';
 import ClosedDrafts from './ClosedDrafts.vue';
 import WorkspaceRetention from './WorkspaceRetention.vue';
 import { cancelSaveLogout, saveLogoutOwner } from './logoutIntent';
@@ -236,7 +237,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
     <header>
       <RouterLink :to="{ name: 'account' }">账号与登录</RouterLink>
       <h1>题目与工作区</h1>
-      <p>工程底座：支持编辑、显式保存与稳定版本测试；模型检查与面试对话尚未接入，不代表完整面试流程。</p>
+      <p>第二阶段工程练习：支持编辑、显式保存与稳定版本测试。开始前需选择并检查个人模型；无面试官、挑战或 AI 报告，不代表完整面试流程。</p>
     </header>
     <p
       v-if="account.isPending.value"
@@ -472,6 +473,16 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
           >
             这个固定题目版本尚未配备正式执行配置，测试不可用；不会替换已有工作区版本。
           </p>
+          <ExerciseModelPicker
+            v-if="['READY', 'ACTIVE'].includes(exercise.state)"
+            :key="owner + exercise.exerciseId"
+            :owner="owner"
+            :exercise-id="exercise.exerciseId"
+            :credential="credential"
+            :preparing="exercise.state === 'READY'"
+            :disabled="!writable || expired || pending || !!unresolved"
+            @unauthorized="credential = ''; account.refetch()"
+          />
           <WorkspaceStorage
             :key="owner + exercise.exerciseId"
             :owner="owner"

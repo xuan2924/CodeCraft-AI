@@ -2,6 +2,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ModelForm from './ModelForm.vue';
+import ExerciseModelPicker from './ExerciseModelPicker.vue';
 import ModelCheckView from './ModelCheckView.vue';
 import ModelSettingsPage from './ModelSettingsPage.vue';
 import DeleteConfiguration from './DeleteConfiguration.vue';
@@ -9,7 +10,7 @@ import * as api from './api';
 import { session, type Identity } from '../auth/api';
 import { ApiError } from '../api/request';
 vi.mock('../auth/api', () => ({ session: vi.fn() }));
-vi.mock('./api', async (original) => ({ ...await original<typeof import('./api')>(), connections: vi.fn(), getConnection: vi.fn(), models: vi.fn(), getModel: vi.fn(),
+vi.mock('./api', async (original) => ({ ...await original<typeof import('./api')>(), connections: vi.fn(), exerciseSelection: vi.fn(), selectExerciseModel: vi.fn(), getConnection: vi.fn(), models: vi.fn(), getModel: vi.fn(),
   saveConnection: vi.fn(), saveModel: vi.fn(), deleteConnection: vi.fn(), deleteModel: vi.fn(), latestCheck: vi.fn(), getCheck: vi.fn(), startCheck: vi.fn() }));
 const connection: api.Connection = { id: '10000000-0000-0000-0000-000000000001', name: 'Fixture connection', baseUrl: 'https://example.test/v1',
   protocol: 'OPENAI_CHAT', preset: 'CUSTOM', version: '2', configurationVersion: '1', keyConfigured: true, deleted: false };
@@ -39,6 +40,25 @@ beforeEach(() => {
   vi.mocked(api.getCheck).mockResolvedValue({ check, reason: null, currentConfiguration: true, basic: item, tool: item });
 });
 afterEach(() => { wrappers.splice(0).forEach((wrapper) => wrapper.unmount()); clients.splice(0).forEach((queryClient) => queryClient.clear()); vi.useRealTimers(); });
+
+it('selects explicit revisions without paid checks, reports deleted selections, and preserves the original key on uncertain retry', async () => {
+  vi.mocked(api.connections).mockResolvedValue({ items: [connection], nextCursor: null });
+  vi.mocked(api.models).mockResolvedValue({ items: [model], nextCursor: null });
+  vi.mocked(api.exerciseSelection).mockResolvedValue({ selected: null, availability: 'MODEL_CONFIGURATION_NOT_FOUND' });
+  vi.mocked(api.selectExerciseModel).mockRejectedValueOnce(new TypeError('network unavailable'))
+    .mockResolvedValue({ selected: null, availability: 'SELECTED' });
+  const wrapper = mount(ExerciseModelPicker, { props: { owner: 'owner-a', exerciseId: 'exercise', credential: 'control', preparing: false, disabled: false },
+    global: { plugins: [[VueQueryPlugin, { queryClient: client() }]], stubs: { RouterLink: true } } }); wrappers.push(wrapper);
+  await flushPromises(); expect(wrapper.text()).toContain('所选配置已删除，请重新选择');
+  await wrapper.get('#connection-exercise').setValue(connection.id); await flushPromises();
+  await wrapper.get('#model-exercise').setValue(model.id); await button(wrapper, '显式使用此版本').trigger('click'); await flushPromises();
+  expect(api.startCheck).not.toHaveBeenCalled(); expect(wrapper.text()).toContain('核对原模型选择');
+  await button(wrapper, '核对原模型选择').trigger('click'); await flushPromises();
+  const calls = vi.mocked(api.selectExerciseModel).mock.calls;
+  expect(calls).toHaveLength(2); expect(calls[0]?.[3]).toBe(calls[1]?.[3]);
+  expect(calls[0]?.[1]).toEqual({ connectionId: connection.id, modelConfigurationId: model.id, connectionConfigurationVersion: '1', modelConfigurationVersion: '1' });
+  expect(calls[0]?.[5]).toBe('owner-a');
+});
 
 it('validates model capacity, preserves explicit zero temperature, and clears disabled thinking parameters in the frozen payload', async () => {
   const wrapper = mount(ModelForm, { props: { owner: 'owner-a', connection, model: null } }); wrappers.push(wrapper);

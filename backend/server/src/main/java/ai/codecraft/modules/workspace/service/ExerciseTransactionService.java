@@ -30,9 +30,10 @@ public class ExerciseTransactionService {
     private final WorkspaceCoordinationStore coordination;
     private final RetentionProperties retention;
     private final StorageCapacityStore capacity;
+    private final ExerciseModelService models;
 
     public ExerciseTransactionService(ExerciseRepository repository, IdentityTransactionService identity,
-                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination, RetentionProperties retention, StorageCapacityStore capacity) {
+                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination, RetentionProperties retention, StorageCapacityStore capacity, ExerciseModelService models) {
         this.repository = repository;
         this.identity = identity;
         this.problems = problems;
@@ -41,6 +42,7 @@ public class ExerciseTransactionService {
         this.coordination = coordination;
         this.retention = retention;
         this.capacity = capacity;
+        this.models = models;
     }
 
     @Transactional
@@ -84,6 +86,7 @@ public class ExerciseTransactionService {
         coordination.checkControl(id, IdentitySecrets.digest(credential));
         if (repository.receipt(user, "START", id, key) != null) return exercise;
         if (!exercise.state().equals("READY")) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
+        models.requireReady(session, id);
         Instant started = clock.instant();
         if (repository.start(id, started, started.plusSeconds(durationSeconds)) != 1) {
             throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
