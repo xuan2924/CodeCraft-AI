@@ -15,6 +15,10 @@ import ai.codecraft.modules.identity.service.IdentityRevocationNotifier;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.modelaccess.config.ModelSecurityProperties;
+import ai.codecraft.modules.modelaccess.config.ModelCheckProperties;
+import ai.codecraft.modules.modelaccess.repository.ModelCheckRepository;
+import ai.codecraft.modules.modelaccess.model.dto.ModelCheckResponse;
+import java.time.Duration;
 import ai.codecraft.modules.modelaccess.model.ModelProtocol;
 import ai.codecraft.modules.modelaccess.model.ModelThinkingMode;
 import ai.codecraft.modules.modelaccess.model.dto.ModelConfigurationRequest;
@@ -71,6 +75,7 @@ class ModelConnectionPersistenceIT {
     private TransactionTemplate transactions;
     private ModelConnectionService service;
     private ModelConfigurationService models;
+    private ModelCheckService checks;
     private String owner;
 
     @BeforeAll
@@ -81,6 +86,7 @@ class ModelConnectionPersistenceIT {
         var configuration = new Configuration();
         configuration.setLocalCacheScope(LocalCacheScope.STATEMENT);
         configuration.addMapper(IdentityRepository.class); configuration.addMapper(ModelConnectionRepository.class); configuration.addMapper(ModelConfigurationRepository.class);
+        configuration.addMapper(ModelCheckRepository.class);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(configuration);
         sql = new SqlSessionTemplate(factory.getObject());
     }
@@ -99,10 +105,57 @@ class ModelConnectionPersistenceIT {
         when(secrets.fingerprint(anyString())).thenAnswer(call -> HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(call.<String>getArgument(0).getBytes(StandardCharsets.UTF_8))));
         var cipher = new ModelCredentialCipher(new ModelSecurityProperties("fixture", "fixture:" + Base64.getEncoder().encodeToString(new byte[32])));
         var repository = sql.getMapper(ModelConnectionRepository.class);
-        var receipts = new ModelCommandReceipts(repository, secrets, new ObjectMapper(), clock);
+        var receipts = new ModelCommandReceipts(repository, secrets, new ObjectMapper().findAndRegisterModules(), clock);
         service = transactional(new ModelConnectionService(repository, identity, cipher, new ModelConnectionValidator(), receipts, clock), ModelConnectionService.class);
         models = transactional(new ModelConfigurationService(sql.getMapper(ModelConfigurationRepository.class), repository, identity,
             new ModelConnectionValidator(), receipts, clock), ModelConfigurationService.class);
+        checks = transactional(new ModelCheckService(sql.getMapper(ModelCheckRepository.class), sql.getMapper(ModelConfigurationRepository.class), repository,
+            identity, receipts, clock, new ModelCheckProperties(Duration.ofMinutes(5), 3)), ModelCheckService.class);
+    }
+
+    @Test
+    void concurrentCheckStartsAcrossModelsShareOneUserAdmission() throws Exception {
+        var connection = service.create("session", "connection", input);
+        var first = models.create("session", connection.id(), "first", new ModelConfigurationRequest("First", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var second = models.create("session", connection.id(), "second", new ModelConfigurationRequest("Second", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var outcomes = race(() -> checks.start("session", first.id(), "one", true), () -> checks.start("session", second.id(), "two", true));
+        assertThat(outcomes.stream().filter(ModelCheckResponse.class::isInstance).count()).isEqualTo(1);
+        assertThat(outcomes).contains("MODEL_CHECK_ALREADY_ACTIVE");
+    }
+
+    @Test
+    void sameCheckKeyReplaysAfterDeletionWithoutCountingAgain() throws Exception {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var outcomes = race(() -> checks.start("session", model.id(), "same", true), () -> checks.start("session", model.id(), "same", true));
+        assertThat(outcomes.get(0)).isInstanceOf(ModelCheckResponse.class).isEqualTo(outcomes.get(1));
+        service.delete("session", connection.id(), "delete", connection.version());
+        assertThat(checks.start("session", model.id(), "same", true)).isEqualTo(outcomes.get(0));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM personal_model_check WHERE user_id=?::uuid", Integer.class, owner)).isEqualTo(1);
+    }
+
+    @Test
+    void failedAndInterruptedStartsCountUntilTheyLeaveTheWindow() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        for (int i = 0; i < 3; i++) {
+            jdbc.update("INSERT INTO personal_model_check(id,user_id,connection_id,model_configuration_id,connection_configuration_version,model_configuration_version,status,started_at) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,1,1,?,?)",
+                UUID.randomUUID().toString(), owner, connection.id(), model.id(), i == 0 ? "INTERRUPTED" : "FAILED", Timestamp.from(NOW.minusSeconds(299)));
+        }
+        assertThatThrownBy(() -> checks.start("session", model.id(), "new", true)).isInstanceOfSatisfying(BusinessException.class, failure -> assertThat(failure.code()).isEqualTo("MODEL_CHECK_RATE_LIMITED"));
+        jdbc.update("UPDATE personal_model_check SET started_at=? WHERE user_id=?::uuid", Timestamp.from(NOW.minusSeconds(300)), owner);
+        assertThat(checks.start("session", model.id(), "new", true).status()).isEqualTo("QUEUED");
+    }
+
+    @Test
+    void checkAdmissionAndReceiptRollBackTogether() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        assertThatThrownBy(() -> transactions.execute(status -> {
+            checks.start("session", model.id(), "rollback", true); throw new IllegalStateException("injected rollback");
+        })).hasMessage("injected rollback");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM personal_model_check WHERE user_id=?::uuid", Integer.class, owner)).isZero();
+        assertThat(checks.start("session", model.id(), "rollback", true).status()).isEqualTo("QUEUED");
     }
 
     @Test

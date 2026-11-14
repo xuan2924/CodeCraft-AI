@@ -1,0 +1,13 @@
+package ai.codecraft.modules.modelaccess.config;
+
+import java.time.Duration;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.DefaultValue;
+
+@ConfigurationProperties("model.checks")
+public record ModelCheckProperties(@DefaultValue("5m") Duration startWindow, @DefaultValue("3") int startsPerWindow) {
+    public ModelCheckProperties {
+        if (startWindow == null || startWindow.compareTo(Duration.ofMinutes(5)) < 0 || startWindow.compareTo(Duration.ofDays(1)) > 0
+            || startsPerWindow < 1 || startsPerWindow > 3) throw new IllegalArgumentException("Invalid model check admission limits");
+    }
+}
