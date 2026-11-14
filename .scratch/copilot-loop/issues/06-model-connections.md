@@ -95,4 +95,14 @@ V22 增加对原始成功请求的逻辑引用，不复制或刷新完成时间�
 
 新增 POST `/api/model-configurations/{id}/checks`（202 + Location）、GET `/api/model-checks/{id}` 及 GET `/api/model-configurations/{id}/checks/latest`；都使用统一认证/请求体边界，写入还须 CSRF、幂等键及明确收费确认。ModelAccessErrors 纳入新 Controller，数据库错误只输出安全码与脱敏类型。有效接口契约同步到模型接入设计。V23 仅加待处理发现与模型最近结果索引，不改已发布迁移。
 
-6 个实际 Spring MVC + IdentitySecurity 过滤链测试通过（仅替换事务服务，无 worker/供应商）：CSRF、外源、登录、费用确认、格式/UUID、202 Location、no-store、结果读取不派发及数据库错误脱敏。1 个有界调度/停机测试、驱动新中断回归通过；实际 PostgreSQL 新增从受理→正式事务账本→nonce runner→分项读取→缓存零调用的组合用例，供应商边界用受控 driver 替身，全部 26 个 IT 与 V1–V23 通过（该含启动/迁移的组 10.82 秒；不冒充纯单测反馈）。quick Java 202 / Vue 93 / Node 21、Go/Lint/类型通过，34.20 秒低于 60 秒硬限，之后中断回归及受影响测试组再次通过。尚未实现设置 UI、检查历史清理、轮换维护入口与演练选择联动；未发真实收费调用，不宣称整票完成。独立 Standards / Spec 对后台派发与 HTTP 切片均审查 OK。
+6 个实际 Spring MVC + IdentitySecurity 过滤链测试通过（仅替换事务服务，无 worker/供应商）：CSRF、外源、登录、费用确认、格式/UUID、202 Location、no-store、结果读取不派发及数据库错误脱敏。1 个有界调度/停机测试、驱动新中断回归通过；实际 PostgreSQL 新增从受理→正式事务账本→nonce runner→分项读取→缓存零调用的组合用例，供应商边界用受控 driver 替身，全部 26 个 IT 与 V1–V23 通过（该含启动/迁移的组 10.82 秒；不冒充纯单测反馈）。quick Java 202 / Vue 93 / Node 21、Go/Lint/类型通过，34.20 秒低于 60 秒硬限，之后中断回归及受影响测试组再次通过。尚未实现设置 UI、检查历史清理、轮换维护入口与演练选择联动；未发真实收费调用，不宣称整票完成。独立 Standards / Spec 对后台派发与 HTTP 切片均审查 OK。后台接口切片已提交 `0220a53`。
+
+### 设置页网络与未决命令边界（实施中）
+
+沿用现有蓝灰 Token、Naive UI、Composition API 与查询缓存，计划以“连接目录 → 共用地址/Key → 多模型参数与分项检查”呈现，不改变工作区已有布局。当前先完成 `frontend/src/modelaccess/` 的类型化 API 与组件作用域命令边界，**页面和路由尚未交付**。
+
+共享请求入口增加 PUT 及可带 expectedVersion 的 DELETE，旧无 body 删除调用保持兼容；每次显式动作取新 CSRF，无自动副作用重放。领域解析从 unknown 验证分页/枚举/ID/修订/参数及检查有效性，重建非秘密响应对象，不把响应额外字段复制入查询缓存。只把准确的 MODEL_CHECK_NOT_FOUND 当成“尚未检查”，不吞掉其他 404/鉴权错误。
+
+`useModelCommand` 在组件内存持有原命令闭包和幂等键；网络结果未知后只能显式重试同一命令，不用新输入改写旧请求。仅首次明确业务拒绝解除未决状态；先前未知的重试即使得到冲突，也不假定原操作未执行。账号/资源作用域改变或销毁时取消并清除命令，迟到完成不回调成功，也不能清掉新账号的 pending；没有 localStorage/IndexedDB 或服务端状态的客户端第二份缓存。实际表单仍须冻结提交输入、清空敏感字段并按 owner 键控组件，下一步在页面测试验证。
+
+20 个新增网络/作用域边界测试通过，删除 body、未知响应一致性、账号竞态/原键重试及错误字典原型键分支观察红→绿；前端全量 111 例通过后另加 2 个错误字典回归，最新受影响 20 例通过。`vue-tsc --noEmit`、新增文件 ESLint 通过；全量 ESLint 无错误、有 35 条原有警告；前端 build 通过，仍有既有 Monaco chunk 大小警告。未进行真实模型调用。独立 Standards / Spec 对前端 API/命令边界均审查 OK；不代表设置页完成。

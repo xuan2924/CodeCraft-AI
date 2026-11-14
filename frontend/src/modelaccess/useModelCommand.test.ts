@@ -1,0 +1,73 @@
+import { effectScope, ref } from 'vue';
+import { expect, it, vi } from 'vitest';
+import { ApiError } from '../api/request';
+import { useModelCommand } from './useModelCommand';
+
+it('ignores a late completion after account or selected-resource scope changes', async () => {
+  const scope = effectScope();
+  const owner = ref('owner-a/connection-a');
+  const saved = vi.fn();
+  const command = scope.run(() => useModelCommand<{ id: string }>(() => owner.value, saved));
+  if (!command) throw new Error('Missing test scope');
+  let finish: (value: { id: string }) => void = () => { throw new Error('Not dispatched'); };
+  let signal: AbortSignal | undefined;
+  const completion = command.submit((_key, currentSignal) => {
+    signal = currentSignal;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  owner.value = 'owner-b/connection-b';
+  finish({ id: 'old-owner-result' });
+  await completion;
+  expect(saved).not.toHaveBeenCalled();
+  expect(signal?.aborted).toBe(true);
+  expect(command.pending.value).toBe(false);
+  scope.stop();
+});
+it('does not let an old completion clear the new accounts pending command', async () => {
+  const scope = effectScope();
+  const owner = ref('a');
+  const saved = vi.fn();
+  const command = scope.run(() => useModelCommand<string>(() => owner.value, saved));
+  if (!command) throw new Error('Missing test scope');
+  let finishOld: (value: string) => void = () => {};
+  let finishNew: (value: string) => void = () => {};
+  const old = command.submit(() => new Promise((resolve) => { finishOld = resolve; }));
+  owner.value = 'b';
+  const current = command.submit(() => new Promise((resolve) => { finishNew = resolve; }));
+  finishOld('old'); await old;
+  expect(command.pending.value).toBe(true);
+  expect(saved).not.toHaveBeenCalled();
+  scope.stop();
+  finishNew('new'); await current;
+  expect(saved).not.toHaveBeenCalled();
+});
+it('replays an ambiguous result only on explicit retry with the same command and key', async () => {
+  const scope = effectScope();
+  const saved = vi.fn();
+  const command = scope.run(() => useModelCommand<{ id: string }>(() => 'owner', saved));
+  if (!command) throw new Error('Missing test scope');
+  const operation = vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce({ id: 'saved' });
+  await command.submit(operation);
+  expect(command.uncertain.value).toBe(true);
+  expect(operation).toHaveBeenCalledTimes(1);
+  await command.retry();
+  expect(operation).toHaveBeenCalledTimes(2);
+  expect(operation.mock.calls[1]?.[0]).toBe(operation.mock.calls[0]?.[0]);
+  expect(saved).toHaveBeenCalledWith({ id: 'saved' });
+  expect(command.uncertain.value).toBe(false);
+  scope.stop();
+});
+it('allows correcting a definite first-attempt rejection but does not discard an earlier ambiguous command', async () => {
+  const scope = effectScope();
+  const command = scope.run(() => useModelCommand<unknown>(() => 'owner', vi.fn()));
+  if (!command) throw new Error('Missing test scope');
+  const rejected = vi.fn().mockRejectedValue(new ApiError(409, 'MODEL_NAME_CONFLICT'));
+  await command.submit(rejected);
+  expect(command.uncertain.value).toBe(false);
+  const ambiguous = vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockRejectedValueOnce(new ApiError(409, 'MODEL_VERSION_CONFLICT'));
+  await command.submit(ambiguous);
+  await command.retry();
+  expect(command.uncertain.value).toBe(true);
+  expect(ambiguous.mock.calls[1]?.[0]).toBe(ambiguous.mock.calls[0]?.[0]);
+  scope.stop();
+});

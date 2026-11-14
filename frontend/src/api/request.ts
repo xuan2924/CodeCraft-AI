@@ -32,10 +32,13 @@ export function events(path: string, types: readonly string[], receive: (type: s
 export async function post(path: string, body: unknown, signal: AbortSignal, key?: string, operationCredential?: string): Promise<unknown> {
   return mutate('POST', path, body, signal, key, operationCredential);
 }
-export async function remove(path: string, signal: AbortSignal, key: string): Promise<unknown> {
-  return mutate('DELETE', path, undefined, signal, key);
+export async function put(path: string, body: unknown, signal: AbortSignal, key: string): Promise<unknown> {
+  return mutate('PUT', path, body, signal, key);
 }
-async function mutate(method: 'POST' | 'DELETE', path: string, body: unknown, signal: AbortSignal, key?: string, operationCredential?: string): Promise<unknown> {
+export async function remove(path: string, signal: AbortSignal, key: string, body?: unknown): Promise<unknown> {
+  return mutate('DELETE', path, body, signal, key);
+}
+async function mutate(method: 'POST' | 'PUT' | 'DELETE', path: string, body: unknown, signal: AbortSignal, key?: string, operationCredential?: string): Promise<unknown> {
   // Fresh CSRF per explicit action; never automatically replay a side effect.
   const csrf = await request('/api/auth/csrf', signal);
   if (!object(csrf) || typeof csrf.token !== 'string') throw new ApiError(502, 'INVALID_RESPONSE');
