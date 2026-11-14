@@ -20,7 +20,8 @@ export async function buildJavaImage() {
 export function javaComposeEnv(values) {
   const env = {};
   for (const key of ['JAVA_PORT', 'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD',
-    'IDENTITY_FINGERPRINT_KEY', 'SANDBOX_RPC_KEY']) env[key] = values[key] ?? '';
+    'IDENTITY_FINGERPRINT_KEY', 'SANDBOX_RPC_KEY', 'MODEL_CREDENTIAL_ACTIVE_KEY_ID', 'MODEL_CREDENTIAL_KEYS']) env[key] = values[key] ?? '';
+  env.MODEL_CREDENTIAL_ROTATION_ENABLED = values.MODEL_CREDENTIAL_ROTATION_ENABLED ?? 'false';
   env.PUBLIC_ORIGIN = values.PUBLIC_ORIGIN ?? `http://localhost:${values.WEB_PORT}`;
   env.JAVA_PUBLICATION_FILE = values.PROBLEM_PUBLICATION_FILE ? '/app/publication.json' : '';
   return env;

@@ -4,10 +4,11 @@ import { root } from './process.mjs';
 
 const defaults = {
   POSTGRES_DB: 'codecraft', POSTGRES_PORT: '5432', JAVA_PORT: '8080',
-  SANDBOX_PORT: '9090', WEB_PORT: '5173',
+  SANDBOX_PORT: '9090', WEB_PORT: '5173', MODEL_CREDENTIAL_ROTATION_ENABLED: 'false',
 };
 const allowed = new Set([...Object.keys(defaults), 'POSTGRES_USER', 'POSTGRES_PASSWORD',
-  'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN', 'SANDBOX_RPC_KEY', 'PROBLEM_PUBLICATION_FILE']);
+  'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN', 'SANDBOX_RPC_KEY', 'PROBLEM_PUBLICATION_FILE',
+  'MODEL_CREDENTIAL_ACTIVE_KEY_ID', 'MODEL_CREDENTIAL_KEYS']);
 
 // Deliberately a literal subset, not a shell/dotenv evaluator. Never log values.
 export function parseConfig(text) {
@@ -58,16 +59,16 @@ export async function loadConfig() {
 }
 
 // Only these .env values reach each service. Frontend never receives DB/admin secrets.
-export function serviceEnv(values, service) {
+export function serviceEnv(values, service, inherited = process.env) {
   const keys = {
     java: ['POSTGRES_DB', 'POSTGRES_PORT', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'JAVA_PORT', 'SANDBOX_PORT',
       'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN',
-      'SANDBOX_RPC_KEY', 'PROBLEM_PUBLICATION_FILE'],
+      'SANDBOX_RPC_KEY', 'PROBLEM_PUBLICATION_FILE', 'MODEL_CREDENTIAL_ACTIVE_KEY_ID', 'MODEL_CREDENTIAL_KEYS', 'MODEL_CREDENTIAL_ROTATION_ENABLED'],
     sandbox: ['SANDBOX_PORT', 'SANDBOX_RPC_KEY'], web: ['JAVA_PORT', 'WEB_PORT'],
     postgres: ['POSTGRES_DB', 'POSTGRES_PORT', 'POSTGRES_USER', 'POSTGRES_PASSWORD'],
   }[service];
   if (!keys) throw new Error('Unknown service');
-  const env = { ...process.env };
+  const env = { ...inherited };
   for (const key of allowed) delete env[key];
   for (const key of keys) if (values[key] !== undefined) env[key] = values[key];
   if (service === 'java' && !env.PUBLIC_ORIGIN) env.PUBLIC_ORIGIN = `http://localhost:${values.WEB_PORT}`;

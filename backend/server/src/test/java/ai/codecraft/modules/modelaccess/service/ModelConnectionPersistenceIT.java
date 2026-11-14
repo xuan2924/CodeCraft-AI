@@ -43,6 +43,7 @@ import ai.codecraft.modules.modelaccess.repository.ModelConfigurationRepository;
 import ai.codecraft.modules.modelaccess.model.ModelProviderPreset;
 import ai.codecraft.modules.modelaccess.model.dto.ModelConnectionRequest;
 import ai.codecraft.modules.modelaccess.model.dto.ModelConnectionResponse;
+import ai.codecraft.modules.modelaccess.model.dto.ModelCredentialRotationCandidateDTO;
 import ai.codecraft.modules.modelaccess.repository.ModelConnectionRepository;
 import ai.codecraft.modules.modelaccess.security.ModelCredentialCipher;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -96,6 +97,8 @@ class ModelConnectionPersistenceIT {
     private ModelCheckService checksAfterValidity;
     private ModelCheckExecutionStore dispatches;
     private ModelCheckExecutionStore expiredDispatches;
+    private ModelCredentialRotationStore rotation;
+    private ModelCredentialCipher rotatedCipher;
     private String owner;
 
     @BeforeAll
@@ -127,6 +130,9 @@ class ModelConnectionPersistenceIT {
         when(secrets.fingerprint(anyString())).thenAnswer(call -> HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(call.<String>getArgument(0).getBytes(StandardCharsets.UTF_8))));
         var cipher = new ModelCredentialCipher(new ModelSecurityProperties("fixture", "fixture:" + Base64.getEncoder().encodeToString(new byte[32])));
         var repository = sql.getMapper(ModelConnectionRepository.class);
+        rotatedCipher = new ModelCredentialCipher(new ModelSecurityProperties("rotated", "fixture:" + Base64.getEncoder().encodeToString(new byte[32])
+            + ",rotated:" + Base64.getEncoder().encodeToString("n".repeat(32).getBytes(StandardCharsets.US_ASCII))));
+        rotation = transactional(new ModelCredentialRotationStore(identity, repository, rotatedCipher), ModelCredentialRotationStore.class);
         var receipts = new ModelCommandReceipts(repository, secrets, new ObjectMapper().findAndRegisterModules(), clock);
         service = transactional(new ModelConnectionService(repository, identity, cipher, new ModelConnectionValidator(), receipts, clock), ModelConnectionService.class);
         models = transactional(new ModelConfigurationService(sql.getMapper(ModelConfigurationRepository.class), repository, identity,
@@ -142,6 +148,39 @@ class ModelConnectionPersistenceIT {
         expiredDispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
             new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
             new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), Clock.offset(clock, Duration.ofSeconds(120))), ModelCheckExecutionStore.class);
+    }
+
+    @Test
+    void deploymentRotationChangesOnlyWrappingMaterialAndCannotReviveDeletedCredentials() {
+        var connection = service.create("session", "connection", input);
+        var repository = sql.getMapper(ModelConnectionRepository.class);
+        var before = repository.find(connection.id());
+        assertThat(rotation.rotate(owner, connection.id())).isTrue();
+        var after = repository.find(connection.id());
+        assertThat(service.connection("session", connection.id())).isEqualTo(connection);
+        assertThat(after.updatedAt()).isEqualTo(before.updatedAt());
+        assertThat(after.credentialKeyId()).isEqualTo("rotated");
+        assertThat(rotatedCipher.decrypt(owner, connection.id(), after.credential())).isEqualTo(input.apiKey());
+        assertThat(repository.rotationCandidates("fixture", null)).anyMatch(candidate -> candidate.id().equals(connection.id()) && candidate.userId().equals(owner));
+        assertThat(rotation.rotate(owner, connection.id())).isFalse();
+        assertThat(repository.rotateCredential(connection.id(), owner, before.credential(), before.credential())).isZero();
+        service.delete("session", connection.id(), "delete", connection.version());
+        assertThat(rotation.rotate(owner, connection.id())).isFalse();
+        assertThat(repository.find(connection.id()).credentialCiphertext()).isNull();
+    }
+
+    @Test
+    void replacementAfterDiscoveryIsRewrappedWithoutRestoringTheEarlierProviderKey() {
+        var connection = service.create("session", "connection", input);
+        var discovered = new ModelCredentialRotationCandidateDTO(connection.id(), owner);
+        var updated = service.update("session", connection.id(), "replacement", new ModelConnectionRequest(input.name(), input.baseUrl(), input.protocol(),
+            input.preset(), "fixture-latest-provider-key", connection.version()));
+        assertThat(rotation.rotate(discovered.userId(), discovered.id())).isTrue();
+        var current = sql.getMapper(ModelConnectionRepository.class).find(connection.id());
+        assertThat(rotatedCipher.decrypt(owner, connection.id(), current.credential())).isEqualTo("fixture-latest-provider-key");
+        assertThat(service.connection("session", connection.id())).isEqualTo(updated);
+        assertThat(service.create("session", "connection", input)).isEqualTo(connection);
+        assertThat(service.connection("session", connection.id())).isEqualTo(updated);
     }
 
     @Test

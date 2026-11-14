@@ -1,5 +1,7 @@
 package ai.codecraft.modules.modelaccess.repository;
 
+import ai.codecraft.modules.modelaccess.model.dto.EncryptedCredentialDTO;
+import ai.codecraft.modules.modelaccess.model.dto.ModelCredentialRotationCandidateDTO;
 import ai.codecraft.modules.modelaccess.model.entity.ModelCommandEntity;
 import ai.codecraft.modules.modelaccess.model.entity.ModelConnectionEntity;
 import org.apache.ibatis.annotations.Insert;
@@ -26,6 +28,10 @@ public interface ModelConnectionRepository {
     int update(@Param("value") ModelConnectionEntity value, @Param("expected") long expected);
     @Update("UPDATE personal_model_configuration SET deleted_at=#{now},updated_at=#{now},version=version+1,configuration_version=configuration_version+1 WHERE connection_id=#{connection}::uuid AND user_id=#{owner}::uuid AND deleted_at IS NULL")
     void retireModels(@Param("owner") String owner, @Param("connection") String connection, @Param("now") Instant now);
+    @Select("SELECT id::text,user_id::text FROM personal_model_connection WHERE deleted_at IS NULL AND credential_key_id<>#{active} AND (#{after}::uuid IS NULL OR id>#{after}::uuid) ORDER BY id LIMIT 100")
+    List<ModelCredentialRotationCandidateDTO> rotationCandidates(@Param("active") String active, @Param("after") String after);
+    @Update("UPDATE personal_model_connection SET credential_key_id=#{credential.keyId},credential_nonce=#{credential.nonce},credential_ciphertext=#{credential.ciphertext} WHERE id=#{id}::uuid AND user_id=#{owner}::uuid AND deleted_at IS NULL AND credential_key_id=#{original.keyId} AND credential_nonce=#{original.nonce} AND credential_ciphertext=#{original.ciphertext}")
+    int rotateCredential(@Param("id") String id, @Param("owner") String owner, @Param("original") EncryptedCredentialDTO original, @Param("credential") EncryptedCredentialDTO credential);
     @Select("SELECT user_id::text,kind,scope,request_key,fingerprint,response::text,completed_at FROM personal_model_command WHERE user_id=#{owner}::uuid AND kind=#{kind} AND scope=#{scope} AND request_key=#{key}")
     ModelCommandEntity command(@Param("owner") String owner, @Param("kind") String kind, @Param("scope") String scope, @Param("key") String key);
     @Insert("INSERT INTO personal_model_command(user_id,kind,scope,request_key,fingerprint,response,completed_at) VALUES(#{userId}::uuid,#{kind},#{scope},#{requestKey},#{fingerprint},#{response}::jsonb,#{completedAt})")
