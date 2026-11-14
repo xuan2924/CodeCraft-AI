@@ -38,6 +38,10 @@ import dev.langchain4j.model.chat.response.CompleteResponse;
 import dev.langchain4j.model.output.FinishReason;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.Clock;
+import java.time.ZoneOffset;
+import org.junit.jupiter.params.provider.ValueSource;
 import java.util.Map;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.Flow;
@@ -191,8 +195,50 @@ class ModelCallDriverTest {
         assertEquals("MODEL_INVALID_REQUEST", failure.code()); assertEquals(0, subscriptions.get());
     }
 
+    @Test
+    void expiredDurablePermitCannotDispatchEvenWhenTheLocalCallBudgetIsFresh() {
+        model(subscriber -> {
+            subscriber.onNext(new CompleteResponse(ChatResponse.builder().aiMessage(AiMessage.from("ok")).build())); subscriber.onComplete();
+        });
+        var failure = assertThrows(BusinessException.class,
+            () -> driver(Duration.ofSeconds(1)).call(target(), request, limits, 4096, Instant.EPOCH));
+        assertEquals("MODEL_REQUEST_TIMEOUT", failure.code());
+        assertEquals(0, subscriptions.get());
+    }
+
+    @Test
+    void shorterDurableDeadlineLimitsElapsedTimeEvenWithAFixedBusinessClock() {
+        var now = Instant.parse("2026-01-01T00:00:00Z");
+        model(subscriber -> {
+            LockSupport.parkNanos(Duration.ofMillis(60).toNanos());
+            subscriber.onNext(new CompleteResponse(ChatResponse.builder().aiMessage(AiMessage.from("late")).build())); subscriber.onComplete();
+        });
+        try (var driver = new ModelCallDriver(factory, new ModelCallProperties(Duration.ofSeconds(1), Duration.ofMillis(1), 1, 8192, 1024, 4096), Clock.fixed(now, ZoneOffset.UTC))) {
+            var failure = assertThrows(BusinessException.class, () -> driver.call(target(), request, limits, 4096, now.plusMillis(15)));
+            assertEquals("MODEL_REQUEST_TIMEOUT", failure.code());
+            assertTrue(cancellations.get() > 0);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void absoluteDeadlineIsRecheckedBeforeDispatchAndBeforeReturningACompletedResponse(boolean beforeDispatch) {
+        var now = Instant.parse("2026-01-01T00:00:00Z");
+        var clock = mock(Clock.class);
+        if (beforeDispatch) when(clock.instant()).thenReturn(now, now.plusSeconds(1));
+        else when(clock.instant()).thenReturn(now, now, now, now.plusSeconds(1));
+        model(subscriber -> {
+            subscriber.onNext(new CompleteResponse(ChatResponse.builder().aiMessage(AiMessage.from("ok")).build())); subscriber.onComplete();
+        });
+        try (var driver = new ModelCallDriver(factory, new ModelCallProperties(Duration.ofSeconds(1), Duration.ofMillis(1), 1, 8192, 1024, 4096), clock)) {
+            var failure = assertThrows(BusinessException.class, () -> driver.call(target(), request, limits, 4096, now.plusSeconds(1)));
+            assertEquals("MODEL_REQUEST_TIMEOUT", failure.code());
+            assertEquals(beforeDispatch ? 0 : 1, subscriptions.get());
+        }
+    }
+
     private ModelCallDriver driver(Duration timeout) {
-        return new ModelCallDriver(factory, new ModelCallProperties(timeout, Duration.ofMillis(1), 1, 8192, 1024, 4096));
+        return new ModelCallDriver(factory, new ModelCallProperties(timeout, Duration.ofMillis(1), 1, 8192, 1024, 4096), Clock.systemUTC());
     }
     private void model(Consumer<Flow.Subscriber<? super ChatModelStreamingEvent>> source) {
         StreamingChatModel model = new StreamingChatModel() {

@@ -19,6 +19,9 @@ import dev.langchain4j.model.chat.response.PartialResponse;
 import dev.langchain4j.model.chat.response.PartialThinking;
 import dev.langchain4j.model.chat.response.PartialToolCall;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -42,16 +45,25 @@ public class ModelCallDriver implements AutoCloseable {
     private final ModelSdkClientFactory factory;
     private final ModelCallProperties properties;
     private final Semaphore capacity;
+    private final Clock clock;
     private final ConcurrentMap<BoundedModelHttpClientBuilder, ResponseSubscriber> transports = new ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
-    public ModelCallDriver(ModelSdkClientFactory factory, ModelCallProperties properties) {
-        this.factory = factory; this.properties = properties; capacity = new Semaphore(properties.maxConcurrent());
+    public ModelCallDriver(ModelSdkClientFactory factory, ModelCallProperties properties, Clock clock) {
+        this.factory = factory; this.properties = properties; this.clock = clock; capacity = new Semaphore(properties.maxConcurrent());
     }
 
     public ModelCallResultDTO call(ModelInvocationDTO target, ChatRequest request, ModelInvocationLimitsDTO limits, int maximumDecodedBytes) throws InterruptedException {
+        return call(target, request, limits, maximumDecodedBytes, clock.instant().plus(properties.timeout()));
+    }
+
+    public ModelCallResultDTO call(ModelInvocationDTO target, ChatRequest request, ModelInvocationLimitsDTO limits, int maximumDecodedBytes, Instant notAfter) throws InterruptedException {
         if (TransactionSynchronizationManager.isActualTransactionActive()) throw new IllegalStateException("Model calls must run outside database transactions");
         requestParameters(request);
         if (maximumDecodedBytes < 1 || maximumDecodedBytes > properties.maxDecodedBytes()) throw new BusinessException(ModelAccessErrorCode.MODEL_INVALID_REQUEST);
+        if (notAfter == null) throw new BusinessException(ModelAccessErrorCode.MODEL_INVALID_REQUEST);
+        var authorizedDuration = Duration.between(clock.instant(), notAfter);
+        if (authorizedDuration.isNegative() || authorizedDuration.isZero()) throw new BusinessException(ModelAccessErrorCode.MODEL_REQUEST_TIMEOUT);
+        long budgetNanos = (authorizedDuration.compareTo(properties.timeout()) < 0 ? authorizedDuration : properties.timeout()).toNanos();
         reapClosedTransports();
         if (closed.get() || !capacity.tryAcquire()) throw new BusinessException(ModelAccessErrorCode.MODEL_RUNTIME_BUSY);
         long started = System.nanoTime();
@@ -62,15 +74,15 @@ public class ModelCallDriver implements AutoCloseable {
             transports.put(transport, subscriber);
             if (closed.get()) throw new BusinessException(ModelAccessErrorCode.MODEL_RUNTIME_BUSY);
             var model = factory.create(target, limits, transport);
-            if (properties.timeout().toNanos() - (System.nanoTime() - started) <= 0) throw new TimeoutException("Model request deadline elapsed");
+            if (remaining(started, budgetNanos, notAfter) <= 0) throw new TimeoutException("Model request deadline elapsed");
             model.chat(request).subscribe(subscriber);
-            long remaining = properties.timeout().toNanos() - (System.nanoTime() - started);
+            long remaining = remaining(started, budgetNanos, notAfter);
             if (remaining <= 0) throw new TimeoutException("Model request deadline elapsed");
             var response = subscriber.result.get(remaining, TimeUnit.NANOSECONDS);
             if (response.finishReason() == FinishReason.LENGTH) throw new BusinessException(ModelAccessErrorCode.MODEL_OUTPUT_LIMIT_EXCEEDED);
             int bytes = ChatMessageSerializer.messagesToJson(List.of(response.aiMessage())).getBytes(StandardCharsets.UTF_8).length;
             if (bytes > maximumDecodedBytes) throw new BusinessException(ModelAccessErrorCode.MODEL_OUTPUT_LIMIT_EXCEEDED);
-            if (properties.timeout().toNanos() - (System.nanoTime() - started) <= 0) throw new TimeoutException("Model request deadline elapsed");
+            if (remaining(started, budgetNanos, notAfter) <= 0) throw new TimeoutException("Model request deadline elapsed");
             return new ModelCallResultDTO(response, Math.max(bytes, subscriber.streamedBytes));
         } catch (TimeoutException timeout) {
             throw new BusinessException(ModelAccessErrorCode.MODEL_REQUEST_TIMEOUT, timeout);
@@ -83,6 +95,13 @@ public class ModelCallDriver implements AutoCloseable {
             if (transport == null) capacity.release();
             else { transport.close(); reapClosedTransports(); }
         }
+    }
+
+    private long remaining(long started, long budgetNanos, Instant notAfter) {
+        var authorized = Duration.between(clock.instant(), notAfter);
+        if (authorized.isNegative() || authorized.isZero()) return 0;
+        long wallRemaining = authorized.compareTo(properties.timeout()) < 0 ? authorized.toNanos() : properties.timeout().toNanos();
+        return Math.min(wallRemaining, budgetNanos - (System.nanoTime() - started));
     }
 
     @Scheduled(fixedDelay = 250)

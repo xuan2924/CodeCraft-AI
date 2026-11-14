@@ -1,0 +1,2 @@
+This is a connection check. Reply with exactly the following marker, and no other text:
+{{marker}}

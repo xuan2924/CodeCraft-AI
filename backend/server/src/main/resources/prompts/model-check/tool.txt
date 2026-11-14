@@ -1,0 +1,1 @@
+This is a harmless tool compatibility check. Call connection_probe exactly once with nonce "{{nonce}}". Do not invent the tool result. After receiving the tool result, reply with exactly its receipt marker and no other text. Do not call any further tools.
