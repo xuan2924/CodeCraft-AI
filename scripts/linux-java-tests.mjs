@@ -9,7 +9,8 @@ const image = 'maven@sha256:d6e32a254897415a445654a3c43c30fbc731a4d946cf5c66d1cb
 export async function linuxJavaTests({ directory, project, values, database, mode, sandbox, test, url }) {
   const selection = test ?? { workspace: 'WorkspaceIT', identity: 'IdentityIT', recovery: 'WorkspaceCrashRecoveryIT', tracer: 'StatusIT' }[mode];
   if (!selection) throw new Error('Unknown Java integration-test mode');
-  if (mode === 'copilot' && !process.env.DeepSeek?.trim()) throw new Error('Paid Copilot validation requires the DeepSeek environment credential');
+  const credential = process.env.DEEPSEEK ?? process.env.DeepSeek;
+  if (mode === 'copilot' && !credential?.trim()) throw new Error('Paid Copilot validation requires DEEPSEEK (or DeepSeek) in the environment');
   const work = join(directory, `java-tests-${mode}`);
   await mkdir(join(work, 'server/target'), { recursive: true });
   await mkdir(join(work, 'bin'));
@@ -50,7 +51,8 @@ export async function linuxJavaTests({ directory, project, values, database, mod
       ...(mode === 'workspace' ? ['--mount', 'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock'] : []),
       '--workdir', '/tests/server', '--entrypoint', 'sh', image, '-c',
       'set -e; export PATH=/tests/bin:$PATH; if [ -f /tests/bin/docker ]; then chmod +x /tests/bin/docker; fi; exec mvn -o -B -ntp "$@"', 'tests',
-      `-Dit.test=${selection}`, 'failsafe:integration-test', 'failsafe:verify'], { timeout: 600000 });
+      `-Dit.test=${selection}`, 'failsafe:integration-test', 'failsafe:verify'], { timeout: 600000,
+        ...(mode === 'copilot' ? { env: { ...process.env, DeepSeek: credential } } : {}) });
     const summary = await readFile(join(work, 'server/target/failsafe-reports/failsafe-summary.xml'), 'utf8');
     const completed = Number(summary.match(/<completed>(\d+)<\/completed>/)?.[1]);
     const skipped = Number(summary.match(/<skipped>(\d+)<\/skipped>/)?.[1]);

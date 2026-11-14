@@ -193,12 +193,17 @@ node scripts/test-tracer.mjs --workspace --boundary-only
 # 仅精确 JVM 崩溃恢复 / 单项撤销准备恢复测试
 node scripts/test-tracer.mjs --workspace --boundary-only --workspace-recovery-only
 node scripts/test-tracer.mjs --workspace --boundary-only --workspace-test=revokedPreparationIsCleanedAfterSandboxRecovery
-# 显式收费：需环境变量 DeepSeek；真实模型检查、稳定版本测试续答及联动停止，最多 9 次调用
+# 显式收费：需环境变量 DEEPSEEK（兼容 DeepSeek）；真实模型检查、稳定版本测试续答及联动停止，最多 9 次调用
 # 凭证仅传给可信 Java 测试容器，不传给 Go/题目容器；独立库/卷在 finally 清理
 node scripts/test-tracer.mjs --workspace --boundary-only --copilot-tests
+# 显式收费：真实浏览器选择/检查/计时→读取→Diff 批准→写入→Docker 测试→回复与重连观察
+# deepseek-flash / thinking OFF；含检查最多 12 次模型调用，不进入默认 quick/smoke/CI
+node scripts/test-tracer.mjs --workspace --copilot-browser
 ```
 
 Java 集成测试使用已有 `~/.m2/repository` 的只读挂载，以离线 Maven 运行预先编译的 classes/test-classes；首次先完成本机 Maven 构建。每次/每种模式的 Failsafe 输出放在其 `.runtime/cc-tracer-*/java-tests-*`，缺失产物/依赖、零执行或跳过所选测试均失败。工作区故障测试容器临时挂载 Docker socket，通过受限命令适配器真实暂停/恢复本次 Go 容器并注入损坏文件；**它是可信测试夹具，拥有 Docker 管理权限，不是用户代码沙箱**。Java 应用及题目容器不获得该挂载。
+
+`--copilot-browser` 还需已安装的 Playwright Chromium；入口先重新打包 Java、构建前端，再运行一个显式收费场景。只有临时 Java 容器额外挂载两个测试类：受属性约束的 BeanPostProcessor 安装真实驱动的 12 次硬上限，受鉴权的测试路由委托正式连接 Service 创建个人配置。若驱动没有实际安装限额器，夹具拒绝启动。供应商 Key 仅通过环境传入该可信 Java 容器，不写临时环境文件，不传给浏览器驱动、Go 或题目容器；正常应用镜像没有这些测试类/路由。浏览器禁用自动 trace/录像/故障截图，只保留不含凭证的业务画面；结束时扫描并移除含明文供应商 Key 的制品（发现即失败）。输出模型身份、结构化结果与用量，不估算价格。例中只增加注释，故意保留题目初始错误，以真实 FAILED/Surefire 证据验证续答，而不是把聊天文字当作测试通过。供应商或 Docker 不可用时该入口失败，不能报闭环通过。
 
 `--smoke` 仅运行管理员登录/改密/邀请/退出、草稿刷新恢复、保存运行及结果恢复三条黄金路径；镜像构建、题目发布校验和服务就绪属于前置准备，不把准备时间伪报为浏览器交互耗时。
 

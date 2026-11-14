@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm, copyFile, readdir } from 'node:fs/promises';
 import { openSync, closeSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
@@ -27,11 +27,17 @@ if (workspaceTestOption !== undefined && (!workspaceMode || !boundaryOnly || !/^
   throw new Error('--workspace-test requires --workspace --boundary-only and method names joined by +');
 }
 const copilotTests = process.argv.includes('--copilot-tests');
+const copilotBrowser = process.argv.includes('--copilot-browser');
+if (copilotBrowser && (!workspaceMode || identityMode || smoke || boundaryOnly || workspaceTest || copilotTests || process.argv.includes('--workspace-recovery-only'))) {
+  throw new Error('--copilot-browser requires --workspace without other suite selections');
+}
+const liveCredential = process.env.DEEPSEEK ?? process.env.DeepSeek;
 if (copilotTests && (!workspaceMode || !boundaryOnly || workspaceTest || process.argv.includes('--workspace-recovery-only'))) {
   throw new Error('--copilot-tests requires --workspace --boundary-only without other test selections');
 }
-if (copilotTests && !process.env.DeepSeek?.trim()) throw new Error('Paid Copilot validation requires the DeepSeek environment credential');
-if (copilotTests) maven(['-q', '-DskipTests', 'test-compile']);
+if ((copilotTests || copilotBrowser) && !liveCredential?.trim()) throw new Error('Paid Copilot validation requires DEEPSEEK (or DeepSeek) in the environment');
+if (copilotBrowser) maven(['-q', '-DskipTests', 'package']);
+else if (copilotTests) maven(['-q', '-DskipTests', 'test-compile']);
 const recoveryOnly = process.argv.includes('--workspace-recovery-only');
 if (recoveryOnly && (!workspaceMode || !boundaryOnly || workspaceTest)) {
   throw new Error('--workspace-recovery-only requires --workspace --boundary-only without --workspace-test');
@@ -58,6 +64,7 @@ const values = {
   IDENTITY_FINGERPRINT_KEY: randomBytes(32).toString('hex'),
   ...(workspaceMode ? { SANDBOX_RPC_KEY: randomBytes(32).toString('hex'),
     PROBLEM_PUBLICATION_FILE: join(directory, 'problem-publication.json') } : {}),
+  ...(copilotBrowser ? { MODEL_CREDENTIAL_ACTIVE_KEY_ID: 'fixture', MODEL_CREDENTIAL_KEYS: `fixture:${randomBytes(32).toString('base64')}` } : {}),
   POSTGRES_PORT: await reservePort(), JAVA_PORT: await reservePort(),
   SANDBOX_PORT: await reservePort(), WEB_PORT: await reservePort(),
 };
@@ -65,7 +72,25 @@ const envFile = join(directory, '.env');
 await writeFile(envFile, Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n'), { mode: 0o600 });
 await Promise.all(reservations.map((server) => new Promise((resolve) => server.close(resolve))));
 const composeArgs = ['compose', '-p', project, '--env-file', envFile, '-f', join(root, 'compose.yaml')];
+async function configurePaidBrowser() {
+  if (!copilotBrowser) return;
+  const support = join(directory, 'model-budget');
+  await mkdir(join(support, 'ai/codecraft/fixture'), { recursive: true });
+  for (const name of ['CopilotBrowserBudget', 'CopilotBrowserFixtureController']) {
+    await copyFile(join(root, `backend/server/target/test-classes/ai/codecraft/fixture/${name}.class`), join(support, `ai/codecraft/fixture/${name}.class`));
+  }
+  const override = join(directory, 'browser-override.json');
+  await writeFile(override, JSON.stringify({ services: { java: {
+    entrypoint: ['java', '-cp', '/app/server.jar', 'org.springframework.boot.loader.launch.PropertiesLauncher'],
+    environment: { LOADER_PATH: '/test-support', COPILOT_BROWSER_E2E: 'disposable', DEEPSEEK: null },
+    volumes: [{ type: 'bind', source: support, target: '/test-support', read_only: true }],
+  } } }), { mode: 0o600 });
+  composeArgs.push('-f', override);
+}
 const composeEnv = serviceEnv(values, 'postgres');
+if (copilotBrowser) composeEnv.DEEPSEEK = liveCredential;
+const webEnv = serviceEnv(values, 'web');
+for (const key of Object.keys(webEnv)) if (key.toUpperCase() === 'DEEPSEEK') delete webEnv[key];
 function compose(args) { run('docker', [...composeArgs, ...args], { env: composeEnv }); }
 function start(name, executable, args, env) {
   const log = openSync(join(directory, `${name}.log`), 'a');
@@ -103,6 +128,18 @@ async function stop(child) {
       }, 10000);
     })]);
   } finally { clearTimeout(timer); }
+}
+async function protectCredentialArtifacts(path) {
+  let removed = false;
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    const file = join(path, entry.name);
+    if (entry.isDirectory()) removed = await protectCredentialArtifacts(file) || removed;
+    else if (entry.isFile() && (await readFile(file)).includes(Buffer.from(liveCredential))) {
+      await writeFile(file, 'Sensitive artifact removed by paid-validation guard.\n');
+      removed = true;
+    }
+  }
+  return removed;
 }
 async function waitFor(url, expectedStatus, child) {
   const deadline = Date.now() + 60000;
@@ -143,13 +180,14 @@ async function browser(database = 'AVAILABLE', sandboxState = 'AVAILABLE', javaS
     const child = spawn(process.execPath, [join(root, 'frontend/node_modules/@playwright/test/cli.js'), 'test', ...selection,
       ...(browserTest ? ['--grep', browserTest] : smoke ? ['--grep', '@smoke'] : [])], {
       cwd: join(root, 'frontend'), stdio: 'inherit',
-      env: { ...serviceEnv(values, 'web'), TRACER_WEB_URL: webUrl, TRACER_SCREENSHOT_DIR: output,
+      env: { ...webEnv, TRACER_WEB_URL: webUrl, TRACER_SCREENSHOT_DIR: output,
         PLAYWRIGHT_OUTPUT_DIR: join(output, 'results'), PLAYWRIGHT_REPORT_DIR: join(output, 'report'),
         EXPECT_DATABASE: database, EXPECT_SANDBOX: sandboxState, EXPECT_JAVA: javaState,
         IDENTITY_E2E: identityMode ? 'true' : 'false', WORKSPACE_E2E: workspaceMode ? 'true' : 'false',
         IDENTITY_TEST_ADMIN: values.BOOTSTRAP_ADMIN_USERNAME, IDENTITY_TEST_PASSWORD: values.BOOTSTRAP_ADMIN_PASSWORD,
         IDENTITY_TEST_NEW_PASSWORD: updatedIdentityPassword,
-        BROWSER_FIXTURE_URL: fixtures?.url ?? '', BROWSER_FIXTURE_KEY: fixtures?.key ?? '' },
+        BROWSER_FIXTURE_URL: fixtures?.url ?? '', BROWSER_FIXTURE_KEY: fixtures?.key ?? '',
+        ...(copilotBrowser ? { COPILOT_BROWSER_E2E: 'disposable' } : {}) },
     });
     child.once('error', reject);
     child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`Browser failed (${code}); artifacts: ${output}`)));
@@ -171,7 +209,8 @@ function inspectJava() {
   assert(info.HostConfig.SecurityOpt.some((value) => value.startsWith('no-new-privileges')));
   assert(info.Mounts.some((mount) => mount.Type === 'bind' && mount.Destination === '/app/publication.json' && !mount.RW));
   assert(info.Mounts.every((mount) => (mount.Type === 'tmpfs' && mount.Destination === '/tmp')
-    || (mount.Type === 'bind' && mount.Destination === '/app/publication.json' && !mount.RW)), 'Java receives only its read-only publication and tmpfs');
+    || (mount.Type === 'bind' && mount.Destination === '/app/publication.json' && !mount.RW)
+    || (copilotBrowser && mount.Type === 'bind' && mount.Destination === '/test-support' && !mount.RW)), 'Java receives only explicitly scoped read-only inputs and tmpfs');
   assert.equal(info.HostConfig.PortBindings['8080/tcp'][0].HostIp, '127.0.0.1');
 }
 function inspectSandbox() {
@@ -187,7 +226,7 @@ function inspectSandbox() {
   assert(info.Mounts.some((mount) => mount.Type === 'volume' && mount.Destination === '/var/lib/codecraft'));
   assert(info.Mounts.some((mount) => mount.Type === 'bind' && mount.Destination === '/docker.sock'));
   assert.equal(info.HostConfig.PortBindings['9090/tcp'][0].HostIp, '127.0.0.1');
-  assert(!info.Config.Env.some((value) => /^(POSTGRES_|BOOTSTRAP_|IDENTITY_)/.test(value)));
+  assert(!info.Config.Env.some((value) => /^(POSTGRES_|BOOTSTRAP_|IDENTITY_|MODEL_CREDENTIAL_|DEEPSEEK=|DeepSeek=)/.test(value)));
   const second = spawnSync('docker', ['exec', id, '/sandbox', '--container'], { encoding: 'utf8', timeout: 10000 });
   assert.equal(second.status, 1, 'second storage owner must be rejected');
   assert(second.stderr.includes('acquire exclusive storage ownership'), 'must reject the storage lock, not merely the port');
@@ -196,6 +235,7 @@ function inspectSandbox() {
 let failure;
 try {
   run('docker', ['info'], { stdio: 'ignore' });
+  await configurePaidBrowser();
   if (workspaceMode) run(process.execPath, ['scripts/publish-problem.mjs', 'problems/cart-total/1.0.1',
     join(directory, 'publication-evidence'), values.PROBLEM_PUBLICATION_FILE]);
   Object.assign(composeEnv, await prepareContainerInputs(values.PROBLEM_PUBLICATION_FILE));
@@ -214,7 +254,7 @@ try {
   let javaProcess = java();
   await waitFor(`${javaUrl}/api/internal/status`, 200, javaProcess);
   inspectJava();
-  if (workspaceMode && !smoke) {
+  if (workspaceMode && !smoke && !copilotBrowser) {
     compose(['exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB,
       '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE DATABASE workspace_boundary']);
     if (copilotTests) {
@@ -233,10 +273,22 @@ try {
   }
   if (workspaceMode) fixtures = await browserFixtures({ project, composeArgs, env: composeEnv,
     username: values.POSTGRES_USER, database: values.POSTGRES_DB });
-  if (smoke) {
+  if (copilotBrowser) {
+    inspectSandbox();
+    run(process.execPath, [join(root, 'frontend/node_modules/vite/bin/vite.js'), 'build', join(root, 'frontend'), '--config', join(root, 'frontend/vite.config.ts')]);
     const webProcess = start('web', process.execPath,
       [join(root, 'frontend/node_modules/vite/bin/vite.js'), 'preview', join(root, 'frontend'), '--config', join(root, 'frontend/vite.config.ts')],
-      serviceEnv(values, 'web'));
+      webEnv);
+    await waitFor(webUrl, 200, webProcess);
+    await browser('AVAILABLE', 'AVAILABLE', 'AVAILABLE', ['copilot.spec.ts']);
+    compose(['exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB, '-v', 'ON_ERROR_STOP=1', '-c',
+      'SELECT ordinal, state, input_tokens, output_tokens, total_tokens, usage_incomplete FROM public.copilot_turn ORDER BY created_at;']);
+    assert.equal(run('docker', ['ps', '-aq', '--filter', `label=codecraft.execution.volume=${project}_sandbox-data`],
+      { encoding: 'utf8', stdio: 'pipe' }).stdout.trim(), '', 'Browser validation must leave no execution containers');
+  } else if (smoke) {
+    const webProcess = start('web', process.execPath,
+      [join(root, 'frontend/node_modules/vite/bin/vite.js'), 'preview', join(root, 'frontend'), '--config', join(root, 'frontend/vite.config.ts')],
+      webEnv);
     await waitFor(webUrl, 200, webProcess);
     await browser('AVAILABLE', 'AVAILABLE', 'AVAILABLE', [
       ...(identityMode ? ['identity.spec.ts'] : []), ...(workspaceMode ? ['workspace.spec.ts'] : []),
@@ -249,7 +301,7 @@ try {
   await linuxJavaTests({ directory, project, values, database: values.POSTGRES_DB, mode: 'tracer', url: 'http://java:8080' });
   const webProcess = start('web', process.execPath,
     [join(root, 'frontend/node_modules/vite/bin/vite.js'), 'preview', join(root, 'frontend'), '--config', join(root, 'frontend/vite.config.ts')],
-    serviceEnv(values, 'web'));
+    webEnv);
   // Vite's root is explicitly supplied because this process starts in the repository root.
   await waitFor(webUrl, 200, webProcess);
   console.log('Browser: all dependencies available');
@@ -327,6 +379,11 @@ try {
   } catch (error) { failures.push(error); }
   try { compose(['down', '--volumes', '--remove-orphans']); } catch (error) { failures.push(error); }
   try { await rm(envFile, { force: true }); } catch (error) { failures.push(error); }
+  if ((copilotBrowser || copilotTests) && liveCredential) {
+    try {
+      if (await protectCredentialArtifacts(directory)) throw new Error('Provider credential detected; sensitive artifacts removed');
+    } catch (error) { failures.push(error); }
+  }
   failure = failures.length > 1 ? new AggregateError(failures, `Test/cleanup failed: ${project}; logs: ${directory}`) : failures[0];
 }
 if (failure) throw failure;
