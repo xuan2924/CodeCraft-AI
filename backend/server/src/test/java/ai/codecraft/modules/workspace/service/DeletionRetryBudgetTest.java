@@ -41,7 +41,7 @@ class DeletionRetryBudgetTest {
             if (last[0] != null && clock.now.isBefore(last[0].plusSeconds(60))) return 0;
             last[0] = clock.now; return 1;
         });
-        var service = new DeletionStore(repository, exercises, identity, clock, new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60));
+        var service = new DeletionStore(repository, exercises, identity, clock, new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), new ExerciseDataService(List.of()));
         service.retry("session", "exercise", "first");
         service.retry("session", "exercise", "first");
         assertEquals(1, receipts.size());
@@ -65,7 +65,7 @@ class DeletionRetryBudgetTest {
         when(exercises.find("exercise")).thenReturn(new ai.codecraft.modules.workspace.model.entity.ExerciseEntity("exercise", "owner", "problem", "workspace", "prepare", "ENDED", 1L,
             "[]", 1, completed, null, null, null, null, null));
         when(repository.find("exercise")).thenReturn(new DeletionEntity("exercise", "owner", "workspace", "SUCCEEDED", completed, completed, 0, completed, null, null));
-        var service = new DeletionStore(repository, exercises, identity, clock, new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60));
+        var service = new DeletionStore(repository, exercises, identity, clock, new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), new ExerciseDataService(List.of()));
         assertEquals("RESOURCE_NOT_FOUND", assertThrows(BusinessException.class, () -> service.status("session", "exercise")).code());
         assertEquals("EXERCISE_DELETED", assertThrows(BusinessException.class, () -> service.request("session", "exercise", "delete")).code());
         assertEquals("EXERCISE_DELETED", assertThrows(BusinessException.class, () -> service.retry("session", "exercise", "retry")).code());

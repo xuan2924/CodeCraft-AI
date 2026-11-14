@@ -107,6 +107,16 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - 流使用有界缓冲、输出上限及慢消费者策略；截断明确提示，不能静默丢失最终状态。
 - 路由退出可关闭订阅，关页面不停止任务；用户通过“停止任务”请求停止。前端以服务端结构化状态结束加载，不从聊天或日志猜测成功。
 
+## Copilot 只读阶段接口
+
+- `POST /api/exercises/{id}/copilot/tasks`：`{text, feeAcknowledged}`，最多 4 KiB UTF-8 请求文字；要求当前操作凭证、CSRF 与幂等键，返回 202。同演练仅一个活动任务，不排队；原键重放只读取原受理记录。
+- `GET /api/exercises/{id}/copilot/tasks/latest`：最近任务、消息高水位、历史文本转换提示、未确认回复预览；无任务返回 `null`。
+- `GET /api/copilot-tasks/{taskId}`、`POST /api/copilot-tasks/{taskId}/stop`：读取或单调停止。停止要求当前身份、CSRF 与幂等键，但不要求工作区写入凭证或新空间；不停止独立手动测试。
+- `GET /api/exercises/{id}/copilot/messages?after=...`：默认 `-1` 返回最近页，`0` 从最早记录开始，其余为向前读取游标。每页最多 100 条、数据库协议负载最多 512 KiB；前端不得把一页视为完整历史。
+- `GET /api/exercises/{id}/copilot/tasks/{taskId}/events`：独立只读 SSE，`copilot_snapshot` 推送持久化状态与有界预览，不创建或重启任务。游标只用于快照去重；刷新/重连从 REST 消息记录恢复，不保证重放每个文本增量。所有终态以结构化任务状态为准。
+- 未确认的文本在已预留空间内按块落盘，预览最多 4096 个 Unicode 字符并明确截断。它不进入下一轮模型消息，也不能执行工具；完整响应确认后才保存正式消息。失败保留已落盘预览，成功后由完整消息替代。
+- REST 使用当前身份与资源归属校验，支持 `X-Codecraft-Owner` 防止旧页面跨账号提交；所有响应禁止缓存。SSE 复用现有有界非阻塞传输与持续身份核验。
+
 ## 保存与恢复
 
 业务动作被服务端确认时持续保存，不依赖浏览器关闭事件作为保存点。

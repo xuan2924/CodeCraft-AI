@@ -69,6 +69,31 @@ class ModelCallDriverTest {
     }
 
     @Test
+    void boundedTextIsObservedBeforeTheCompleteResponseWithoutTreatingItAsCompletion() throws Exception {
+        var observed = new StringBuilder();
+        model(subscriber -> {
+            subscriber.onNext(new PartialResponse("first "));
+            assertEquals("first ", observed.toString());
+            subscriber.onNext(new PartialResponse("second"));
+            subscriber.onNext(new CompleteResponse(ChatResponse.builder().aiMessage(AiMessage.from("first second")).build()));
+            subscriber.onComplete();
+        });
+        var result = driver(Duration.ofSeconds(1)).call(target(), request, limits, 4096, Instant.now().plusSeconds(10), observed::append);
+        assertEquals("first second", observed.toString());
+        assertEquals("first second", result.response().aiMessage().text());
+        assertEquals(1, subscriptions.get());
+    }
+
+    @Test
+    void previewPersistenceFailureCancelsTheSubscriptionWithoutRetry() {
+        model(subscriber -> { subscriber.onNext(new PartialResponse("first")); subscriber.onComplete(); });
+        var failure = assertThrows(BusinessException.class, () -> driver(Duration.ofSeconds(1)).call(target(), request, limits, 4096,
+            Instant.now().plusSeconds(10), text -> { throw new IllegalStateException("fixture observer failed"); }));
+        assertEquals("MODEL_INVALID_RESPONSE", failure.code());
+        assertEquals(1, subscriptions.get()); assertTrue(cancellations.get() > 0);
+    }
+
+    @Test
     void streamedOutputCannotBypassTheBudgetByEndingWithASmallCompleteMessage() {
         model(subscriber -> {
             subscriber.onNext(new PartialResponse("x".repeat(512)));

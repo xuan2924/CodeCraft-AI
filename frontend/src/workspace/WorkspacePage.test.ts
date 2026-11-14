@@ -51,7 +51,7 @@ it('clears only the authoritatively deleted exercise on reconnect, not generic r
   await flushPromises();
   expect(drafts.confirmExerciseDeletion).toHaveBeenCalledWith('owner', 'old');
   expect(page!.text()).toContain('演练已删除');
-  expect(page!.find('textarea').exists()).toBe(false);
+  expect(page!.find('textarea[aria-label="草稿夹具"]').exists()).toBe(false);
 });
 
 it('retains the original mutation key after a lost response and aborts requests on unmount', async () => {
@@ -191,7 +191,7 @@ it('selects a published version and displays only confirmed workspace files', as
   await page.get('[data-testid="workspace-file"]').trigger('click');
   await flushPromises();
   expect(page.get('pre[data-testid="source"]').text()).toContain('public class CartTotal');
-  expect(page.find('textarea').exists()).toBe(false);
+  expect(page.find('textarea[aria-label="草稿夹具"]').exists()).toBe(false);
 });
 
 it('retains the mounted active editor on background failures and exposes file retry errors', async () => {
@@ -211,7 +211,7 @@ it('retains the mounted active editor on background failures and exposes file re
     throw new Error('Unexpected request');
   }));
   await flushPromises();
-  await view.get('textarea').setValue('unsaved without IndexedDB');
+  await view.get('textarea[aria-label="草稿夹具"]').setValue('unsaved without IndexedDB');
   await view.get('[data-testid="workspace-file"]').trigger('click');
   await flushPromises();
   expect(view.text()).toContain('重试文件读取');
@@ -226,8 +226,8 @@ it('retains the mounted active editor on background failures and exposes file re
   offline = true;
   await client?.invalidateQueries({ queryKey: ['workspace', 'owner', 'current'] });
   await flushPromises();
-  expect(view.get('textarea').element.value).toBe('unsaved without IndexedDB');
-  expect(view.get('textarea').attributes('data-can-write')).toBe('false');
+  expect(view.get<HTMLTextAreaElement>('textarea[aria-label="草稿夹具"]').element.value).toBe('unsaved without IndexedDB');
+  expect(view.get('textarea[aria-label="草稿夹具"]').attributes('data-can-write')).toBe('false');
 });
 
 it('requires draft handling before ending and retains the ended result by exercise id', async () => {
@@ -284,13 +284,13 @@ it('can explicitly retain drafts and end after reload without reacquiring ordina
     if (path.endsWith('/tasks')) return ok({ tasks: [], retention: { retainedCompletedLimit: 20, prunedCount: 0, cleanupPendingCount: 0 } });
     throw new Error('Unexpected ordinary action: ' + path);
   }));
-  await view.get('textarea').setValue('retain this local draft');
+  await view.get('textarea[aria-label="草稿夹具"]').setValue('retain this local draft');
   expect(view.get('[data-testid="end-exercise"]').attributes('disabled')).toBeUndefined();
   await view.get('[data-testid="end-exercise"]').trigger('click');
   await view.findAll('button').find((button) => button.text() === '保留草稿并结束')!.trigger('click');
   await flushPromises();
   expect(ended).toBe(true); expect(endPreparation).toHaveBeenCalledWith('retain');
-  expect(view.get('textarea').element.value).toBe('retain this local draft');
+  expect(view.get<HTMLTextAreaElement>('textarea[aria-label="草稿夹具"]').element.value).toBe('retain this local draft');
   expect(drafts.confirmExerciseDeletion).not.toHaveBeenCalled();
 });
 
@@ -335,11 +335,11 @@ it('counts down without resetting and does not submit drafts at expiry', async (
     throw new Error('Unexpected request: ' + path);
   });
   const view = await render(fetcher);
-  await view.get('textarea').setValue('draft remains local');
+  await view.get('textarea[aria-label="草稿夹具"]').setValue('draft remains local');
   expect(view.text()).toContain('00:02');
   await vi.advanceTimersByTimeAsync(2000);
   await flushPromises();
   expect(view.text()).toContain('作答已到期');
-  expect(view.get('textarea').element.value).toBe('draft remains local');
+  expect(view.get<HTMLTextAreaElement>('textarea[aria-label="草稿夹具"]').element.value).toBe('draft remains local');
   expect(fetcher.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
 });

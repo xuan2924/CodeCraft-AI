@@ -39,11 +39,12 @@ public class StorageCapacityStore {
     private final IdentityTransactionService identity;
     private final StorageProperties limits;
     private final Clock clock;
+    private final ExerciseDataService data;
 
     public StorageCapacityStore(StorageCapacityRepository capacity, ExerciseRepository exercises,
-        WorkspaceWriteRepository writes, IdentityTransactionService identity, StorageProperties limits, Clock clock) {
+        WorkspaceWriteRepository writes, IdentityTransactionService identity, StorageProperties limits, Clock clock, ExerciseDataService data) {
         this.capacity = capacity; this.exercises = exercises; this.writes = writes;
-        this.identity = identity; this.limits = limits; this.clock = clock;
+        this.identity = identity; this.limits = limits; this.clock = clock; this.data = data;
     }
 
     /** Credit and the caller's new durable business intent must commit together. */
@@ -150,7 +151,7 @@ public class StorageCapacityStore {
         var converged = new HashSet<>(capacity.settledOperations(id));
         var releasable = plan.completedOperations().stream().filter(converged::contains).distinct().toList();
         for (int offset = 0; offset < releasable.size(); offset += 1000) capacity.release(releasable.subList(offset, Math.min(offset + 1000, releasable.size())));
-        return new StorageBudgetResponse(limits.maxBytes(), limits.recoveryBytes(), meter.bytes(), capacity.databaseBytes(id), capacity.reservedBytes(id), meter.checkedAt());
+        return new StorageBudgetResponse(limits.maxBytes(), limits.recoveryBytes(), meter.bytes(), databaseBytes(id), capacity.reservedBytes(id), meter.checkedAt());
     }
 
     @Transactional(readOnly = true)
@@ -175,12 +176,14 @@ public class StorageCapacityStore {
         if (growth < 4096) throw new IllegalArgumentException("Storage growth must cover admission metadata");
         long ceiling = limits.maxBytes() - (operation.kind().equals("FINAL_TEST") ? PROTECTED_RECOVERY : limits.recoveryBytes());
         try {
-            long committed = Math.addExact(meter.bytes(), capacity.databaseBytes(operation.exerciseId()));
+            long committed = Math.addExact(meter.bytes(), databaseBytes(operation.exerciseId()));
             long charged = Math.addExact(committed, capacity.reservedBytes(operation.exerciseId()));
             if (Math.addExact(charged, growth) > ceiling) throw new BusinessException(WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED);
         } catch (ArithmeticException overflow) { throw new BusinessException(WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED); }
         capacity.reserve(operation.id(), operation.exerciseId(), growth, clock.instant());
     }
+
+    private long databaseBytes(String id) { return Math.addExact(capacity.databaseBytes(id), data.retainedBytes(id)); }
 
     private static void unavailable() { throw new BusinessException(WorkspaceErrorCode.STORAGE_METER_UNAVAILABLE); }
 }

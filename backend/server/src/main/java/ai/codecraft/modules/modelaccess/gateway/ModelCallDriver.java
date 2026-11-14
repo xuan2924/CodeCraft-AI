@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Flow;
@@ -57,6 +58,11 @@ public class ModelCallDriver implements AutoCloseable {
     }
 
     public ModelCallResultDTO call(ModelInvocationDTO target, ChatRequest request, ModelInvocationLimitsDTO limits, int maximumDecodedBytes, Instant notAfter) throws InterruptedException {
+        return call(target, request, limits, maximumDecodedBytes, notAfter, ignored -> {});
+    }
+
+    public ModelCallResultDTO call(ModelInvocationDTO target, ChatRequest request, ModelInvocationLimitsDTO limits, int maximumDecodedBytes,
+        Instant notAfter, Consumer<String> partialResponse) throws InterruptedException {
         if (TransactionSynchronizationManager.isActualTransactionActive()) throw new IllegalStateException("Model calls must run outside database transactions");
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Model worker interrupted");
         requestParameters(request);
@@ -68,7 +74,7 @@ public class ModelCallDriver implements AutoCloseable {
         reapClosedTransports();
         if (closed.get() || !capacity.tryAcquire()) throw new BusinessException(ModelAccessErrorCode.MODEL_RUNTIME_BUSY);
         long started = System.nanoTime();
-        var subscriber = new ResponseSubscriber(maximumDecodedBytes);
+        var subscriber = new ResponseSubscriber(maximumDecodedBytes, partialResponse);
         BoundedModelHttpClientBuilder transport = null;
         try {
             transport = new BoundedModelHttpClientBuilder(properties.responseBytes(), properties.errorBytes());
@@ -162,7 +168,8 @@ public class ModelCallDriver implements AutoCloseable {
         private ChatResponse response;
         private final int maximum;
         private int streamedBytes;
-        ResponseSubscriber(int maximum) { this.maximum = maximum; }
+        private final Consumer<String> partialResponse;
+        ResponseSubscriber(int maximum, Consumer<String> partialResponse) { this.maximum = maximum; this.partialResponse = partialResponse; }
         @Override public void onSubscribe(Flow.Subscription value) {
             if (!subscription.compareAndSet(null, value) || cancelled.get()) value.cancel();
             else value.request(Long.MAX_VALUE);
@@ -181,6 +188,10 @@ public class ModelCallDriver implements AutoCloseable {
                     result.completeExceptionally(new BusinessException(ModelAccessErrorCode.MODEL_OUTPUT_LIMIT_EXCEEDED)); cancel(); return;
                 }
                 streamedBytes += bytes;
+            }
+            if (event instanceof PartialResponse partial) {
+                try { partialResponse.accept(partial.text()); }
+                catch (RuntimeException failure) { result.completeExceptionally(failure); cancel(); return; }
             }
             if (event instanceof CompleteResponse complete) response = complete.chatResponse();
         }

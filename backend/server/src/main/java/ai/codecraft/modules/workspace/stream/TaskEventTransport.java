@@ -6,6 +6,7 @@ import ai.codecraft.modules.workspace.config.TaskStreamProperties;
 import ai.codecraft.modules.workspace.model.dto.TaskStreamBatchDTO;
 import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import ai.codecraft.modules.workspace.service.TaskStreamStore;
+import ai.codecraft.modules.workspace.service.TaskStreamSource;
 import jakarta.annotation.PreDestroy;
 import jakarta.servlet.AsyncContext;
 import jakarta.servlet.AsyncEvent;
@@ -41,10 +42,14 @@ public final class TaskEventTransport {
     }
     public void open(String session, String exercise, String task, String after, String lastEvent,
         HttpServletRequest request, HttpServletResponse response) throws IOException {
+        open(session, exercise, task, after, lastEvent, request, response, store::batch);
+    }
+    public void open(String session, String exercise, String task, String after, String lastEvent,
+        HttpServletRequest request, HttpServletResponse response, TaskStreamSource source) throws IOException {
         if (after != null && lastEvent != null && !after.equals(lastEvent)) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
         String cursor = lastEvent != null ? lastEvent : after;
-        TaskStreamBatchDTO authorized = store.batch(session, exercise, task, cursor, false);
-        Connection connection = new Connection(session, exercise, task, authorized.userId(), authorized.cursor());
+        TaskStreamBatchDTO authorized = source.batch(session, exercise, task, cursor, false);
+        Connection connection = new Connection(session, exercise, task, authorized.userId(), authorized.cursor(), source);
         synchronized (connections) {
             if (connections.size() >= limits.connections() || connections.stream().filter(value -> value.user.equals(authorized.userId())).count() >= limits.perUser()) {
                 throw new BusinessException(WorkspaceErrorCode.STREAM_CAPACITY);
@@ -81,6 +86,7 @@ public final class TaskEventTransport {
         private final String exercise;
         private final String task;
         private final String user;
+        private final TaskStreamSource source;
         private final AtomicBoolean busy = new AtomicBoolean();
         private String cursor;
         private AsyncContext context;
@@ -89,8 +95,8 @@ public final class TaskEventTransport {
         private boolean started;
         private long lastWrite;
         private long stalledSince;
-        Connection(String session, String exercise, String task, String user, String cursor) {
-            this.session = session; this.exercise = exercise; this.task = task; this.user = user; this.cursor = cursor;
+        Connection(String session, String exercise, String task, String user, String cursor, TaskStreamSource source) {
+            this.session = session; this.exercise = exercise; this.task = task; this.user = user; this.cursor = cursor; this.source = source;
         }
         synchronized void start(AsyncContext context, ServletOutputStream output) {
             this.context = context; this.output = output;
@@ -109,7 +115,8 @@ public final class TaskEventTransport {
             try {
                 boolean ready = output.isReady();
                 // Idle and stalled connections still recheck authoritative identity.
-                TaskStreamBatchDTO batch = store.batch(session, exercise, task, cursor, ready);
+                TaskStreamBatchDTO batch = source.batch(session, exercise, task, cursor, ready);
+                if (batch.bytes().length > 64 * 1024 || !user.equals(batch.userId())) { close(); return; }
                 long now = System.nanoTime();
                 if (!ready) {
                     if (stalledSince == 0) stalledSince = now;

@@ -27,10 +27,12 @@ public class DeletionStore {
     private final Clock clock;
     private final RetentionProperties properties;
 
+    private final ExerciseDataService data;
+
     public DeletionStore(DeletionRepository deletions, ExerciseRepository exercises, IdentityTransactionService identity,
-        Clock clock, RetentionProperties properties) {
+        Clock clock, RetentionProperties properties, ExerciseDataService data) {
         this.deletions = deletions; this.exercises = exercises; this.identity = identity;
-        this.clock = clock; this.properties = properties;
+        this.clock = clock; this.properties = properties; this.data = data;
     }
 
     @Transactional
@@ -99,7 +101,7 @@ public class DeletionStore {
     public List<String> workspaceInstances(String id) { return deletions.workspaceInstances(id); }
     @Transactional(readOnly = true)
     public boolean reconciled(String id) {
-        return deletions.unresolved(id) == 0 && deletions.cleanupStates(id).stream().allMatch(value ->
+        return data.quiescent(id) && deletions.unresolved(id) == 0 && deletions.cleanupStates(id).stream().allMatch(value ->
             value.quiescent() && "SUCCEEDED".equals(value.cleanup())
                 && ("SUCCEEDED".equals(value.copyCleanup()) || "NOT_CREATED".equals(value.copyCleanup())));
     }
@@ -113,6 +115,7 @@ public class DeletionStore {
         identity.lockResourceOwner(deletions.find(id).userId());
         deletions.lockControl(id);
         if (deletions.complete(id, token, clock.instant()) != 1) return;
+        data.erase(id);
         deletions.eraseMutationPayloads(id);
         deletions.clearEvents(id);
         deletions.clearStreams(id);

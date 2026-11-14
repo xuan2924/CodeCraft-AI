@@ -10,6 +10,7 @@ import WorkspaceLogout from './WorkspaceLogout.vue';
 import WorkspaceTests from './WorkspaceTests.vue';
 import WorkspaceStorage from './WorkspaceStorage.vue';
 import ExerciseModelPicker from '../modelaccess/ExerciseModelPicker.vue';
+import CopilotPanel from '../copilot/CopilotPanel.vue';
 import ClosedDrafts from './ClosedDrafts.vue';
 import WorkspaceRetention from './WorkspaceRetention.vue';
 import { cancelSaveLogout, saveLogoutOwner } from './logoutIntent';
@@ -66,6 +67,10 @@ async function saveForLogout() {
   if (!writable.value || pending.value || unresolved.value) return false;
   if (editorView.value) return editorView.value.saveForLogout();
   return !active.isPending.value && !active.isError.value && exercise.value?.state !== 'ACTIVE';
+}
+async function prepareCopilot() {
+  if (!writable.value || !credential.value || pending.value || unresolved.value || answeringClosed.value || ending.value || logoutBusy.value) return false;
+  return editorView.value ? editorView.value.saveForLogout() : false;
 }
 function restartEditor() { editorGeneration.value++; credential.value = ''; }
 watch(() => account.data.value, (value) => {
@@ -481,6 +486,16 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :credential="credential"
             :preparing="exercise.state === 'READY'"
             :disabled="!writable || expired || pending || !!unresolved"
+            @unauthorized="credential = ''; account.refetch()"
+          />
+          <CopilotPanel
+            v-if="['ACTIVE', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
+            :key="owner + exercise.exerciseId"
+            :owner="owner"
+            :exercise-id="exercise.exerciseId"
+            :credential="credential"
+            :disabled="!writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy"
+            :prepare="prepareCopilot"
             @unauthorized="credential = ''; account.refetch()"
           />
           <WorkspaceStorage

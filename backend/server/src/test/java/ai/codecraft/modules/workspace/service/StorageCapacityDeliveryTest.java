@@ -48,7 +48,7 @@ class StorageCapacityDeliveryTest {
             return new StorageMeasurement("exercise", "A".repeat(26), 2, 1024);
         });
         var store = new StorageCapacityStore(capacity, exercises, mock(WorkspaceWriteRepository.class), identity,
-            new StorageProperties(536870912, 268435456, 20), Clock.fixed(now, ZoneOffset.UTC));
+            new StorageProperties(536870912, 268435456, 20), Clock.fixed(now, ZoneOffset.UTC), mock(ExerciseDataService.class));
         var service = new StorageCapacityService(store, gateway, mock(WorkspaceMaintenanceCoordinator.class));
         var failure = assertThrows(BusinessException.class, () -> service.usage("session", "exercise"));
         assertEquals(deleted ? "EXERCISE_DELETED" : "UNAUTHENTICATED", failure.code());

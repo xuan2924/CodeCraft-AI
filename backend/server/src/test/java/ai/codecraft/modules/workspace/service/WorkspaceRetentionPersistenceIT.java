@@ -140,9 +140,9 @@ class WorkspaceRetentionPersistenceIT {
         when(identity.authorizeMutation("session")).thenAnswer(call -> { ownerLocks.lockResourceOwner(owner); return authorization; });
         when(identity.authorizePrivateDelivery("session")).thenAnswer(call -> { ownerLocks.lockResourceOwner(owner); return authorization; });
         var limits = new StorageProperties(512L * 1024 * 1024, 256L * 1024 * 1024, 20);
-        capacityStore = transactional(new StorageCapacityStore(sql.getMapper(StorageCapacityRepository.class), exercises, sql.getMapper(WorkspaceWriteRepository.class), identity, limits, clock), StorageCapacityStore.class);
+        capacityStore = transactional(new StorageCapacityStore(sql.getMapper(StorageCapacityRepository.class), exercises, sql.getMapper(WorkspaceWriteRepository.class), identity, limits, clock, new ExerciseDataService(List.of())), StorageCapacityStore.class);
         maintenance = transactional(new WorkspaceMaintenanceStore(sql.getMapper(WorkspaceMaintenanceRepository.class), exercises, deletions, identity, clock, limits), WorkspaceMaintenanceStore.class);
-        deletion = transactional(new DeletionStore(deletions, exercises, identity, clock, new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60)), DeletionStore.class);
+        deletion = transactional(new DeletionStore(deletions, exercises, identity, clock, new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), new ExerciseDataService(List.of())), DeletionStore.class);
         problems = mock(ProblemRepository.class);
         when(problems.find(problem)).thenReturn(new ProblemVersionEntity(problem, "cart-total", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", "{}"));
         tasks = transactional(new TestTaskStore(identity, fingerprints(), exercises, sql.getMapper(WorkspaceWriteRepository.class), sql.getMapper(TestTaskRepository.class),

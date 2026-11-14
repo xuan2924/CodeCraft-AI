@@ -59,7 +59,7 @@ class DeletionStoreTest {
                 old.attempts() + 1, call.getArgument(3), old.firstFailureAt() == null ? call.getArgument(2) : old.firstFailureAt(), call.getArgument(4));
             return null;
         }).when(deletions).failed(anyString(), anyString(), any(), any(), anyString());
-        DeletionStore service = new DeletionStore(deletions, exercises, identity, clock, new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60));
+        DeletionStore service = new DeletionStore(deletions, exercises, identity, clock, new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), new ExerciseDataService(List.of()));
         for (long interval : new long[]{60, 300, 1800, 3600, 3600}) {
             Instant failure = clock.instant();
             service.failed(value[0], "claim", "STORAGE_CLEANUP_FAILED");
@@ -87,7 +87,7 @@ class DeletionStoreTest {
         IdentityTransactionService identity = mock(IdentityTransactionService.class);
         when(exercises.find("exercise")).thenReturn(new ExerciseEntity("exercise", "owner", "problem", "workspace", "prepare", "ENDED", 7L, "[]", 1, clock.instant(), null, null, null, null, null));
         when(deletions.retainUntil("exercise")).thenReturn(until);
-        DeletionStore service = new DeletionStore(deletions, exercises, identity, clock, new RetentionProperties(20, 1, 7, List.of(60, 300, 1800, 3600), 24, 60));
+        DeletionStore service = new DeletionStore(deletions, exercises, identity, clock, new RetentionProperties(20, 1, 7, List.of(60, 300, 1800, 3600), 24, 60), new ExerciseDataService(List.of()));
         clock.now = until.minusNanos(1);
         service.expire("exercise");
         verify(deletions, never()).insert(any());
@@ -127,14 +127,14 @@ class DeletionStoreTest {
         when(deletions.workspaceInstances("exercise")).thenReturn(List.of("previous-preparation", "workspace"));
         when(deletions.unresolved("exercise")).thenReturn(1);
         RetentionProperties policy = new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60);
-        DeletionStore service = new DeletionStore(deletions, exercises, identity, clock, policy);
+        DeletionStore service = new DeletionStore(deletions, exercises, identity, clock, policy, new ExerciseDataService(List.of()));
         SandboxWorkspaceGateway sandbox = mock(SandboxWorkspaceGateway.class);
         when(sandbox.deleteWorkspace("previous-preparation")).thenReturn(WorkspaceDeletionReceipt.newBuilder().setWorkspaceInstanceId("previous-preparation").setComplete(true).build());
         when(sandbox.deleteWorkspace("workspace")).thenReturn(WorkspaceDeletionReceipt.newBuilder().setWorkspaceInstanceId("workspace").setComplete(true).build());
         new DeletionCoordinator(service, sandbox).drive(value[0]);
         assertEquals("RECONCILIATION_REQUIRED", service.status("session", "exercise").failureCode());
         verify(sandbox, never()).deleteWorkspace(anyString());
-        DeletionStore restarted = new DeletionStore(deletions, exercises, identity, clock, policy);
+        DeletionStore restarted = new DeletionStore(deletions, exercises, identity, clock, policy, new ExerciseDataService(List.of()));
         DeletionCoordinator worker = new DeletionCoordinator(restarted, sandbox);
         worker.drive(value[0]);
         assertEquals("FAILED", restarted.status("session", "exercise").state());
@@ -161,7 +161,7 @@ class DeletionStoreTest {
         MutableClock clock = new MutableClock();
         DeletionRepository deletions = mock(DeletionRepository.class);
         DeletionStore service = new DeletionStore(deletions, mock(ExerciseRepository.class), mock(IdentityTransactionService.class), clock,
-            new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60));
+            new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), new ExerciseDataService(List.of()));
         when(deletions.cleanupStates("exercise")).thenReturn(List.of(new ExecutionCleanupDTO(true, "SUCCEEDED", "NOT_CREATED")));
         assertEquals(true, service.reconciled("exercise"));
         when(deletions.cleanupStates("exercise")).thenReturn(List.of(new ExecutionCleanupDTO(false, "FAILED", "UNKNOWN")));
@@ -201,7 +201,7 @@ class DeletionStoreTest {
         DeletionEntity[] stored = {null};
         doAnswer(call -> { stored[0] = call.getArgument(0); return null; }).when(deletions).insert(any());
         when(deletions.find("exercise")).thenAnswer(call -> stored[0]);
-        DeletionStore service = new DeletionStore(deletions, exercises, identity, Clock.fixed(now, ZoneOffset.UTC), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60));
+        DeletionStore service = new DeletionStore(deletions, exercises, identity, Clock.fixed(now, ZoneOffset.UTC), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), new ExerciseDataService(List.of()));
         assertEquals("PENDING", service.request("session", "exercise", "delete").state());
         assertEquals(now, service.request("session", "exercise", "delete").requestedAt());
         when(exercises.find("exercise")).thenReturn(new ExerciseEntity("exercise", "other", "problem", "workspace", "prepare", "ENDED", 7L, "[]", 1, now, now, now, null, null, null));

@@ -1,0 +1,20 @@
+package ai.codecraft.modules.copilot.service;
+
+import ai.codecraft.modules.copilot.repository.CopilotRetentionRepository;
+import ai.codecraft.modules.workspace.service.ExerciseDataContributor;
+import org.springframework.stereotype.Service;
+
+/** Called under the exercise owner's transaction. Personal model configurations are never touched. */
+@Service
+public class CopilotExerciseData implements ExerciseDataContributor {
+    private final CopilotRetentionRepository repository;
+    public CopilotExerciseData(CopilotRetentionRepository repository) { this.repository = repository; }
+    @Override public long retainedBytes(String exerciseId) { return repository.bytes(exerciseId); }
+    @Override public boolean quiescent(String exerciseId) { return repository.quiescent(exerciseId); }
+    @Override public void erase(String exerciseId) {
+        repository.deleteTools(exerciseId);
+        repository.deleteMessages(exerciseId);
+        repository.deleteTurns(exerciseId);
+        repository.deleteTasks(exerciseId);
+    }
+}

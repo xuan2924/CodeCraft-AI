@@ -85,6 +85,18 @@ class StorageCapacityStoreTest {
     }
 
     @Test
+    void attachedAiEvidenceIsIncludedInBothAdmissionAndDisplayedDatabaseUsage() {
+        var fixture = new Fixture();
+        long baseline = 236 * MIB;
+        fixture.meter = new StorageMeterEntity("exercise", EPOCH, 20, baseline, NOW);
+        when(fixture.data.retainedBytes("exercise")).thenReturn(8 * MIB);
+        assertEquals("STORAGE_BUDGET_EXCEEDED", assertThrows(BusinessException.class, () -> fixture.service.admit(
+            fixture.operation("model", "COPILOT_MODEL"), fixture.measurement(20, baseline), 2 * MIB)).code());
+        var plan = new StorageReconciliationPlan(new StorageScope("exercise", List.of("workspace"), List.of()), List.of());
+        assertEquals(24 * MIB, fixture.service.reconcile(plan, fixture.measurement(20, baseline)).databaseBytes());
+    }
+
+    @Test
     void zeroUsageBootstrapIsAllowedOnlyForANewBudget() {
         var fixture = new Fixture();
         fixture.meter = new StorageMeterEntity("exercise", null, 0, 0, NOW);
@@ -96,6 +108,7 @@ class StorageCapacityStoreTest {
 
     private static final class Fixture {
         final StorageCapacityRepository capacity = mock(StorageCapacityRepository.class);
+        final ExerciseDataService data = mock(ExerciseDataService.class);
         final Map<String, Long> reservations = new HashMap<>();
         StorageMeterEntity meter = new StorageMeterEntity("exercise", EPOCH, 20, 0, NOW);
         final StorageCapacityStore service;
@@ -115,7 +128,7 @@ class StorageCapacityStoreTest {
                 .when(capacity).observed(anyString(), anyString(), anyLong(), anyLong(), any());
             when(capacity.release(anyList())).thenAnswer(call -> { List<String> ids = call.getArgument(0); ids.forEach(reservations::remove); return ids.size(); });
             service = new StorageCapacityStore(capacity, exercises, mock(WorkspaceWriteRepository.class), mock(IdentityTransactionService.class),
-                limits, Clock.fixed(NOW, ZoneOffset.UTC));
+                limits, Clock.fixed(NOW, ZoneOffset.UTC), data);
         }
         WorkspaceOperationEntity operation(String id, String kind) {
             return new WorkspaceOperationEntity(id, "owner", "exercise", "workspace", kind, "exercise", id, "a".repeat(64), "PENDING", NOW);

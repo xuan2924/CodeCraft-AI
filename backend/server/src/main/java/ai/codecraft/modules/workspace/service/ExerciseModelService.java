@@ -4,6 +4,7 @@ import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationReferenceDTO;
+import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationDTO;
 import ai.codecraft.modules.modelaccess.model.exception.ModelAccessErrorCode;
 import ai.codecraft.modules.modelaccess.service.ModelCheckService;
 import ai.codecraft.modules.modelaccess.service.ModelInvocationService;
@@ -69,6 +70,19 @@ public class ExerciseModelService {
         if (reference == null) return new ExerciseModelResponse(null, "SELECTION_REQUIRED");
         var resolved = invocations.tryResolve(session, reference);
         return new ExerciseModelResponse(reference, resolved.error() == null ? "SELECTED" : resolved.error().code());
+    }
+
+    /** Invoke only at a complete batch boundary; the returned credentials live only in the in-flight call. */
+    @Transactional
+    public ModelInvocationDTO resolveForCall(String session, String id) {
+        authorize(session, id);
+        var exercise = exercises.find(id);
+        if (!"ACTIVE".equals(exercise.state()) || exercise.deadlineAt() == null || !clock.instant().isBefore(exercise.deadlineAt())) {
+            throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
+        }
+        var reference = selections.find(id);
+        if (reference == null) throw new BusinessException(ModelAccessErrorCode.MODEL_SELECTION_REQUIRED);
+        return invocations.resolve(session, reference);
     }
 
     @Transactional
