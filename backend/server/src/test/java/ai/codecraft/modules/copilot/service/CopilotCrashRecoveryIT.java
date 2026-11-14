@@ -51,6 +51,7 @@ class CopilotCrashRecoveryIT {
         try (var reservation = new ServerSocket(0)) { port = reservation.getLocalPort(); }
         try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
             http = client;
+            Throwable failure = null;
             try {
                 start("normal"); seedUser();
                 String model = checkedModel();
@@ -149,7 +150,12 @@ class CopilotCrashRecoveryIT {
                 Files.writeString(evidence.resolve("result.json"), json.writeValueAsString(Map.of("parentState", "STOPPED", "childState", result.path("state").asText(),
                     "childTaskId", child.getFirst(), "executionInstanceId", child.get(1), "quiescent", true, "revision", "4", "autoRevocation", "AUTHORIZATION_ENDED")));
                 System.out.println("Copilot recovery: approval restart; write before/after Java receipt; steer reconciliation; unknown model not replayed; takeover and auto revocation; original Docker execution after Java/Go restart=" + result.path("state").asText() + ". Evidence=" + evidence);
-            } finally { stop(); }
+            } catch (Exception | Error error) {
+                failure = error; throw error;
+            } finally {
+                try { stop(); }
+                catch (Exception | Error cleanup) { if (failure != null) failure.addSuppressed(cleanup); else throw cleanup; }
+            }
         }
     }
 
