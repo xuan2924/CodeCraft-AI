@@ -22,6 +22,7 @@ import ai.codecraft.modules.modelaccess.repository.ModelCheckRepository;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckResponse;
 import java.time.Duration;
 import ai.codecraft.modules.modelaccess.model.ModelProtocol;
+import ai.codecraft.modules.modelaccess.model.exception.ModelAccessErrorCode;
 import ai.codecraft.modules.modelaccess.model.ModelThinkingMode;
 import ai.codecraft.modules.modelaccess.model.dto.ModelConfigurationRequest;
 import ai.codecraft.modules.modelaccess.repository.ModelConfigurationRepository;
@@ -78,6 +79,7 @@ class ModelConnectionPersistenceIT {
     private ModelConnectionService service;
     private ModelConfigurationService models;
     private ModelCheckService checks;
+    private ModelCheckService checksAfterValidity;
     private ModelCheckExecutionStore dispatches;
     private ModelCheckExecutionStore expiredDispatches;
     private String owner;
@@ -117,6 +119,8 @@ class ModelConnectionPersistenceIT {
             new ModelConnectionValidator(), receipts, clock), ModelConfigurationService.class);
         checks = transactional(new ModelCheckService(sql.getMapper(ModelCheckRepository.class), sql.getMapper(ModelConfigurationRepository.class), repository,
             identity, receipts, clock, new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536)), ModelCheckService.class);
+        checksAfterValidity = transactional(new ModelCheckService(sql.getMapper(ModelCheckRepository.class), sql.getMapper(ModelConfigurationRepository.class), repository,
+            identity, receipts, Clock.offset(clock, Duration.ofMinutes(30)), new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536)), ModelCheckService.class);
         var invocations = transactional(new ModelInvocationService(identity, repository, sql.getMapper(ModelConfigurationRepository.class), cipher), ModelInvocationService.class);
         dispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
             new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
@@ -124,6 +128,104 @@ class ModelConnectionPersistenceIT {
         expiredDispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
             new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
             new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), Clock.offset(clock, Duration.ofSeconds(120))), ModelCheckExecutionStore.class);
+    }
+
+    @Test
+    void successfulChecksReuseOriginalResultsWithoutExtendingTheirThirtyMinuteValidity() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var original = checks.start("session", model.id(), "original", true);
+        String worker = UUID.randomUUID().toString();
+        String basic = null;
+        String tool = null;
+        for (int step = 1; step <= 3; step++) {
+            var request = dispatches.begin(original.id(), step, worker);
+            assertThat(dispatches.complete(request.requestId(), worker, 100, null)).isTrue();
+            if (step == 1) basic = request.requestId();
+            if (step == 3) tool = request.requestId();
+        }
+        var reused = checks.start("session", model.id(), "reuse", true);
+        assertThat(reused.status()).isEqualTo("SUCCEEDED");
+        var details = checks.status("session", reused.id());
+        assertThat(details.basic().reused()).isTrue(); assertThat(details.tool().reused()).isTrue();
+        assertThat(details.basic().valid()).isTrue(); assertThat(details.tool().valid()).isTrue();
+        assertThat(details.basic().completedAt()).isEqualTo(NOW);
+        assertThat(details.basic().validUntil()).isEqualTo(NOW.plusSeconds(1800));
+        assertThat(checksAfterValidity.status("session", reused.id()).basic().valid()).isFalse();
+        assertThat(sql.getMapper(ModelCheckRepository.class).reuse(reused.id()).basicRequestId()).isEqualTo(basic);
+        assertThat(sql.getMapper(ModelCheckRepository.class).reuse(reused.id()).toolRequestId()).isEqualTo(tool);
+        assertThat(dispatches.begin(reused.id(), 1, UUID.randomUUID().toString())).isNull();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM personal_model_check_request WHERE check_id=?::uuid", Integer.class, reused.id())).isZero();
+        var expired = checksAfterValidity.start("session", model.id(), "expired", true);
+        assertThat(expired.status()).isEqualTo("QUEUED");
+        assertThat(dispatches.firstOrdinal(expired.id())).isEqualTo(1);
+        assertThat(sql.getMapper(ModelCheckRepository.class).reuse(expired.id())).isNull();
+    }
+
+    @Test
+    void basicSuccessSurvivesToolFailureAndOnlyTheToolRoundtripIsChargedOnRetry() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var original = checks.start("session", model.id(), "original", true);
+        String worker = UUID.randomUUID().toString();
+        var basic = dispatches.begin(original.id(), 1, worker);
+        assertThat(dispatches.complete(basic.requestId(), worker, 100, null)).isTrue();
+        var failed = dispatches.begin(original.id(), 2, worker);
+        assertThat(dispatches.complete(failed.requestId(), worker, 100, ModelAccessErrorCode.MODEL_INVALID_RESPONSE)).isFalse();
+        var retry = checks.start("session", model.id(), "retry", true);
+        assertThat(dispatches.firstOrdinal(retry.id())).isEqualTo(2);
+        String nextWorker = UUID.randomUUID().toString();
+        assertThat(dispatches.begin(retry.id(), 1, nextWorker)).isNull();
+        for (int step = 2; step <= 3; step++) {
+            var request = dispatches.begin(retry.id(), step, nextWorker);
+            assertThat(dispatches.complete(request.requestId(), nextWorker, 100, null)).isTrue();
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM personal_model_check_request WHERE check_id=?::uuid", Integer.class, retry.id())).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT status FROM personal_model_check WHERE id=?::uuid", String.class, retry.id())).isEqualTo("SUCCEEDED");
+    }
+
+    @Test
+    void stillValidToolResultNeedsOnlyOneNewRequestWhenBasicHasExpired() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var original = checks.start("session", model.id(), "original", true);
+        String worker = UUID.randomUUID().toString();
+        for (int step = 1; step <= 3; step++) {
+            var request = dispatches.begin(original.id(), step, worker);
+            assertThat(dispatches.complete(request.requestId(), worker, 100, null)).isTrue();
+        }
+        jdbc.update("UPDATE personal_model_check_request SET completed_at=? WHERE check_id=?::uuid AND ordinal=1", Timestamp.from(NOW.minusSeconds(1800)), original.id());
+        var retry = checks.start("session", model.id(), "retry", true);
+        String nextWorker = UUID.randomUUID().toString();
+        assertThat(dispatches.firstOrdinal(retry.id())).isEqualTo(1);
+        var basic = dispatches.begin(retry.id(), 1, nextWorker);
+        assertThat(dispatches.complete(basic.requestId(), nextWorker, 100, null)).isTrue();
+        assertThat(dispatches.begin(retry.id(), 2, nextWorker)).isNull();
+        var details = checks.status("session", retry.id());
+        assertThat(details.check().status()).isEqualTo("SUCCEEDED");
+        assertThat(details.tool().reused()).isTrue(); assertThat(details.tool().completedAt()).isEqualTo(NOW);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM personal_model_check_request WHERE check_id=?::uuid", Integer.class, retry.id())).isEqualTo(1);
+    }
+
+    @Test
+    void displayRenamesRetainReusableResultsButCredentialChangesInvalidateThem() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var original = checks.start("session", model.id(), "original", true);
+        String worker = UUID.randomUUID().toString();
+        for (int step = 1; step <= 3; step++) {
+            var request = dispatches.begin(original.id(), step, worker);
+            assertThat(dispatches.complete(request.requestId(), worker, 100, null)).isTrue();
+        }
+        models.update("session", model.id(), "rename", new ModelConfigurationRequest("Renamed", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, "1"));
+        var renamed = checks.start("session", model.id(), "rename-check", true);
+        assertThat(renamed.status()).isEqualTo("SUCCEEDED");
+        service.update("session", connection.id(), "key-change", new ModelConnectionRequest("DeepSeek", "https://api.deepseek.com", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, "fixture-replacement-key", "1"));
+        assertThat(checks.status("session", renamed.id()).currentConfiguration()).isFalse();
+        assertThat(checks.status("session", renamed.id()).basic().valid()).isFalse();
+        var changed = checks.start("session", model.id(), "changed-check", true);
+        assertThat(changed.status()).isEqualTo("QUEUED");
+        assertThat(sql.getMapper(ModelCheckRepository.class).reuse(changed.id())).isNull();
     }
 
     @Test
@@ -151,8 +253,8 @@ class ModelConnectionPersistenceIT {
     @Test
     void expiredContinuationAndRecoveryConvergeInEitherTransactionOrder() {
         var connection = service.create("session", "connection", input);
-        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
         for (boolean recoveryFirst : new boolean[] {false, true}) {
+            var model = models.create("session", connection.id(), "model-" + recoveryFirst, new ModelConfigurationRequest("Fixture-" + recoveryFirst, "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
             var check = checks.start("session", model.id(), "check-" + recoveryFirst, true);
             String worker = UUID.randomUUID().toString();
             var first = dispatches.begin(check.id(), 1, worker);

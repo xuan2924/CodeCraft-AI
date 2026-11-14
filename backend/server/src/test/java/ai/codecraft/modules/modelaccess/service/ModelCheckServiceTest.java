@@ -18,6 +18,12 @@ import java.time.Duration;
 import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.modelaccess.model.entity.ModelConfigurationEntity;
+import ai.codecraft.modules.modelaccess.model.entity.ModelCheckEntity;
+import ai.codecraft.modules.modelaccess.model.entity.ModelCheckResultEntity;
+import java.util.List;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import ai.codecraft.modules.modelaccess.model.entity.ModelConnectionEntity;
 import ai.codecraft.modules.modelaccess.repository.ModelCheckRepository;
 import ai.codecraft.modules.modelaccess.repository.ModelConfigurationRepository;
@@ -42,6 +48,7 @@ class ModelCheckServiceTest {
         when(receipts.fingerprint(true)).thenReturn("fingerprint");
         when(receipts.complete(anyString(), anyString(), anyString(), anyString(), anyString(), any(ModelCheckResponse.class))).thenAnswer(call -> call.getArgument(5));
         when(identity.authorizeMutation("session")).thenReturn(new SessionAuthorizationDTO("owner", "USER", false, 1, NOW.plusSeconds(60)));
+        when(identity.authorizePrivateDelivery("session")).thenReturn(new SessionAuthorizationDTO("owner", "USER", false, 1, NOW.plusSeconds(60)));
         when(models.find("model")).thenReturn(new ModelConfigurationEntity("model", "connection", "owner", "Fixture", "fixture", 10000, 4096, "OFF", null, null, null, 4, 2, NOW, NOW, null));
         when(connections.find("connection")).thenReturn(new ModelConnectionEntity("connection", "owner", "Fixture", "https://example.com", "OPENAI_CHAT", "CUSTOM", "key", "nonce", "encrypted", 3, 2, NOW, NOW, null));
     }
@@ -74,6 +81,54 @@ class ModelCheckServiceTest {
         assertEquals("MODEL_CONFIGURATION_NOT_FOUND", assertThrows(BusinessException.class, () -> service.start("other", "model", "request", true)).code());
         verify(checks, never()).insert(any());
         verify(receipts, never()).replay(eq("admin"), anyString(), anyString(), anyString(), any(), eq(ModelCheckResponse.class));
+    }
+
+    @Test
+    void twoValidOriginalResultsCompleteTheGroupWithoutSchedulingMorePaidRequests() {
+        when(checks.reusable(eq("owner"), any(), eq(1), eq(NOW.minusSeconds(1800)))).thenReturn("basic-request");
+        when(checks.reusable(eq("owner"), any(), eq(3), eq(NOW.minusSeconds(1800)))).thenReturn("tool-request");
+        assertEquals("SUCCEEDED", service.start("session", "model", "request", true).status());
+        verify(checks).insertReuse(any());
+    }
+
+    @Test
+    void readoutPreservesOriginalCompletionAndExpiresSuccessAtExactlyThirtyMinutes() {
+        when(checks.find("check")).thenReturn(new ModelCheckEntity("check", "owner", "connection", "model", 2, 2, "SUCCEEDED", NOW));
+        when(checks.results("check")).thenReturn(List.of(new ModelCheckResultEntity("original", 1, "SUCCEEDED", NOW.minusSeconds(1800), null, true)));
+        var response = service.status("session", "check");
+        assertEquals(NOW.minusSeconds(1800), response.basic().completedAt());
+        assertEquals(NOW, response.basic().validUntil());
+        assertFalse(response.basic().valid());
+        assertFalse(response.tool().valid());
+    }
+
+    @Test
+    void basicSuccessIsNotRelabeledWithTheOtherChecksFailure() {
+        when(checks.find("check")).thenReturn(new ModelCheckEntity("check", "owner", "connection", "model", 2, 2, "FAILED", NOW));
+        when(checks.reason("check")).thenReturn("MODEL_INVALID_RESPONSE");
+        when(checks.results("check")).thenReturn(List.of(new ModelCheckResultEntity("basic", 1, "SUCCEEDED", NOW, null, false),
+            new ModelCheckResultEntity("tool", 2, "FAILED", NOW, "MODEL_INVALID_RESPONSE", false)));
+        var response = service.status("session", "check");
+        assertTrue(response.basic().valid()); assertNull(response.basic().errorCode());
+        assertFalse(response.tool().valid()); assertEquals("MODEL_INVALID_RESPONSE", response.tool().errorCode());
+    }
+
+    @Test
+    void readoutRejectsForeignOwnersAndAdministratorsBeforeLoadingResults() {
+        when(checks.find("check")).thenReturn(new ModelCheckEntity("check", "owner", "connection", "model", 2, 2, "SUCCEEDED", NOW));
+        when(identity.authorizePrivateDelivery("other")).thenReturn(new SessionAuthorizationDTO("other", "USER", false, 1, NOW.plusSeconds(60)));
+        when(identity.authorizePrivateDelivery("admin")).thenReturn(new SessionAuthorizationDTO("admin", "ADMIN", false, 1, NOW.plusSeconds(60)));
+        assertEquals("MODEL_CHECK_NOT_FOUND", assertThrows(BusinessException.class, () -> service.status("other", "check")).code());
+        assertEquals("FORBIDDEN", assertThrows(BusinessException.class, () -> service.status("admin", "check")).code());
+        verify(checks, never()).results(anyString());
+    }
+
+    @Test
+    void toolInvocationAloneDoesNotCountAsACompletedRoundtrip() {
+        when(checks.find("check")).thenReturn(new ModelCheckEntity("check", "owner", "connection", "model", 2, 2, "RUNNING", NOW));
+        when(checks.results("check")).thenReturn(List.of(new ModelCheckResultEntity("tool", 2, "SUCCEEDED", NOW, null, false)));
+        assertEquals("RUNNING", service.status("session", "check").tool().status());
+        assertFalse(service.status("session", "check").tool().valid());
     }
 
     @Test

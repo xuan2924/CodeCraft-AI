@@ -56,6 +56,7 @@ class ModelCheckRunnerTest {
 
     @BeforeEach
     void setup() {
+        when(store.firstOrdinal("check")).thenReturn(1);
         var connection = new ModelConnectionResponse("connection", "Fixture", "https://example.test", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, "1", "1", true, false);
         var model = new ModelConfigurationResponse("model", "connection", "Fixture", "fixture-model", 100000, 4096, ModelThinkingMode.OFF, null, null, null, "1", "1", "USER_PROVIDED", false);
         target = new ModelInvocationDTO(connection, model, "fixture-not-a-real-key");
@@ -91,13 +92,15 @@ class ModelCheckRunnerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"exact", "wrong", "padded"})
+    @ValueSource(strings = {"exact", "wrong", "padded", "reuse-basic"})
     void exactToolReceiptAndNativeReasoningHistoryAreRequiredForTheThreeRequestRoundtrip(String mode) throws Exception {
+        boolean reuseBasic = mode.equals("reuse-basic");
+        if (reuseBasic) when(store.firstOrdinal("check")).thenReturn(2);
         var calls = new AtomicInteger();
         var original = new AtomicReference<AiMessage>();
         var challenge = new AtomicReference<String>();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
-            int ordinal = calls.incrementAndGet();
+            int ordinal = calls.incrementAndGet() + (reuseBasic ? 1 : 0);
             ChatRequest request = call.getArgument(1);
             ModelInvocationLimitsDTO limits = call.getArgument(2);
             assertEquals(ordinal == 1 ? 128 : 256, limits.outputTokens());
@@ -119,12 +122,13 @@ class ModelCheckRunnerTest {
             assertFalse(prompt.contains(receipt.text()));
             assertNotEquals(challenge.get(), receipt.text());
             assertEquals(1, request.toolSpecifications().size());
-            return result(AiMessage.from(mode.equals("exact") ? receipt.text() : mode.equals("padded") ? "\n" + receipt.text() + "\n" : challenge.get()));
+            return result(AiMessage.from((mode.equals("exact") || reuseBasic) ? receipt.text() : mode.equals("padded") ? "\n" + receipt.text() + "\n" : challenge.get()));
         });
         runner.run("check");
-        assertEquals(3, calls.get());
-        verify(store).complete(eq("request-3"), anyString(), eq(100), eq(mode.equals("exact") ? null : ModelAccessErrorCode.MODEL_INVALID_RESPONSE));
-        verify(driver, times(3)).call(any(), any(), any(), anyInt(), any());
+        assertEquals(reuseBasic ? 2 : 3, calls.get());
+        verify(store).complete(eq("request-3"), anyString(), eq(100), eq(mode.equals("exact") || reuseBasic ? null : ModelAccessErrorCode.MODEL_INVALID_RESPONSE));
+        verify(driver, times(reuseBasic ? 2 : 3)).call(any(), any(), any(), anyInt(), any());
+        if (reuseBasic) verify(store, never()).begin(eq("check"), eq(1), anyString());
     }
 
     @Test

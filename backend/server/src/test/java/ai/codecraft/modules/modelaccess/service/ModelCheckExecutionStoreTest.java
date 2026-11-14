@@ -21,6 +21,7 @@ import ai.codecraft.modules.modelaccess.model.entity.ModelCheckAuthorityEntity;
 import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationResolutionDTO;
 import ai.codecraft.modules.modelaccess.model.exception.ModelAccessErrorCode;
 import ai.codecraft.modules.modelaccess.model.entity.ModelCheckEntity;
+import ai.codecraft.modules.modelaccess.model.entity.ModelCheckReuseEntity;
 import ai.codecraft.modules.modelaccess.model.entity.ModelCheckRequestEntity;
 import ai.codecraft.modules.modelaccess.repository.ModelCheckRepository;
 import java.time.Clock;
@@ -156,6 +157,26 @@ class ModelCheckExecutionStoreTest {
         assertNull(store.begin("check", 2, "worker"));
         verify(checks, never()).insertRequest(any());
         verify(checks).transition("check", "INTERRUPTED", "MODEL_CALL_CANCELLED");
+    }
+
+    @Test
+    void cachedBasicResultSkipsTheFirstPaidRequestButDoesNotSkipTheToolRoundtrip() {
+        when(checks.reuse("check")).thenReturn(new ModelCheckReuseEntity("check", "original-basic", null));
+        when(invocations.tryResolve(anyString(), any())).thenReturn(new ModelInvocationResolutionDTO(null, null));
+        assertEquals(2, store.firstOrdinal("check"));
+        assertNull(store.begin("check", 1, "worker"));
+        assertNotNull(store.begin("check", 2, "worker"));
+        assertNull(store.begin("check", 3, "worker"));
+    }
+
+    @Test
+    void cachedToolRoundtripLetsTheNewBasicResultFinishWithoutTwoMorePaidRequests() {
+        when(checks.reuse("check")).thenReturn(new ModelCheckReuseEntity("check", null, "original-tool"));
+        when(checks.request("request")).thenReturn(new ModelCheckRequestEntity("request", "check", 1, "worker", "DISPATCHED", NOW, NOW.plusSeconds(120), 0));
+        when(invocations.tryResolve(anyString(), any())).thenReturn(new ModelInvocationResolutionDTO(null, null));
+        when(checks.completeRequest(anyString(), anyString(), anyInt(), any(), any())).thenReturn(1);
+        assertTrue(store.complete("request", "worker", 100, null));
+        verify(checks).transition("check", "SUCCEEDED", null);
     }
 
     @Test

@@ -3,6 +3,9 @@ package ai.codecraft.modules.modelaccess.repository;
 import ai.codecraft.modules.modelaccess.model.entity.ModelCheckEntity;
 import ai.codecraft.modules.modelaccess.model.entity.ModelCheckAuthorityEntity;
 import ai.codecraft.modules.modelaccess.model.entity.ModelCheckRequestEntity;
+import ai.codecraft.modules.modelaccess.model.entity.ModelCheckReuseEntity;
+import ai.codecraft.modules.modelaccess.model.entity.ModelCheckResultEntity;
+import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationReferenceDTO;
 import org.apache.ibatis.annotations.Update;
 import java.time.Instant;
 import java.util.List;
@@ -13,6 +16,21 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface ModelCheckRepository {
+    @Select("SELECT r.id::text,r.ordinal,r.status,r.completed_at,r.error_code,(r.check_id<>#{id}::uuid) AS reused FROM personal_model_check_request r WHERE r.check_id=#{id}::uuid OR r.id IN (SELECT basic_request_id FROM personal_model_check_reuse WHERE check_id=#{id}::uuid UNION SELECT tool_request_id FROM personal_model_check_reuse WHERE check_id=#{id}::uuid)")
+    List<ModelCheckResultEntity> results(String id);
+
+    @Select("SELECT reason FROM personal_model_check WHERE id=#{id}::uuid")
+    String reason(String id);
+
+    @Select("SELECT r.id::text FROM personal_model_check_request r JOIN personal_model_check c ON c.id=r.check_id WHERE c.user_id=#{owner}::uuid AND c.connection_id=#{reference.connectionId}::uuid AND c.model_configuration_id=#{reference.modelConfigurationId}::uuid AND c.connection_configuration_version=#{reference.connectionConfigurationVersion} AND c.model_configuration_version=#{reference.modelConfigurationVersion} AND r.ordinal=#{ordinal} AND r.status='SUCCEEDED' AND r.completed_at>#{since} ORDER BY r.completed_at DESC,r.id DESC LIMIT 1")
+    String reusable(@Param("owner") String owner, @Param("reference") ModelInvocationReferenceDTO reference, @Param("ordinal") int ordinal, @Param("since") Instant since);
+
+    @Insert("INSERT INTO personal_model_check_reuse(check_id,basic_request_id,tool_request_id) VALUES(#{checkId}::uuid,#{basicRequestId}::uuid,#{toolRequestId}::uuid)")
+    void insertReuse(ModelCheckReuseEntity value);
+
+    @Select("SELECT check_id::text,basic_request_id::text,tool_request_id::text FROM personal_model_check_reuse WHERE check_id=#{id}::uuid")
+    ModelCheckReuseEntity reuse(String id);
+
     @Select("SELECT id::text,user_id::text,connection_id::text,model_configuration_id::text,connection_configuration_version,model_configuration_version,status,started_at FROM personal_model_check WHERE id=#{id}::uuid")
     ModelCheckEntity find(String id);
 

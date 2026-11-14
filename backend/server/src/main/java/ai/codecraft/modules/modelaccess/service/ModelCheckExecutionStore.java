@@ -28,6 +28,13 @@ public class ModelCheckExecutionStore {
         this.checks = checks; this.identity = identity; this.invocations = invocations; this.calls = calls; this.properties = properties; this.clock = clock;
     }
 
+    /** Internal worker hint only; begin rechecks the immutable reuse plan under the owner lock. */
+    @Transactional(readOnly = true)
+    public int firstOrdinal(String checkId) {
+        var reuse = checks.reuse(checkId);
+        return reuse != null && reuse.basicRequestId() != null ? 2 : 1;
+    }
+
     @Transactional
     public ModelCheckDispatchDTO begin(String checkId, int ordinal, String workerId) {
         if (ordinal < 1 || ordinal > 3 || workerId == null) throw new IllegalArgumentException("Invalid check request identity");
@@ -50,7 +57,9 @@ public class ModelCheckExecutionStore {
             if ("DISPATCHED".equals(latest.status())) checks.completeRequest(latest.id(), "INTERRUPTED", 0, now, "MODEL_REQUEST_TIMEOUT");
             checks.transition(checkId, "INTERRUPTED", "MODEL_CALL_CANCELLED"); return null;
         }
-        if (latest == null ? ordinal != 1 : !"SUCCEEDED".equals(latest.status()) || ordinal != latest.ordinal() + 1) return null;
+        var reuse = checks.reuse(checkId);
+        int first = reuse != null && reuse.basicRequestId() != null ? 2 : 1;
+        if (latest == null ? ordinal != first : !"SUCCEEDED".equals(latest.status()) || ordinal != latest.ordinal() + 1) return null;
         if (authority.workerId() == null) {
             if (checks.claim(checkId, workerId) != 1) return null;
         } else if (!authority.workerId().equals(workerId)) return null;
@@ -131,7 +140,9 @@ public class ModelCheckExecutionStore {
             checks.transition(check.id(), "INTERRUPTED", "MODEL_REQUEST_TIMEOUT"); return false;
         }
         if (checks.completeRequest(requestId, error == null ? "SUCCEEDED" : "FAILED", decodedBytes, now, error) != 1) return false;
-        checks.transition(check.id(), error != null ? "FAILED" : request.ordinal() == 3 ? "SUCCEEDED" : "RUNNING", error);
+        var reuse = checks.reuse(check.id());
+        boolean finished = request.ordinal() == 3 || request.ordinal() == 1 && reuse != null && reuse.toolRequestId() != null;
+        checks.transition(check.id(), error != null ? "FAILED" : finished ? "SUCCEEDED" : "RUNNING", error);
         return error == null;
     }
 }

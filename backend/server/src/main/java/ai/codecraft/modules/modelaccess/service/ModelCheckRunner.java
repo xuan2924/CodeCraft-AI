@@ -52,7 +52,7 @@ public class ModelCheckRunner {
         String nonce = UUID.randomUUID().toString();
         String receipt = null;
         List<ChatMessage> messages = new ArrayList<>();
-        for (int ordinal = 1; ordinal <= 3; ordinal++) {
+        for (int ordinal = store.firstOrdinal(checkId); ordinal <= 3; ordinal++) {
             var dispatch = store.begin(checkId, ordinal, worker);
             if (dispatch == null) return;
             int decodedBytes = 0;
