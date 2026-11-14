@@ -237,6 +237,18 @@ class ModelCallDriverTest {
         }
     }
 
+    @Test
+    void alreadyInterruptedWorkerCannotStartAnotherPaidSubscription() {
+        model(subscriber -> {
+            subscriber.onNext(new CompleteResponse(ChatResponse.builder().aiMessage(AiMessage.from("ok")).build())); subscriber.onComplete();
+        });
+        try (var driver = driver(Duration.ofSeconds(1))) {
+            Thread.currentThread().interrupt();
+            assertThrows(InterruptedException.class, () -> driver.call(target(), request, limits, 4096));
+            assertEquals(0, subscriptions.get());
+        } finally { Thread.interrupted(); }
+    }
+
     private ModelCallDriver driver(Duration timeout) {
         return new ModelCallDriver(factory, new ModelCallProperties(timeout, Duration.ofMillis(1), 1, 8192, 1024, 4096), Clock.systemUTC());
     }

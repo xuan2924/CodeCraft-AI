@@ -58,6 +58,7 @@ public class ModelCallDriver implements AutoCloseable {
 
     public ModelCallResultDTO call(ModelInvocationDTO target, ChatRequest request, ModelInvocationLimitsDTO limits, int maximumDecodedBytes, Instant notAfter) throws InterruptedException {
         if (TransactionSynchronizationManager.isActualTransactionActive()) throw new IllegalStateException("Model calls must run outside database transactions");
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Model worker interrupted");
         requestParameters(request);
         if (maximumDecodedBytes < 1 || maximumDecodedBytes > properties.maxDecodedBytes()) throw new BusinessException(ModelAccessErrorCode.MODEL_INVALID_REQUEST);
         if (notAfter == null) throw new BusinessException(ModelAccessErrorCode.MODEL_INVALID_REQUEST);
@@ -75,6 +76,7 @@ public class ModelCallDriver implements AutoCloseable {
             if (closed.get()) throw new BusinessException(ModelAccessErrorCode.MODEL_RUNTIME_BUSY);
             var model = factory.create(target, limits, transport);
             if (remaining(started, budgetNanos, notAfter) <= 0) throw new TimeoutException("Model request deadline elapsed");
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Model worker interrupted");
             model.chat(request).subscribe(subscriber);
             long remaining = remaining(started, budgetNanos, notAfter);
             if (remaining <= 0) throw new TimeoutException("Model request deadline elapsed");

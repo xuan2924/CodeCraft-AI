@@ -45,12 +45,27 @@ public class ModelCheckService {
     public ModelCheckStatusResponse status(String session, String id) {
         var grant = identity.authorizePrivateDelivery(session);
         if (!"USER".equals(grant.role())) throw new BusinessException(IdentityErrorCode.FORBIDDEN);
+        return describe(grant.userId(), id);
+    }
+
+    @Transactional
+    public ModelCheckStatusResponse latest(String session, String modelId) {
+        var grant = identity.authorizePrivateDelivery(session);
+        if (!"USER".equals(grant.role())) throw new BusinessException(IdentityErrorCode.FORBIDDEN);
+        var model = models.find(modelId);
+        if (model == null || model.deletedAt() != null || !model.userId().equals(grant.userId())) throw new BusinessException(ModelAccessErrorCode.MODEL_CONFIGURATION_NOT_FOUND);
+        var id = checks.latestCheck(grant.userId(), modelId);
+        if (id == null) throw new BusinessException(ModelAccessErrorCode.MODEL_CHECK_NOT_FOUND);
+        return describe(grant.userId(), id);
+    }
+
+    private ModelCheckStatusResponse describe(String owner, String id) {
         var check = checks.find(id);
-        if (check == null || !check.userId().equals(grant.userId())) throw new BusinessException(ModelAccessErrorCode.MODEL_CHECK_NOT_FOUND);
+        if (check == null || !check.userId().equals(owner)) throw new BusinessException(ModelAccessErrorCode.MODEL_CHECK_NOT_FOUND);
         var model = models.find(check.modelConfigurationId());
         var connection = connections.find(check.connectionId());
         boolean current = model != null && connection != null && model.deletedAt() == null && connection.deletedAt() == null
-            && model.userId().equals(grant.userId()) && connection.userId().equals(grant.userId()) && model.connectionId().equals(connection.id())
+            && model.userId().equals(owner) && connection.userId().equals(owner) && model.connectionId().equals(connection.id())
             && model.configurationVersion() == check.modelConfigurationVersion() && connection.configurationVersion() == check.connectionConfigurationVersion();
         var results = checks.results(id);
         String reason = checks.reason(id);

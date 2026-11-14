@@ -53,6 +53,7 @@ public class ModelCheckRunner {
         String receipt = null;
         List<ChatMessage> messages = new ArrayList<>();
         for (int ordinal = store.firstOrdinal(checkId); ordinal <= 3; ordinal++) {
+            if (Thread.currentThread().isInterrupted()) return;
             var dispatch = store.begin(checkId, ordinal, worker);
             if (dispatch == null) return;
             int decodedBytes = 0;

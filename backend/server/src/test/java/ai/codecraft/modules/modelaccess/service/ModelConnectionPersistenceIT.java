@@ -5,6 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
 
 import ai.codecraft.common.exception.BusinessException;
@@ -18,6 +22,16 @@ import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.modelaccess.config.ModelSecurityProperties;
 import ai.codecraft.modules.modelaccess.config.ModelCheckProperties;
 import ai.codecraft.modules.modelaccess.config.ModelCallProperties;
+import ai.codecraft.modules.modelaccess.config.ModelProbeProperties;
+import ai.codecraft.modules.modelaccess.gateway.ModelCallDriver;
+import ai.codecraft.modules.modelaccess.model.dto.ModelCallResultDTO;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.data.message.ToolExecutionResultMessage;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import java.util.concurrent.atomic.AtomicInteger;
 import ai.codecraft.modules.modelaccess.repository.ModelCheckRepository;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckResponse;
 import java.time.Duration;
@@ -128,6 +142,37 @@ class ModelConnectionPersistenceIT {
         expiredDispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
             new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
             new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), Clock.offset(clock, Duration.ofSeconds(120))), ModelCheckExecutionStore.class);
+    }
+
+    @Test
+    void admittedGroupRunsThroughRealTransactionsAndSubsequentReuseMakesNoProviderCalls() throws Exception {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 10000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var driver = mock(ModelCallDriver.class);
+        var count = new AtomicInteger();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
+            int ordinal = count.incrementAndGet();
+            ChatRequest request = call.getArgument(1);
+            String prompt = ((UserMessage) request.messages().get(0)).singleText();
+            AiMessage response;
+            if (ordinal == 1) response = AiMessage.from(prompt.substring(prompt.lastIndexOf('\n', prompt.length() - 2) + 1).strip());
+            else if (ordinal == 2) response = AiMessage.builder().toolExecutionRequests(List.of(ToolExecutionRequest.builder().id("fixture-tool").name("connection_probe")
+                .arguments("{\"nonce\":\"" + prompt.split("\"")[1] + "\"}").build())).build();
+            else response = AiMessage.from(((ToolExecutionResultMessage) request.messages().get(2)).text());
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(response).build(), 100);
+        });
+        var runner = new ModelCheckRunner(dispatches, driver, new ModelCheckPrompts(), new ModelProbeProperties(128, 256, 2048),
+            new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144), new ObjectMapper());
+        var admitted = checks.start("session", model.id(), "admit", true);
+        assertThat(sql.getMapper(ModelCheckRepository.class).queued()).contains(admitted.id());
+        runner.run(admitted.id());
+        var complete = checks.latest("session", model.id());
+        assertThat(complete.check().id()).isEqualTo(admitted.id());
+        assertThat(complete.basic().valid()).isTrue(); assertThat(complete.tool().valid()).isTrue();
+        var reused = checks.start("session", model.id(), "reuse", true);
+        runner.run(reused.id());
+        assertThat(sql.getMapper(ModelCheckRepository.class).queued()).doesNotContain(admitted.id(), reused.id());
+        verify(driver, times(3)).call(any(), any(), any(), anyInt(), any());
     }
 
     @Test

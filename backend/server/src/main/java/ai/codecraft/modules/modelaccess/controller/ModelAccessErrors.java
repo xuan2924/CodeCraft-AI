@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
-@RestControllerAdvice(assignableTypes = {ModelConnectionController.class, ModelConfigurationController.class})
+@RestControllerAdvice(assignableTypes = {ModelConnectionController.class, ModelConfigurationController.class, ModelCheckController.class})
 public class ModelAccessErrors {
     private static final Logger LOG = LoggerFactory.getLogger(ModelAccessErrors.class);
     private final ObjectMapper json;

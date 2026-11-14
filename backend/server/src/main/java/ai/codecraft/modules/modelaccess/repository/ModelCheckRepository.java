@@ -16,6 +16,12 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface ModelCheckRepository {
+    @Select("SELECT id::text FROM personal_model_check WHERE user_id=#{owner}::uuid AND model_configuration_id=#{model}::uuid ORDER BY started_at DESC,id DESC LIMIT 1")
+    String latestCheck(@Param("owner") String owner, @Param("model") String model);
+
+    @Select("SELECT id::text FROM personal_model_check WHERE status='QUEUED' ORDER BY started_at,id LIMIT 100")
+    List<String> queued();
+
     @Select("SELECT r.id::text,r.ordinal,r.status,r.completed_at,r.error_code,(r.check_id<>#{id}::uuid) AS reused FROM personal_model_check_request r WHERE r.check_id=#{id}::uuid OR r.id IN (SELECT basic_request_id FROM personal_model_check_reuse WHERE check_id=#{id}::uuid UNION SELECT tool_request_id FROM personal_model_check_reuse WHERE check_id=#{id}::uuid)")
     List<ModelCheckResultEntity> results(String id);
 
