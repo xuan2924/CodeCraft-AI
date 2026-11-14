@@ -23,6 +23,7 @@ import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.modelaccess.config.ModelCallProperties;
 import ai.codecraft.modules.modelaccess.config.ModelSecurityProperties;
 import ai.codecraft.modules.modelaccess.gateway.ModelCallDriver;
+import ai.codecraft.modules.modelaccess.gateway.ModelSdkClientFactory;
 import ai.codecraft.modules.modelaccess.model.ModelProtocol;
 import ai.codecraft.modules.modelaccess.model.ModelProviderPreset;
 import ai.codecraft.modules.modelaccess.model.ModelThinkingMode;
@@ -69,6 +70,7 @@ import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -125,6 +127,10 @@ class CopilotPersistenceIT {
     private Runnable deleteSelectedModel;
     private Runnable switchSelectedModel;
     private String alternateModelId;
+    private ModelConnectionService connections;
+    private ModelConfigurationService models;
+    private ExerciseModelService selection;
+    private IdentityTransactionService identity;
 
     @BeforeAll
     void migrate() throws Exception {
@@ -141,11 +147,11 @@ class CopilotPersistenceIT {
 
     @BeforeEach
     void seed() throws Exception {
-        clock.now = Instant.parse("2026-01-01T00:00:00Z");
+        clock.now = "1".equals(System.getenv("COPILOT_LIVE_DEEPSEEK")) ? Instant.now() : Instant.parse("2026-01-01T00:00:00Z");
         String owner = UUID.randomUUID().toString(); exercise = UUID.randomUUID().toString();
         String instance = UUID.randomUUID().toString(); String preparation = UUID.randomUUID().toString();
         jdbc.update("INSERT INTO identity_user(id,username,password_hash,role,password_change_required) VALUES(?::uuid,?,'fixture','USER',false)", owner, "u_" + owner.substring(0, 20));
-        var identity = mock(IdentityTransactionService.class);
+        identity = mock(IdentityTransactionService.class);
         var grant = new SessionAuthorizationDTO(owner, "USER", false, 1, clock.instant().plusSeconds(3600));
         when(identity.authorizeMutation(SESSION)).thenReturn(grant);
         when(identity.authorization(SESSION)).thenReturn(grant);
@@ -156,9 +162,11 @@ class CopilotPersistenceIT {
         var connectionRepository = sql.getMapper(ModelConnectionRepository.class);
         var modelRepository = sql.getMapper(ModelConfigurationRepository.class);
         var receipts = new ModelCommandReceipts(connectionRepository, secrets, json, clock);
-        var cipher = new ModelCredentialCipher(new ModelSecurityProperties("fixture", "fixture:" + Base64.getEncoder().encodeToString(new byte[32])));
-        var connections = proxy(new ModelConnectionService(connectionRepository, identity, cipher, new ModelConnectionValidator(), receipts, clock), ModelConnectionService.class);
-        var models = proxy(new ModelConfigurationService(modelRepository, connectionRepository, identity, new ModelConnectionValidator(), receipts, clock), ModelConfigurationService.class);
+        byte[] fixtureKey = new byte[32];
+        if ("1".equals(System.getenv("COPILOT_LIVE_DEEPSEEK"))) new SecureRandom().nextBytes(fixtureKey);
+        var cipher = new ModelCredentialCipher(new ModelSecurityProperties("fixture", "fixture:" + Base64.getEncoder().encodeToString(fixtureKey)));
+        connections = proxy(new ModelConnectionService(connectionRepository, identity, cipher, new ModelConnectionValidator(), receipts, clock), ModelConnectionService.class);
+        models = proxy(new ModelConfigurationService(modelRepository, connectionRepository, identity, new ModelConnectionValidator(), receipts, clock), ModelConfigurationService.class);
         var connection = connections.create(SESSION, "connection", new ModelConnectionRequest("Fixture", "https://example.test", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.CUSTOM, "fixture-not-real", null));
         var model = models.create(SESSION, connection.id(), "model", new ModelConfigurationRequest("Fixture", "fixture", 1000000, 4096, ModelThinkingMode.OFF, null, null, null, null));
         updateSelectedKey = () -> connections.update(SESSION, connection.id(), "update-key", new ModelConnectionRequest("Fixture", "https://example.test", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.CUSTOM, "fixture-replacement", connection.version()));
@@ -171,7 +179,7 @@ class CopilotPersistenceIT {
         var writes = sql.getMapper(WorkspaceWriteRepository.class);
         var coordination = proxy(new WorkspaceCoordinationStore(writes, exercises, json), WorkspaceCoordinationStore.class);
         var invocations = proxy(new ModelInvocationService(identity, connectionRepository, modelRepository, cipher), ModelInvocationService.class);
-        var selection = proxy(new ExerciseModelService(sql.getMapper(ExerciseModelRepository.class), exercises, identity, coordination, invocations,
+        selection = proxy(new ExerciseModelService(sql.getMapper(ExerciseModelRepository.class), exercises, identity, coordination, invocations,
             mock(ModelCheckService.class), clock, secrets), ExerciseModelService.class);
         selection.select(SESSION, exercise, CONTROL, "select", new ModelInvocationReferenceDTO(connection.id(), model.id(), 1, 1));
         var alternate = models.create(SESSION, connection.id(), "alternate", new ModelConfigurationRequest("Alternate", "alternate", 1000000, 4096, ModelThinkingMode.OFF, null, null, null, null));
@@ -350,6 +358,23 @@ class CopilotPersistenceIT {
     }
 
     @Test
+    void foreignOwnersStaleControlAndExpiredExercisesCannotAdmitOrReadWork() throws Exception {
+        assertThatThrownBy(() -> tasks.accept(SESSION, exercise, "x".repeat(43), "stale", "Inspect", true, measurement)).hasMessage("STALE_CONTROL");
+        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
+        var other = new SessionAuthorizationDTO(UUID.randomUUID().toString(), "USER", false, 1, clock.instant().plusSeconds(3600));
+        when(identity.authorizeMutation("other")).thenReturn(other);
+        when(identity.authorizePrivateDelivery("other")).thenReturn(other);
+        when(identity.authorization("other")).thenReturn(other);
+        assertThatThrownBy(() -> tasks.find("other", task.id())).hasMessage("COPILOT_NOT_FOUND");
+        assertThatThrownBy(() -> tasks.stop("other", task.id(), "stop")).hasMessage("COPILOT_NOT_FOUND");
+        assertThatThrownBy(() -> tasks.messages("other", exercise, -1)).hasMessage("RESOURCE_NOT_FOUND");
+        tasks.stop(SESSION, task.id(), "stop");
+        clock.now = clock.instant().plusSeconds(3601);
+        assertThatThrownBy(() -> tasks.accept(SESSION, exercise, CONTROL, "expired", "Inspect", true, measurement)).hasMessage("INVALID_STATE");
+        verify(driver, never()).call(any(), any(), any(), anyInt(), any(), any());
+    }
+
+    @Test
     void deletionWaitsForTaskQuiescenceAndErasesEvidenceWithoutDeletingPersonalModels() {
         var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
         assertThatThrownBy(() -> new TransactionTemplate(transactions).executeWithoutResult(status -> data.erase(exercise)))
@@ -359,6 +384,39 @@ class CopilotPersistenceIT {
         new TransactionTemplate(transactions).executeWithoutResult(status -> data.erase(exercise));
         assertThat(data.retainedBytes(exercise)).isZero();
         assertThat(sql.getMapper(ModelConfigurationRepository.class).find(alternateModelId)).isNotNull();
+    }
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "COPILOT_LIVE_DEEPSEEK", matches = "1")
+    void realDeepSeekReadsSavedFixtureCodeAndRepliesWithoutAnImplicitRetryLoop() throws Exception {
+        String key = System.getenv("DeepSeek");
+        assertThat(key != null && !key.isBlank()).as("DeepSeek credential must be supplied through the environment").isTrue();
+        var connection = connections.create(SESSION, "live-connection", new ModelConnectionRequest("Live fixture", "https://api.deepseek.com", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, key, null));
+        var model = models.create(SESSION, connection.id(), "live-model", new ModelConfigurationRequest("Live fixture", "deepseek-flash", 100000, 1024, ModelThinkingMode.OFF, null, null, null, null));
+        selection.select(SESSION, exercise, CONTROL, "live-select", new ModelInvocationReferenceDTO(connection.id(), model.id(), 1, 1));
+        var count = new AtomicInteger();
+        try (var live = new ModelCallDriver(new ModelSdkClientFactory(new ModelConnectionValidator(), calls), calls, clock)) {
+            doAnswer(call -> {
+                // Test-only paid-call budget; production tasks have no fixed round limit.
+                if (count.incrementAndGet() > 4) throw new BusinessException(ModelAccessErrorCode.MODEL_OUTPUT_LIMIT_EXCEEDED);
+                return live.call(call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4), call.getArgument(5));
+            }).when(driver).call(any(), any(), any(), anyInt(), any(), any());
+            var task = tasks.accept(SESSION, exercise, CONTROL, "live-start", "Use view_file once to read src/Main.java. Then reply briefly with the class name from the saved file. Do not use other tools.", true, measurement);
+            runner.run(task.id(), UUID.randomUUID().toString());
+            assertThat(tasks.find(SESSION, task.id()).state()).as("live task reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("SUCCEEDED");
+            verify(files, times(1)).read(SESSION, exercise, "src/Main.java");
+            var messages = tasks.messages(SESSION, exercise, -1);
+            assertThat(messages.getLast().payload()).contains("Main");
+            assertThat(messages.stream().filter(value -> value.kind().equals("TOOL")).count()).isEqualTo(1);
+            assertThat(count.get()).isBetween(2, 4);
+            var samples = jdbc.queryForList("SELECT input_tokens,output_tokens,total_tokens,usage_payload FROM copilot_turn WHERE task_id=?::uuid ORDER BY ordinal", task.id());
+            assertThat(samples).hasSize(count.get());
+            for (var sample : samples) assertThat(sample.get("usage_payload")).isNotNull();
+            assertThat(jdbc.queryForList("SELECT configuration_payload FROM copilot_turn WHERE task_id=?::uuid", String.class, task.id()).stream().anyMatch(value -> value.contains(key))).isFalse();
+            System.out.println("DeepSeek live fixture usage (no request bodies or credentials): " + samples);
+        } finally {
+            connections.delete(SESSION, connection.id(), "live-cleanup", connection.version());
+        }
     }
 
     @Test

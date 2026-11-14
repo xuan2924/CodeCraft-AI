@@ -34,6 +34,7 @@ import ai.codecraft.modules.modelaccess.config.ModelCheckProperties;
 import ai.codecraft.modules.modelaccess.config.ModelCallProperties;
 import ai.codecraft.modules.modelaccess.config.ModelProbeProperties;
 import ai.codecraft.modules.modelaccess.gateway.ModelCallDriver;
+import ai.codecraft.modules.modelaccess.gateway.ModelSdkClientFactory;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCallResultDTO;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
@@ -60,6 +61,7 @@ import ai.codecraft.modules.modelaccess.security.ModelCredentialCipher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -90,11 +92,11 @@ import org.springframework.transaction.annotation.AnnotationTransactionAttribute
 import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Disposable PostgreSQL/MyBatis business seam; never calls a model provider. */
+/** Disposable PostgreSQL/MyBatis seam; paid provider work requires the explicit live-test environment flag. */
 @EnabledIfEnvironmentVariable(named = "MODEL_ACCESS_IT_JDBC_URL", matches = ".+")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ModelConnectionPersistenceIT {
-    private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
+    private static final Instant NOW = "1".equals(System.getenv("MODEL_ACCESS_LIVE_DEEPSEEK")) ? Instant.now() : Instant.parse("2026-01-01T00:00:00Z");
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
     private final ModelConnectionRequest input = new ModelConnectionRequest("DeepSeek", "https://api.deepseek.com", ModelProtocol.OPENAI_CHAT,
         ModelProviderPreset.DEEPSEEK, "fixture-not-a-real-model-key", null);
@@ -145,9 +147,11 @@ class ModelConnectionPersistenceIT {
         when(identity.authorizePrivateDelivery("session")).thenAnswer(call -> { locks.lockResourceOwner(owner); return grant; });
         var secrets = mock(IdentitySecrets.class);
         when(secrets.fingerprint(anyString())).thenAnswer(call -> HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(call.<String>getArgument(0).getBytes(StandardCharsets.UTF_8))));
-        var cipher = new ModelCredentialCipher(new ModelSecurityProperties("fixture", "fixture:" + Base64.getEncoder().encodeToString(new byte[32])));
+        byte[] fixtureKey = new byte[32];
+        if ("1".equals(System.getenv("MODEL_ACCESS_LIVE_DEEPSEEK"))) new SecureRandom().nextBytes(fixtureKey);
+        var cipher = new ModelCredentialCipher(new ModelSecurityProperties("fixture", "fixture:" + Base64.getEncoder().encodeToString(fixtureKey)));
         var repository = sql.getMapper(ModelConnectionRepository.class);
-        rotatedCipher = new ModelCredentialCipher(new ModelSecurityProperties("rotated", "fixture:" + Base64.getEncoder().encodeToString(new byte[32])
+        rotatedCipher = new ModelCredentialCipher(new ModelSecurityProperties("rotated", "fixture:" + Base64.getEncoder().encodeToString(fixtureKey)
             + ",rotated:" + Base64.getEncoder().encodeToString("n".repeat(32).getBytes(StandardCharsets.US_ASCII))));
         rotation = transactional(new ModelCredentialRotationStore(identity, repository, rotatedCipher), ModelCredentialRotationStore.class);
         retention = transactional(new ModelCheckRetentionService(sql.getMapper(ModelCheckRepository.class), identity, clock), ModelCheckRetentionService.class);
@@ -297,6 +301,32 @@ class ModelConnectionPersistenceIT {
         assertThat(service.connection("session", connection.id())).isEqualTo(updated);
         assertThat(service.create("session", "connection", input)).isEqualTo(connection);
         assertThat(service.connection("session", connection.id())).isEqualTo(updated);
+    }
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "MODEL_ACCESS_LIVE_DEEPSEEK", matches = "1")
+    void realDeepSeekBasicAndSideEffectFreeToolChecksPassAndReuseTheirOriginalResults() {
+        String key = System.getenv("DeepSeek");
+        assertThat(key != null && !key.isBlank()).as("DeepSeek credential must be supplied through the environment").isTrue();
+        var connection = service.create("session", "live-connection", new ModelConnectionRequest("Live fixture", "https://api.deepseek.com", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, key, null));
+        var model = models.create("session", connection.id(), "live-model", new ModelConfigurationRequest("Live fixture", "deepseek-flash", 100000, 4096, ModelThinkingMode.OFF, null, null, null, null));
+        var limits = new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 1, 8388608, 65536, 262144);
+        try (var driver = new ModelCallDriver(new ModelSdkClientFactory(new ModelConnectionValidator(), limits), limits, clock)) {
+            var runner = new ModelCheckRunner(dispatches, driver, new ModelCheckPrompts(), new ModelProbeProperties(128, 256, 2048), limits, new ObjectMapper());
+            var admitted = checks.start("session", model.id(), "live-admit", true);
+            runner.run(admitted.id());
+            var complete = checks.latest("session", model.id());
+            assertThat(complete.basic().valid()).as("basic check code: %s", complete.basic().errorCode()).isTrue();
+            assertThat(complete.tool().valid()).as("tool check code: %s", complete.tool().errorCode()).isTrue();
+            assertThat(sql.getMapper(ModelCheckRepository.class).results(admitted.id())).hasSize(3);
+            var reused = checks.start("session", model.id(), "live-reuse", true);
+            runner.run(reused.id());
+            assertThat(checks.status("session", reused.id()).basic().reused()).isTrue();
+            assertThat(checks.status("session", reused.id()).tool().reused()).isTrue();
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM personal_model_check_request WHERE check_id=?::uuid", Integer.class, reused.id())).isZero();
+        } finally {
+            service.delete("session", connection.id(), "live-cleanup", connection.version());
+        }
     }
 
     @Test
