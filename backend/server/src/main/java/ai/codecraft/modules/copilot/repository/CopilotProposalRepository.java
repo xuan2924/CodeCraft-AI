@@ -1,6 +1,7 @@
 package ai.codecraft.modules.copilot.repository;
 
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalResponse;
+import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotPendingProposalDTO;
 import ai.codecraft.modules.copilot.model.entity.CopilotProposalEntity;
 import java.time.Instant;
@@ -18,6 +19,8 @@ public interface CopilotProposalRepository {
 
     @Select("SELECT " + COLUMNS + " FROM copilot_proposal WHERE id=#{id}::uuid")
     CopilotProposalEntity find(String id);
+    @Select("SELECT id::text,task_id::text,exercise_id::text,base_revision,state,batch_payload,decision_key,decision_fingerprint FROM copilot_proposal WHERE id=#{id}::uuid")
+    CopilotProposalDecisionDTO decisionState(String id);
     @Select("SELECT " + IDENTITY + " FROM copilot_proposal WHERE id=#{id}::uuid")
     CopilotPendingProposalDTO identity(String id);
     @Select("SELECT " + IDENTITY + " FROM copilot_proposal WHERE task_id=#{task}::uuid AND state IN ('PENDING','APPLYING') LIMIT 1")

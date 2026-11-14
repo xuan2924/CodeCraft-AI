@@ -154,6 +154,7 @@ class CopilotPersistenceIT {
     private ExerciseModelService selection;
     private IdentityTransactionService identity;
     private CopilotProposalStore proposals;
+    private CopilotProposalService proposalViews;
     private SandboxWorkspaceGateway sandbox;
     private WorkspaceWriteCoordinator writeCoordinator;
     private StorageCapacityService capacity;
@@ -242,6 +243,7 @@ class CopilotPersistenceIT {
         writeCoordinator = new WorkspaceWriteCoordinator(coordination, sandbox, codec);
         proposals = proxy(new CopilotProposalStore(sql.getMapper(CopilotProposalRepository.class), repository, tasks, execution, identity, secrets,
             lifecycle, coordination, writeStore, operations, codec, json, clock), CopilotProposalStore.class);
+        proposalViews = new CopilotProposalService(proposals, capacity, json);
         executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json);
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls);
     }
@@ -468,14 +470,14 @@ class CopilotPersistenceIT {
         var workspace = new ProposalWorkspace();
         var task = beginProposal(workspace, true);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
-        assertThat(proposals.detail(SESSION, proposal).files().getFirst().before()).isEqualTo("class Main {}");
+        assertThat(proposalViews.detail(SESSION, proposal).files().getFirst().before()).isEqualTo("class Main {}");
         assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(3);
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls);
         var approve = new CopilotProposalDecisionRequest("APPROVE", null);
         assertThat(proposals.decide(SESSION, proposal, CONTROL, "approve", approve, measurement).state()).isEqualTo("APPLYING");
         assertThat(proposals.decide(SESSION, proposal, "obsolete", "approve", approve, measurement).state()).isEqualTo("APPLYING");
         writeCoordinator.recover(); proposals.recoverTask(task.id());
-        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("APPLIED");
+        assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("APPLIED");
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         assertThat(workspace.applies.get()).isEqualTo(1);
@@ -520,7 +522,7 @@ class CopilotPersistenceIT {
         writeCoordinator.recover(); proposals.recoverTask(task.id()); execution.recover(task.id());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
         assertThat(workspace.applies.get()).isZero();
-        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("FAILED");
+        assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("FAILED");
         assertThat(data.quiescent(exercise)).isTrue();
     }
 
@@ -539,7 +541,7 @@ class CopilotPersistenceIT {
         workspace.unavailableReceipts = false;
         writeCoordinator.recover(); proposals.recoverTask(task.id()); execution.recover(task.id());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
-        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("APPLIED");
+        assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("APPLIED");
         assertThat(workspace.applies.get()).isEqualTo(1);
         assertThat(data.quiescent(exercise)).isTrue();
     }
@@ -554,9 +556,9 @@ class CopilotPersistenceIT {
         var foreign = new SessionAuthorizationDTO(UUID.randomUUID().toString(), "USER", false, 1, clock.instant().plusSeconds(3600));
         when(identity.authorizeMutation("foreign")).thenReturn(foreign);
         when(identity.authorizePrivateDelivery("foreign")).thenReturn(foreign);
-        assertThatThrownBy(() -> proposals.detail("foreign", proposal)).isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> proposals.evidence("foreign", proposal)).isInstanceOf(BusinessException.class);
         assertThatThrownBy(() -> proposals.decide("foreign", proposal, CONTROL, "approve", approve, measurement)).isInstanceOf(BusinessException.class);
-        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("PENDING");
+        assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("PENDING");
         sql.getMapper(WorkspaceWriteRepository.class).observed(exercise, 2, "[\"" + ProposalWorkspace.PATH + "\"]");
         assertThat(proposals.decide(SESSION, proposal, CONTROL, "approve", approve, measurement).state()).isEqualTo("INVALIDATED");
         assertThatThrownBy(() -> proposals.decide(SESSION, proposal, CONTROL, "approve", new CopilotProposalDecisionRequest("REJECT", "changed"), null))
@@ -572,7 +574,7 @@ class CopilotPersistenceIT {
         var approve = new CopilotProposalDecisionRequest("APPROVE", null);
         var full = new StorageMeasurement(exercise, "A".repeat(26), 2, 268435456);
         assertThatThrownBy(() -> proposals.decide(SESSION, proposal, CONTROL, "approve", approve, full)).isInstanceOf(BusinessException.class);
-        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("PENDING");
+        assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("PENDING");
         clock.now = clock.instant().plusSeconds(1801);
         assertThat(proposals.decide(SESSION, proposal, CONTROL, "approve", approve, measurement).state()).isEqualTo("CANCELLED");
         execution.recover(task.id());
@@ -624,7 +626,7 @@ class CopilotPersistenceIT {
         proposals.decide(SESSION, proposal, CONTROL, "approve", new CopilotProposalDecisionRequest("APPROVE", null), measurement);
         writeCoordinator.recover(); proposals.recoverTask(task.id());
         runner.run(task.id(), UUID.randomUUID().toString());
-        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("APPLIED");
+        assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("APPLIED");
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("PAUSED");
         assertThat(workspace.applies.get()).isEqualTo(1);
         verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
@@ -650,14 +652,14 @@ class CopilotPersistenceIT {
             assertThat(tasks.find(SESSION, task.id()).state()).as("live proposal reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("WAITING_APPROVAL");
             assertThat(workspace.applies.get()).isZero();
             String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
-            assertThat(proposals.detail(SESSION, proposal).files().getFirst().after()).contains("42");
+            assertThat(proposalViews.detail(SESSION, proposal).files().getFirst().after()).contains("42");
             proposals.decide(SESSION, proposal, CONTROL, "live-approve", new CopilotProposalDecisionRequest("APPROVE", null), measurement);
             writeCoordinator.recover(); proposals.recoverTask(task.id());
             runner.run(task.id(), UUID.randomUUID().toString());
             assertThat(tasks.find(SESSION, task.id()).state()).as("live continuation reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("SUCCEEDED");
             assertThat(workspace.applies.get()).isEqualTo(1);
             assertThat(tasks.messages(SESSION, exercise, -1).getLast().payload()).contains("42");
-            assertThat(proposals.detail(SESSION, proposal).proposal().resultRevision()).isEqualTo("2");
+            assertThat(proposals.summary(SESSION, proposal).resultRevision()).isEqualTo("2");
             var samples = jdbc.queryForList("SELECT input_tokens,output_tokens,total_tokens,usage_payload FROM copilot_turn WHERE task_id=?::uuid ORDER BY ordinal", task.id());
             for (var sample : samples) assertThat(sample.get("usage_payload")).isNotNull();
             System.out.println("DeepSeek live proposal usage (Go is a deterministic fixture; no credentials or request bodies): " + samples);

@@ -68,7 +68,8 @@ public class CopilotProposalPreparation {
             diffs.add(new CopilotFileDiffDTO(change.path(), change.kind(), before, change.kind().equals("DELETE") ? null : change.content()));
         }
         requireBaseline(files.find(session, exercise), initial.workspaceInstanceId(), batch.expectedRevision());
-        return new CopilotProposalPreparedDTO(initial.workspaceInstanceId(), batch.expectedRevision(), payload, diffs);
+        try { return new CopilotProposalPreparedDTO(initial.workspaceInstanceId(), batch.expectedRevision(), payload, json.writeValueAsString(diffs), diffs); }
+        catch (JsonProcessingException invalid) { throw new IllegalStateException("Proposal evidence cannot be encoded"); }
     }
 
     private void requireBaseline(ExerciseResponse exercise, String instance, String revision) {

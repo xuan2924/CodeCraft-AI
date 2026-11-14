@@ -1,10 +1,10 @@
 package ai.codecraft.modules.copilot.service;
 
 import ai.codecraft.common.exception.BusinessException;
-import ai.codecraft.modules.copilot.model.dto.CopilotFileDiffDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotPendingProposalDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionRequest;
-import ai.codecraft.modules.copilot.model.dto.CopilotProposalDetailResponse;
+import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionDTO;
+import ai.codecraft.modules.copilot.model.dto.CopilotProposalEvidenceDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalPreparedDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalResponse;
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalsResponse;
@@ -26,11 +26,9 @@ import ai.codecraft.modules.workspace.service.WorkspaceBatchCodec;
 import ai.codecraft.modules.workspace.service.WorkspaceCoordinationStore;
 import ai.codecraft.modules.workspace.service.WorkspaceWriteTransactionService;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -79,7 +77,7 @@ public class CopilotProposalStore {
         String id = UUID.randomUUID().toString();
         proposals.insert(new CopilotProposalEntity(id, 0, taskId, toolId, tool.turnId(), task.exerciseId(), task.userId(),
             prepared.workspaceInstanceId(), Long.parseLong(prepared.revision()), "PENDING", "ASK", prepared.files().size(), prepared.batchPayload(),
-            encode(prepared.files()), fingerprint, null, null, null, null, null, null, null, null, null, clock.instant(), null, null));
+            prepared.diffPayload(), fingerprint, null, null, null, null, null, null, null, null, null, clock.instant(), null, null));
         execution.parkProposal(taskId, worker, toolId);
         return true;
     }
@@ -94,13 +92,9 @@ public class CopilotProposalStore {
     }
 
     @Transactional
-    public CopilotProposalDetailResponse detail(String session, String id) {
+    public CopilotProposalEvidenceDTO evidence(String session, String id) {
         owned(session, id);
-        var proposal = proposals.find(id);
-        try {
-            List<CopilotFileDiffDTO> files = json.readValue(proposal.diffPayload(), new TypeReference<>() {});
-            return new CopilotProposalDetailResponse(proposals.summary(id), files);
-        } catch (JsonProcessingException invalid) { throw new IllegalStateException("Stored proposal evidence cannot be decoded"); }
+        return new CopilotProposalEvidenceDTO(proposals.summary(id), proposals.find(id).diffPayload());
     }
 
     @Transactional
@@ -113,7 +107,7 @@ public class CopilotProposalStore {
     public CopilotProposalResponse replay(String session, String id, String key, CopilotProposalDecisionRequest input) {
         owned(session, id);
         validate(key, input);
-        return replay(proposals.find(id), key, fingerprint(input));
+        return replay(proposals.decisionState(id), key, fingerprint(input));
     }
 
     @Transactional
@@ -123,7 +117,7 @@ public class CopilotProposalStore {
         if (!"USER".equals(grant.role())) throw new IdentityFailure(IdentityErrorCode.FORBIDDEN);
         owned(session, id);
         validate(key, input);
-        var proposal = proposals.find(id);
+        var proposal = proposals.decisionState(id);
         String fingerprint = fingerprint(input);
         var previous = replay(proposal, key, fingerprint);
         if (previous != null) return previous;
@@ -153,7 +147,7 @@ public class CopilotProposalStore {
             if (!payload.equals(proposal.batchPayload())) throw new IllegalStateException("Proposal payload is not canonical");
             var operation = writes.batch(session, proposal.exerciseId(), "copilot:" + proposal.id(), credential, payload, proposal.baseRevision(), measurement);
             if (proposals.applyingOperation(id, operation.id()) != 1) throw new IllegalStateException("Proposal approval was not recorded");
-            execution.awaitWrite(task.id(), proposal.toolId());
+            execution.awaitWrite(task.id(), pending.toolId());
         }
         return proposals.summary(id);
     }
@@ -202,7 +196,7 @@ public class CopilotProposalStore {
         exercises.find(session, proposal.exerciseId());
         return proposal;
     }
-    private CopilotProposalResponse replay(CopilotProposalEntity proposal, String key, String fingerprint) {
+    private CopilotProposalResponse replay(CopilotProposalDecisionDTO proposal, String key, String fingerprint) {
         if (proposal.decisionKey() != null) {
             if (!proposal.decisionKey().equals(key)) throw new BusinessException(CopilotErrorCode.COPILOT_PROPOSAL_DECIDED);
             if (!proposal.decisionFingerprint().equals(fingerprint)) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
