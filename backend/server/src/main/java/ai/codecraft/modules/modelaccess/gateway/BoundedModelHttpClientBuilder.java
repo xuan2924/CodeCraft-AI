@@ -47,6 +47,7 @@ public final class BoundedModelHttpClientBuilder implements HttpClient.Builder, 
     @Override public synchronized void close() {
         closed = true;
         for (HttpClient client : clients) client.shutdownNow();
-        clients.clear();
     }
+    /** Physical JDK transport convergence, not merely cancellation being requested. */
+    public synchronized boolean isTerminated() { return closed && clients.stream().allMatch(HttpClient::isTerminated); }
 }

@@ -50,3 +50,9 @@
 | GLM、Kimi / 官方支持格式 | 目录/窗口/模式尚须逐一核验 | 未验证；P2-20，不凭名称承诺兼容 |
 
 发布源码依据：[core](https://repo.maven.apache.org/maven2/dev/langchain4j/langchain4j-core/1.23.0/langchain4j-core-1.23.0-sources.jar)、[OpenAI](https://repo.maven.apache.org/maven2/dev/langchain4j/langchain4j-open-ai/1.23.0/langchain4j-open-ai-1.23.0-sources.jar)、[Anthropic](https://repo.maven.apache.org/maven2/dev/langchain4j/langchain4j-anthropic/1.23.0/langchain4j-anthropic-1.23.0-sources.jar)、[JDK transport](https://repo.maven.apache.org/maven2/dev/langchain4j/langchain4j-http-client-jdk/1.23.0/langchain4j-http-client-jdk-1.23.0-sources.jar)。没有运行安装或真实模型实验；下一步核验正式编译、传输上界和取消行为。
+
+### 发布接口落地补充（2026-11-14）
+
+正式 1.23.0 编译及 SDK fixture 已通过；HTTP 字节边界与取消见 P2-06 / `570d05a`。新增原生三协议工厂与单次驱动仍是本地业务切片，**所有真实矩阵保持未验证**。JDK builder 的 `streamingBackpressure(true)` 与 `streamingBufferSize` 不能同时设；使用原生背压，不将事件条数当字节上限。OpenAI Chat 使用 `maxCompletionTokens`，DeepSeek/兼容 Chat 使用 `maxTokens`，Responses 使用 `maxOutputTokens`，Anthropic 使用 `maxTokens` 加显式 thinking budget。Responses `store(false)`、不设置 previousResponseId；思考时请求 encrypted reasoning，DeepSeek Responses 思考缺口继续明确拒绝，不切到 Chat。
+
+官方增量证据：[DeepSeek thinking 参数表](https://api-docs.deepseek.com/guides/thinking_mode)明确 Responses `reasoning.effort=none` 关闭默认思考；[GLM thinking](https://docs.z.ai/guides/capabilities/thinking-mode)明确 `thinking.type=disabled`，且 `glm-5.3` / `glm-5.3-flash` 强制思考不能关闭；Coding Plan/标准端 preserved-thinking 默认不同，启用时要 `clear_thinking:false` 并保留完整 reasoning；[Moonshot K2.5 官方仓库](https://github.com/MoonshotAI/Kimi-K2.5)示例明确官方 API 的 instant 模式为 `thinking:{type:"disabled"}`（不是 vLLM 的 chat_template_kwargs）。工厂保留这些模式区别，已知强制模式不兼容时本地拒绝，不能把无工具 HTTP 200 视为模型可用。此处不承诺任意旧模型接受 `reasoning_effort=none`；实际检查明确失败而不静默回退参数/模式。检索的 raw README URL 返回 404，以上 Moonshot 依据为成功取得的官方 GitHub 页面，不把失败抓取算证据。

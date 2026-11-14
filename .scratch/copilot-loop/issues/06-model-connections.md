@@ -40,3 +40,11 @@ P2-03 讨论中用户明确选择地址仅校验 HTTPS（方案 A），本票相
 JDK 原生 transport 装饰实际响应字节，在 SDK SSE/错误体解析前限流；禁止重定向，不改写供应商协议，返回原生 future 保留首个 token/响应头前的取消链；关闭后禁止迟到 build 新 client。公开 SDK fixture 验证 Chat 流的超大未结束 SSE 行被中止、普通/401 响应体限额、重定向不转发认证、首响应前取消，以及通用消息 codec 的 thinking/attributes/tool ID 配对往返。fixture 仅环回 HTTP、不构成产品 HTTP 例外或真实供应商验收。真实连接检查状态机、收费提示/页面、在用选择与轮换维护入口仍待实现；未发收费调用。
 
 本切片 Standards 独立审查无发现；Spec 发现子模型命令回执在当前父协议校验之后读取，会因父协议变化/删除而破坏成功重试，已以 PostgreSQL 回归观察红→绿：先新鲜授权和校验幂等键，再查归属限定回执，仅对新命令读取/校验可变父子状态；旧回执不会复活资源。新增用例覆盖协议切换、父删除后 create/update 成功重放及新命令拒绝。最新 quick：Java 111 / Vue 93 / Node 21、Go 快速行为/编译/vet、Checkstyle/ESLint/vue-tsc 通过，总计 25.12 秒；32 个新增单元/SDK fixture 用例包含其中。独立 Spec 针对修复的有界复审为 OK；本风险切片两轴审查通过，整票仍未 Dev Done。
+
+### SDK 单次调用切片（实施中）
+
+已加入 `ModelSdkClientFactory` 的 Chat/Responses/Messages 原生映射与 `ModelCallDriver`，调用契约仅允许已授权 worker 在事务外使用；当前尚无生产派发调用方，没有新增可绕过业务授权的 HTTP 入口。配置集中于 `model.calls`：默认 120 秒整次截止、10 秒连接、8 个请求并发、8 MiB 成功正文、64 KiB 错误正文、256 KiB 单次解码结果；检查调用可进一步缩至剩余 64 KiB 组预算。驱动只订阅一次，流回调与最终消息（含 opaque attributes）分别限制，保留 usage 未知，不把截断回复交给工具执行。不允许 ChatRequest 覆写选定模型/输出上限或供应商私有参数，工具/格式参数仍允许。
+
+停止/超时/中断会取消 Subscription 并关闭 JDK 资源；迟到 onSubscribe 不再发需求；SDK 不发终态取消回调时仍能终结等待。全局请求 credit 仅在 JDK `isTerminated` 后释放，未收敛资源由有界集合保留/重查，不靠“已请求取消”释放名额。此处是运行时并发保护，**不代替尚未实现的持久化、每用户一组/五分钟三组的检查准入与重启对账**。三协议配置映射和受控 Publisher 已观察红→绿；真实 DeepSeek、持久化检查组、设置 UI 与在用演练联动仍未完成，未收费。
+
+本次新增 31 个 SDK 发布边界/请求驱动用例，包含三协议实际 SDK builder 参数、禁用默认思考、已知不兼容本地拒绝、超时/迟到订阅、输出与 opaque 字段、截断、事务内拒绝、覆盖参数拒绝、关闭无终态回调、运行时并发不排队以及八种 HTTP 安全分类。quick 的 Java 142 / Vue 93 / Node 21、Go 快速行为/编译/vet、Checkstyle/ESLint/vue-tsc 均通过，35.22 秒超过 30 秒软目标、低于 60 秒硬超时；单次驱动用例组反馈小于 10 秒。独立 Standards / Spec 有界审查均 OK；未新增数据库结构，无真实收费请求。
