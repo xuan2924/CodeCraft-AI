@@ -10,12 +10,30 @@ import org.apache.ibatis.annotations.Update;
 import java.time.Instant;
 import java.util.List;
 import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface ModelCheckRepository {
+    @Select("SELECT c.id::text FROM personal_model_check c WHERE c.completed_at<=#{cutoff} AND c.status NOT IN ('QUEUED','RUNNING') AND NOT EXISTS (SELECT 1 FROM personal_model_check_reuse u JOIN personal_model_check_request r ON r.id=u.basic_request_id OR r.id=u.tool_request_id WHERE r.check_id=c.id AND u.check_id<>c.id) ORDER BY c.completed_at,c.id LIMIT 100")
+    List<String> retentionCandidates(Instant cutoff);
+
+    @Select("SELECT EXISTS(SELECT 1 FROM personal_model_check c WHERE c.id=#{id}::uuid AND c.completed_at<=#{cutoff} AND c.status NOT IN ('QUEUED','RUNNING') AND NOT EXISTS (SELECT 1 FROM personal_model_check_reuse u JOIN personal_model_check_request r ON r.id=u.basic_request_id OR r.id=u.tool_request_id WHERE r.check_id=c.id AND u.check_id<>c.id))")
+    boolean retentionEligible(@Param("id") String id, @Param("cutoff") Instant cutoff);
+
+    @Delete("DELETE FROM personal_model_check_reuse WHERE check_id=#{id}::uuid")
+    void deleteReuse(String id);
+
+    @Delete("DELETE FROM personal_model_check_request WHERE check_id=#{id}::uuid")
+    void deleteRequests(String id);
+
+    @Delete("DELETE FROM personal_model_check_authority WHERE check_id=#{id}::uuid")
+    void deleteAuthority(String id);
+
+    @Delete("DELETE FROM personal_model_check WHERE id=#{id}::uuid")
+    void deleteCheck(String id);
     @Select("SELECT id::text FROM personal_model_check WHERE user_id=#{owner}::uuid AND model_configuration_id=#{model}::uuid ORDER BY started_at DESC,id DESC LIMIT 1")
     String latestCheck(@Param("owner") String owner, @Param("model") String model);
 
@@ -67,10 +85,10 @@ public interface ModelCheckRepository {
     @Insert("INSERT INTO personal_model_check_request(id,check_id,ordinal,worker_id,status,dispatched_at,not_after,decoded_bytes) VALUES(#{id}::uuid,#{checkId}::uuid,#{ordinal},#{workerId}::uuid,#{status},#{dispatchedAt},#{notAfter},#{decodedBytes})")
     void insertRequest(ModelCheckRequestEntity value);
 
-    @Update("UPDATE personal_model_check SET status=#{status},reason=#{reason} WHERE id=#{id}::uuid AND status IN ('QUEUED','RUNNING')")
+    @Update("UPDATE personal_model_check SET status=#{status},reason=#{reason},completed_at=CASE WHEN #{status} IN ('QUEUED','RUNNING') THEN NULL ELSE clock_timestamp() END WHERE id=#{id}::uuid AND status IN ('QUEUED','RUNNING')")
     int transition(@Param("id") String id, @Param("status") String status, @Param("reason") String reason);
 
-    @Insert("INSERT INTO personal_model_check(id,user_id,connection_id,model_configuration_id,connection_configuration_version,model_configuration_version,status,started_at) VALUES(#{id}::uuid,#{userId}::uuid,#{connectionId}::uuid,#{modelConfigurationId}::uuid,#{connectionConfigurationVersion},#{modelConfigurationVersion},#{status},#{startedAt})")
+    @Insert("INSERT INTO personal_model_check(id,user_id,connection_id,model_configuration_id,connection_configuration_version,model_configuration_version,status,started_at,completed_at) VALUES(#{id}::uuid,#{userId}::uuid,#{connectionId}::uuid,#{modelConfigurationId}::uuid,#{connectionConfigurationVersion},#{modelConfigurationVersion},#{status},#{startedAt},CASE WHEN #{status} IN ('QUEUED','RUNNING') THEN NULL ELSE clock_timestamp() END)")
     void insert(ModelCheckEntity value);
 
     @Select("SELECT EXISTS(SELECT 1 FROM personal_model_check WHERE user_id=#{owner}::uuid AND status IN ('QUEUED','RUNNING'))")

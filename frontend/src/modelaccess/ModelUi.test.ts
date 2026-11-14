@@ -115,7 +115,7 @@ it('navigates real connection/model query boundaries and paginates without savin
   const wrapper = mount(ModelSettingsPage, { global: { plugins: [[VueQueryPlugin, { queryClient: client() }]], stubs: { RouterLink: true } } }); wrappers.push(wrapper);
   await flushPromises(); await wrapper.get('nav[aria-label="连接目录"] li button').trigger('click'); await flushPromises();
   await wrapper.get('.models li button').trigger('click'); await flushPromises();
-  expect(wrapper.text()).toContain('尚未检查');
+  expect(wrapper.text()).toContain('暂无保留的检查记录');
   expect(vi.mocked(api.getModel).mock.lastCall?.[0]).toBe(connection.id);
   expect(vi.mocked(api.getModel).mock.lastCall?.[3]).toBe('owner-a');
   await button(wrapper, '下一页连接').trigger('click'); await flushPromises();

@@ -34,6 +34,7 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import java.util.concurrent.atomic.AtomicInteger;
 import ai.codecraft.modules.modelaccess.repository.ModelCheckRepository;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckResponse;
+import ai.codecraft.modules.modelaccess.model.entity.ModelCheckEntity;
 import java.time.Duration;
 import ai.codecraft.modules.modelaccess.model.ModelProtocol;
 import ai.codecraft.modules.modelaccess.model.exception.ModelAccessErrorCode;
@@ -98,6 +99,7 @@ class ModelConnectionPersistenceIT {
     private ModelCheckExecutionStore dispatches;
     private ModelCheckExecutionStore expiredDispatches;
     private ModelCredentialRotationStore rotation;
+    private ModelCheckRetentionService retention;
     private ModelCredentialCipher rotatedCipher;
     private String owner;
 
@@ -133,6 +135,7 @@ class ModelConnectionPersistenceIT {
         rotatedCipher = new ModelCredentialCipher(new ModelSecurityProperties("rotated", "fixture:" + Base64.getEncoder().encodeToString(new byte[32])
             + ",rotated:" + Base64.getEncoder().encodeToString("n".repeat(32).getBytes(StandardCharsets.US_ASCII))));
         rotation = transactional(new ModelCredentialRotationStore(identity, repository, rotatedCipher), ModelCredentialRotationStore.class);
+        retention = transactional(new ModelCheckRetentionService(sql.getMapper(ModelCheckRepository.class), identity, clock), ModelCheckRetentionService.class);
         var receipts = new ModelCommandReceipts(repository, secrets, new ObjectMapper().findAndRegisterModules(), clock);
         service = transactional(new ModelConnectionService(repository, identity, cipher, new ModelConnectionValidator(), receipts, clock), ModelConnectionService.class);
         models = transactional(new ModelConfigurationService(sql.getMapper(ModelConfigurationRepository.class), repository, identity,
@@ -148,6 +151,63 @@ class ModelConnectionPersistenceIT {
         expiredDispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
             new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
             new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), Clock.offset(clock, Duration.ofSeconds(120))), ModelCheckExecutionStore.class);
+    }
+
+    @Test
+    void terminalRetentionStartsAtTransitionRatherThanTransactionStart() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", model("Fixture", "fixture", null));
+        var original = checks.start("session", model.id(), "original", true);
+        transactions.executeWithoutResult(status -> {
+            jdbc.queryForObject("SELECT CURRENT_TIMESTAMP", Timestamp.class);
+            var earliest = jdbc.queryForObject("SELECT clock_timestamp()", Timestamp.class);
+            assertThat(sql.getMapper(ModelCheckRepository.class).transition(original.id(), "FAILED", "fixture")).isEqualTo(1);
+            var completed = jdbc.queryForObject("SELECT completed_at FROM personal_model_check WHERE id=?::uuid", Timestamp.class, original.id());
+            assertThat(completed.toInstant()).isAfterOrEqualTo(earliest.toInstant());
+            var cached = new ModelCheckEntity(UUID.randomUUID().toString(), owner, connection.id(), model.id(), 1, 1, "SUCCEEDED", NOW);
+            sql.getMapper(ModelCheckRepository.class).insert(cached);
+            var cachedCompleted = jdbc.queryForObject("SELECT completed_at FROM personal_model_check WHERE id=?::uuid", Timestamp.class, cached.id());
+            assertThat(cachedCompleted.toInstant()).isAfterOrEqualTo(earliest.toInstant());
+        });
+    }
+
+    @Test
+    void retentionProtectsReferencesAndDeletesChildrenWithoutReopeningCommandIdentity() {
+        var connection = service.create("session", "connection", input);
+        var model = models.create("session", connection.id(), "model", model("Fixture", "fixture", null));
+        var original = checks.start("session", model.id(), "original", true);
+        var worker = UUID.randomUUID().toString();
+        for (int ordinal = 1; ordinal <= 3; ordinal++) {
+            var request = dispatches.begin(original.id(), ordinal, worker);
+            assertThat(dispatches.complete(request.requestId(), worker, 100, null)).isTrue();
+        }
+        var reused = checks.start("session", model.id(), "reused", true);
+        var cutoff = NOW.minus(Duration.ofDays(30));
+        jdbc.update("UPDATE personal_model_check SET completed_at=? WHERE id=?::uuid", Timestamp.from(cutoff), original.id());
+        assertThat(retention.deleteExpired(original.id())).isFalse();
+        assertThat(checks.status("session", reused.id()).basic().valid()).isTrue();
+        jdbc.update("UPDATE personal_model_check SET completed_at=? WHERE id=?::uuid", Timestamp.from(cutoff.plusSeconds(1)), reused.id());
+        assertThat(retention.deleteExpired(reused.id())).isFalse();
+        jdbc.update("UPDATE personal_model_check SET completed_at=? WHERE id=?::uuid", Timestamp.from(cutoff), reused.id());
+        assertThat(sql.getMapper(ModelCheckRepository.class).retentionCandidates(cutoff)).contains(reused.id()).doesNotContain(original.id());
+        assertThatThrownBy(() -> transactions.execute(status -> {
+            assertThat(retention.deleteExpired(reused.id())).isTrue();
+            throw new IllegalStateException("injected cleanup rollback");
+        })).isInstanceOf(IllegalStateException.class).hasMessage("injected cleanup rollback");
+        assertThat(checks.status("session", reused.id()).basic().valid()).isTrue();
+        assertThat(retention.deleteExpired(original.id())).isFalse();
+        assertThat(retention.deleteExpired(reused.id())).isTrue();
+        assertThat(retention.deleteExpired(original.id())).isTrue();
+        assertThat(retention.deleteExpired(original.id())).isFalse();
+        assertThatThrownBy(() -> checks.status("session", original.id())).isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.code()).isEqualTo("MODEL_CHECK_NOT_FOUND"));
+        assertThat(checks.start("session", model.id(), "original", true)).isEqualTo(original);
+        for (var table : List.of("personal_model_check_request", "personal_model_check_reuse", "personal_model_check_authority")) {
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM " + table + " WHERE check_id IN (?::uuid,?::uuid)", Integer.class, original.id(), reused.id())).isZero();
+        }
+        var active = checks.start("session", model.id(), "active", true);
+        jdbc.update("UPDATE personal_model_check SET completed_at=? WHERE id=?::uuid", Timestamp.from(cutoff), active.id());
+        assertThat(retention.deleteExpired(active.id())).isFalse();
     }
 
     @Test

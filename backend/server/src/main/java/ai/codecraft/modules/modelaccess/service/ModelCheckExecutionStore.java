@@ -42,7 +42,7 @@ public class ModelCheckExecutionStore {
         if (initial == null) return null;
         identity.lockResourceOwner(initial.userId());
         var check = checks.find(checkId);
-        if (!"QUEUED".equals(check.status()) && !"RUNNING".equals(check.status())) return null;
+        if (check == null || !"QUEUED".equals(check.status()) && !"RUNNING".equals(check.status())) return null;
         var authority = checks.authority(checkId);
         var now = clock.instant();
         if (authority == null || !now.isBefore(authority.notAfter())) {
@@ -94,7 +94,7 @@ public class ModelCheckExecutionStore {
         if (initial == null) return false;
         identity.lockResourceOwner(initial.userId());
         var check = checks.find(checkId);
-        if (!"QUEUED".equals(check.status()) && !"RUNNING".equals(check.status())) return false;
+        if (check == null || !"QUEUED".equals(check.status()) && !"RUNNING".equals(check.status())) return false;
         var authority = checks.authority(checkId);
         var latest = checks.latest(checkId);
         var now = clock.instant();
@@ -109,10 +109,11 @@ public class ModelCheckExecutionStore {
         var initial = checks.request(requestId);
         if (initial == null) return false;
         var check = checks.find(initial.checkId());
+        if (check == null) return false;
         identity.lockResourceOwner(check.userId());
         check = checks.find(initial.checkId());
         var request = checks.request(requestId);
-        if (!"RUNNING".equals(check.status()) || !"DISPATCHED".equals(request.status()) || !request.workerId().equals(workerId)) return false;
+        if (check == null || request == null || !"RUNNING".equals(check.status()) || !"DISPATCHED".equals(request.status()) || !request.workerId().equals(workerId)) return false;
         var now = clock.instant();
         if (!now.isBefore(request.notAfter())) {
             checks.completeRequest(requestId, "INTERRUPTED", 0, now, "MODEL_REQUEST_TIMEOUT");

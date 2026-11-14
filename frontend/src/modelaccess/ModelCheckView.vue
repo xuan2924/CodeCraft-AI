@@ -87,7 +87,7 @@ function start() {
       </dl>
     </template>
     <p v-else>
-      尚未检查。保存配置不代表供应商兼容性已验证。
+      暂无保留的检查记录。历史记录可能已清理，保存配置不代表供应商兼容性已验证。
     </p>
     <NButton
       :disabled="result.isFetching.value"
@@ -96,7 +96,7 @@ function start() {
       重新读取结果
     </NButton>
     <p class="help">
-      最多 3 次真实模型请求，可能收费；失败不自动重试。关闭页面或取消等待不代表供应商未收费。通过结果按原完成时间保留 30 分钟。
+      最多 3 次真实模型请求，可能收费；失败不自动重试。关闭页面或取消等待不代表供应商未收费。通过结果自原完成时间起 30 分钟内可复用；终态检查记录保留至少 30 天。
     </p>
     <label :for="`fee-${model.id}`"><input
       :id="`fee-${model.id}`"
