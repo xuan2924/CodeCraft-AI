@@ -42,7 +42,7 @@ class CopilotProposalPreparationTest {
     }
     @Test void rejectsAmbiguousJsonAndProtectedPathsBeforeReadingWorkspaceContents() {
         for (String invalid : List.of("{", input + "{}", input.replace("\"expected_revision\":\"7\"", "\"expected_revision\":\"7\",\"expected_revision\":\"8\""),
-            input.replace("\"changes\"", "\"unknown\":true,\"changes\""), input.replace("src/main/java/After.java", "../private"))) {
+            input.replace("\"changes\"", "\"unknown\":true,\"changes\""), input.replace("\"changes\"", "\"mode\":\"AUTO\",\"changes\""), input.replace("src/main/java/After.java", "../private"))) {
             assertThatThrownBy(() -> prepare.prepare("session", "exercise", invalid)).isInstanceOf(BusinessException.class);
         }
         assertThatThrownBy(() -> prepare.prepare("session", "exercise", input.replace("src/main/java/After.java", "authority/tests.java"))).hasMessage("PATH_FORBIDDEN");

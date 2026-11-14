@@ -73,9 +73,38 @@ export async function tests(owner: string, taskId: string, signal: AbortSignal):
       resultState, createdAt: date(entry.createdAt), completedAt: entry.completedAt === null ? null : date(entry.completedAt) };
   });
 }
+export type ApprovalMode = 'ASK' | 'AUTO';
+export interface ApprovalChange { exerciseId: string; id: string; previousMode: ApprovalMode; mode: ApprovalMode; version: string; actorId: string; createdAt: string }
+export interface ApprovalModeSnapshot { exerciseId: string; mode: ApprovalMode; version: string; history: ApprovalChange[] }
+function approvalModeValue(value: unknown): ApprovalMode { if (value !== 'ASK' && value !== 'AUTO') return invalid(); return value; }
+function approvalChange(value: unknown, owner: string, exercise: string): ApprovalChange {
+  if (!object(value) || value.exerciseId !== exercise || value.actorId !== owner || value.version === '0') return invalid();
+  return { exerciseId: uuid(value.exerciseId), id: uuid(value.id), previousMode: approvalModeValue(value.previousMode), mode: approvalModeValue(value.mode),
+    version: sequence(value.version), actorId: uuid(value.actorId), createdAt: date(value.createdAt) };
+}
+export async function approvalMode(owner: string, exercise: string, signal: AbortSignal): Promise<ApprovalModeSnapshot> {
+  const value = await request(`/api/exercises/${path(exercise)}/copilot/approval-mode`, signal, { headers: ownerHeaders(owner) });
+  if (!object(value) || value.exerciseId !== exercise || !Array.isArray(value.history) || value.history.length > 20) return invalid();
+  const mode = approvalModeValue(value.mode); const version = sequence(value.version);
+  let previous = BigInt(version) + 1n; const ids = new Set<string>();
+  const history = value.history.map((entry: unknown) => {
+    const change = approvalChange(entry, owner, exercise);
+    if (BigInt(change.version) >= previous || ids.has(change.id)) return invalid();
+    previous = BigInt(change.version); ids.add(change.id); return change;
+  });
+  if (version === '0' ? mode !== 'ASK' || history.length !== 0 : history[0]?.version !== version || history[0]?.mode !== mode) return invalid();
+  return { exerciseId: uuid(value.exerciseId), mode, version, history };
+}
+export async function changeApprovalMode(owner: string, exercise: string, credential: string, mode: ApprovalMode, expectedVersion: string,
+  key: string, signal: AbortSignal): Promise<ApprovalChange> {
+  const result = approvalChange(await post(`/api/exercises/${path(exercise)}/copilot/approval-mode`,
+    { mode: approvalModeValue(mode), expectedVersion: sequence(expectedVersion) }, signal, key, credential, owner), owner, exercise);
+  if (result.mode !== mode || BigInt(result.version) !== BigInt(expectedVersion) + 1n) return invalid();
+  return result;
+}
 const proposalStates = ['PENDING', 'APPLYING', 'APPLIED', 'REJECTED', 'INVALIDATED', 'FAILED', 'CANCELLED'] as const;
 export interface Proposal {
-  id: string; sequence: string; taskId: string; state: typeof proposalStates[number]; mode: 'ASK' | 'AUTO'; baseRevision: string;
+  id: string; sequence: string; taskId: string; state: typeof proposalStates[number]; mode: 'ASK' | 'AUTO'; modeVersion: string; baseRevision: string;
   fileCount: number; resultRevision: string | null; changed: boolean | null; decisionType: 'APPROVE' | 'REJECT' | null;
   decisionReason: string | null; failureCode: string | null; createdAt: string; decidedAt: string | null; completedAt: string | null;
 }
@@ -89,11 +118,11 @@ function proposal(value: unknown, taskId: string): Proposal {
   if (!object(value)) return invalid();
   const state = proposalStates.find((item) => item === value.state);
   if (!state || value.sequence === '0' || state === 'APPLIED' && (value.resultRevision === null || value.changed === null)
-    || value.taskId !== taskId || value.mode !== 'ASK' && value.mode !== 'AUTO'
+    || value.taskId !== taskId || value.mode !== 'ASK' && value.mode !== 'AUTO' || value.mode === 'AUTO' && value.modeVersion === '0'
     || typeof value.fileCount !== 'number' || !Number.isInteger(value.fileCount) || value.fileCount < 1 || value.fileCount > 32
     || value.changed !== null && typeof value.changed !== 'boolean'
     || value.decisionType !== null && value.decisionType !== 'APPROVE' && value.decisionType !== 'REJECT') return invalid();
-  return { id: uuid(value.id), sequence: sequence(value.sequence), taskId: uuid(value.taskId), state, mode: value.mode,
+  return { id: uuid(value.id), sequence: sequence(value.sequence), taskId: uuid(value.taskId), state, mode: value.mode, modeVersion: sequence(value.modeVersion),
     baseRevision: sequence(value.baseRevision), fileCount: value.fileCount, resultRevision: value.resultRevision === null ? null : sequence(value.resultRevision),
     changed: value.changed, decisionType: value.decisionType, decisionReason: nullableText(value.decisionReason, 2048), failureCode: nullableText(value.failureCode, 128),
     createdAt: date(value.createdAt), decidedAt: value.decidedAt === null ? null : date(value.decidedAt), completedAt: value.completedAt === null ? null : date(value.completedAt) };

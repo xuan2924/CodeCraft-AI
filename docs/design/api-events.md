@@ -127,6 +127,12 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - `WAITING_APPROVAL`/`WAITING_WRITE` 属于活动任务，但不占 worker；保存原批次位置和已完成工具。新会话的显式有效审批可为原任务后续调用更新授权，单纯登录、查询或重复读取原审批回执不能重新授权。
 - 应用后前端失效工作区查询，沿用编辑器原有修订冲突处理；不自动保存、覆盖或清除本地草稿。停止在未知写入收敛前保持 `STOPPING`，不将未知结果伪报未应用。
 
+### 演练审批模式
+
+- `GET /api/exercises/{exercise}/copilot/approval-mode`：`{exerciseId, mode: "ASK"|"AUTO", version, history}`。缺省 ASK/版本 `"0"`；最近 20 条审计含 exerciseId、id、previousMode、mode、version、actorId、createdAt，按数字版本倒序。只读，不改变授权。
+- 同路径 `POST`：`{mode, expectedVersion}`，版本为十进制字符串；要求有效 USER、ACTIVE、当前操作凭证、CSRF、原幂等键。期望版本冲突返回 `COPILOT_APPROVAL_MODE_CONFLICT`；同键不同内容拒绝。成功返回该次不可变审计，不代表后来仍是同一模式；前端重新读取当前快照，不用旧回执覆盖新选择。未知结果仅原键/原内容重试。
+- 提案元数据增加 `modeVersion`（字符串）；AUTO 必须有正版本。登记线性化取最新模式，AUTO 自动决定与原 FILE_BATCH/WAITING_WRITE 原子绑定；旧 ASK 不自动批准，AUTO 禁止手动 decision。所有模式请求与既有私有 REST 一样归属校验、禁止缓存。
+
 ### Copilot 关联测试
 
 - `GET /api/copilot-tasks/{taskId}/tests`：返回最近 20 条绑定元数据（父任务、工具、原测试 ID、保存修订、`base`、`WAITING`/`RESOLVED`、确定终态与时间）。只读、归属校验、no-store，不触发执行或回填；完整记录沿用 `/api/exercises/{exerciseId}/tasks/{testTaskId}`。

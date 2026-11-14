@@ -26,14 +26,15 @@ public class CopilotCoordinator implements AutoCloseable {
     private final CopilotRunner runner;
     private final CopilotProposalStore proposals;
     private final CopilotTestTools tests;
+    private final CopilotAutoApproval automatic;
     private final Clock clock;
     private final ThreadPoolExecutor workers;
     private final Set<String> active = ConcurrentHashMap.newKeySet();
     private final ConcurrentMap<String, WorkerThread> threads = new ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    public CopilotCoordinator(CopilotTaskRepository tasks, CopilotExecutionStore store, CopilotRunner runner, CopilotProperties limits, Clock clock, CopilotProposalStore proposals, CopilotTestTools tests) {
-        this.tasks = tasks; this.store = store; this.runner = runner; this.clock = clock; this.proposals = proposals; this.tests = tests;
+    public CopilotCoordinator(CopilotTaskRepository tasks, CopilotExecutionStore store, CopilotRunner runner, CopilotProperties limits, Clock clock, CopilotProposalStore proposals, CopilotTestTools tests, CopilotAutoApproval automatic) {
+        this.tasks = tasks; this.store = store; this.runner = runner; this.clock = clock; this.proposals = proposals; this.tests = tests; this.automatic = automatic;
         workers = new ThreadPoolExecutor(limits.workers(), limits.workers(), 0, TimeUnit.SECONDS, new SynchronousQueue<>(),
             Thread.ofPlatform().name("copilot-", 0).factory(), new ThreadPoolExecutor.AbortPolicy());
     }
@@ -46,10 +47,11 @@ public class CopilotCoordinator implements AutoCloseable {
                 var thread = threads.get(id);
                 if (thread != null) thread.interrupt();
             }
+            for (String id : automatic.pending()) {
+                if (!submit(id, () -> automatic.apply(id))) break;
+            }
             for (String id : tasks.queued()) {
-                if (!active.add(id)) continue;
-                try { workers.execute(() -> execute(id)); }
-                catch (RejectedExecutionException full) { active.remove(id); break; }
+                if (!submit(id, () -> runner.run(id, UUID.randomUUID().toString()))) break;
             }
         } catch (RuntimeException failure) { LOG.warn("Copilot discovery unavailable ({})", failure.getClass().getSimpleName()); }
     }
@@ -67,10 +69,16 @@ public class CopilotCoordinator implements AutoCloseable {
         } catch (RuntimeException failure) { LOG.warn("Copilot recovery unavailable ({})", failure.getClass().getSimpleName()); }
     }
 
-    private void execute(String id) {
+    private boolean submit(String id, Runnable work) {
+        if (!active.add(id)) return true;
+        try { workers.execute(() -> execute(id, work)); return true; }
+        catch (RejectedExecutionException full) { active.remove(id); return false; }
+    }
+
+    private void execute(String id, Runnable work) {
         var workerThread = new WorkerThread(Thread.currentThread());
         threads.put(id, workerThread);
-        try { if (!closed.get()) runner.run(id, UUID.randomUUID().toString()); }
+        try { if (!closed.get()) work.run(); }
         catch (RuntimeException failure) { LOG.warn("Copilot worker awaiting recovery ({})", failure.getClass().getSimpleName()); }
         finally { workerThread.clear(); threads.remove(id, workerThread); active.remove(id); }
     }

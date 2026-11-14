@@ -2,6 +2,8 @@ package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
+import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
+import ai.codecraft.modules.identity.model.exception.IdentityFailure;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.model.dto.ControlResponse;
@@ -98,11 +100,23 @@ public class WorkspaceWriteTransactionService {
 
     @Transactional
     public WorkspaceOperationEntity batch(String session, String exerciseId, String key, String credential, String payload, long expectedRevision, StorageMeasurement measurement) {
+        return acceptBatch(session, exerciseId, key, credential, payload, expectedRevision, measurement, false);
+    }
+
+    /** Trusted Copilot admission after durable AUTO authorization; same FILE_BATCH intent and dispatcher. */
+    @Transactional
+    public WorkspaceOperationEntity batchCopilot(String session, String exerciseId, String key, String payload, long expectedRevision, StorageMeasurement measurement) {
+        return acceptBatch(session, exerciseId, key, null, payload, expectedRevision, measurement, true);
+    }
+
+    private WorkspaceOperationEntity acceptBatch(String session, String exerciseId, String key, String credential, String payload,
+        long expectedRevision, StorageMeasurement measurement, boolean copilot) {
         SessionAuthorizationDTO authorization = identity.authorizeMutation(session);
+        if (copilot && !"USER".equals(authorization.role())) throw new IdentityFailure(IdentityErrorCode.FORBIDDEN);
         ExerciseEntity exercise = owned(authorization.userId(), exerciseId);
         key(key);
         WorkspaceControlEntity control = writes.lock(exerciseId);
-        credential(control, credential);
+        if (!copilot) credential(control, credential);
         WorkspaceOperationEntity previous = exercises.receipt(authorization.userId(), "FILE_BATCH", exerciseId, key);
         String fingerprint = secrets.fingerprint(payload);
         if (previous != null) {

@@ -2,6 +2,7 @@ package ai.codecraft.modules.copilot.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -9,6 +10,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -17,6 +19,8 @@ import static org.mockito.Mockito.when;
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.copilot.config.CopilotProperties;
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionRequest;
+import ai.codecraft.modules.copilot.model.dto.CopilotApprovalModeRequest;
+import ai.codecraft.modules.copilot.repository.CopilotApprovalModeRepository;
 import ai.codecraft.modules.copilot.model.dto.CopilotTaskResponse;
 import ai.codecraft.modules.workspace.model.dto.FileChangeRequest;
 import ai.codecraft.workspace.v1.ApplyBatchRequest;
@@ -122,6 +126,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Base64;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -129,6 +134,9 @@ import java.util.HashMap;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.LocalCacheScope;
 import org.flywaydb.core.Flyway;
@@ -193,6 +201,8 @@ class CopilotPersistenceIT {
     private CopilotTestStore testRuns;
     private CopilotTestTools testTools;
     private WorkspaceMaintenanceStore maintenance;
+    private CopilotApprovalModeService approvalModes;
+    private CopilotAutoApproval automatic;
 
     @BeforeAll
     void migrate() throws Exception {
@@ -209,7 +219,7 @@ class CopilotPersistenceIT {
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
             ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
-            CopilotTaskRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class,
+            CopilotTaskRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotApprovalModeRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
@@ -222,7 +232,7 @@ class CopilotPersistenceIT {
 
     @BeforeEach
     void seed() throws Exception {
-        jdbc.execute("TRUNCATE copilot_test_run,copilot_proposal,copilot_tool,copilot_message,copilot_turn,copilot_task,workspace_task_event,workspace_task_stream,workspace_test_stop,workspace_test_task");
+        jdbc.execute("TRUNCATE copilot_approval_change,copilot_approval_mode,copilot_test_run,copilot_proposal,copilot_tool,copilot_message,copilot_turn,copilot_task,workspace_task_event,workspace_task_stream,workspace_test_stop,workspace_test_task,workspace_mutation,workspace_transition,workspace_operation");
         clock.now = "1".equals(System.getenv("COPILOT_LIVE_DEEPSEEK")) ? Instant.now() : Instant.parse("2026-01-01T00:00:00Z");
         String owner = UUID.randomUUID().toString(); exercise = UUID.randomUUID().toString();
         String instance = UUID.randomUUID().toString(); String preparation = UUID.randomUUID().toString();
@@ -290,6 +300,8 @@ class CopilotPersistenceIT {
         sandbox = mock(SandboxWorkspaceGateway.class);
         when(sandbox.measureStorage(any())).thenAnswer(call -> measurement);
         capacity = new StorageCapacityService(capacityStore, sandbox, mock(WorkspaceMaintenanceCoordinator.class));
+        approvalModes = new CopilotApprovalModeService(proxy(new CopilotApprovalModeStore(sql.getMapper(CopilotApprovalModeRepository.class),
+            identity, secrets, lifecycle, coordination, operations, clock), CopilotApprovalModeStore.class), capacity);
         files = mock(ExerciseService.class);
         when(files.find(SESSION, exercise)).thenReturn(new ExerciseResponse(exercise, "problem", instance, preparation, "ACTIVE", "1", "1", List.of("src/Main.java"), clock.instant(), clock.instant().plusSeconds(1800), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
         when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(new WorkspaceFileResponse(instance, "1", "src/Main.java", "class Main {}"));
@@ -302,8 +314,9 @@ class CopilotPersistenceIT {
         writeCoordinator = new WorkspaceWriteCoordinator(coordination, sandbox, codec);
         testCoordinator = new TestTaskCoordinator(childExecutions, sandbox, coordination, writeCoordinator);
         proposals = proxy(new CopilotProposalStore(sql.getMapper(CopilotProposalRepository.class), repository, tasks, execution, identity, secrets,
-            lifecycle, coordination, writeStore, operations, codec, json, clock), CopilotProposalStore.class);
+            lifecycle, coordination, writeStore, operations, codec, json, clock, sql.getMapper(CopilotApprovalModeRepository.class)), CopilotProposalStore.class);
         proposalViews = new CopilotProposalService(proposals, capacity, json);
+        automatic = new CopilotAutoApproval(proposals, sql.getMapper(CopilotProposalRepository.class), capacity, codec, json);
         testRuns = proxy(new CopilotTestStore(sql.getMapper(CopilotTestRepository.class), repository, execution, tasks, childLifecycle,
             childExecutions, identity, lifecycle, coordination, clock), CopilotTestStore.class);
         testTools = new CopilotTestTools(testRuns, capacity, new CopilotTestResultFormatter(), json);
@@ -526,6 +539,268 @@ class CopilotPersistenceIT {
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 1, 268435456);
         assertThatThrownBy(() -> tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement)).isInstanceOf(BusinessException.class);
         assertThat(tasks.latest(SESSION, exercise)).isNull();
+    }
+
+    @Test
+    void approvalModeDefaultsToAskAndCommandsAreVersionedAuditedAndReplayOnlyTheirOriginalResult() throws Exception {
+        assertThat(approvalModes.current(SESSION, exercise).mode()).isEqualTo("ASK");
+        assertThat(approvalModes.current(SESSION, exercise).version()).isEqualTo("0");
+        var request = new CopilotApprovalModeRequest("AUTO", "0");
+        var auto = approvalModes.change(SESSION, exercise, CONTROL, "auto", request);
+        assertThat(auto.mode()).isEqualTo("AUTO"); assertThat(auto.version()).isEqualTo("1");
+        approvalModes.change(SESSION, exercise, CONTROL, "ask", new CopilotApprovalModeRequest("ASK", "1"));
+        assertThat(approvalModes.change(SESSION, exercise, "obsolete", "auto", request)).isEqualTo(auto);
+        assertThat(approvalModes.current(SESSION, exercise).mode()).isEqualTo("ASK");
+        assertThat(approvalModes.current(SESSION, exercise).history()).hasSize(2);
+        assertThatThrownBy(() -> approvalModes.change(SESSION, exercise, CONTROL, "stale", request)).hasMessage("COPILOT_APPROVAL_MODE_CONFLICT");
+        assertThatThrownBy(() -> approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("ASK", "0"))).hasMessage("COPILOT_IDEMPOTENCY_CONFLICT");
+        var confirmation = approvalModes.change(SESSION, exercise, CONTROL, "confirm", new CopilotApprovalModeRequest("ASK", "2"));
+        assertThat(confirmation.version()).isEqualTo("3");
+        assertThat(approvalModes.current(SESSION, exercise).history()).extracting(value -> value.version()).containsExactly("3", "2", "1");
+        verify(driver, never()).call(any(), any(), any(), anyInt(), any(), any());
+    }
+
+    @Test
+    void approvalModeCannotBypassControlCapacityOrExpiry() {
+        var request = new CopilotApprovalModeRequest("AUTO", "0");
+        assertThatThrownBy(() -> approvalModes.change(SESSION, exercise, "obsolete", "wrong", request)).hasMessage("STALE_CONTROL");
+        measurement = new StorageMeasurement(exercise, "A".repeat(26), 2, 268435456);
+        assertThatThrownBy(() -> approvalModes.change(SESSION, exercise, CONTROL, "full", request)).hasMessage("STORAGE_BUDGET_EXCEEDED");
+        assertThat(approvalModes.current(SESSION, exercise).version()).isEqualTo("0");
+        assertThat(approvalModes.current(SESSION, exercise).history()).isEmpty();
+        clock.now = clock.now.plusSeconds(1801);
+        assertThatThrownBy(() -> approvalModes.change(SESSION, exercise, CONTROL, "expired", request)).hasMessage("INVALID_STATE");
+    }
+
+    @Test
+    void approvalModeRejectsMalformedVersionsOtherOwnersAndAdministrativeActors() {
+        for (var input : List.of(new CopilotApprovalModeRequest("SHELL", "0"), new CopilotApprovalModeRequest(null, "0"),
+            new CopilotApprovalModeRequest("AUTO", "01"), new CopilotApprovalModeRequest("AUTO", "-1"),
+            new CopilotApprovalModeRequest("AUTO", "9223372036854775808"), new CopilotApprovalModeRequest("AUTO", "9223372036854775807"))) {
+            assertThatThrownBy(() -> approvalModes.change(SESSION, exercise, CONTROL, "bad", input)).hasMessage("COPILOT_APPROVAL_MODE_INVALID");
+        }
+        var other = new SessionAuthorizationDTO(UUID.randomUUID().toString(), "USER", false, 1, clock.instant().plusSeconds(300));
+        when(identity.authorization("other")).thenReturn(other);
+        when(identity.authorizePrivateDelivery("other")).thenReturn(other);
+        when(identity.authorizeMutation("other")).thenReturn(other);
+        assertThatThrownBy(() -> approvalModes.current("other", exercise)).hasMessage("RESOURCE_NOT_FOUND");
+        assertThatThrownBy(() -> approvalModes.change("other", exercise, CONTROL, "other", new CopilotApprovalModeRequest("AUTO", "0"))).hasMessage("RESOURCE_NOT_FOUND");
+        var admin = new SessionAuthorizationDTO(other.userId(), "ADMIN", false, 1, clock.instant().plusSeconds(300));
+        when(identity.authorizePrivateDelivery(SESSION)).thenReturn(admin);
+        assertThatThrownBy(() -> approvalModes.current(SESSION, exercise)).hasMessage("FORBIDDEN");
+        assertThatThrownBy(() -> approvalModes.change(SESSION, exercise, CONTROL, "admin", new CopilotApprovalModeRequest("AUTO", "0"))).hasMessage("FORBIDDEN");
+        assertThat(sql.getMapper(CopilotApprovalModeRepository.class).current(exercise)).isNull();
+        verify(sandbox, never()).measureStorage(any());
+    }
+
+    @Test
+    void competingModeCommandsHaveOneVersionWinnerAndAnImmutableAudit() throws Exception {
+        var barrier = new CyclicBarrier(2);
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            var first = workers.submit(() -> raceMode("AUTO", barrier));
+            var second = workers.submit(() -> raceMode("ASK", barrier));
+            assertThat(List.of(first.get(5, TimeUnit.SECONDS), second.get(5, TimeUnit.SECONDS)))
+                .containsExactlyInAnyOrder("1", "COPILOT_APPROVAL_MODE_CONFLICT");
+        }
+        assertThat(approvalModes.current(SESSION, exercise).version()).isEqualTo("1");
+        assertThat(approvalModes.current(SESSION, exercise).history()).hasSize(1);
+    }
+
+    @Test
+    void modeAuditIsBoundedForDeliveryAndIncludedInExerciseDeletion() {
+        for (int version = 0; version < 23; version++) approvalModes.change(SESSION, exercise, CONTROL, "mode-" + version,
+            new CopilotApprovalModeRequest(version % 2 == 0 ? "AUTO" : "ASK", Integer.toString(version)));
+        assertThat(approvalModes.current(SESSION, exercise).history()).hasSize(20);
+        assertThat(approvalModes.current(SESSION, exercise).history().getFirst().version()).isEqualTo("23");
+        assertThat(data.retainedBytes(exercise)).isPositive();
+        new TransactionTemplate(transactions).executeWithoutResult(status -> data.erase(exercise));
+        assertThat(sql.getMapper(CopilotApprovalModeRepository.class).current(exercise)).isNull();
+        assertThat(sql.getMapper(CopilotApprovalModeRepository.class).history(exercise)).isEmpty();
+        assertThat(data.retainedBytes(exercise)).isZero();
+    }
+
+    @Test
+    void proposalHistoryOrdersNumericSequencesAcrossDigitBoundaries() throws Exception {
+        new ProposalWorkspace();
+        jdbc.execute("ALTER SEQUENCE copilot_proposal_sequence_seq RESTART WITH 8");
+        var requests = new ArrayList<ToolExecutionRequest>();
+        for (int index = 0; index < 5; index++) requests.add(ToolExecutionRequest.builder().id("history-" + index).name("propose_changes")
+            .arguments("{\"expected_revision\":\"1\",\"changes\":[{\"kind\":\"UPDATE\",\"path\":\"" + ProposalWorkspace.PATH
+                + "\",\"content\":\"class Main { int version = " + index + "; }\"}]}").build());
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(requests)).build(), 100),
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Done")).build(), 100));
+        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Compare alternatives", true, measurement);
+        runner.run(task.id(), UUID.randomUUID().toString());
+        for (int index = 0; index < 5; index++) {
+            String proposal = sql.getMapper(CopilotProposalRepository.class).pending(task.id()).id();
+            proposals.decide(SESSION, proposal, CONTROL, "reject-" + index, new CopilotProposalDecisionRequest("REJECT", "Compare next"), null);
+            runner.run(task.id(), UUID.randomUUID().toString());
+        }
+        assertThat(proposals.list(SESSION, task.id(), 0).items()).extracting(value -> value.sequence()).containsExactly("12", "11", "10", "9", "8");
+        assertThat(proposals.list(SESSION, task.id(), 10).items()).extracting(value -> value.sequence()).containsExactly("9", "8");
+    }
+
+    @Test
+    void autoProposalCapturesTheModeAtRegistrationRatherThanModelDispatch() throws Exception {
+        var workspace = new ProposalWorkspace();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
+            approvalModes.change(SESSION, exercise, CONTROL, "during-generation", new CopilotApprovalModeRequest("AUTO", "0"));
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(workspace.proposal()))).build(), 100);
+        });
+        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Change the class", true, measurement);
+        runner.run(task.id(), UUID.randomUUID().toString());
+        var proposal = proposals.list(SESSION, task.id(), 0).items().getFirst();
+        assertThat(proposal.mode()).isEqualTo("AUTO");
+        assertThat(proposal.modeVersion()).isEqualTo("1");
+        assertThat(proposal.state()).isEqualTo("PENDING");
+        assertThat(repository.find(task.id()).workerId()).isNull();
+    }
+
+    @Test
+    void autoApprovalUsesTheBoundedWorkerAndOriginalWriteReceiptWithoutBrowserCredential() throws Exception {
+        approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
+        var workspace = new ProposalWorkspace(); workspace.loseApplyResponse = true;
+        var task = beginProposal(workspace, true);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        try (var coordinator = new CopilotCoordinator(repository, execution, runner, limits, clock, proposals, testTools, automatic)) {
+            coordinator.dispatch();
+            await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_WRITE"));
+        }
+        assertThat(proposals.summary(SESSION, proposal).decisionType()).isEqualTo("APPROVE");
+        assertThat(workspace.applies.get()).isZero();
+        writeCoordinator.recover(); proposals.recoverTask(task.id());
+        writeCoordinator.recover(); proposals.recoverTask(task.id());
+        assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("APPLIED");
+        assertThat(workspace.applies.get()).isEqualTo(1);
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+    }
+
+    @Test
+    void switchingToAutoNeverApprovesAnAlreadyRegisteredAskProposal() throws Exception {
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, false);
+        approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
+        assertThat(automatic.pending()).doesNotContain(task.id());
+        automatic.apply(task.id());
+        var proposal = proposals.list(SESSION, task.id(), 0).items().getFirst();
+        assertThat(proposal.mode()).isEqualTo("ASK"); assertThat(proposal.modeVersion()).isEqualTo("0");
+        assertThat(proposal.state()).isEqualTo("PENDING"); assertThat(proposal.decisionType()).isNull();
+        assertThat(workspace.applies.get()).isZero();
+    }
+
+    @Test
+    void registeredAutoAuthorizationSurvivesSwitchingBackToAskButCannotBeDecidedManually() throws Exception {
+        approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, false);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        approvalModes.change(SESSION, exercise, CONTROL, "ask", new CopilotApprovalModeRequest("ASK", "1"));
+        assertThatThrownBy(() -> proposalViews.decide(SESSION, proposal, CONTROL, "manual", new CopilotProposalDecisionRequest("APPROVE", null)))
+            .hasMessage("COPILOT_INVALID_STATE");
+        automatic.apply(task.id()); automatic.apply(task.id());
+        assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("APPLYING");
+        assertThat(proposals.summary(SESSION, proposal).modeVersion()).isEqualTo("1");
+        writeCoordinator.recover(); proposals.recoverTask(task.id());
+        assertThat(workspace.applies.get()).isEqualTo(1);
+        assertThat(approvalModes.current(SESSION, exercise).mode()).isEqualTo("ASK");
+    }
+
+    @Test
+    void autoBaselineConflictInvalidatesTheOldProposalWithoutMerging() throws Exception {
+        approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, false);
+        sql.getMapper(WorkspaceWriteRepository.class).observed(exercise, 2, "[\"" + ProposalWorkspace.PATH + "\"]");
+        automatic.apply(task.id());
+        var proposal = proposals.list(SESSION, task.id(), 0).items().getFirst();
+        assertThat(proposal.state()).isEqualTo("INVALIDATED"); assertThat(proposal.failureCode()).isEqualTo("REVISION_CONFLICT");
+        assertThat(proposal.decisionType()).isNull(); assertThat(workspace.applies.get()).isZero();
+    }
+
+    @Test
+    void autoMeterOutageRetainsTheOriginalProposalWithoutInventingARejectionOrCallingTheModel() throws Exception {
+        approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, false);
+        when(sandbox.measureStorage(any())).thenThrow(Status.UNAVAILABLE.asRuntimeException());
+        assertThatThrownBy(() -> automatic.apply(task.id())).hasMessage("STORAGE_METER_UNAVAILABLE");
+        var original = proposals.list(SESSION, task.id(), 0).items().getFirst();
+        assertThat(original.state()).isEqualTo("PENDING"); assertThat(original.decisionType()).isNull();
+        assertThat(repository.find(task.id()).state()).isEqualTo("WAITING_APPROVAL"); assertThat(workspace.applies.get()).isZero();
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+        doReturn(measurement).when(sandbox).measureStorage(any());
+        automatic.apply(task.id());
+        var recovered = proposals.list(SESSION, task.id(), 0).items().getFirst();
+        assertThat(recovered.id()).isEqualTo(original.id()); assertThat(recovered.state()).isEqualTo("APPLYING");
+    }
+
+    @Test
+    void autoCapacityFailurePreservesItsDiffAndDoesNotAdmitAWrite() throws Exception {
+        approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, false);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        measurement = new StorageMeasurement(exercise, "A".repeat(26), 2, 268435456);
+        automatic.apply(task.id());
+        assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("FAILED");
+        assertThat(proposals.summary(SESSION, proposal).failureCode()).isEqualTo("STORAGE_BUDGET_EXCEEDED");
+        assertThat(proposalViews.detail(SESSION, proposal).files()).isNotEmpty();
+        assertThat(sql.getMapper(CopilotProposalRepository.class).find(proposal).operationId()).isNull();
+        assertThat(workspace.applies.get()).isZero();
+        tasks.stop(SESSION, task.id(), "stop"); execution.recover(task.id());
+        assertThat(repository.find(task.id()).state()).isEqualTo("STOPPED");
+    }
+
+    @Test
+    void stoppingBeforeAutoAdmissionCancelsWithoutApplying() throws Exception {
+        approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, true);
+        tasks.stop(SESSION, task.id(), "stop");
+        automatic.apply(task.id()); execution.recover(task.id());
+        assertThat(proposals.list(SESSION, task.id(), 0).items().getFirst().state()).isEqualTo("CANCELLED");
+        assertThat(repository.find(task.id()).state()).isEqualTo("STOPPED");
+        assertThat(workspace.applies.get()).isZero();
+    }
+
+    @Test
+    void stopAfterAutoApplicationPreservesTheConfirmedRevisionWithoutAnotherModelCall() throws Exception {
+        approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, true);
+        automatic.apply(task.id()); writeCoordinator.recover();
+        tasks.stop(SESSION, task.id(), "stop"); proposals.recoverTask(task.id()); execution.recover(task.id());
+        var proposal = sql.getMapper(CopilotProposalRepository.class).page(task.id(), 0).getFirst();
+        assertThat(proposal.state()).isEqualTo("APPLIED"); assertThat(proposal.resultRevision()).isEqualTo("2");
+        assertThat(repository.find(task.id()).state()).isEqualTo("STOPPED"); assertThat(workspace.applies.get()).isEqualTo(1);
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void expiredAutoProposalCannotApplyOrWakeTheModel() throws Exception {
+        approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, true);
+        clock.now = clock.now.plusSeconds(1801);
+        automatic.apply(task.id()); execution.recover(task.id());
+        assertThat(proposals.list(SESSION, task.id(), 0).items().getFirst().state()).isEqualTo("CANCELLED");
+        assertThat(repository.find(task.id()).state()).isEqualTo("INTERRUPTED");
+        assertThat(workspace.applies.get()).isZero();
+    }
+
+    @Test
+    void autoAuthorizationLossCommitsCancellationThroughTheRealIdentityProxy() throws Exception {
+        approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, true);
+        invalidateOriginalAuthorizationUsingRealProxy();
+        automatic.apply(task.id()); execution.recover(task.id());
+        assertThat(sql.getMapper(CopilotProposalRepository.class).page(task.id(), 0).getFirst().state()).isEqualTo("CANCELLED");
+        assertThat(repository.find(task.id()).state()).isEqualTo("INTERRUPTED");
+        assertThat(repository.find(task.id()).reason()).isEqualTo("AUTHORIZATION_ENDED");
+        assertThat(workspace.applies.get()).isZero();
     }
 
     @Test
@@ -814,7 +1089,7 @@ class CopilotPersistenceIT {
     void revokedAuthorizationStopsOnlyTheBoundChildAndNeverResumesTheModel() throws Exception {
         new TestExecution();
         var task = beginTest(false);
-        when(identity.authorization(SESSION)).thenThrow(new IdentityFailure(IdentityErrorCode.UNAUTHENTICATED));
+        invalidateOriginalAuthorizationUsingRealProxy();
         testTools.recoverTask(task.id());
         testCoordinator.recover();
         testTools.recoverTask(task.id());
@@ -915,6 +1190,20 @@ class CopilotPersistenceIT {
             if (state.equals("PASSED") || state.equals("FAILED")) value.setEvidence(TestEvidence.newBuilder().setKind("SUREFIRE_XML").setSha256("e".repeat(64)).setBytes(100));
             return value.build();
         }
+    }
+
+    private String raceMode(String mode, CyclicBarrier barrier) throws Exception {
+        barrier.await(5, TimeUnit.SECONDS);
+        try { return approvalModes.change(SESSION, exercise, CONTROL, "race-" + mode, new CopilotApprovalModeRequest(mode, "0")).version(); }
+        catch (BusinessException rejected) { return rejected.errorCode().code(); }
+    }
+
+    private void invalidateOriginalAuthorizationUsingRealProxy() {
+        var actual = proxy(new IdentityTransactionService(sql.getMapper(IdentityRepository.class), clock, mock(IdentityRevocationNotifier.class),
+            mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class)), IdentityTransactionService.class);
+        // The fixture grant has no real session row: exercise actual transactional denial, not a mock-only throw.
+        when(identity.authorization(SESSION)).thenAnswer(call -> actual.authorization(SESSION));
+        when(identity.tryAuthorizeMutation(SESSION)).thenAnswer(call -> actual.tryAuthorizeMutation(SESSION));
     }
 
     private CopilotTaskResponse beginProposal(ProposalWorkspace workspace, boolean trailingRead) throws Exception {

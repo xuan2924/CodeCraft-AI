@@ -1,11 +1,11 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type BrowserContext } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 test.skip(process.env.COPILOT_BROWSER_E2E !== 'disposable', 'Use the explicit paid --workspace --copilot-browser tracer');
 // Credentials/cookies and network payloads must not enter automatic failure artifacts.
-test.use({ trace: 'off', video: 'off', screenshot: 'off' });
+test.use({ trace: 'off', video: 'off', screenshot: 'off', actionTimeout: 15000 });
 const source = 'src/main/java/interview/CartTotal.java';
 const marker = '// Copilot integration edit';
 function object(value: unknown): Record<string, unknown> {
@@ -15,7 +15,7 @@ function object(value: unknown): Record<string, unknown> {
 function text(value: unknown): string { if (typeof value !== 'string') throw new Error('Invalid fixture string'); return value; }
 function array(value: unknown): unknown[] { if (!Array.isArray(value)) throw new Error('Invalid fixture list'); return value; }
 
-test('real personal DeepSeek read, approved edit, Docker test and reconnect observation', async ({ page, context, baseURL }) => {
+test('real DeepSeek approved and automatic edits, Docker test, draft isolation and reconnect observation', async ({ page, context, browser, baseURL }) => {
   test.setTimeout(180000);
   const fixtureUrl = process.env.BROWSER_FIXTURE_URL;
   const fixtureKey = process.env.BROWSER_FIXTURE_KEY;
@@ -43,6 +43,7 @@ test('real personal DeepSeek read, approved edit, Docker test and reconnect obse
   let connectionId = ''; let connectionVersion = ''; let exerciseId = ''; let taskId = '';
   const failures: unknown[] = [];
   let current = page;
+  let otherBrowser: BrowserContext | undefined;
   try {
     const connection = object(await api('POST', '/api/test-fixtures/copilot-connection', {}, 201));
     connectionId = text(connection.id); connectionVersion = text(connection.version);
@@ -133,7 +134,67 @@ test('real personal DeepSeek read, approved edit, Docker test and reconnect obse
       await shown.screenshot({ path: join(output, 'structured-test-result.png') });
     }
     console.log(`Live browser evidence: model=deepseek-flash thinking=OFF, task=${taskId}, proposal=${proposalId}, test=${text(bound.testTaskId)}, revision=1, structured result=FAILED`);
+
+    const mode = current.getByRole('region', { name: 'Copilot 审批模式', exact: true });
+    await expect(mode).toContainText('已生效：逐次审批');
+    await mode.getByLabel('期望审批模式', { exact: false }).selectOption('AUTO');
+    await mode.getByLabel('我允许本场后续登记的合法修改自动应用', { exact: false }).check();
+    await mode.getByRole('button', { name: '确认审批模式', exact: true }).click();
+    await expect(mode).toContainText('已生效：自动审批');
+    console.log('Live auto progress: mode confirmed');
+    const draft = '// AUTO_DRAFT_RETAINED';
+    await current.getByRole('button', { name: source, exact: true }).click();
+    await current.getByRole('textbox', { name: '文件编辑器', exact: false }).focus();
+    await current.keyboard.press('ControlOrMeta+End'); await current.keyboard.insertText(`\n${draft}\n`);
+    await expect(current.getByText('本地草稿已更新；', { exact: false })).toBeVisible();
+    console.log('Live auto progress: first-browser draft retained');
+
+    // A separate browser has no shared draft store. Its explicit task must not flush this browser's local draft.
+    otherBrowser = await browser.newContext({ baseURL, storageState: { cookies: await context.cookies(), origins: [] } });
+    const automaticPage = await otherBrowser.newPage(); await automaticPage.goto('/workspace');
+    await automaticPage.getByRole('button', { name: '接管操作权', exact: true }).click();
+    await expect(automaticPage.getByText('当前页面持有操作权', { exact: true })).toBeVisible();
+    console.log('Live auto progress: second-browser control acquired');
+    const automaticMode = automaticPage.getByRole('region', { name: 'Copilot 审批模式', exact: true });
+    await expect(automaticMode).toContainText('已生效：自动审批');
+    const autoMarker = '// Automatically approved integration edit';
+    await automaticPage.getByLabel('给 Copilot 的请求', { exact: true }).fill(
+      `For this new task, approval mode is AUTO. Read ${source} with view_file, then propose exactly one UPDATE that prepends the line ${autoMarker} to the current saved file and otherwise preserves every existing line. Do not run any tests or propose any other edit. After confirmed application, reply AUTO_MODE_DONE. Do not wait for a manual approval.`);
+    await automaticPage.getByLabel('我确认模型请求可能收费', { exact: true }).check();
+    await automaticPage.getByRole('button', { name: '保存草稿并发送', exact: true }).click();
+    await expect.poll(async () => text(object(object(await api('GET', `${base}/copilot/tasks/latest`)).task).id), { timeout: 15000 }).not.toBe(taskId);
+    const autoTask = text(object(object(await api('GET', `${base}/copilot/tasks/latest`)).task).id);
+    await expect.poll(async () => object(await api('GET', `/api/copilot-tasks/${autoTask}`)).state, { timeout: 60000 }).toBe('SUCCEEDED');
+    const autoProposals = array(object(await api('GET', `/api/copilot-tasks/${autoTask}/proposals?before=0`)).items);
+    expect(autoProposals).toHaveLength(1);
+    const autoProposal = object(autoProposals[0]);
+    expect(autoProposal.mode).toBe('AUTO'); expect(autoProposal.modeVersion).toBe('1'); expect(autoProposal.state).toBe('APPLIED');
+    expect(autoProposal.resultRevision).toBe('2'); expect(autoProposal.baseRevision).toBe('1');
+    const applied = text(object(await api('GET', `${base}/files?path=${encodeURIComponent(source)}`)).content);
+    expect(applied).toContain(autoMarker); expect(applied.replace(autoMarker, '').trim()).toBe(proposed.trim()); expect(applied).not.toContain(draft);
+    expect(array(await api('GET', `/api/copilot-tasks/${autoTask}/tests`))).toHaveLength(0);
+    console.log(`Live auto application: task=${autoTask}, proposal=${text(autoProposal.id)}, modeVersion=1, saved revision=2, no test dispatched`);
+    await expect(current.getByTestId('source')).toContainText(draft); await expect(current.getByTestId('source')).not.toContainText(autoMarker);
+    const automaticProposalRegion = automaticPage.getByRole('region', { name: 'Copilot 修改提案', exact: true });
+    await expect(automaticProposalRegion).toContainText('自动应用成功');
+    await expect(automaticProposalRegion.getByRole('button', { name: '批准整批修改', exact: true })).toHaveCount(0);
+    await expect(automaticProposalRegion.locator('.monaco-diff-editor')).toBeVisible();
+    if (output) await automaticProposalRegion.screenshot({ path: join(output, 'automatically-applied-proposal.png') });
+    await automaticMode.getByLabel('期望审批模式', { exact: false }).selectOption('ASK');
+    await automaticMode.getByRole('button', { name: '确认审批模式', exact: true }).click();
+    await expect(automaticMode).toContainText('已生效：逐次审批');
+    const audit = object(await api('GET', `${base}/copilot/approval-mode`)); expect(audit.version).toBe('2');
+    expect(array(audit.history).map((item) => object(item).mode)).toEqual(['ASK', 'AUTO']);
+    const postsAfterReload: string[] = [];
+    automaticPage.on('request', (request) => { if (request.method() === 'POST') postsAfterReload.push(request.url()); });
+    await automaticPage.reload();
+    await expect(automaticPage.getByRole('region', { name: 'Copilot 修改提案', exact: true })).toContainText('自动应用成功');
+    await expect(automaticPage.getByRole('region', { name: 'Copilot 审批模式', exact: true })).toContainText('模式版本 2');
+    expect(postsAfterReload).toEqual([]);
+    expect(text(object(object(await api('GET', `${base}/copilot/tasks/latest`)).task).id)).toBe(autoTask);
+    console.log(`Live auto evidence: task=${autoTask}, proposal=${text(autoProposal.id)}, modeVersion=1, revision=2, auditVersion=2, draft retained in first browser, reload GET-only`);
   } catch (failure) { failures.push(failure); }
+  if (otherBrowser) { try { await otherBrowser.close(); } catch (failure) { failures.push(failure); } }
   // No automatic retry of unknown side effects, even during cleanup; tracer owns all remaining resources.
   if (exerciseId) {
     try {

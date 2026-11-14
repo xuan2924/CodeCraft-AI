@@ -124,11 +124,9 @@ public class CopilotTestStore {
     }
 
     private boolean authorized(CopilotTaskEntity task) {
-        try {
-            var grant = identity.authorization(task.sessionHash());
-            return task.userId().equals(grant.userId()) && "USER".equals(grant.role()) && !grant.passwordChangeRequired()
-                && clock.instant().isBefore(grant.expiresAt());
-        } catch (IdentityFailure failure) { return false; }
+        var grant = identity.tryAuthorizeMutation(task.sessionHash());
+        return grant != null && task.userId().equals(grant.userId()) && "USER".equals(grant.role()) && !grant.passwordChangeRequired()
+            && clock.instant().isBefore(grant.expiresAt());
     }
 
     private long goal(String task) {

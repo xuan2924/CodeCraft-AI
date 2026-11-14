@@ -8,6 +8,7 @@ import * as api from './api';
 import { commandPolicy, errorMessage } from './errors';
 import CopilotProposals from './CopilotProposals.vue';
 import CopilotTests from './CopilotTests.vue';
+import CopilotApprovalMode from './CopilotApprovalMode.vue';
 
 const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string] }>();
@@ -87,6 +88,13 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     <h2>Copilot · 读取、修改提案与测试</h2>
     <p>模型读取服务端已保存代码，可提出整批修改，默认须经你审批后写入；可对指定保存版本运行基础测试，结果不代表后续版本或未保存草稿。</p>
     <p>请求可能收费，多轮任务可能持续调用模型。关闭页面不停止后台任务；停止后已发出的请求仍可能收费。</p>
+    <CopilotApprovalMode
+      :owner="owner"
+      :exercise-id="exerciseId"
+      :credential="credential"
+      :disabled="disabled"
+      @unauthorized="emit('unauthorized')"
+    />
     <p
       v-if="latest.isPending.value"
       role="status"

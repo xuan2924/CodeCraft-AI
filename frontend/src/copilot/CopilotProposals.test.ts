@@ -6,7 +6,7 @@ import * as api from './api';
 
 vi.mock('./api', async (original) => ({ ...await original<typeof import('./api')>(), proposals: vi.fn(), proposalDetail: vi.fn(), proposalStatus: vi.fn(), decide: vi.fn() }));
 const proposal: api.Proposal = { id: '10000000-0000-0000-0000-000000000001', taskId: '10000000-0000-0000-0000-000000000002',
-  sequence: '1', state: 'PENDING', mode: 'ASK', baseRevision: '1', fileCount: 1, resultRevision: null, changed: null, decisionType: null,
+  sequence: '1', state: 'PENDING', mode: 'ASK', modeVersion: '0', baseRevision: '1', fileCount: 1, resultRevision: null, changed: null, decisionType: null,
   decisionReason: null, failureCode: null, createdAt: '2026-01-01T00:00:00Z', decidedAt: null, completedAt: null };
 const wrappers: ReturnType<typeof mount>[] = []; const clients: QueryClient[] = [];
 function panel() {
@@ -72,6 +72,21 @@ it('settles an unknown command from the immutable proposal outcome without repos
   expect(wrapper.text()).not.toContain('审批结果未知'); expect(wrapper.text()).toContain('写入结果待核对');
   expect(api.decide).toHaveBeenCalledTimes(1);
 });
+it('marks automatic registration, keeps its Diff and failure, and offers no manual decision', async () => {
+  const automatic: api.Proposal = { ...proposal, mode: 'AUTO', modeVersion: '3' };
+  vi.mocked(api.proposals).mockResolvedValue({ items: [automatic], nextCursor: null });
+  vi.mocked(api.proposalStatus).mockResolvedValue(automatic);
+  const wrapper = panel(); await flushPromises();
+  expect(wrapper.text()).toContain('自动应用待校验'); expect(wrapper.text()).toContain('登记模式版本 3');
+  expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false);
+  expect(wrapper.findAll('button').some((item) => item.text() === '批准整批修改')).toBe(false);
+  expect(wrapper.findAll('pre')).toHaveLength(2);
+  vi.mocked(api.proposalStatus).mockResolvedValue({ ...automatic, state: 'FAILED', failureCode: 'STORAGE_BUDGET_EXCEEDED' });
+  await button(wrapper, '重新读取提案').trigger('click'); await flushPromises();
+  expect(wrapper.text()).toContain('自动应用失败'); expect(wrapper.text()).toContain('单场数据容量不足');
+  expect(api.decide).not.toHaveBeenCalled();
+});
+
 it('ignores a late approval response after the owner changes', async () => {
   let complete: (value: api.Proposal) => void = () => {};
   vi.mocked(api.decide).mockImplementation(() => new Promise<api.Proposal>((resolve) => { complete = resolve; }));

@@ -3,7 +3,7 @@ import { request, post } from '../api/request';
 import { decide, proposalDetail, proposalStatus, proposals, type Proposal } from './api';
 vi.mock('../api/request', async (original) => ({ ...await original<typeof import('../api/request')>(), request: vi.fn(), post: vi.fn() }));
 const value: Proposal = { id: '10000000-0000-0000-0000-000000000001', taskId: '10000000-0000-0000-0000-000000000002',
-  sequence: '1', state: 'PENDING', mode: 'ASK', baseRevision: '1', fileCount: 1, resultRevision: null, changed: null, decisionType: null,
+  sequence: '1', state: 'PENDING', mode: 'ASK', modeVersion: '0', baseRevision: '1', fileCount: 1, resultRevision: null, changed: null, decisionType: null,
   decisionReason: null, failureCode: null, createdAt: '2026-01-01T00:00:00Z', decidedAt: null, completedAt: null };
 const signal = new globalThis.AbortController().signal;
 beforeEach(() => vi.resetAllMocks());

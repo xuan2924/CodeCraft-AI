@@ -39,7 +39,7 @@ const command = useCommand<api.Proposal>(() => scope.value, () => {
 watch([status.data, command.uncertain], ([value, uncertain]) => {
   if (uncertain && value?.id === selected.value && value.state !== 'PENDING') command.confirmObserved(value);
 });
-const ready = computed(() => !props.disabled && !!props.credential && proposal.value?.state === 'PENDING'
+const ready = computed(() => !props.disabled && !!props.credential && proposal.value?.state === 'PENDING' && proposal.value.mode === 'ASK'
   && !!detail.data.value && !detail.isError.value && !status.isError.value && !status.isPending.value && !command.pending.value && !command.uncertain.value);
 function decide(decision: 'APPROVE' | 'REJECT') {
   if (!ready.value || decision === 'APPROVE' && !consent.value) return;
@@ -47,6 +47,15 @@ function decide(decision: 'APPROVE' | 'REJECT') {
   const { owner, taskId, credential } = props; const id = selected.value; const explanation = decision === 'REJECT' ? reason.value : null;
   notice.value = '';
   void command.submit((key, signal) => api.decide(owner, taskId, id, credential, decision, explanation, key, signal));
+}
+function label(proposal: api.Proposal): string {
+  if (proposal.mode === 'AUTO') {
+    if (proposal.state === 'PENDING') return '自动应用待校验';
+    if (proposal.state === 'APPLYING') return '自动批准，写入结果待核对';
+    if (proposal.state === 'APPLIED') return '自动应用成功';
+    if (proposal.state === 'FAILED') return '自动应用失败';
+  }
+  return labels[proposal.state];
 }
 const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批审批', APPLYING: '已批准，写入结果待核对', APPLIED: '已应用', REJECTED: '已拒绝', INVALIDATED: '基线已变化，原批准不可复用', FAILED: '未应用', CANCELLED: '已取消' };
 </script>
@@ -81,7 +90,7 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
           :disabled="command.pending.value || command.uncertain.value"
           @click="selected = item.id"
         >
-          {{ labels[item.state] }} · 基线 {{ item.baseRevision }} · {{ item.fileCount }} 个文件
+          {{ label(item) }} · 基线 {{ item.baseRevision }} · {{ item.fileCount }} 个文件
         </NButton>
       </li>
     </ul>
@@ -113,8 +122,8 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
       {{ errorMessage(status.error.value) }}
     </p>
     <template v-if="proposal && detail.data.value">
-      <h4>{{ labels[proposal.state] }} · 提案 {{ proposal.id }}</h4>
-      <p>原始模式 {{ proposal.mode }} · 保存基线 {{ proposal.baseRevision }} · 整批 {{ proposal.fileCount }} 个文件</p>
+      <h4>{{ label(proposal) }} · 提案 {{ proposal.id }}</h4>
+      <p>原始模式 {{ proposal.mode }} · 登记模式版本 {{ proposal.modeVersion }} · 保存基线 {{ proposal.baseRevision }} · 整批 {{ proposal.fileCount }} 个文件</p>
       <p v-if="proposal.resultRevision !== null">
         已确认修订 {{ proposal.resultRevision }} · {{ proposal.changed ? '文件已变化' : '内容无变化' }}
       </p>
@@ -150,7 +159,7 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
           <h5>修改后{{ current.after === null ? ' · 删除文件' : '' }}</h5><pre>{{ current.after }}</pre>
         </details>
       </template>
-      <template v-if="proposal.state === 'PENDING'">
+      <template v-if="proposal.state === 'PENDING' && proposal.mode === 'ASK'">
         <label><input
           v-model="consent"
           type="checkbox"

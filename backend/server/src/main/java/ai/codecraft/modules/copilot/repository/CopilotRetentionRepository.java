@@ -15,6 +15,8 @@ public interface CopilotRetentionRepository {
           UNION ALL SELECT sum(pg_column_size(t)) FROM copilot_tool t WHERE exercise_id=#{exercise}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM copilot_proposal t WHERE exercise_id=#{exercise}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM copilot_test_run t WHERE exercise_id=#{exercise}::uuid
+          UNION ALL SELECT sum(pg_column_size(t)) FROM copilot_approval_mode t WHERE exercise_id=#{exercise}::uuid
+          UNION ALL SELECT sum(pg_column_size(t)) FROM copilot_approval_change t WHERE exercise_id=#{exercise}::uuid
         ) retained
         """)
     long bytes(String exercise);
@@ -24,6 +26,10 @@ public interface CopilotRetentionRepository {
 
     @Select("SELECT test_task_id::text FROM copilot_test_run WHERE exercise_id=#{exercise}::uuid AND state='WAITING'")
     Set<String> protectedTestRecords(String exercise);
+    @Delete("DELETE FROM copilot_approval_change WHERE exercise_id=#{exercise}::uuid")
+    void deleteApprovalChanges(String exercise);
+    @Delete("DELETE FROM copilot_approval_mode WHERE exercise_id=#{exercise}::uuid")
+    void deleteApprovalMode(String exercise);
     @Delete("DELETE FROM copilot_test_run WHERE exercise_id=#{exercise}::uuid")
     void deleteTests(String exercise);
     @Delete("DELETE FROM copilot_proposal WHERE exercise_id=#{exercise}::uuid")

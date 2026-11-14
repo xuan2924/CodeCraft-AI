@@ -2,6 +2,7 @@ package ai.codecraft.modules.copilot.service;
 
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.copilot.model.dto.CopilotPendingProposalDTO;
+import ai.codecraft.modules.copilot.model.dto.CopilotAutoApprovalDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalEvidenceDTO;
@@ -11,6 +12,7 @@ import ai.codecraft.modules.copilot.model.dto.CopilotProposalsResponse;
 import ai.codecraft.modules.copilot.model.entity.CopilotProposalEntity;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
+import ai.codecraft.modules.copilot.repository.CopilotApprovalModeRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
 import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
 import ai.codecraft.modules.identity.model.exception.IdentityFailure;
@@ -39,6 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class CopilotProposalStore {
     private final CopilotProposalRepository proposals;
+    private final CopilotApprovalModeRepository modes;
     private final CopilotTaskRepository tasks;
     private final CopilotTaskStore views;
     private final CopilotExecutionStore execution;
@@ -55,10 +58,10 @@ public class CopilotProposalStore {
     public CopilotProposalStore(CopilotProposalRepository proposals, CopilotTaskRepository tasks, CopilotTaskStore views,
         CopilotExecutionStore execution, IdentityTransactionService identity, IdentitySecrets secrets, ExerciseTransactionService exercises,
         WorkspaceCoordinationStore workspace, WorkspaceWriteTransactionService writes, WorkspaceAiOperationService operations,
-        WorkspaceBatchCodec codec, @Qualifier("workspaceJson") ObjectMapper json, Clock clock) {
+        WorkspaceBatchCodec codec, @Qualifier("workspaceJson") ObjectMapper json, Clock clock, CopilotApprovalModeRepository modes) {
         this.proposals = proposals; this.tasks = tasks; this.views = views; this.execution = execution; this.identity = identity;
         this.secrets = secrets; this.exercises = exercises; this.workspace = workspace; this.writes = writes;
-        this.operations = operations; this.codec = codec; this.json = json; this.clock = clock;
+        this.operations = operations; this.codec = codec; this.json = json; this.clock = clock; this.modes = modes;
     }
 
     @Transactional
@@ -75,11 +78,78 @@ public class CopilotProposalStore {
         String fingerprint = secrets.fingerprint(prepared.workspaceInstanceId() + "\n" + prepared.batchPayload());
         if (proposals.rejected(taskId, fingerprint)) return false;
         String id = UUID.randomUUID().toString();
+        var mode = modes.current(task.exerciseId());
         proposals.insert(new CopilotProposalEntity(id, 0, taskId, toolId, tool.turnId(), task.exerciseId(), task.userId(),
-            prepared.workspaceInstanceId(), Long.parseLong(prepared.revision()), "PENDING", "ASK", prepared.files().size(), prepared.batchPayload(),
-            prepared.diffPayload(), fingerprint, null, null, null, null, null, null, null, null, null, clock.instant(), null, null));
+            prepared.workspaceInstanceId(), Long.parseLong(prepared.revision()), "PENDING", mode == null ? "ASK" : mode.mode(), prepared.files().size(), prepared.batchPayload(),
+            prepared.diffPayload(), fingerprint, null, null, null, null, null, null, null, null, null, clock.instant(), null, null, mode == null ? 0 : mode.version()));
         execution.parkProposal(taskId, worker, toolId);
         return true;
+    }
+
+    @Transactional
+    public CopilotAutoApprovalDTO autoCandidate(String taskId) {
+        var pending = autoPending(taskId, null);
+        if (pending == null) return null;
+        var task = tasks.find(taskId);
+        var evidence = proposals.decisionState(pending.id());
+        return new CopilotAutoApprovalDTO(pending.id(), taskId, pending.exerciseId(), task.sessionHash(), pending.modeVersion(),
+            pending.baseRevision(), evidence.batchPayload());
+    }
+
+    @Transactional
+    public boolean applyAuto(CopilotAutoApprovalDTO source, String payload, StorageMeasurement measurement) {
+        var pending = autoPending(source.taskId(), source.proposalId());
+        if (pending == null) return false;
+        var task = tasks.find(pending.taskId());
+        if (!source.sessionHash().equals(task.sessionHash())) return false;
+        if (!pending.exerciseId().equals(source.exerciseId()) || pending.modeVersion() != source.modeVersion()
+            || pending.baseRevision() != source.baseRevision() || !payload.equals(proposals.decisionState(pending.id()).batchPayload())) {
+            throw new IllegalStateException("Automatic approval evidence changed");
+        }
+        autoDecision(pending);
+        var operation = writes.batchCopilot(task.sessionHash(), pending.exerciseId(), "copilot:" + pending.id(), payload, pending.baseRevision(), measurement);
+        if (proposals.applyingOperation(pending.id(), operation.id()) != 1) throw new IllegalStateException("Automatic approval was not recorded");
+        execution.awaitWrite(task.id(), pending.toolId());
+        return true;
+    }
+
+    @Transactional
+    public void failAuto(String taskId, String proposalId, String code) {
+        var pending = autoPending(taskId, proposalId);
+        if (pending == null) return;
+        autoDecision(pending);
+        resolve(pending, "REVISION_CONFLICT".equals(code) ? "INVALIDATED" : "FAILED", code, null, null, "");
+    }
+
+    private CopilotPendingProposalDTO autoPending(String taskId, String expected) {
+        var initial = tasks.find(taskId);
+        if (initial == null) return null;
+        identity.lockResourceOwner(initial.userId());
+        var task = tasks.find(taskId);
+        if (task == null) return null;
+        var pending = proposals.pending(taskId);
+        if (pending == null || !"AUTO".equals(pending.mode()) || !"PENDING".equals(pending.state()) || task.workerId() != null
+            || expected != null && !expected.equals(pending.id())) return null;
+        var exercise = workspace.exercise(pending.exerciseId());
+        if (task.stopRequested() || ended(exercise)) {
+            if (!task.stopRequested()) tasks.haltIdle(taskId, "EXERCISE_ENDED");
+            resolve(pending, "CANCELLED", task.stopRequested() ? "TASK_STOPPED" : "EXERCISE_ENDED", null, null, "");
+            return null;
+        }
+        var grant = identity.tryAuthorizeMutation(task.sessionHash());
+        if (grant == null || !task.userId().equals(grant.userId()) || !"USER".equals(grant.role()) || grant.passwordChangeRequired() || !clock.instant().isBefore(grant.expiresAt())) {
+            tasks.haltIdle(taskId, "AUTHORIZATION_ENDED");
+            resolve(pending, "CANCELLED", "AUTHORIZATION_ENDED", null, null, "");
+            return null;
+        }
+        if (stale(pending, exercise)) { resolve(pending, "INVALIDATED", "REVISION_CONFLICT", null, null, ""); return null; }
+        if (!"WAITING_APPROVAL".equals(task.state())) throw new IllegalStateException("Automatic proposal lost its waiting task");
+        return pending;
+    }
+
+    private void autoDecision(CopilotPendingProposalDTO proposal) {
+        if (proposals.decision(proposal.id(), "auto:" + proposal.id(), secrets.fingerprint("AUTO\n" + proposal.modeVersion()),
+            "APPROVE", proposal.userId(), null, clock.instant()) != 1) throw new IllegalStateException("Automatic proposal already decided");
     }
 
     @Transactional
@@ -105,7 +175,7 @@ public class CopilotProposalStore {
 
     @Transactional
     public CopilotProposalResponse replay(String session, String id, String key, CopilotProposalDecisionRequest input) {
-        owned(session, id);
+        manual(owned(session, id));
         validate(key, input);
         return replay(proposals.decisionState(id), key, fingerprint(input));
     }
@@ -115,7 +185,7 @@ public class CopilotProposalStore {
         CopilotProposalDecisionRequest input, StorageMeasurement measurement) {
         var grant = identity.authorizeMutation(session);
         if (!"USER".equals(grant.role())) throw new IdentityFailure(IdentityErrorCode.FORBIDDEN);
-        owned(session, id);
+        manual(owned(session, id));
         validate(key, input);
         var proposal = proposals.decisionState(id);
         String fingerprint = fingerprint(input);
@@ -174,6 +244,10 @@ public class CopilotProposalStore {
         } else if (task.stopRequested() || ended(exercise)) {
             resolve(pending, "CANCELLED", task.stopRequested() ? "TASK_STOPPED" : "EXERCISE_ENDED", null, null, "");
         } else if (stale(pending, exercise)) resolve(pending, "INVALIDATED", "REVISION_CONFLICT", null, null, "");
+    }
+
+    private void manual(CopilotPendingProposalDTO proposal) {
+        if ("AUTO".equals(proposal.mode())) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
     }
 
     private void reauthorize(String task, String session) {
