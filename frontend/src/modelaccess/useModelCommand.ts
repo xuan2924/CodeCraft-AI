@@ -1,6 +1,5 @@
 import { onScopeDispose, ref, watch } from 'vue';
-import { ApiError } from '../api/request';
-import { definitiveRejection, errorMessage } from './errors';
+import { definitiveRejection, errorMessage, identityFailure } from './errors';
 
 type Operation<T> = (key: string, signal: AbortSignal) => Promise<T>;
 
@@ -35,7 +34,7 @@ export function useModelCommand<T>(scope: () => string, succeeded: (result: T) =
       error.value = errorMessage(failure);
       if (!wasUncertain && definitiveRejection(failure)) { attempt = null; uncertain.value = false; }
       else uncertain.value = true;
-      if (failure instanceof ApiError && failure.status === 401) unauthorized();
+      if (identityFailure(failure)) unauthorized();
       return;
     } finally { if (!disposed && token === generation) pending.value = false; }
     if (disposed || token !== generation) return;

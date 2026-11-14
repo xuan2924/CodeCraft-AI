@@ -56,12 +56,16 @@ async function submitPassword() {
         CodeCraft / 工程底座
       </p>
       <h1>{{ identity ? '账号' : '受邀账号登录' }}</h1>
-      <p>内部工程验证入口。AI 与完整面试流程尚未接入。</p>
+      <p>内部工程验证入口。模型连接与检查可单独配置，演练内 Copilot 与完整面试流程尚未接入。</p>
       <RouterLink to="/">查看服务链路</RouterLink>
       <RouterLink
         v-if="identity && !identity.passwordChangeRequired"
         :to="{ name: 'workspace' }"
       >题目与工作区</RouterLink>
+      <RouterLink
+        v-if="identity?.role === 'USER' && !identity.passwordChangeRequired"
+        :to="{ name: 'models' }"
+      >个人模型连接</RouterLink>
     </header>
     <section
       aria-label="账号操作"

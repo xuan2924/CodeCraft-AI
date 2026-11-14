@@ -3,6 +3,14 @@ import { expect, it, vi } from 'vitest';
 import { ApiError } from '../api/request';
 import { useModelCommand } from './useModelCommand';
 
+it.each(['PASSWORD_CHANGE_REQUIRED', 'FORBIDDEN'])('clears the private view when the server revokes model access: %s', async (code) => {
+  const scope = effectScope(); const unauthorized = vi.fn();
+  const command = scope.run(() => useModelCommand<unknown>(() => 'owner', vi.fn(), unauthorized));
+  if (!command) throw new Error('Missing test scope');
+  await command.submit(async () => { throw new ApiError(403, code); });
+  expect(unauthorized).toHaveBeenCalledOnce();
+  scope.stop();
+});
 it('ignores a late completion after account or selected-resource scope changes', async () => {
   const scope = effectScope();
   const owner = ref('owner-a/connection-a');

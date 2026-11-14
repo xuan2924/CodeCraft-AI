@@ -1,4 +1,4 @@
-import { ApiError, object, post, put, remove, request } from '../api/request';
+import { ApiError, object, ownerHeaders, post, put, remove, request } from '../api/request';
 
 export const protocols = ['OPENAI_CHAT', 'OPENAI_RESPONSES', 'ANTHROPIC'] as const;
 export const presets = ['DEEPSEEK', 'GLM', 'KIMI', 'OPENAI', 'CUSTOM'] as const;
@@ -95,43 +95,47 @@ function page<T>(value: unknown, key: string, parse: (value: unknown) => T): Pag
 function path(id: string): string { return encodeURIComponent(uuid(id)); }
 function after(cursor: string | null): string { return cursor ? `?after=${path(cursor)}` : ''; }
 
-export async function connections(cursor: string | null, signal: AbortSignal): Promise<Page<Connection>> {
-  return page(await request(`/api/model-connections${after(cursor)}`, signal), 'connections', connection);
+export async function connections(cursor: string | null, signal: AbortSignal, owner?: string): Promise<Page<Connection>> {
+  return page(await request(`/api/model-connections${after(cursor)}`, signal, { headers: ownerHeaders(owner) }), 'connections', connection);
 }
-export async function getConnection(id: string, signal: AbortSignal): Promise<Connection> {
-  const result = connection(await request(`/api/model-connections/${path(id)}`, signal)); if (result.id !== id) return invalid(); return result;
+export async function getConnection(id: string, signal: AbortSignal, owner?: string): Promise<Connection> {
+  const result = connection(await request(`/api/model-connections/${path(id)}`, signal, { headers: ownerHeaders(owner) })); if (result.id !== id) return invalid(); return result;
 }
-export async function saveConnection(id: string | null, input: ConnectionInput, key: string, signal: AbortSignal): Promise<Connection> {
-  const result = connection(await (id ? put(`/api/model-connections/${path(id)}`, input, signal, key) : post('/api/model-connections', input, signal, key)));
+export async function saveConnection(id: string | null, input: ConnectionInput, key: string, signal: AbortSignal, owner?: string): Promise<Connection> {
+  const result = connection(await (id ? put(`/api/model-connections/${path(id)}`, input, signal, key, owner) : post('/api/model-connections', input, signal, key, undefined, owner)));
   if (id && result.id !== id || result.deleted) return invalid(); return result;
 }
-export async function deleteConnection(id: string, expectedVersion: string, key: string, signal: AbortSignal): Promise<Connection> {
-  const result = connection(await remove(`/api/model-connections/${path(id)}`, signal, key, { expectedVersion }));
+export async function deleteConnection(id: string, expectedVersion: string, key: string, signal: AbortSignal, owner?: string): Promise<Connection> {
+  const result = connection(await remove(`/api/model-connections/${path(id)}`, signal, key, { expectedVersion }, owner));
   if (result.id !== id || !result.deleted) return invalid(); return result;
 }
-export async function models(connectionId: string, cursor: string | null, signal: AbortSignal): Promise<Page<Model>> {
-  const result = page(await request(`/api/model-connections/${path(connectionId)}/models${after(cursor)}`, signal), 'models', model);
+export async function models(connectionId: string, cursor: string | null, signal: AbortSignal, owner?: string): Promise<Page<Model>> {
+  const result = page(await request(`/api/model-connections/${path(connectionId)}/models${after(cursor)}`, signal, { headers: ownerHeaders(owner) }), 'models', model);
   if (result.items.some((item) => item.connectionId !== connectionId)) return invalid(); return result;
 }
-export async function saveModel(connectionId: string, id: string | null, input: ModelInput, key: string, signal: AbortSignal): Promise<Model> {
-  const result = model(await (id ? put(`/api/model-configurations/${path(id)}`, input, signal, key)
-    : post(`/api/model-connections/${path(connectionId)}/models`, input, signal, key)));
+export async function getModel(connectionId: string, id: string, signal: AbortSignal, owner?: string): Promise<Model> {
+  const result = model(await request(`/api/model-configurations/${path(id)}`, signal, { headers: ownerHeaders(owner) }));
+  if (result.id !== id || result.connectionId !== connectionId) return invalid(); return result;
+}
+export async function saveModel(connectionId: string, id: string | null, input: ModelInput, key: string, signal: AbortSignal, owner?: string): Promise<Model> {
+  const result = model(await (id ? put(`/api/model-configurations/${path(id)}`, input, signal, key, owner)
+    : post(`/api/model-connections/${path(connectionId)}/models`, input, signal, key, undefined, owner)));
   if (result.connectionId !== connectionId || id && result.id !== id || result.deleted) return invalid(); return result;
 }
-export async function deleteModel(id: string, expectedVersion: string, key: string, signal: AbortSignal): Promise<Model> {
-  const result = model(await remove(`/api/model-configurations/${path(id)}`, signal, key, { expectedVersion }));
+export async function deleteModel(id: string, expectedVersion: string, key: string, signal: AbortSignal, owner?: string): Promise<Model> {
+  const result = model(await remove(`/api/model-configurations/${path(id)}`, signal, key, { expectedVersion }, owner));
   if (result.id !== id || !result.deleted) return invalid(); return result;
 }
-export async function startCheck(modelId: string, key: string, signal: AbortSignal): Promise<Check> {
-  const result = check(await post(`/api/model-configurations/${path(modelId)}/checks`, { feeAcknowledged: true }, signal, key));
+export async function startCheck(modelId: string, key: string, signal: AbortSignal, owner?: string): Promise<Check> {
+  const result = check(await post(`/api/model-configurations/${path(modelId)}/checks`, { feeAcknowledged: true }, signal, key, undefined, owner));
   if (result.modelConfigurationId !== modelId) return invalid(); return result;
 }
-export async function getCheck(id: string, signal: AbortSignal): Promise<CheckStatus> {
-  const result = checkStatus(await request(`/api/model-checks/${path(id)}`, signal)); if (result.check.id !== id) return invalid(); return result;
+export async function getCheck(id: string, signal: AbortSignal, owner?: string): Promise<CheckStatus> {
+  const result = checkStatus(await request(`/api/model-checks/${path(id)}`, signal, { headers: ownerHeaders(owner) })); if (result.check.id !== id) return invalid(); return result;
 }
-export async function latestCheck(modelId: string, signal: AbortSignal): Promise<CheckStatus | null> {
+export async function latestCheck(modelId: string, signal: AbortSignal, owner?: string): Promise<CheckStatus | null> {
   try {
-    const result = checkStatus(await request(`/api/model-configurations/${path(modelId)}/checks/latest`, signal));
+    const result = checkStatus(await request(`/api/model-configurations/${path(modelId)}/checks/latest`, signal, { headers: ownerHeaders(owner) }));
     if (result.check.modelConfigurationId !== modelId) return invalid(); return result;
   } catch (failure) {
     if (failure instanceof ApiError && failure.status === 404 && failure.code === 'MODEL_CHECK_NOT_FOUND') return null;

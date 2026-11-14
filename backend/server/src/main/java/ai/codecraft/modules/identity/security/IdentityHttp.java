@@ -14,6 +14,7 @@ public final class IdentityHttp {
     public static final String SESSION_COOKIE = "codecraft_session";
     public static final String ANONYMOUS_COOKIE = "codecraft_csrf";
     public static final String CSRF_HEADER = "X-CSRF-TOKEN";
+    public static final String EXPECTED_OWNER_HEADER = "X-Codecraft-Owner";
 
     private IdentityHttp() { }
 

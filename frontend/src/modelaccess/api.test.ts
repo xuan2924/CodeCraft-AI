@@ -15,22 +15,30 @@ const response = (data: unknown) => new Response(JSON.stringify({ code: 'OK', da
 afterEach(() => vi.unstubAllGlobals());
 
 it('keeps only non-secret response metadata instead of copying arbitrary server fields into query caches', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ ...connection, apiKey: 'fixture-secret' })));
-  expect(await api.getConnection(connectionId, signal())).toEqual(connection);
+  const fetch = vi.fn().mockResolvedValue(response({ ...connection, apiKey: 'fixture-secret' }));
+  vi.stubGlobal('fetch', fetch);
+  expect(await api.getConnection(connectionId, signal(), 'owner-a')).toEqual(connection);
+  expect(fetch.mock.calls[0]?.[1]).toMatchObject({ headers: { 'X-Codecraft-Owner': 'owner-a' } });
+});
+it.each([model, { ...model, id: checkId }, { ...model, connectionId: checkId }])('binds model detail to both requested resource identities', async (value) => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(value)));
+  const result = api.getModel(connectionId, modelId, signal(), 'owner-a');
+  if (value.id === modelId && value.connectionId === connectionId) await expect(result).resolves.toEqual(model);
+  else await expect(result).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
 });
 it('updates through shared PUT/CSRF without silently testing the saved credential', async () => {
   const fetch = vi.fn().mockResolvedValueOnce(response({ token: 'csrf' })).mockResolvedValueOnce(response(connection));
   vi.stubGlobal('fetch', fetch);
   const input: api.ConnectionInput = { name: 'Fixture', baseUrl: 'https://example.test', protocol: 'OPENAI_CHAT', preset: 'CUSTOM', apiKey: 'fixture-secret', expectedVersion: '1' };
-  await api.saveConnection(connectionId, input, 'original-command', signal());
+  await api.saveConnection(connectionId, input, 'original-command', signal(), 'owner-a');
   expect(fetch).toHaveBeenCalledTimes(2);
-  expect(fetch.mock.calls[1]?.[1]).toMatchObject({ method: 'PUT', body: JSON.stringify(input), headers: { 'Idempotency-Key': 'original-command', 'X-CSRF-TOKEN': 'csrf' } });
+  expect(fetch.mock.calls[1]?.[1]).toMatchObject({ method: 'PUT', body: JSON.stringify(input), headers: { 'Idempotency-Key': 'original-command', 'X-CSRF-TOKEN': 'csrf', 'X-Codecraft-Owner': 'owner-a' } });
 });
 it('preserves the deletion version in the JSON body', async () => {
   const fetch = vi.fn().mockResolvedValueOnce(response({ token: 'csrf' })).mockResolvedValueOnce(response({ ...model, deleted: true }));
   vi.stubGlobal('fetch', fetch);
-  await api.deleteModel(modelId, '1', 'original-delete', signal());
-  expect(fetch.mock.calls[1]?.[1]).toMatchObject({ method: 'DELETE', body: '{"expectedVersion":"1"}' });
+  await api.deleteModel(modelId, '1', 'original-delete', signal(), 'owner-a');
+  expect(fetch.mock.calls[1]?.[1]).toMatchObject({ method: 'DELETE', body: '{"expectedVersion":"1"}', headers: { 'X-Codecraft-Owner': 'owner-a' } });
 });
 it('rejects another connections model rather than showing it under the selected credential', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ models: [{ ...model, connectionId: checkId }], nextCursor: null })));
@@ -45,9 +53,9 @@ it.each(['MODEL_CHECK_NOT_FOUND', 'MODEL_CONFIGURATION_NOT_FOUND', 'REQUEST_FAIL
 it('does not retry a possibly accepted check after a network failure', async () => {
   const fetch = vi.fn().mockResolvedValueOnce(response({ token: 'csrf' })).mockRejectedValueOnce(new TypeError('fixture offline'));
   vi.stubGlobal('fetch', fetch);
-  await expect(api.startCheck(modelId, 'original-check', signal())).rejects.toBeInstanceOf(TypeError);
+  await expect(api.startCheck(modelId, 'original-check', signal(), 'owner-a')).rejects.toBeInstanceOf(TypeError);
   expect(fetch).toHaveBeenCalledTimes(2);
-  expect(fetch.mock.calls[1]?.[1]).toMatchObject({ body: '{"feeAcknowledged":true}' });
+  expect(fetch.mock.calls[1]?.[1]).toMatchObject({ body: '{"feeAcknowledged":true}', headers: { 'X-Codecraft-Owner': 'owner-a' } });
 });
 it('keeps basic and tool timestamps separate and rejects a mismatched check identity', async () => {
   const fetch = vi.fn().mockResolvedValueOnce(response({ check, reason: null, currentConfiguration: true, basic: item, tool: { ...item, reused: false } }))

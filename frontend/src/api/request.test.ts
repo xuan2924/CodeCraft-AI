@@ -1,7 +1,11 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { remove } from './request';
+import { ownerHeaders, remove } from './request';
 
 afterEach(() => vi.unstubAllGlobals());
+it('does not silently drop an explicitly empty owner condition', () => {
+  expect(ownerHeaders('')).toEqual({ 'X-Codecraft-Owner': '' });
+  expect(ownerHeaders()).toEqual({});
+});
 it('sends the original deletion version and idempotency key through the shared CSRF boundary', async () => {
   const fetch = vi.fn()
     .mockResolvedValueOnce(new Response(JSON.stringify({ code: 'OK', data: { token: 'csrf' } })))

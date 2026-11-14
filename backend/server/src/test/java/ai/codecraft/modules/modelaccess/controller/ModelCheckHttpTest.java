@@ -33,6 +33,7 @@ import ai.codecraft.modules.modelaccess.model.dto.ModelCheckStatusResponse;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckItemResponse;
 import ai.codecraft.modules.modelaccess.model.exception.ModelAccessErrorCode;
 import ai.codecraft.modules.modelaccess.service.ModelCheckService;
+import ai.codecraft.modules.modelaccess.service.ModelConnectionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.Filter;
 import jakarta.servlet.http.Cookie;
@@ -110,6 +111,39 @@ class ModelCheckHttpTest {
     }
 
     @Test
+    void expectedOwnerMismatchRejectsReadsAndCommandsBeforeBusinessDispatch() throws Exception {
+        mvc.perform(start().header(IdentityHttp.CSRF_HEADER, "fixture-csrf").header("X-Codecraft-Owner", "previous-owner")
+            .content("{\"feeAcknowledged\":true}"))
+            .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+        String path = "/api/model-checks/" + CHECK;
+        mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header("X-Codecraft-Owner", "previous-owner"))
+            .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+        verify(checks, never()).start(any(), anyString(), any(), anyBoolean());
+        verify(checks, never()).status(any(), anyString());
+    }
+
+    @Test
+    void staleTabCannotSaveItsCredentialUnderTheNewCookieOwner() throws Exception {
+        String path = "/api/model-connections";
+        mvc.perform(post(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN))
+            .header("Origin", "https://app.example.test").header(IdentityHttp.CSRF_HEADER, "fixture-csrf")
+            .header("X-Codecraft-Owner", "previous-owner").header("Idempotency-Key", "original-create")
+            .contentType("application/json").content("""
+                {"name":"fixture","protocol":"OPENAI_CHAT","preset":"CUSTOM","baseUrl":"https://fixture.example",
+                 "apiKey":"fixture-previous-owner-secret","expectedVersion":null}
+                """))
+            .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+        verify(context.getBean(ModelConnectionService.class), never()).create(any(), any(), any());
+    }
+
+    @Test
+    void matchingExpectedOwnerAllowsTheExplicitCommand() throws Exception {
+        mvc.perform(start().header(IdentityHttp.CSRF_HEADER, "fixture-csrf").header("X-Codecraft-Owner", "owner")
+            .content("{\"feeAcknowledged\":true}")).andExpect(status().isAccepted());
+        verify(checks).start(HASH, MODEL, "request", true);
+    }
+
+    @Test
     void omittedFeeAcknowledgementIsFalseAndRejected() throws Exception {
         mvc.perform(start().header(IdentityHttp.CSRF_HEADER, "fixture-csrf").content("{}"))
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("MODEL_CHECK_FEE_ACKNOWLEDGEMENT_REQUIRED"));
@@ -157,9 +191,10 @@ class ModelCheckHttpTest {
     @Configuration
     @EnableWebMvc
     @EnableWebSecurity
-    @Import({IdentitySecurity.class, ModelCheckController.class, ModelAccessErrors.class, GlobalExceptionHandler.class})
+    @Import({IdentitySecurity.class, ModelCheckController.class, ModelConnectionController.class, ModelAccessErrors.class, GlobalExceptionHandler.class})
     static class Fixture {
         @Bean ModelCheckService checks() { return mock(ModelCheckService.class); }
+        @Bean ModelConnectionService connections() { return mock(ModelConnectionService.class); }
         @Bean IdentityTransactionService identity() { return mock(IdentityTransactionService.class); }
         @Bean IdentitySecrets secrets() { return mock(IdentitySecrets.class); }
         @Bean IdentitySettings settings() { return new IdentitySettings("https://app.example.test", "00".repeat(32), "", ""); }

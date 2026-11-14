@@ -29,20 +29,21 @@ export function events(path: string, types: readonly string[], receive: (type: s
   signal.addEventListener('abort', close, { once: true });
   return close;
 }
-export async function post(path: string, body: unknown, signal: AbortSignal, key?: string, operationCredential?: string): Promise<unknown> {
-  return mutate('POST', path, body, signal, key, operationCredential);
+export function ownerHeaders(owner?: string): Record<string, string> { return owner === undefined ? {} : { 'X-Codecraft-Owner': owner }; }
+export async function post(path: string, body: unknown, signal: AbortSignal, key?: string, operationCredential?: string, owner?: string): Promise<unknown> {
+  return mutate('POST', path, body, signal, key, operationCredential, owner);
 }
-export async function put(path: string, body: unknown, signal: AbortSignal, key: string): Promise<unknown> {
-  return mutate('PUT', path, body, signal, key);
+export async function put(path: string, body: unknown, signal: AbortSignal, key: string, owner?: string): Promise<unknown> {
+  return mutate('PUT', path, body, signal, key, undefined, owner);
 }
-export async function remove(path: string, signal: AbortSignal, key: string, body?: unknown): Promise<unknown> {
-  return mutate('DELETE', path, body, signal, key);
+export async function remove(path: string, signal: AbortSignal, key: string, body?: unknown, owner?: string): Promise<unknown> {
+  return mutate('DELETE', path, body, signal, key, undefined, owner);
 }
-async function mutate(method: 'POST' | 'PUT' | 'DELETE', path: string, body: unknown, signal: AbortSignal, key?: string, operationCredential?: string): Promise<unknown> {
+async function mutate(method: 'POST' | 'PUT' | 'DELETE', path: string, body: unknown, signal: AbortSignal, key?: string, operationCredential?: string, owner?: string): Promise<unknown> {
   // Fresh CSRF per explicit action; never automatically replay a side effect.
   const csrf = await request('/api/auth/csrf', signal);
   if (!object(csrf) || typeof csrf.token !== 'string') throw new ApiError(502, 'INVALID_RESPONSE');
   return request(path, signal, { method, headers: { 'Content-Type': 'application/json',
-    'X-CSRF-TOKEN': csrf.token, ...(key ? { 'Idempotency-Key': key } : {}),
+    'X-CSRF-TOKEN': csrf.token, ...ownerHeaders(owner), ...(key ? { 'Idempotency-Key': key } : {}),
     ...(operationCredential ? { 'X-Operation-Credential': operationCredential } : {}) }, body: JSON.stringify(body) });
 }

@@ -55,6 +55,7 @@
 Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开发环境固定使用同一主机名，不混用 localhost 与 127.0.0.1。浏览器不直接访问 Java 的另一端口；不开放带凭证的跨源 CORS。后端信任明确配置的公共源，不从任意转发头推导可信来源。
 
 - GET 不做业务写入。所有 POST/PUT/PATCH/DELETE（含登录、退出）验证 CSRF Token 和来源；`Origin` 必须精确匹配公共源，缺失时用 `Referer` 的源，均缺失或不匹配则拒绝。不能只依赖 SameSite。
+- 已认证 REST 请求支持可选 `X-Codecraft-Owner` 条件头：提供时必须等于该请求 Cookie 所属的当前用户 ID（空值也拒绝），不匹配返回 401 `UNAUTHENTICATED`，在进入业务前拒绝；它不是授权凭证，也不替代新鲜鉴权、资源归属或 CSRF。模型设置页所有模型读写必须携带已确认账号 ID，防止其他标签页切换 Cookie 后将旧页 Key 保存到新账号或把新账号数据写入旧账号查询缓存。旧客户端不携带时保持既有接口兼容；会话发现和 CSRF 获取不绑定旧账号，以便重新确认身份。
 - `GET /api/auth/csrf` 返回 CSRF Token（不缓存），前端仅内存保存并在 `X-CSRF-TOKEN` 请求头提交。登录前使用短期匿名 CSRF 上下文，登录成功后换为登录会话绑定上下文；具体 `CsrfTokenRepository` 适配由任务 07 测试，不直接依赖进程内 HttpSession。
 - 登录、退出后重新获取 Token；旧上下文不能继续写入。匿名上下文寿命和限额由任务 07 随登录限流实现，不得无限建表。安全过滤器异常使用明确 HTTP 状态，不返回 HTML 登录重定向。
 

@@ -109,6 +109,11 @@ public class IdentitySecurity {
                 String path = request.getServletPath();
                 if (!List.of("/api/internal/status", "/api/auth/csrf", "/api/auth/login", "/api/auth/logout", "/error").contains(path)) {
                     AuthenticatedIdentityDTO auth = store.authenticate(IdentityHttp.sessionHash(request));
+                    // Optional client ownership condition: a stale tab must not read or submit secrets under a newly switched cookie.
+                    String expectedOwner = request.getHeader(IdentityHttp.EXPECTED_OWNER_HEADER);
+                    if (expectedOwner != null && !auth.identity().id().equals(expectedOwner)) {
+                        throw new IdentityFailure(IdentityErrorCode.UNAUTHENTICATED);
+                    }
                     boolean ownRevocation = auth.user().passwordChangeRequired() && request.getMethod().equals("GET")
                         && path.matches("/api/operations/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
                         && store.revocation(IdentityHttp.sessionHash(request), path.substring("/api/operations/".length())) != null;
