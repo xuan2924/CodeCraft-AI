@@ -83,6 +83,7 @@ public class CopilotProposalStore {
             prepared.workspaceInstanceId(), Long.parseLong(prepared.revision()), "PENDING", mode == null ? "ASK" : mode.mode(), prepared.files().size(), prepared.batchPayload(),
             prepared.diffPayload(), fingerprint, null, null, null, null, null, null, null, null, null, clock.instant(), null, null, mode == null ? 0 : mode.version()));
         execution.parkProposal(taskId, worker, toolId);
+        execution.steerIdle(taskId);
         return true;
     }
 

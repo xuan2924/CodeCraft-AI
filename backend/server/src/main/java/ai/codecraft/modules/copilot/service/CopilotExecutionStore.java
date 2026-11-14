@@ -15,6 +15,7 @@ import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import java.nio.charset.StandardCharsets;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
+import ai.codecraft.modules.copilot.repository.CopilotSteerRepository;
 import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
@@ -55,12 +56,43 @@ public class CopilotExecutionStore {
     private final CopilotProposalRepository proposals;
     private final IdentitySecrets secrets;
     private final CopilotTestLifecycle tests;
+    private final CopilotSteerRepository steers;
 
     public CopilotExecutionStore(CopilotTaskRepository tasks, IdentityTransactionService identity,
         WorkspaceCoordinationStore workspace, ExerciseModelService models, WorkspaceAiOperationService operations,
-        CopilotProperties limits, Clock clock, CopilotRequestFactory requests, CopilotProposalRepository proposals, IdentitySecrets secrets, CopilotTestLifecycle tests) {
+        CopilotProperties limits, Clock clock, CopilotRequestFactory requests, CopilotProposalRepository proposals, IdentitySecrets secrets, CopilotTestLifecycle tests, CopilotSteerRepository steers) {
         this.tasks = tasks; this.identity = identity; this.workspace = workspace; this.models = models;
-        this.operations = operations; this.limits = limits; this.clock = clock; this.requests = requests; this.proposals = proposals; this.secrets = secrets; this.tests = tests;
+        this.operations = operations; this.limits = limits; this.clock = clock; this.requests = requests; this.proposals = proposals; this.secrets = secrets; this.tests = tests; this.steers = steers;
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void steerIdle(String id) {
+        var initial = tasks.find(id);
+        if (initial == null) return;
+        identity.lockResourceOwner(initial.userId());
+        var task = tasks.find(id);
+        if (task != null && task.workerId() == null && supersedeOldBatch(task)) tasks.wake(id);
+    }
+
+    @Transactional
+    public boolean steerAtBoundary(String id, String worker) {
+        var task = owned(id, worker);
+        return task != null && supersedeOldBatch(task);
+    }
+
+    private boolean supersedeOldBatch(CopilotTaskEntity task) {
+        if (task.stopRequested() || !steers.unstaged(task.id()) || proposals.applying(task.id()) || tests.waiting(task.id())) return false;
+        var turn = tasks.latestTurn(task.id());
+        if (turn == null || !"TOOLS".equals(turn.state())) return false;
+        var current = tasks.toolAt(turn.id(), turn.toolPosition());
+        if (current != null && "RUNNING".equals(current.state())) return false;
+        interruptBatch(task, turn, "STEER_SUPERSEDED");
+        return true;
+    }
+
+    private void unappliedSteers(CopilotTaskEntity task, String reason) {
+        for (String steer : steers.pendingIds(task.id())) operations.settle(task.exerciseId(), steer, false);
+        steers.notApplied(task.id(), reason == null ? "TASK_FINISHED" : reason, clock.instant());
     }
 
     @Transactional
@@ -90,11 +122,23 @@ public class CopilotExecutionStore {
             Long.parseLong(target.model().configurationVersion()), target.connection().protocol().name(), target.model().modelId(),
             target.model().contextWindow(), null, 0, clock.instant(), notAfter, null, null);
         operations.reserve(task.sessionHash(), task.exerciseId(), turn.id(), "COPILOT_MODEL", measurement, MODEL_CREDIT);
+        var adjustments = steers.pending(id);
+        for (var steer : adjustments) {
+            String message = UUID.randomUUID().toString();
+            tasks.message(new CopilotMessageEntity(0, message, id, task.exerciseId(), "USER", steer.messagePayload(), clock.instant()));
+            if (steers.stage(steer.id(), message) != 1) throw new IllegalStateException("Steer already included in another request");
+        }
+        if (tasks.contextBytes(task.exerciseId()) > limits.contextBytes()) throw new BusinessException(CopilotErrorCode.COPILOT_CONTEXT_REQUIRED);
         boolean converted = tasks.foreignHistory(task.exerciseId(), turn.connectionId(), turn.modelConfigurationId(), turn.connectionConfigurationVersion(), turn.modelConfigurationVersion());
         var request = requests.create(target, tasks.context(task.exerciseId()).stream().map(CopilotMessageEntity::payload).toList(), converted);
         tasks.turn(turn);
         tasks.configuration(turn.id(), evidencePayload(Map.of("connection", target.connection(), "model", target.model())));
         tasks.historyMode(turn.id(), converted);
+        if (!adjustments.isEmpty()) {
+            if (steers.applied(id, turn.id(), clock.instant()) != adjustments.size()) throw new IllegalStateException("Steer dispatch lost its ordered instructions");
+            for (var steer : adjustments) operations.settle(task.exerciseId(), steer.id(), true);
+            tasks.resetProgress(id);
+        }
         tasks.renew(id, worker, clock.instant().plus(limits.workerLease()));
         return new CopilotModelDispatchDTO(turn, target, request, converted);
     }
@@ -144,7 +188,7 @@ public class CopilotExecutionStore {
     @Transactional
     public CopilotToolEntity beginTool(String id, String worker, String turnId, ToolExecutionRequest request, StorageMeasurement measurement) {
         var task = owned(id, worker);
-        if (task == null || task.stopRequested()) return null;
+        if (task == null || task.stopRequested() || steers.unstaged(id)) return null;
         var turn = tasks.latestTurn(id);
         if (turn == null || !turn.id().equals(turnId) || !"TOOLS".equals(turn.state())) return null;
         var assistant = (AiMessage) ChatMessageDeserializer.messageFromJson(tasks.messageById(turn.assistantMessageId()).payload());
@@ -249,13 +293,15 @@ public class CopilotExecutionStore {
     /** Unknown writes must be reconciled before remaining protocol results can be synthesized. */
     private void interruptBatch(CopilotTaskEntity task, CopilotTurnEntity turn, String reason) {
         if (proposals.applying(task.id()) || tests.waiting(task.id())) throw new IllegalStateException("Unconfirmed child operation cannot be interrupted");
-        proposals.cancelPending(task.id(), reason, clock.instant());
+        if ("STEER_SUPERSEDED".equals(reason)) proposals.invalidateSteered(task.id(), clock.instant());
+        else proposals.cancelPending(task.id(), reason, clock.instant());
         var assistant = (AiMessage) ChatMessageDeserializer.messageFromJson(tasks.messageById(turn.assistantMessageId()).payload());
         for (int position = turn.toolPosition(); position < assistant.toolExecutionRequests().size(); position++) {
             var request = assistant.toolExecutionRequests().get(position);
             String message = UUID.randomUUID().toString();
             var existing = tasks.toolAt(turn.id(), position);
-            String result = existing == null || "WAITING_APPROVAL".equals(existing.state()) ? "{\"code\":\"NOT_EXECUTED\"}" : "{\"code\":\"INTERRUPTED\"}";
+            String result = "STEER_SUPERSEDED".equals(reason) ? "{\"code\":\"NOT_EXECUTED\",\"reason\":\"STEER_SUPERSEDED\"}"
+                : existing == null || "WAITING_APPROVAL".equals(existing.state()) ? "{\"code\":\"NOT_EXECUTED\"}" : "{\"code\":\"INTERRUPTED\"}";
             tasks.message(new CopilotMessageEntity(0, message, task.id(), task.exerciseId(), "TOOL",
                 ChatMessageSerializer.messageToJson(ToolExecutionResultMessage.from(request, result)), clock.instant()));
             if (existing != null && ("RUNNING".equals(existing.state()) || "WAITING_APPROVAL".equals(existing.state()))) {
@@ -270,6 +316,7 @@ public class CopilotExecutionStore {
     @Transactional
     public boolean madeProgress(String id, String worker, String turnId) {
         if (owned(id, worker) == null) return false;
+        if (steers.unstaged(id)) { tasks.resetProgress(id); return true; }
         var turn = tasks.latestTurn(id);
         if (turn == null || !turnId.equals(turn.id()) || !"SUCCEEDED".equals(turn.state())) throw new IllegalStateException("Batch is not complete");
         String signature = tasks.batchSignature(turnId);
@@ -284,12 +331,21 @@ public class CopilotExecutionStore {
     public void finish(String id, String worker, String state, String reason) {
         var task = owned(id, worker);
         if (task == null || proposals.applying(id) || tests.waiting(id)) return;
+        if ("SUCCEEDED".equals(state) && !task.stopRequested() && steers.pendingCount(id) > 0) {
+            var exercise = workspace.exercise(task.exerciseId());
+            if (exercise != null && "ACTIVE".equals(exercise.state()) && exercise.deadlineAt() != null && clock.instant().isBefore(exercise.deadlineAt())) {
+                tasks.park(id, worker, "QUEUED", "STEER_PENDING");
+                return;
+            }
+            state = "INTERRUPTED"; reason = "EXERCISE_ENDED";
+        }
         var turn = tasks.latestTurn(id);
         if (turn != null && "DISPATCHED".equals(turn.state())) {
             tasks.failTurn(turn.id(), "FAILED", reason, clock.instant());
             operations.settle(task.exerciseId(), turn.id(), false);
         }
         if (turn != null && "TOOLS".equals(turn.state())) interruptBatch(task, turn, reason);
+        if (!"PAUSED".equals(state)) unappliedSteers(task, reason);
         tasks.finish(id, worker, state, reason, "PAUSED".equals(state) ? null : clock.instant());
     }
 
@@ -310,6 +366,7 @@ public class CopilotExecutionStore {
             operations.settle(task.exerciseId(), turn.id(), false);
         }
         if (turn != null && "TOOLS".equals(turn.state())) interruptBatch(task, turn, "SERVICE_INTERRUPTED");
+        unappliedSteers(task, "SERVICE_INTERRUPTED");
         tasks.finish(id, task.workerId(), task.stopRequested() ? "STOPPED" : "INTERRUPTED", "SERVICE_INTERRUPTED", clock.instant());
     }
 
@@ -332,6 +389,7 @@ public class CopilotExecutionStore {
         String reason = task.reason() == null ? "USER_STOP" : task.reason();
         var turn = tasks.latestTurn(task.id());
         if (turn != null && "TOOLS".equals(turn.state())) interruptBatch(task, turn, reason);
+        unappliedSteers(task, reason);
         tasks.finishIdle(task.id(), "USER_STOP".equals(reason) ? "STOPPED" : "INTERRUPTED", reason, clock.instant());
     }
 

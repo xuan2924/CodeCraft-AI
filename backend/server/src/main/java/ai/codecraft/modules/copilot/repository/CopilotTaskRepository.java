@@ -33,6 +33,8 @@ public interface CopilotTaskRepository {
     void insert(CopilotTaskEntity task);
     @Update("UPDATE copilot_task SET no_progress_count=CASE WHEN last_progress_signature=#{signature} THEN no_progress_count+1 ELSE 0 END,last_progress_signature=#{signature} WHERE id=#{id}::uuid")
     void progress(String id, String signature);
+    @Update("UPDATE copilot_task SET no_progress_count=0,last_progress_signature=NULL WHERE id=#{id}::uuid")
+    void resetProgress(String id);
     @Select("SELECT no_progress_count FROM copilot_task WHERE id=#{id}::uuid")
     int noProgress(String id);
     @Select("SELECT id::text FROM copilot_task WHERE state='STOPPING' ORDER BY created_at,id LIMIT 100")

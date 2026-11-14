@@ -133,6 +133,13 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - 同路径 `POST`：`{mode, expectedVersion}`，版本为十进制字符串；要求有效 USER、ACTIVE、当前操作凭证、CSRF、原幂等键。期望版本冲突返回 `COPILOT_APPROVAL_MODE_CONFLICT`；同键不同内容拒绝。成功返回该次不可变审计，不代表后来仍是同一模式；前端重新读取当前快照，不用旧回执覆盖新选择。未知结果仅原键/原内容重试。
 - 提案元数据增加 `modeVersion`（字符串）；AUTO 必须有正版本。登记线性化取最新模式，AUTO 自动决定与原 FILE_BATCH/WAITING_WRITE 原子绑定；旧 ASK 不自动批准，AUTO 禁止手动 decision。所有模式请求与既有私有 REST 一样归属校验、禁止缓存。
 
+### Copilot steer
+
+- `POST /api/copilot-tasks/{taskId}/steers`：`{text}`，成功 `202` 返回原指令回执；需要 USER、归属、ACTIVE、当前操作凭证、CSRF、幂等键及原父任务仍有效的授权。4 KiB UTF-8/最多 32 条待处理，不自动保存草稿，不另起任务。同键同内容返回原记录，异内容冲突；未知结果仅原键/原内容核对，查询或换账号不能自动重发。
+- `GET /api/copilot-tasks/{taskId}/steers?before=0`：私有、no-store 的 `{items, nextCursor}`，数字接收序号倒序，每页 20 条，`0` 表示最近页。记录包含 `id, sequence, taskId, exerciseId, actorId, text, state, turnId, reason, createdAt, completedAt`；序号/游标为十进制字符串，GET 不派发模型或工具。
+- `RECEIVED` 尚未纳入请求，`APPLIED` 已纳入持久请求上下文且带原 `turnId`，`NOT_APPLIED` 表示结束前未派发并带原因。后两者有完成时间；已纳入请求不等于供应商收到或成功回复。停止/到期不补发，已绑定写入/测试先按原 ID 收敛。
+- `COPILOT_STEER_NOT_ACTIVE`（409）表示新指令不被当前任务受理，`COPILOT_STEER_LIMIT`（429）表示待处理队列已满。先接受的 steer 使旧待审批提案 `INVALIDATED/STEER_SUPERSEDED`，已批准原写入不由 steer 撤销。
+
 ### Copilot 关联测试
 
 - `GET /api/copilot-tasks/{taskId}/tests`：返回最近 20 条绑定元数据（父任务、工具、原测试 ID、保存修订、`base`、`WAITING`/`RESOLVED`、确定终态与时间）。只读、归属校验、no-store，不触发执行或回填；完整记录沿用 `/api/exercises/{exerciseId}/tasks/{testTaskId}`。

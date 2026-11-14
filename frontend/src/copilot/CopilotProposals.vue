@@ -57,7 +57,7 @@ function label(proposal: api.Proposal): string {
   }
   return labels[proposal.state];
 }
-const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批审批', APPLYING: '已批准，写入结果待核对', APPLIED: '已应用', REJECTED: '已拒绝', INVALIDATED: '基线已变化，原批准不可复用', FAILED: '未应用', CANCELLED: '已取消' };
+const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批审批', APPLYING: '已批准，写入结果待核对', APPLIED: '已应用', REJECTED: '已拒绝', INVALIDATED: '原提案已失效，原批准不可复用', FAILED: '未应用', CANCELLED: '已取消' };
 </script>
 <template>
   <section

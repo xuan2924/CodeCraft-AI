@@ -9,6 +9,7 @@ import ai.codecraft.modules.copilot.model.entity.CopilotMessageEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
+import ai.codecraft.modules.copilot.repository.CopilotSteerRepository;
 import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
@@ -38,12 +39,13 @@ public class CopilotTaskStore {
     private final Clock clock;
     private final CopilotProposalRepository proposals;
     private final CopilotTestLifecycle tests;
+    private final CopilotSteerRepository steers;
 
     public CopilotTaskStore(CopilotTaskRepository tasks, IdentityTransactionService identity, IdentitySecrets secrets,
         ExerciseTransactionService exercises, WorkspaceCoordinationStore control, ExerciseModelService models,
-        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests) {
+        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers) {
         this.tasks = tasks; this.identity = identity; this.secrets = secrets; this.exercises = exercises;
-        this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals; this.tests = tests;
+        this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals; this.tests = tests; this.steers = steers;
     }
 
     @Transactional
@@ -116,7 +118,12 @@ public class CopilotTaskStore {
             var outcome = operations.mutationOutcome(task.exerciseId(), pending.operationId());
             if ("PENDING".equals(outcome.state()) || "PENDING_RECONCILIATION".equals(outcome.state())) control.reconcile(task.exerciseId());
         }
-        return describe(tasks.find(id));
+        var stopped = tasks.find(id);
+        if ("STOPPED".equals(stopped.state())) {
+            for (String steer : steers.pendingIds(id)) operations.settle(task.exerciseId(), steer, false);
+            steers.notApplied(id, "USER_STOP", clock.instant());
+        }
+        return describe(stopped);
     }
 
     private CopilotTaskEntity authorize(String session, String id) {

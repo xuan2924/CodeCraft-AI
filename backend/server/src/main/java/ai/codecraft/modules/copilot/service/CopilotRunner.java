@@ -37,10 +37,11 @@ public class CopilotRunner {
     public void run(String id, String worker) {
         if (store.claim(id, worker) == null) return;
         try {
-            while (!Thread.currentThread().isInterrupted()) {
+            loop: while (!Thread.currentThread().isInterrupted()) {
                 var task = store.current(id, worker);
                 if (task == null) return;
                 if (task.stopRequested()) { store.finish(id, worker, "STOPPED", "USER_STOP"); return; }
+                if (store.steerAtBoundary(id, worker)) continue;
                 var turn = store.turn(id, worker);
                 AiMessage assistant;
                 if (turn != null && "TOOLS".equals(turn.state())) {
@@ -73,9 +74,11 @@ public class CopilotRunner {
                     if (current == null) return;
                     if (current.stopRequested()) { store.finish(id, worker, "STOPPED", "USER_STOP"); return; }
                     if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Copilot worker interrupted");
+                    if (store.steerAtBoundary(id, worker)) continue loop;
                     var request = assistant.toolExecutionRequests().get(position);
                     var tool = capacity.admit(current.sessionHash(), current.exerciseId(), measurement -> store.beginTool(id, worker, batch.id(), request, measurement));
                     if (tool == null) {
+                        if (store.steerAtBoundary(id, worker)) continue loop;
                         var stopped = store.current(id, worker);
                         if (stopped != null && stopped.stopRequested()) store.finish(id, worker, "STOPPED", "USER_STOP");
                         return;

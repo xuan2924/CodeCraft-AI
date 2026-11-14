@@ -50,4 +50,6 @@ public interface CopilotProposalRepository {
     int finish(String id, String state, Long revision, Boolean changed, String failure, Instant now);
     @Update("UPDATE copilot_proposal SET state='CANCELLED',failure_code=#{reason},completed_at=#{now} WHERE task_id=#{task}::uuid AND state='PENDING'")
     void cancelPending(String task, String reason, Instant now);
+    @Update("UPDATE copilot_proposal SET state='INVALIDATED',failure_code='STEER_SUPERSEDED',completed_at=#{now} WHERE task_id=#{task}::uuid AND state='PENDING'")
+    void invalidateSteered(String task, Instant now);
 }

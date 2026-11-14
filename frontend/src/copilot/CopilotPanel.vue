@@ -9,6 +9,7 @@ import { commandPolicy, errorMessage } from './errors';
 import CopilotProposals from './CopilotProposals.vue';
 import CopilotTests from './CopilotTests.vue';
 import CopilotApprovalMode from './CopilotApprovalMode.vue';
+import CopilotSteers from './CopilotSteers.vue';
 
 const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string] }>();
@@ -141,6 +142,17 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     <p v-if="task?.state === 'PAUSED'">
       请处理模型配置或容量问题；可先停止当前任务，再显式发起新请求。不会自动回退或重发。
     </p>
+    <CopilotSteers
+      v-if="task"
+      :key="owner + task.id + ':steers'"
+      :owner="owner"
+      :exercise-id="exerciseId"
+      :task-id="task.id"
+      :state="task.state"
+      :credential="credential"
+      :disabled="disabled"
+      @unauthorized="emit('unauthorized')"
+    />
     <CopilotTests
       v-if="task"
       :key="owner + task.id + ':tests'"

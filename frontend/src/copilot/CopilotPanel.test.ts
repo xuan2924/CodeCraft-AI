@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import CopilotPanel from './CopilotPanel.vue';
 import * as api from './api';
 
-vi.mock('./api', async (original) => ({ ...await original<typeof import('./api')>(), latest: vi.fn(), messages: vi.fn(), start: vi.fn(), stop: vi.fn(), watchTask: vi.fn(), tests: vi.fn(), approvalMode: vi.fn(), changeApprovalMode: vi.fn() }));
+vi.mock('./api', async (original) => ({ ...await original<typeof import('./api')>(), latest: vi.fn(), messages: vi.fn(), start: vi.fn(), stop: vi.fn(), watchTask: vi.fn(), tests: vi.fn(), approvalMode: vi.fn(), changeApprovalMode: vi.fn(), steers: vi.fn(), sendSteer: vi.fn() }));
 const exercise = '10000000-0000-0000-0000-000000000001';
 const task: api.Task = { id: '10000000-0000-0000-0000-000000000002', exerciseId: exercise, state: 'RUNNING', reason: null, stopRequested: false, createdAt: '2026-01-01T00:00:00Z', completedAt: null };
 const wrappers: ReturnType<typeof mount>[] = [];
@@ -24,6 +24,7 @@ beforeEach(() => {
   vi.resetAllMocks(); vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
   vi.mocked(api.latest).mockResolvedValue(null);
   vi.mocked(api.tests).mockResolvedValue([]);
+  vi.mocked(api.steers).mockResolvedValue({ items: [], nextCursor: null });
   vi.mocked(api.approvalMode).mockResolvedValue({ exerciseId: exercise, mode: 'ASK', version: '0', history: [] });
   vi.mocked(api.messages).mockResolvedValue({ messages: [], nextCursor: null });
   vi.mocked(api.start).mockResolvedValue(task);

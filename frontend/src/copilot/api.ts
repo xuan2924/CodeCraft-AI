@@ -54,6 +54,41 @@ export async function messages(owner: string, exercise: string, after: string, s
   if (nextCursor !== null && nextCursor !== items.at(-1)?.sequence) return invalid();
   return { messages: items, nextCursor };
 }
+export interface Steer {
+  id: string; sequence: string; taskId: string; exerciseId: string; actorId: string; text: string;
+  state: 'RECEIVED' | 'APPLIED' | 'NOT_APPLIED'; turnId: string | null; reason: string | null; createdAt: string; completedAt: string | null;
+}
+export interface Steers { items: Steer[]; nextCursor: string | null }
+function steerResponse(value: unknown, owner: string, exercise: string, taskId: string): Steer {
+  if (!object(value) || value.actorId !== owner || value.exerciseId !== exercise || value.taskId !== taskId
+    || typeof value.text !== 'string' || !value.text.trim() || new globalThis.TextEncoder().encode(value.text).length > 4096
+    || value.reason !== null && (typeof value.reason !== 'string' || value.reason.length > 64)
+    || value.state !== 'RECEIVED' && value.state !== 'APPLIED' && value.state !== 'NOT_APPLIED' || value.sequence === '0') return invalid();
+  if (value.state === 'RECEIVED' && (value.turnId !== null || value.completedAt !== null || value.reason !== null)
+    || value.state === 'APPLIED' && (value.turnId === null || value.completedAt === null || value.reason !== null)
+    || value.state === 'NOT_APPLIED' && (value.turnId !== null || value.completedAt === null || typeof value.reason !== 'string' || !value.reason || value.reason.length > 64)) return invalid();
+  return { id: uuid(value.id), sequence: sequence(value.sequence), taskId: uuid(value.taskId), exerciseId: uuid(value.exerciseId), actorId: uuid(value.actorId),
+    text: value.text, state: value.state, turnId: value.turnId === null ? null : uuid(value.turnId), reason: value.reason,
+    createdAt: date(value.createdAt), completedAt: value.completedAt === null ? null : date(value.completedAt) };
+}
+export async function steers(owner: string, exercise: string, taskId: string, before: string, signal: AbortSignal): Promise<Steers> {
+  sequence(before);
+  const value = await request(`/api/copilot-tasks/${path(taskId)}/steers?before=${encodeURIComponent(before)}`, signal, { headers: ownerHeaders(owner) });
+  if (!object(value) || !Array.isArray(value.items) || value.items.length > 20) return invalid();
+  let previous = before === '0' ? 9223372036854775808n : BigInt(before); const ids = new Set<string>();
+  const items = value.items.map((entry: unknown) => {
+    const item = steerResponse(entry, owner, exercise, taskId);
+    if (BigInt(item.sequence) >= previous || ids.has(item.id)) return invalid();
+    previous = BigInt(item.sequence); ids.add(item.id); return item;
+  });
+  const nextCursor = value.nextCursor === null ? null : sequence(value.nextCursor);
+  if (nextCursor !== null && (items.length !== 20 || nextCursor !== items.at(-1)?.sequence)) return invalid();
+  return { items, nextCursor };
+}
+export async function sendSteer(owner: string, exercise: string, taskId: string, credential: string, text: string, key: string, signal: AbortSignal): Promise<Steer> {
+  const value = steerResponse(await post(`/api/copilot-tasks/${path(taskId)}/steers`, { text }, signal, key, credential, owner), owner, exercise, taskId);
+  if (value.text !== text) return invalid(); return value;
+}
 const testResults = ['PASSED', 'FAILED', 'TIMED_OUT', 'STOPPED', 'ENVIRONMENT_ERROR', 'INTERRUPTED'] as const;
 export interface TestRun {
   toolId: string; taskId: string; testTaskId: string; revision: string; target: 'base'; state: 'WAITING' | 'RESOLVED';
