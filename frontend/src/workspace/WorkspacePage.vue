@@ -496,6 +496,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :credential="credential"
             :disabled="!writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy"
             :prepare="prepareCopilot"
+            @changed="refreshWorkspace"
             @unauthorized="credential = ''; account.refetch()"
           />
           <WorkspaceStorage

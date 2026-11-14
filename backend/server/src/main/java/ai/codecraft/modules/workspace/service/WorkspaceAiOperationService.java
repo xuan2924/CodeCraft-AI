@@ -3,6 +3,7 @@ package ai.codecraft.modules.workspace.service;
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
+import ai.codecraft.modules.workspace.model.dto.WorkspaceOperationResponse;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
 import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import ai.codecraft.modules.workspace.repository.ExerciseRepository;
@@ -16,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 /** Domain entry into the existing operation ledger and unified storage credit; never dispatches work. */
 @Service
 public class WorkspaceAiOperationService {
-    private static final Set<String> KINDS = Set.of("COPILOT_START", "COPILOT_MODEL", "COPILOT_READ");
+    private static final Set<String> KINDS = Set.of("COPILOT_START", "COPILOT_MODEL", "COPILOT_READ", "COPILOT_PROPOSAL");
     private final IdentityTransactionService identity;
     private final ExerciseRepository exercises;
     private final WorkspaceWriteRepository controls;
@@ -46,6 +47,22 @@ public class WorkspaceAiOperationService {
             exerciseId, operationId, operationId, "PENDING", clock.instant());
         capacity.admit(operation, measurement, bytes);
         exercises.insertOperation(operation);
+    }
+
+    /** Internal receipt lookup for already admitted AI file writes; it cannot dispatch or change authorization. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public WorkspaceOperationResponse mutationOutcome(String exerciseId, String operationId) {
+        var exercise = exercises.find(exerciseId);
+        if (exercise == null) throw new IllegalStateException("Mutation exercise is missing");
+        identity.lockResourceOwner(exercise.userId());
+        var operation = exercises.operation(operationId);
+        if (operation == null || !exerciseId.equals(operation.exerciseId()) || !"FILE_BATCH".equals(operation.kind())) {
+            throw new IllegalStateException("Mutation operation identity mismatch");
+        }
+        var mutation = controls.mutation(operationId);
+        if (mutation == null) throw new IllegalStateException("Mutation evidence is missing");
+        return new WorkspaceOperationResponse(operationId, exerciseId, operation.state(), "/api/operations/" + operationId,
+            mutation.revision() == null ? null : mutation.revision().toString(), mutation.changed(), mutation.failureCode());
     }
 
     /** Internal convergence records results even after session revocation; it never grants a new side effect. */

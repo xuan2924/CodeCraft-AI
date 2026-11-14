@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doAnswer;
@@ -14,12 +16,26 @@ import static org.mockito.Mockito.when;
 
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.copilot.config.CopilotProperties;
+import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionRequest;
+import ai.codecraft.modules.copilot.model.dto.CopilotTaskResponse;
+import ai.codecraft.modules.workspace.model.dto.FileChangeRequest;
+import ai.codecraft.workspace.v1.ApplyBatchRequest;
+import ai.codecraft.workspace.v1.GateResponse;
+import ai.codecraft.workspace.v1.MutationReceipt;
+import ai.codecraft.workspace.v1.WorkspaceSnapshot;
+import io.grpc.Status;
 import ai.codecraft.modules.copilot.repository.CopilotRetentionRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
+import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
 import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.repository.IdentityRepository;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
+import ai.codecraft.modules.identity.service.IdentityRevocationNotifier;
+import ai.codecraft.modules.identity.service.IdentityRevocationBarrier;
+import ai.codecraft.modules.identity.repository.RevocationIntentRepository;
+import ai.codecraft.modules.identity.model.exception.IdentityFailure;
+import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
 import ai.codecraft.modules.modelaccess.config.ModelCallProperties;
 import ai.codecraft.modules.modelaccess.config.ModelSecurityProperties;
 import ai.codecraft.modules.modelaccess.gateway.ModelCallDriver;
@@ -61,6 +77,11 @@ import ai.codecraft.modules.workspace.service.StorageCapacityService;
 import ai.codecraft.modules.workspace.service.StorageCapacityStore;
 import ai.codecraft.modules.workspace.service.WorkspaceAiOperationService;
 import ai.codecraft.modules.workspace.service.WorkspaceCoordinationStore;
+import ai.codecraft.modules.workspace.service.WorkspaceBatchCodec;
+import ai.codecraft.modules.workspace.service.WorkspaceWriteTransactionService;
+import ai.codecraft.modules.workspace.service.WorkspaceWriteCoordinator;
+import ai.codecraft.modules.workspace.service.WorkspaceMaintenanceCoordinator;
+import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
@@ -79,10 +100,11 @@ import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.LocalCacheScope;
 import org.flywaydb.core.Flyway;
@@ -131,6 +153,11 @@ class CopilotPersistenceIT {
     private ModelConfigurationService models;
     private ExerciseModelService selection;
     private IdentityTransactionService identity;
+    private CopilotProposalStore proposals;
+    private SandboxWorkspaceGateway sandbox;
+    private WorkspaceWriteCoordinator writeCoordinator;
+    private StorageCapacityService capacity;
+    private CopilotToolExecutor executor;
 
     @BeforeAll
     void migrate() throws Exception {
@@ -140,7 +167,7 @@ class CopilotPersistenceIT {
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
             ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
-            CopilotTaskRepository.class, CopilotRetentionRepository.class)) config.addMapper(mapper);
+            CopilotTaskRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
     }
@@ -152,11 +179,14 @@ class CopilotPersistenceIT {
         String instance = UUID.randomUUID().toString(); String preparation = UUID.randomUUID().toString();
         jdbc.update("INSERT INTO identity_user(id,username,password_hash,role,password_change_required) VALUES(?::uuid,?,'fixture','USER',false)", owner, "u_" + owner.substring(0, 20));
         identity = mock(IdentityTransactionService.class);
+        var locks = proxy(new IdentityTransactionService(sql.getMapper(IdentityRepository.class), clock, mock(IdentityRevocationNotifier.class),
+            mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class)), IdentityTransactionService.class);
+        doAnswer(call -> { locks.lockResourceOwner(call.getArgument(0)); return null; }).when(identity).lockResourceOwner(anyString());
         var grant = new SessionAuthorizationDTO(owner, "USER", false, 1, clock.instant().plusSeconds(3600));
-        when(identity.authorizeMutation(SESSION)).thenReturn(grant);
+        when(identity.authorizeMutation(SESSION)).thenAnswer(call -> { locks.lockResourceOwner(owner); return grant; });
         when(identity.authorization(SESSION)).thenReturn(grant);
-        when(identity.authorizePrivateDelivery(SESSION)).thenReturn(grant);
-        when(identity.tryAuthorizeMutation(SESSION)).thenReturn(grant);
+        when(identity.authorizePrivateDelivery(SESSION)).thenAnswer(call -> { locks.lockResourceOwner(owner); return grant; });
+        when(identity.tryAuthorizeMutation(SESSION)).thenAnswer(call -> { locks.lockResourceOwner(owner); return grant; });
         var secrets = mock(IdentitySecrets.class);
         when(secrets.fingerprint(anyString())).thenAnswer(call -> HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(call.<String>getArgument(0).getBytes(StandardCharsets.UTF_8))));
         var connectionRepository = sql.getMapper(ModelConnectionRepository.class);
@@ -194,11 +224,12 @@ class CopilotPersistenceIT {
             new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, selection), ExerciseTransactionService.class);
         var operations = proxy(new WorkspaceAiOperationService(identity, exercises, writes, capacityStore, clock), WorkspaceAiOperationService.class);
         var repository = sql.getMapper(CopilotTaskRepository.class);
-        tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock), CopilotTaskStore.class);
-        execution = proxy(new CopilotExecutionStore(repository, identity, coordination, selection, operations, limits, clock, new CopilotRequestFactory()), CopilotExecutionStore.class);
+        tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class)), CopilotTaskStore.class);
+        execution = proxy(new CopilotExecutionStore(repository, identity, coordination, selection, operations, limits, clock, new CopilotRequestFactory(), sql.getMapper(CopilotProposalRepository.class), secrets), CopilotExecutionStore.class);
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 1, 0);
-        var capacity = mock(StorageCapacityService.class);
-        when(capacity.admit(anyString(), anyString(), any())).thenAnswer(call -> call.<Function<StorageMeasurement, Object>>getArgument(2).apply(measurement));
+        sandbox = mock(SandboxWorkspaceGateway.class);
+        when(sandbox.measureStorage(any())).thenAnswer(call -> measurement);
+        capacity = new StorageCapacityService(capacityStore, sandbox, mock(WorkspaceMaintenanceCoordinator.class));
         files = mock(ExerciseService.class);
         when(files.find(SESSION, exercise)).thenReturn(new ExerciseResponse(exercise, "problem", instance, preparation, "ACTIVE", "1", "1", List.of("src/Main.java"), clock.instant(), clock.instant().plusSeconds(1800), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
         when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(new WorkspaceFileResponse(instance, "1", "src/Main.java", "class Main {}"));
@@ -206,7 +237,13 @@ class CopilotPersistenceIT {
         // Keep non-streaming scenarios focused on completed responses; streaming cases replace this bridge explicitly.
         when(driver.call(any(), any(), any(), anyInt(), any(), any())).thenAnswer(call -> driver.call(
             call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4)));
-        runner = new CopilotRunner(execution, capacity, driver, new CopilotReadTools(files, json), limits, calls, secrets, json);
+        var codec = new WorkspaceBatchCodec(json);
+        var writeStore = proxy(new WorkspaceWriteTransactionService(identity, secrets, exercises, writes, clock, capacityStore), WorkspaceWriteTransactionService.class);
+        writeCoordinator = new WorkspaceWriteCoordinator(coordination, sandbox, codec);
+        proposals = proxy(new CopilotProposalStore(sql.getMapper(CopilotProposalRepository.class), repository, tasks, execution, identity, secrets,
+            lifecycle, coordination, writeStore, operations, codec, json, clock), CopilotProposalStore.class);
+        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json);
+        runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls);
     }
 
     @Test
@@ -424,6 +461,279 @@ class CopilotPersistenceIT {
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 1, 268435456);
         assertThatThrownBy(() -> tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement)).isInstanceOf(BusinessException.class);
         assertThat(tasks.latest(SESSION, exercise)).isNull();
+    }
+
+    @Test
+    void approvedProposalResumesTheOriginalBatchWithoutRegeneratingOrReapplyingIt() throws Exception {
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, true);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        assertThat(proposals.detail(SESSION, proposal).files().getFirst().before()).isEqualTo("class Main {}");
+        assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(3);
+        runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls);
+        var approve = new CopilotProposalDecisionRequest("APPROVE", null);
+        assertThat(proposals.decide(SESSION, proposal, CONTROL, "approve", approve, measurement).state()).isEqualTo("APPLYING");
+        assertThat(proposals.decide(SESSION, proposal, "obsolete", "approve", approve, measurement).state()).isEqualTo("APPLYING");
+        writeCoordinator.recover(); proposals.recoverTask(task.id());
+        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("APPLIED");
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(workspace.applies.get()).isEqualTo(1);
+        assertThat(tasks.messages(SESSION, exercise, -1).stream().map(value -> value.kind())).containsExactly("USER", "ASSISTANT", "TOOL", "TOOL", "TOOL", "ASSISTANT");
+        verify(files, times(3)).read(SESSION, exercise, ProposalWorkspace.PATH);
+        assertThat(proposals.decide(SESSION, proposal, "obsolete", "approve", approve, measurement).resultRevision()).isEqualTo("2");
+        verify(driver, times(2)).call(any(), any(), any(), anyInt(), any());
+        assertThat(data.quiescent(exercise)).isTrue();
+        assertThat(data.retainedBytes(exercise)).isPositive();
+        new TransactionTemplate(transactions).executeWithoutResult(status -> data.erase(exercise));
+        assertThat(sql.getMapper(CopilotProposalRepository.class).find(proposal)).isNull();
+        assertThat(data.retainedBytes(exercise)).isZero();
+        assertThat(sql.getMapper(ModelConfigurationRepository.class).find(alternateModelId)).isNotNull();
+    }
+
+    @Test
+    void rejectionContinuesTheTaskAndDoesNotRegisterTheSameRejectedPatchAgain() throws Exception {
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, false);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        proposals.decide(SESSION, proposal, CONTROL, "reject", new CopilotProposalDecisionRequest("REJECT", "Keep the original class"), null);
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(workspace.proposal()))).build(), 100),
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Keeping the original code.")).build(), 100));
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(proposals.list(SESSION, task.id(), 0).items()).hasSize(1);
+        var messages = tasks.messages(SESSION, exercise, -1);
+        assertThat(messages.stream().filter(value -> value.kind().equals("TOOL")).map(value -> value.payload()).toList())
+            .anyMatch(value -> value.contains("Keep the original class")).anyMatch(value -> value.contains("PROPOSAL_PREVIOUSLY_REJECTED"));
+        assertThat(workspace.applies.get()).isZero();
+        verify(driver, times(3)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void stopBeforeTheApprovedWriteDispatchFencesItInsteadOfApplyingIt() throws Exception {
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, true);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        proposals.decide(SESSION, proposal, CONTROL, "approve", new CopilotProposalDecisionRequest("APPROVE", null), measurement);
+        assertThat(tasks.stop(SESSION, task.id(), "stop").state()).isEqualTo("STOPPING");
+        writeCoordinator.recover(); proposals.recoverTask(task.id()); execution.recover(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
+        assertThat(workspace.applies.get()).isZero();
+        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("FAILED");
+        assertThat(data.quiescent(exercise)).isTrue();
+    }
+
+    @Test
+    void anAppliedWriteWithLostResponsesRemainsUnknownUntilItsReceiptIsRecoveredAndIsNeverReplayed() throws Exception {
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, true);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        proposals.decide(SESSION, proposal, CONTROL, "approve", new CopilotProposalDecisionRequest("APPROVE", null), measurement);
+        workspace.loseApplyResponse = true; workspace.unavailableReceipts = true;
+        writeCoordinator.recover();
+        assertThat(tasks.stop(SESSION, task.id(), "stop").state()).isEqualTo("STOPPING");
+        proposals.recoverTask(task.id()); execution.recover(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPING");
+        assertThat(data.quiescent(exercise)).isFalse();
+        workspace.unavailableReceipts = false;
+        writeCoordinator.recover(); proposals.recoverTask(task.id()); execution.recover(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
+        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("APPLIED");
+        assertThat(workspace.applies.get()).isEqualTo(1);
+        assertThat(data.quiescent(exercise)).isTrue();
+    }
+
+    @Test
+    void approvalRechecksOwnershipControlAndBaselineAndCannotAuthorizeNewContentWithAnOldKey() throws Exception {
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, false);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        var approve = new CopilotProposalDecisionRequest("APPROVE", null);
+        assertThatThrownBy(() -> proposals.decide(SESSION, proposal, "stale", "approve", approve, measurement)).isInstanceOf(BusinessException.class);
+        var foreign = new SessionAuthorizationDTO(UUID.randomUUID().toString(), "USER", false, 1, clock.instant().plusSeconds(3600));
+        when(identity.authorizeMutation("foreign")).thenReturn(foreign);
+        when(identity.authorizePrivateDelivery("foreign")).thenReturn(foreign);
+        assertThatThrownBy(() -> proposals.detail("foreign", proposal)).isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> proposals.decide("foreign", proposal, CONTROL, "approve", approve, measurement)).isInstanceOf(BusinessException.class);
+        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("PENDING");
+        sql.getMapper(WorkspaceWriteRepository.class).observed(exercise, 2, "[\"" + ProposalWorkspace.PATH + "\"]");
+        assertThat(proposals.decide(SESSION, proposal, CONTROL, "approve", approve, measurement).state()).isEqualTo("INVALIDATED");
+        assertThatThrownBy(() -> proposals.decide(SESSION, proposal, CONTROL, "approve", new CopilotProposalDecisionRequest("REJECT", "changed"), null))
+            .isInstanceOf(BusinessException.class);
+        assertThat(workspace.applies.get()).isZero();
+    }
+
+    @Test
+    void capacityFailureDoesNotConsumeConsentAndExpiryCancelsIt() throws Exception {
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, false);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        var approve = new CopilotProposalDecisionRequest("APPROVE", null);
+        var full = new StorageMeasurement(exercise, "A".repeat(26), 2, 268435456);
+        assertThatThrownBy(() -> proposals.decide(SESSION, proposal, CONTROL, "approve", approve, full)).isInstanceOf(BusinessException.class);
+        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("PENDING");
+        clock.now = clock.instant().plusSeconds(1801);
+        assertThat(proposals.decide(SESSION, proposal, CONTROL, "approve", approve, measurement).state()).isEqualTo("CANCELLED");
+        execution.recover(task.id());
+        assertThat(workspace.applies.get()).isZero();
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("INTERRUPTED");
+        assertThat(tasks.find(SESSION, task.id()).reason()).isEqualTo("EXERCISE_ENDED");
+    }
+
+    @Test
+    void explicitDecisionCanReauthorizeContinuationButObservingAPendingProposalDoesNot() throws Exception {
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, false);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        String owner = sql.getMapper(CopilotTaskRepository.class).find(task.id()).userId();
+        var fresh = new SessionAuthorizationDTO(owner, "USER", false, 1, clock.instant().plusSeconds(3600));
+        when(identity.authorizeMutation("renewed")).thenAnswer(call -> { identity.lockResourceOwner(owner); return fresh; });
+        when(identity.authorizePrivateDelivery("renewed")).thenAnswer(call -> { identity.lockResourceOwner(owner); return fresh; });
+        when(identity.tryAuthorizeMutation("renewed")).thenAnswer(call -> { identity.lockResourceOwner(owner); return fresh; });
+        when(identity.authorization("renewed")).thenReturn(fresh);
+        when(identity.authorizeMutation(SESSION)).thenThrow(new IdentityFailure(IdentityErrorCode.UNAUTHENTICATED));
+        assertThat(proposals.summary("renewed", proposal).state()).isEqualTo("PENDING");
+        assertThat(sql.getMapper(CopilotTaskRepository.class).find(task.id()).sessionHash()).isEqualTo(SESSION);
+        proposals.decide("renewed", proposal, CONTROL, "reject", new CopilotProposalDecisionRequest("REJECT", "Keep unchanged"), null);
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find("renewed", task.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(workspace.applies.get()).isZero();
+    }
+
+    @Test
+    void stopBeforeApprovalCancelsTheProposalAndPreservesCompletedReads() throws Exception {
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, true);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        tasks.stop(SESSION, task.id(), "stop");
+        assertThat(proposals.decide(SESSION, proposal, CONTROL, "late-approve", new CopilotProposalDecisionRequest("APPROVE", null), measurement).state()).isEqualTo("CANCELLED");
+        execution.recover(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
+        assertThat(workspace.applies.get()).isZero();
+        verify(files, times(2)).read(SESSION, exercise, ProposalWorkspace.PATH);
+        assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(5);
+    }
+
+    @Test
+    void deletingTheSelectedModelDoesNotDiscardApprovedWorkOrRepeatTheOriginalModelCall() throws Exception {
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, false);
+        String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        deleteSelectedModel.run();
+        proposals.decide(SESSION, proposal, CONTROL, "approve", new CopilotProposalDecisionRequest("APPROVE", null), measurement);
+        writeCoordinator.recover(); proposals.recoverTask(task.id());
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(proposals.detail(SESSION, proposal).proposal().state()).isEqualTo("APPLIED");
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("PAUSED");
+        assertThat(workspace.applies.get()).isEqualTo(1);
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "COPILOT_LIVE_DEEPSEEK", matches = "1")
+    void realDeepSeekProposesThenContinuesOnlyAfterApprovalAndAConfirmedWrite() throws Exception {
+        var workspace = new ProposalWorkspace();
+        String key = System.getenv("DeepSeek");
+        assertThat(key != null && !key.isBlank()).as("DeepSeek credential must be supplied through the environment").isTrue();
+        var connection = connections.create(SESSION, "live-connection", new ModelConnectionRequest("Live proposal fixture", "https://api.deepseek.com", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, key, null));
+        var count = new AtomicInteger();
+        try (var live = new ModelCallDriver(new ModelSdkClientFactory(new ModelConnectionValidator(), calls), calls, clock)) {
+            var model = models.create(SESSION, connection.id(), "live-model", new ModelConfigurationRequest("Live proposal fixture", "deepseek-flash", 100000, 2048, ModelThinkingMode.OFF, null, null, null, null));
+            selection.select(SESSION, exercise, CONTROL, "live-select", new ModelInvocationReferenceDTO(connection.id(), model.id(), 1, 1));
+            doAnswer(call -> {
+                if (count.incrementAndGet() > 8) throw new BusinessException(ModelAccessErrorCode.MODEL_OUTPUT_LIMIT_EXCEEDED);
+                return live.call(call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4), call.getArgument(5));
+            }).when(driver).call(any(), any(), any(), anyInt(), any(), any());
+            var task = tasks.accept(SESSION, exercise, CONTROL, "live-start", "Read src/main/java/Main.java. Propose exactly one UPDATE replacing its entire content with: class Main { int answer = 42; }. Wait for approval. After its confirmed application, use view_file to read the saved file, then reply briefly with the value of answer. Do not propose another edit.", true, measurement);
+            runner.run(task.id(), UUID.randomUUID().toString());
+            assertThat(tasks.find(SESSION, task.id()).state()).as("live proposal reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("WAITING_APPROVAL");
+            assertThat(workspace.applies.get()).isZero();
+            String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+            assertThat(proposals.detail(SESSION, proposal).files().getFirst().after()).contains("42");
+            proposals.decide(SESSION, proposal, CONTROL, "live-approve", new CopilotProposalDecisionRequest("APPROVE", null), measurement);
+            writeCoordinator.recover(); proposals.recoverTask(task.id());
+            runner.run(task.id(), UUID.randomUUID().toString());
+            assertThat(tasks.find(SESSION, task.id()).state()).as("live continuation reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("SUCCEEDED");
+            assertThat(workspace.applies.get()).isEqualTo(1);
+            assertThat(tasks.messages(SESSION, exercise, -1).getLast().payload()).contains("42");
+            assertThat(proposals.detail(SESSION, proposal).proposal().resultRevision()).isEqualTo("2");
+            var samples = jdbc.queryForList("SELECT input_tokens,output_tokens,total_tokens,usage_payload FROM copilot_turn WHERE task_id=?::uuid ORDER BY ordinal", task.id());
+            for (var sample : samples) assertThat(sample.get("usage_payload")).isNotNull();
+            System.out.println("DeepSeek live proposal usage (Go is a deterministic fixture; no credentials or request bodies): " + samples);
+        } finally { connections.delete(SESSION, connection.id(), "live-cleanup", connection.version()); }
+    }
+
+    private CopilotTaskResponse beginProposal(ProposalWorkspace workspace, boolean trailingRead) throws Exception {
+        var proposal = workspace.proposal();
+        var read = ToolExecutionRequest.builder().id("after-proposal").name("view_file").arguments("{\"path\":\"" + ProposalWorkspace.PATH + "\"}").build();
+        var prefix = ToolExecutionRequest.builder().id("before-proposal").name("view_file").arguments(read.arguments()).build();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(trailingRead ? List.of(prefix, proposal, read) : List.of(prefix, proposal))).build(), 100),
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Finished.")).build(), 100));
+        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Propose an edit", true, measurement);
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_APPROVAL");
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+        return task;
+    }
+
+    private final class ProposalWorkspace {
+        static final String PATH = "src/main/java/Main.java";
+        final String instance = sql.getMapper(ExerciseRepository.class).find(exercise).workspaceInstanceId();
+        final AtomicInteger applies = new AtomicInteger();
+        final Map<String, MutationReceipt> receipts = new HashMap<>();
+        volatile boolean loseApplyResponse;
+        volatile boolean unavailableReceipts;
+        private String source = "class Main {}";
+        private long revision = 1;
+        private long epoch = 1;
+        private String gateState = "OPEN";
+        ProposalWorkspace() {
+            sql.getMapper(WorkspaceWriteRepository.class).observed(exercise, 1, "[\"" + PATH + "\"]");
+            when(files.find(SESSION, exercise)).thenAnswer(call -> {
+                var value = sql.getMapper(ExerciseRepository.class).find(exercise);
+                return new ExerciseResponse(exercise, value.problemVersionId(), instance, value.preparationOperationId(), value.state(), value.revision().toString(), "1",
+                    List.of(PATH), value.startedAt(), value.deadlineAt(), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null);
+            });
+            when(files.read(SESSION, exercise, PATH)).thenAnswer(call -> file());
+            when(sandbox.apply(any())).thenAnswer(call -> apply(call.getArgument(0)));
+            when(sandbox.query(instance)).thenAnswer(call -> snapshot());
+            when(sandbox.mutation(eq(instance), anyString())).thenAnswer(call -> receipt(call.getArgument(1)));
+            when(sandbox.gate(instance)).thenAnswer(call -> gate());
+            when(sandbox.closeGate(eq(instance), anyString(), anyLong())).thenAnswer(call -> close(call.getArgument(1), call.getArgument(2)));
+            when(sandbox.openGate(eq(instance), anyString(), anyLong())).thenAnswer(call -> open(call.getArgument(1), call.getArgument(2)));
+        }
+        ToolExecutionRequest proposal() throws Exception {
+            String arguments = json.writeValueAsString(Map.of("expected_revision", "1", "changes", List.of(new FileChangeRequest(PATH, "UPDATE", "class Main { int answer = 42; }"))));
+            return ToolExecutionRequest.builder().id("proposal-call").name("propose_changes").arguments(arguments).build();
+        }
+        synchronized WorkspaceFileResponse file() { return new WorkspaceFileResponse(instance, Long.toString(revision), PATH, source); }
+        synchronized WorkspaceSnapshot snapshot() { return WorkspaceSnapshot.newBuilder().setWorkspaceInstanceId(instance).setPrepared(true).setRevision(revision).addPaths(PATH).build(); }
+        synchronized GateResponse gate() { return GateResponse.newBuilder().setWorkspaceInstanceId(instance).setEpoch(epoch).setState(gateState).build(); }
+        synchronized GateResponse close(String id, long expected) {
+            if (epoch == expected) { epoch++; gateState = "CLOSED"; }
+            return GateResponse.newBuilder().setWorkspaceInstanceId(instance).setTransitionId(id).setEpoch(expected + 1).setState("CLOSED").build();
+        }
+        synchronized GateResponse open(String id, long expected) {
+            if (epoch == expected) { epoch++; gateState = "OPEN"; }
+            return GateResponse.newBuilder().setWorkspaceInstanceId(instance).setTransitionId(id).setEpoch(expected + 1).setState("OPEN").build();
+        }
+        synchronized MutationReceipt receipt(String id) {
+            if (unavailableReceipts) throw Status.UNAVAILABLE.asRuntimeException();
+            return receipts.get(id);
+        }
+        synchronized MutationReceipt apply(ApplyBatchRequest request) {
+            assertThat(request.getGateEpoch()).isEqualTo(epoch); assertThat(gateState).isEqualTo("OPEN");
+            assertThat(request.getExpectedRevision()).isEqualTo(revision);
+            assertThat(request.getChangesCount()).isEqualTo(1); assertThat(request.getChanges(0).getPath()).isEqualTo(PATH);
+            applies.incrementAndGet(); source = request.getChanges(0).getContent(); revision++;
+            var receipt = MutationReceipt.newBuilder().setWorkspaceInstanceId(instance).setRequestId(request.getRequestId()).setOperationId(request.getOperationId())
+                .setFingerprint("a".repeat(64)).setRevision(revision).setChanged(true).build();
+            receipts.put(request.getRequestId(), receipt);
+            if (loseApplyResponse) throw Status.UNAVAILABLE.asRuntimeException();
+            return receipt;
+        }
     }
 
     private <T> T proxy(T value, Class<T> type) {

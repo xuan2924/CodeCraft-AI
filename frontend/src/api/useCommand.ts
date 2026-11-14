@@ -50,5 +50,12 @@ export function useCommand<T>(scope: () => string, succeeded: (result: T) => voi
     attempt ??= { key: crypto.randomUUID(), operation };
     await run();
   }
-  return { pending, uncertain, error, submit, retry: run };
+  /** Caller must prove an immutable domain result resolves this intent; a mutable latest-state snapshot is not sufficient. */
+  function confirmObserved(result: T) {
+    if (disposed || !attempt) return;
+    generation++; controller.abort(); controller = new AbortController();
+    attempt = null; pending.value = false; uncertain.value = false; error.value = '';
+    succeeded(result);
+  }
+  return { pending, uncertain, error, submit, retry: run, confirmObserved };
 }

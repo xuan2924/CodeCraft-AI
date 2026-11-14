@@ -6,6 +6,11 @@ import ai.codecraft.modules.copilot.model.dto.CopilotDeliveryDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotStartRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotTaskResponse;
 import ai.codecraft.modules.copilot.service.CopilotTaskService;
+import ai.codecraft.modules.copilot.service.CopilotProposalService;
+import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionRequest;
+import ai.codecraft.modules.copilot.model.dto.CopilotProposalDetailResponse;
+import ai.codecraft.modules.copilot.model.dto.CopilotProposalResponse;
+import ai.codecraft.modules.copilot.model.dto.CopilotProposalsResponse;
 import ai.codecraft.modules.workspace.stream.TaskEventTransport;
 import ai.codecraft.modules.identity.security.IdentityHttp;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,7 +30,29 @@ import org.springframework.web.bind.annotation.RestController;
 public class CopilotController {
     private final CopilotTaskService tasks;
     private final TaskEventTransport transport;
-    public CopilotController(CopilotTaskService tasks, TaskEventTransport transport) { this.tasks = tasks; this.transport = transport; }
+    private final CopilotProposalService proposals;
+    public CopilotController(CopilotTaskService tasks, TaskEventTransport transport, CopilotProposalService proposals) {
+        this.tasks = tasks; this.transport = transport; this.proposals = proposals;
+    }
+
+    @GetMapping("/api/copilot-tasks/{task}/proposals")
+    public ApiResponse<CopilotProposalsResponse> proposals(@PathVariable UUID task, @RequestParam(defaultValue = "0") long before, HttpServletRequest request) {
+        return ApiResponse.success(proposals.list(IdentityHttp.sessionHash(request), task.toString(), before));
+    }
+    @GetMapping("/api/copilot-proposals/{proposal}")
+    public ApiResponse<CopilotProposalDetailResponse> proposal(@PathVariable UUID proposal, HttpServletRequest request) {
+        return ApiResponse.success(proposals.detail(IdentityHttp.sessionHash(request), proposal.toString()));
+    }
+    @GetMapping("/api/copilot-proposals/{proposal}/status")
+    public ApiResponse<CopilotProposalResponse> proposalStatus(@PathVariable UUID proposal, HttpServletRequest request) {
+        return ApiResponse.success(proposals.summary(IdentityHttp.sessionHash(request), proposal.toString()));
+    }
+    @PostMapping("/api/copilot-proposals/{proposal}/decision")
+    public ApiResponse<CopilotProposalResponse> decide(@PathVariable UUID proposal, @RequestBody CopilotProposalDecisionRequest input,
+        @RequestHeader(value = "Idempotency-Key", required = false) String key,
+        @RequestHeader(value = "X-Operation-Credential", required = false) String credential, HttpServletRequest request) {
+        return ApiResponse.success(proposals.decide(IdentityHttp.sessionHash(request), proposal.toString(), credential, key, input));
+    }
 
     @PostMapping("/api/exercises/{exercise}/copilot/tasks")
     public ResponseEntity<ApiResponse<CopilotTaskResponse>> start(@PathVariable UUID exercise, @RequestBody CopilotStartRequest input,

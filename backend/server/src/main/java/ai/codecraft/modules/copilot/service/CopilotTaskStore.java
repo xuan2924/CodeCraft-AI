@@ -9,6 +9,7 @@ import ai.codecraft.modules.copilot.model.entity.CopilotMessageEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
+import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
@@ -35,12 +36,13 @@ public class CopilotTaskStore {
     private final ExerciseModelService models;
     private final WorkspaceAiOperationService operations;
     private final Clock clock;
+    private final CopilotProposalRepository proposals;
 
     public CopilotTaskStore(CopilotTaskRepository tasks, IdentityTransactionService identity, IdentitySecrets secrets,
         ExerciseTransactionService exercises, WorkspaceCoordinationStore control, ExerciseModelService models,
-        WorkspaceAiOperationService operations, Clock clock) {
+        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals) {
         this.tasks = tasks; this.identity = identity; this.secrets = secrets; this.exercises = exercises;
-        this.control = control; this.models = models; this.operations = operations; this.clock = clock;
+        this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals;
     }
 
     @Transactional
@@ -107,6 +109,11 @@ public class CopilotTaskStore {
         var task = authorize(session, id);
         validateKey(key);
         tasks.stop(task.id(), clock.instant());
+        var pending = proposals.pending(task.id());
+        if (pending != null && "APPLYING".equals(pending.state())) {
+            var outcome = operations.mutationOutcome(task.exerciseId(), pending.operationId());
+            if ("PENDING".equals(outcome.state()) || "PENDING_RECONCILIATION".equals(outcome.state())) control.reconcile(task.exerciseId());
+        }
         return describe(tasks.find(id));
     }
 

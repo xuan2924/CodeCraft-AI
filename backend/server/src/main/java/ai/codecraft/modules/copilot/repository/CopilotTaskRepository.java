@@ -24,7 +24,7 @@ public interface CopilotTaskRepository {
     CopilotTaskEntity receipt(String exercise, String key);
     @Select("SELECT " + TASK + " FROM copilot_task WHERE exercise_id=#{exercise}::uuid ORDER BY created_at DESC,id DESC LIMIT 1")
     CopilotTaskEntity latest(String exercise);
-    @Select("SELECT EXISTS(SELECT 1 FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','STOPPING'))")
+    @Select("SELECT EXISTS(SELECT 1 FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','STOPPING'))")
     boolean active(String exercise);
     @Insert("""
         INSERT INTO copilot_task(id,exercise_id,user_id,session_hash,request_key,fingerprint,state,created_at)
@@ -43,16 +43,28 @@ public interface CopilotTaskRepository {
     int claim(String id, String worker, Instant until);
     @Update("UPDATE copilot_task SET worker_not_after=#{until} WHERE id=#{id}::uuid AND worker_id=#{worker}::uuid AND state IN ('RUNNING','STOPPING')")
     int renew(String id, String worker, Instant until);
-    @Update("UPDATE copilot_task SET stop_requested=true,state=CASE WHEN state IN ('QUEUED','PAUSED') THEN 'STOPPED' ELSE 'STOPPING' END,completed_at=CASE WHEN state IN ('QUEUED','PAUSED') THEN #{now}::timestamptz ELSE NULL END WHERE id=#{id}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','STOPPING')")
+    @Update("UPDATE copilot_task SET stop_requested=true,reason='USER_STOP',state=CASE WHEN worker_id IS NULL AND NOT EXISTS(SELECT 1 FROM copilot_turn WHERE task_id=#{id}::uuid AND state IN ('DISPATCHED','TOOLS')) THEN 'STOPPED' ELSE 'STOPPING' END,completed_at=CASE WHEN worker_id IS NULL AND NOT EXISTS(SELECT 1 FROM copilot_turn WHERE task_id=#{id}::uuid AND state IN ('DISPATCHED','TOOLS')) THEN #{now}::timestamptz ELSE NULL END WHERE id=#{id}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','STOPPING')")
     void stop(String id, Instant now);
     @Update("UPDATE copilot_task SET state=#{state},reason=#{reason},completed_at=#{completed},worker_id=NULL,worker_not_after=NULL WHERE id=#{id}::uuid AND worker_id=#{worker}::uuid")
     int finish(String id, String worker, String state, String reason, Instant completed);
-    @Select("SELECT id::text FROM copilot_task WHERE state IN ('QUEUED','PAUSED') ORDER BY last_checked_at,id LIMIT 100")
+    @Update("UPDATE copilot_task SET state=#{state},reason=#{reason},worker_id=NULL,worker_not_after=NULL WHERE id=#{id}::uuid AND worker_id=#{worker}::uuid AND NOT stop_requested")
+    int park(String id, String worker, String state, String reason);
+    @Update("UPDATE copilot_task SET state=#{state},reason=#{reason} WHERE id=#{id}::uuid AND worker_id IS NULL AND state IN ('WAITING_APPROVAL','WAITING_WRITE') AND NOT stop_requested")
+    int waitFor(String id, String state, String reason);
+    @Update("UPDATE copilot_task SET state='QUEUED',reason=NULL WHERE id=#{id}::uuid AND worker_id IS NULL AND state IN ('WAITING_APPROVAL','WAITING_WRITE') AND NOT stop_requested")
+    int wake(String id);
+    @Update("UPDATE copilot_task SET state='STOPPING',stop_requested=true,reason=#{reason} WHERE id=#{id}::uuid AND worker_id IS NULL AND state IN ('QUEUED','PAUSED','WAITING_APPROVAL','WAITING_WRITE')")
+    void haltIdle(String id, String reason);
+    @Update("UPDATE copilot_task SET state=#{state},reason=#{reason},completed_at=#{now} WHERE id=#{id}::uuid AND worker_id IS NULL AND state IN ('QUEUED','PAUSED','WAITING_APPROVAL','WAITING_WRITE','STOPPING')")
+    int finishIdle(String id, String state, String reason, Instant now);
+    @Select("SELECT id::text FROM copilot_task WHERE worker_id IS NULL AND state IN ('QUEUED','PAUSED','WAITING_APPROVAL','WAITING_WRITE','STOPPING') ORDER BY last_checked_at,id LIMIT 100")
     List<String> idle();
     @Update("UPDATE copilot_task SET last_checked_at=#{now} WHERE id=#{id}::uuid")
     void checked(String id, Instant now);
     @Update("UPDATE copilot_task SET state='INTERRUPTED',reason=#{reason},completed_at=#{now} WHERE id=#{id}::uuid AND state IN ('QUEUED','PAUSED')")
     int expireIdle(String id, String reason, Instant now);
+    @Update("UPDATE copilot_task SET session_hash=#{session} WHERE id=#{id}::uuid AND state='WAITING_APPROVAL' AND worker_id IS NULL AND NOT stop_requested")
+    int reauthorizeWaiting(String id, String session);
     @Update("UPDATE copilot_task SET state='QUEUED',reason=NULL,session_hash=#{session},worker_id=NULL,worker_not_after=NULL WHERE id=#{id}::uuid AND state='PAUSED' AND NOT stop_requested")
     int resume(String id, String session);
     @Select("SELECT id::text FROM copilot_task WHERE state IN ('RUNNING','STOPPING') AND worker_not_after<=#{now} ORDER BY worker_not_after,id LIMIT 100")
@@ -60,6 +72,12 @@ public interface CopilotTaskRepository {
 
     @Insert("INSERT INTO copilot_message(id,task_id,exercise_id,kind,payload,created_at) VALUES(#{id}::uuid,#{taskId}::uuid,#{exerciseId}::uuid,#{kind},#{payload},#{createdAt})")
     void message(CopilotMessageEntity message);
+    @Select("SELECT progress_signature FROM copilot_turn WHERE id=#{turn}::uuid")
+    String batchSignature(String turn);
+    @Update("UPDATE copilot_turn SET progress_recorded=true WHERE id=#{turn}::uuid AND state='SUCCEEDED' AND NOT progress_recorded")
+    int recordProgress(String turn);
+    @Update("UPDATE copilot_turn SET progress_signature=#{signature} WHERE id=#{turn}::uuid AND state IN ('TOOLS','SUCCEEDED')")
+    void batchProgress(String turn, String signature);
     @Select("SELECT " + MESSAGE + " FROM copilot_message WHERE id=#{id}::uuid")
     CopilotMessageEntity messageById(String id);
     @Select("WITH candidates AS (SELECT " + MESSAGE + " FROM copilot_message WHERE exercise_id=#{exercise}::uuid AND sequence>#{after} ORDER BY sequence LIMIT 100), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence) AS bytes FROM candidates) SELECT " + MESSAGE + " FROM budgeted WHERE bytes<=524288 ORDER BY sequence")
@@ -83,7 +101,11 @@ public interface CopilotTaskRepository {
     void tool(CopilotToolEntity tool);
     @Select("SELECT id::text,turn_id::text,task_id::text,exercise_id::text,position,call_id,name,arguments,state,result_message_id::text,created_at,completed_at FROM copilot_tool WHERE turn_id=#{turn}::uuid AND position=#{position}")
     CopilotToolEntity toolAt(String turn, int position);
-    @Update("UPDATE copilot_tool SET state=#{state},result_message_id=#{message}::uuid,completed_at=#{now} WHERE id=#{id}::uuid AND state='RUNNING'")
+    @Select("SELECT id::text,turn_id::text,task_id::text,exercise_id::text,position,call_id,name,arguments,state,result_message_id::text,created_at,completed_at FROM copilot_tool WHERE id=#{id}::uuid")
+    CopilotToolEntity toolById(String id);
+    @Update("UPDATE copilot_tool SET state=#{state} WHERE id=#{id}::uuid AND state IN ('RUNNING','WAITING_APPROVAL')")
+    int waitTool(String id, String state);
+    @Update("UPDATE copilot_tool SET state=#{state},result_message_id=#{message}::uuid,completed_at=#{now} WHERE id=#{id}::uuid AND state IN ('RUNNING','WAITING_APPROVAL','APPLYING')")
     int completeTool(String id, String state, String message, Instant now);
 
     @Select("SELECT EXISTS(SELECT 1 FROM copilot_turn WHERE exercise_id=#{exercise}::uuid AND (connection_id<>#{connection}::uuid OR model_configuration_id<>#{model}::uuid OR connection_configuration_version<>#{connectionVersion} OR model_configuration_version<>#{modelVersion}))")

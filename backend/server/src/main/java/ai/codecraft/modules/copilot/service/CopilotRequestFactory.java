@@ -13,6 +13,7 @@ import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import dev.langchain4j.model.chat.request.json.JsonArraySchema;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -33,7 +34,15 @@ public class CopilotRequestFactory {
         ToolSpecification.builder().name("glob_files").description("Match published allowed paths. Supports * and ? within segments and ** across segments; no regex or shell.")
             .parameters(JsonObjectSchema.builder().addStringProperty("pattern").required("pattern").additionalProperties(false).build()).build(),
         ToolSpecification.builder().name("grep_code").description("Search literal case-sensitive text in saved allowed files. Not a regular expression. Results include path, revision and line number.")
-            .parameters(JsonObjectSchema.builder().addStringProperty("pattern").required("pattern").additionalProperties(false).build()).build());
+            .parameters(JsonObjectSchema.builder().addStringProperty("pattern").required("pattern").additionalProperties(false).build()).build(),
+        ToolSpecification.builder().name("propose_changes").description("Propose one atomic batch against the saved workspace revision. Waits for human approval before writing. Up to 32 files and 192 KiB of arguments; never edit protected files. Rejection is not permission to resubmit unchanged content.")
+            .parameters(JsonObjectSchema.builder().addStringProperty("expected_revision", "Exact saved revision as a decimal string")
+                .addProperty("changes", JsonArraySchema.builder().items(JsonObjectSchema.builder()
+                    .addStringProperty("path", "Allowed workspace-relative source path")
+                    .addEnumProperty("kind", List.of("CREATE", "UPDATE", "DELETE"))
+                    .addStringProperty("content", "Complete UTF-8 file text for CREATE/UPDATE; omit for DELETE")
+                    .required("path", "kind").additionalProperties(false).build()).build())
+                .required("expected_revision", "changes").additionalProperties(false).build()).build());
 
     public CopilotRequestFactory() {
         try { system = SystemMessage.from(new ClassPathResource("prompts/copilot/system.txt").getContentAsString(StandardCharsets.UTF_8)); }

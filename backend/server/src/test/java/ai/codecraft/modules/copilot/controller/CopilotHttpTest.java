@@ -16,8 +16,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import ai.codecraft.common.exception.GlobalExceptionHandler;
 import ai.codecraft.common.web.RequestBodyAdmission;
 import ai.codecraft.modules.copilot.model.dto.CopilotStartRequest;
+import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotTaskResponse;
 import ai.codecraft.modules.copilot.service.CopilotTaskService;
+import ai.codecraft.modules.copilot.service.CopilotProposalService;
 import ai.codecraft.modules.workspace.stream.TaskEventTransport;
 import ai.codecraft.modules.identity.config.IdentitySettings;
 import ai.codecraft.modules.identity.model.dto.AuthenticatedIdentityDTO;
@@ -60,17 +62,19 @@ class CopilotHttpTest {
     private AnnotationConfigWebApplicationContext context;
     private MockMvc mvc;
     private CopilotTaskService tasks;
+    private CopilotProposalService proposals;
     private IdentityTransactionService identity;
 
     @BeforeAll void initialize() {
         context = new AnnotationConfigWebApplicationContext(); context.setServletContext(new MockServletContext());
         context.register(Fixture.class); context.refresh();
+        proposals = context.getBean(CopilotProposalService.class);
         tasks = context.getBean(CopilotTaskService.class); identity = context.getBean(IdentityTransactionService.class);
         mvc = MockMvcBuilders.webAppContextSetup(context).addFilters(context.getBean("springSecurityFilterChain", Filter.class)).build();
     }
     @AfterAll void close() { context.close(); }
     @BeforeEach void authorize() {
-        reset(tasks, identity);
+        reset(tasks, proposals, identity);
         var user = mock(UserEntity.class); when(user.role()).thenReturn("USER");
         var auth = new AuthenticatedIdentityDTO(user, null, new SessionResponse("owner", "fixture", "USER", false, Instant.parse("2030-01-01T00:00:00Z")));
         when(identity.authenticate(any())).thenAnswer(call -> {
@@ -108,6 +112,27 @@ class CopilotHttpTest {
             .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("COPILOT_STORAGE_UNAVAILABLE")).andReturn();
         assertThat(response.getResponse().getContentAsString()).doesNotContain("private-fixture-text");
     }
+    @Test void proposalDecisionsUseCsrfAndOwnerBindingAndPrivateReadsNeverApprove() throws Exception {
+        String path = "/api/copilot-proposals/" + ID;
+        mvc.perform(get(path).servletPath(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)))
+            .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"));
+        verify(proposals).detail(HASH, ID);
+        String action = path + "/decision";
+        mvc.perform(post(action).servletPath(action).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN))
+            .contentType("application/json").content("{\"decision\":\"APPROVE\"}")).andExpect(status().isForbidden());
+        mvc.perform(post(action).servletPath(action).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header(IdentityHttp.CSRF_HEADER, "fixture-csrf")
+            .header("Origin", "https://app.example.test").header("X-Codecraft-Owner", "old-owner")
+            .contentType("application/json").content("{\"decision\":\"APPROVE\"}")).andExpect(status().isUnauthorized());
+        verify(proposals, never()).decide(any(), any(), any(), any(), any());
+        mvc.perform(post(action).servletPath(action).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header(IdentityHttp.CSRF_HEADER, "fixture-csrf")
+            .header("Origin", "https://app.example.test").header("X-Codecraft-Owner", "owner")
+            .header("Idempotency-Key", "approval").header("X-Operation-Credential", "current")
+            .contentType("application/json").content("{\"decision\":\"REJECT\",\"reason\":\"Keep API\"}"))
+            .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"));
+        verify(proposals).decide(HASH, ID, "current", "approval", new CopilotProposalDecisionRequest("REJECT", "Keep API"));
+    }
+
     private MockHttpServletRequestBuilder start() {
         return post(PATH).servletPath(PATH).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header("Origin", "https://app.example.test")
             .header("Idempotency-Key", "original").header("X-Operation-Credential", "control").contentType("application/json");
@@ -117,6 +142,7 @@ class CopilotHttpTest {
     static class Fixture {
         @Bean TaskEventTransport transport() { return mock(TaskEventTransport.class); }
         @Bean CopilotTaskService tasks() { return mock(CopilotTaskService.class); }
+        @Bean CopilotProposalService proposals() { return mock(CopilotProposalService.class); }
         @Bean IdentityTransactionService identity() { return mock(IdentityTransactionService.class); }
         @Bean IdentitySecrets secrets() { return mock(IdentitySecrets.class); }
         @Bean IdentitySettings settings() { return new IdentitySettings("https://app.example.test", "00".repeat(32), "", ""); }

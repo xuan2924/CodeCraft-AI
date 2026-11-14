@@ -107,7 +107,7 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - 流使用有界缓冲、输出上限及慢消费者策略；截断明确提示，不能静默丢失最终状态。
 - 路由退出可关闭订阅，关页面不停止任务；用户通过“停止任务”请求停止。前端以服务端结构化状态结束加载，不从聊天或日志猜测成功。
 
-## Copilot 只读阶段接口
+## Copilot 任务与审批接口
 
 - `POST /api/exercises/{id}/copilot/tasks`：`{text, feeAcknowledged}`，最多 4 KiB UTF-8 请求文字；要求当前操作凭证、CSRF 与幂等键，返回 202。同演练仅一个活动任务，不排队；原键重放只读取原受理记录。
 - `GET /api/exercises/{id}/copilot/tasks/latest`：最近任务、消息高水位、历史文本转换提示、未确认回复预览；无任务返回 `null`。
@@ -116,6 +116,16 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - `GET /api/exercises/{id}/copilot/tasks/{taskId}/events`：独立只读 SSE，`copilot_snapshot` 推送持久化状态与有界预览，不创建或重启任务。游标只用于快照去重；刷新/重连从 REST 消息记录恢复，不保证重放每个文本增量。所有终态以结构化任务状态为准。
 - 未确认的文本在已预留空间内按块落盘，预览最多 4096 个 Unicode 字符并明确截断。它不进入下一轮模型消息，也不能执行工具；完整响应确认后才保存正式消息。失败保留已落盘预览，成功后由完整消息替代。
 - REST 使用当前身份与资源归属校验，支持 `X-Codecraft-Owner` 防止旧页面跨账号提交；所有响应禁止缓存。SSE 复用现有有界非阻塞传输与持续身份核验。
+
+### 修改提案
+
+- `GET /api/copilot-tasks/{taskId}/proposals?before=0`：按提案序号倒序分页，最多 20 条元数据；`nextCursor` 继续向前查看。工作区修订与提案序号按十进制字符串传输，`fileCount` 为小范围整数。
+- `GET /api/copilot-proposals/{id}`：不可变的整批修改前/后完整文本；最多 32 个文件，原文合计最多 10 MiB。前端仅为选中的提案加载，一次只挂载一个文件 Diff 编辑器，不轮询完整文本。
+- `GET /api/copilot-proposals/{id}/status`：轻量状态、批准/拒绝及写入回执元数据，供只读轮询。审批已受理不等于文件已应用；`APPLYING` 仍须等待权威写入回执。
+- `POST /api/copilot-proposals/{id}/decision`：`{decision: "APPROVE"|"REJECT", reason?}`；拒绝理由最多 2 KiB UTF-8，批准不接收理由或替换内容。要求 CSRF、原幂等键及当前操作凭证，重新检查当前用户、归属和任务/演练/基线。批准与既有 FILE_BATCH 意图同事务落盘，RPC 在事务外由原写入协调器执行。
+- 同一提案只能决定一次；原键原内容重试读取原决定，不能覆盖它。页面读到该不可变提案已决定/取消可解除审批传输的不确定提示，但不能把 `APPLYING` 当已写入。新内容或新基线必须生成新提案。
+- `WAITING_APPROVAL`/`WAITING_WRITE` 属于活动任务，但不占 worker；保存原批次位置和已完成工具。新会话的显式有效审批可为原任务后续调用更新授权，单纯登录、查询或重复读取原审批回执不能重新授权。
+- 应用后前端失效工作区查询，沿用编辑器原有修订冲突处理；不自动保存、覆盖或清除本地草稿。停止在未知写入收敛前保持 `STOPPING`，不将未知结果伪报未应用。
 
 ## 保存与恢复
 

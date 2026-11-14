@@ -12,6 +12,7 @@ public class CopilotExerciseData implements ExerciseDataContributor {
     @Override public long retainedBytes(String exerciseId) { return repository.bytes(exerciseId); }
     @Override public boolean quiescent(String exerciseId) { return repository.quiescent(exerciseId); }
     @Override public void erase(String exerciseId) {
+        repository.deleteProposals(exerciseId);
         repository.deleteTools(exerciseId);
         repository.deleteMessages(exerciseId);
         repository.deleteTurns(exerciseId);

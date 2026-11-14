@@ -3,7 +3,13 @@ import { identityFailure, errorMessage as modelMessage } from '../modelaccess/er
 import { message as workspaceMessage } from '../workspace/api';
 
 const messages: Record<string, string> = {
-  COPILOT_INVALID_REQUEST: '请输入不超过 4 KiB 的请求并确认费用。',
+  COPILOT_INVALID_REQUEST: '请求格式不合法：任务文字最多 4 KiB 且需确认费用；拒绝理由最多 2 KiB。',
+  COPILOT_PROPOSAL_NOT_FOUND: '提案不存在或不可访问。',
+  COPILOT_PROPOSAL_DECIDED: '提案已有决定，请核对原提案状态，不会重复应用。',
+  APPROVAL_REQUIRED: '提案等待你核对整批 Diff 并批准或拒绝。',
+  WRITE_RECONCILIATION: '审批已保存，等待权威写入回执；不会重复应用。',
+  PROPOSAL_REJECTED: '用户已拒绝此批修改，任务将基于拒绝继续。',
+  TASK_STOPPED: '任务已停止，此提案没有获得写入授权。',
   COPILOT_BUSY: '本场已有 Copilot 任务，不会排队；请先查看或停止原任务。',
   COPILOT_NOT_FOUND: '任务不存在或不可访问，请重新读取。',
   COPILOT_IDEMPOTENCY_CONFLICT: '原请求身份与内容不一致，请核对已保存任务。',
@@ -29,7 +35,7 @@ export const commandPolicy = {
   errorMessage, identityFailure,
   definitiveRejection(failure: unknown) {
     return failure instanceof ApiError && [400, 403, 404, 409, 422, 429].includes(failure.status) && [
-      'COPILOT_INVALID_REQUEST', 'COPILOT_BUSY', 'COPILOT_NOT_FOUND', 'COPILOT_IDEMPOTENCY_CONFLICT', 'COPILOT_INVALID_STATE',
+      'COPILOT_INVALID_REQUEST', 'COPILOT_BUSY', 'COPILOT_NOT_FOUND', 'COPILOT_PROPOSAL_NOT_FOUND', 'COPILOT_PROPOSAL_DECIDED', 'IDEMPOTENCY_CONFLICT', 'COPILOT_IDEMPOTENCY_CONFLICT', 'COPILOT_INVALID_STATE',
       'MODEL_SELECTION_REQUIRED', 'MODEL_CONNECTION_NOT_FOUND', 'MODEL_CONFIGURATION_NOT_FOUND', 'MODEL_VERSION_CONFLICT',
       'STALE_CONTROL', 'CONTROL_TRANSITION_PENDING', 'INVALID_STATE', 'EXERCISE_DELETED', 'STORAGE_BUDGET_EXCEEDED',
       'CSRF_REJECTED', 'PASSWORD_CHANGE_REQUIRED', 'FORBIDDEN',
