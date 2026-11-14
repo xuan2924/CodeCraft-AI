@@ -31,8 +31,9 @@ export async function linuxJavaTests({ directory, project, values, database, mod
     await copyFile(values.PROBLEM_PUBLICATION_FILE, join(work, 'publication.json'));
     env.PROBLEM_PUBLICATION_FILE = '/tests/publication.json';
   }
-  if (mode === 'workspace') {
-    env.WORKSPACE_IT_RUN = 'disposable';
+  if (mode === 'workspace' || mode === 'copilot-recovery') {
+    if (mode === 'workspace') env.WORKSPACE_IT_RUN = 'disposable';
+    else env.COPILOT_RECOVERY_IT_RUN = 'disposable';
     env.SANDBOX_TEST_CONTAINER = sandbox;
     await copyFile(join(root, 'scripts/test-support/docker-control.sh'), join(work, 'bin/docker'));
   } else if (mode === 'copilot') env.COPILOT_WORKSPACE_IT_RUN = 'disposable';
@@ -48,7 +49,7 @@ export async function linuxJavaTests({ directory, project, values, database, mod
       '--env-file', envFile, ...(mode === 'copilot' ? ['--env', 'DeepSeek'] : []), '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
       '--mount', `type=bind,source=${work},target=/tests`,
       '--mount', `type=bind,source=${join(homedir(), '.m2/repository')},target=/root/.m2/repository,readonly`,
-      ...(mode === 'workspace' ? ['--mount', 'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock'] : []),
+      ...(['workspace', 'copilot-recovery'].includes(mode) ? ['--mount', 'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock'] : []),
       '--workdir', '/tests/server', '--entrypoint', 'sh', image, '-c',
       'set -e; export PATH=/tests/bin:$PATH; if [ -f /tests/bin/docker ]; then chmod +x /tests/bin/docker; fi; exec mvn -o -B -ntp "$@"', 'tests',
       `-Dit.test=${selection}`, 'failsafe:integration-test', 'failsafe:verify'], { timeout: 600000,

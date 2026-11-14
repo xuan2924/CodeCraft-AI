@@ -195,6 +195,8 @@ node scripts/test-tracer.mjs --workspace --boundary-only
 # 仅精确 JVM 崩溃恢复 / 单项撤销准备恢复测试
 node scripts/test-tracer.mjs --workspace --boundary-only --workspace-recovery-only
 node scripts/test-tracer.mjs --workspace --boundary-only --workspace-test=revokedPreparationIsCleanedAfterSandboxRecovery
+# 非收费 Copilot 恢复：受控 SDK 流 + 真实 PostgreSQL/子 JVM 强杀/Go/Docker，独立按需入口
+node scripts/test-tracer.mjs --workspace --boundary-only --copilot-recovery
 # 显式收费：需环境变量 DEEPSEEK（兼容 DeepSeek）；真实模型检查、稳定版本测试续答及联动停止，最多 9 次调用
 # 凭证仅传给可信 Java 测试容器，不传给 Go/题目容器；独立库/卷在 finally 清理
 node scripts/test-tracer.mjs --workspace --boundary-only --copilot-tests
@@ -203,7 +205,9 @@ node scripts/test-tracer.mjs --workspace --boundary-only --copilot-tests
 node scripts/test-tracer.mjs --workspace --copilot-browser
 ```
 
-Java 集成测试使用已有 `~/.m2/repository` 的只读挂载，以离线 Maven 运行预先编译的 classes/test-classes；首次先完成本机 Maven 构建。每次/每种模式的 Failsafe 输出放在其 `.runtime/cc-tracer-*/java-tests-*`，缺失产物/依赖、零执行或跳过所选测试均失败。工作区故障测试容器临时挂载 Docker socket，通过受限命令适配器真实暂停/恢复本次 Go 容器并注入损坏文件；**它是可信测试夹具，拥有 Docker 管理权限，不是用户代码沙箱**。Java 应用及题目容器不获得该挂载。
+Java 集成测试使用已有 `~/.m2/repository` 的只读挂载，以离线 Maven 运行预先编译的 classes/test-classes；首次先完成本机 Maven 构建。每次/每种模式的 Failsafe 输出放在其 `.runtime/cc-tracer-*/java-tests-*`，缺失产物/依赖、零执行或跳过所选测试均失败。工作区故障测试容器临时挂载 Docker socket，通过受限命令适配器真实暂停/恢复本次 Go 容器并注入损坏文件；**它是可信测试夹具，拥有 Docker 管理权限，不是用户代码沙箱**。正式 Java 服务容器及题目容器不获得该挂载；测试容器内的故障子 JVM 属于可信夹具。
+
+`--copilot-recovery` 不读取或传递供应商 Key，SDK 只允许 `sdk-fixture.invalid` 的受控发布者，拒绝真实供应商；普通 USER 会话由测试库预置，其余模型配置/检查、计时、审批、steer、接管和注销走正式服务。覆盖待审批恢复、文件回执入库前后 JVM 强杀、模型半截流不重发、AUTO 撤销栅栏，以及 Java/Go 重启后按原执行身份停止 Docker 测试。只在确认旧 JVM 退出后定向老化内部 worker lease，不改变会话/演练或 Go 截止时间。该夹具不证明真实供应商兼容性，也不进入默认 CI。
 
 `--copilot-browser` 还需已安装的 Playwright Chromium；入口先重新打包 Java、构建前端，再运行一个显式收费场景。只有临时 Java 容器额外挂载两个测试类：受属性约束的 BeanPostProcessor 安装真实驱动的 12 次硬上限，受鉴权的测试路由委托正式连接 Service 创建个人配置。若驱动没有实际安装限额器，夹具拒绝启动。供应商 Key 仅通过环境传入该可信 Java 容器，不写临时环境文件，不传给浏览器驱动、Go 或题目容器；正常应用镜像没有这些测试类/路由。浏览器禁用自动 trace/录像/故障截图，只保留不含凭证的业务画面；结束时扫描并移除含明文供应商 Key 的制品（发现即失败）。输出模型身份、结构化结果与用量，不估算价格。场景先以逐次审批增加注释、运行测试，再在第二浏览器通过 AUTO 自动增加另一条注释；核对第一浏览器未保存草稿不被覆盖、切回 ASK 的审计和只读重载。两次修改均故意保留题目初始错误，以真实 FAILED/Surefire 证据验证续答，而不是把聊天文字当作测试通过。供应商或 Docker 不可用时该入口失败，不能报闭环通过。
 

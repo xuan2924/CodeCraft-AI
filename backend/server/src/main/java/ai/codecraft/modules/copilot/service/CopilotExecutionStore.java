@@ -366,8 +366,9 @@ public class CopilotExecutionStore {
             operations.settle(task.exerciseId(), turn.id(), false);
         }
         if (turn != null && "TOOLS".equals(turn.state())) interruptBatch(task, turn, "SERVICE_INTERRUPTED");
-        unappliedSteers(task, "SERVICE_INTERRUPTED");
-        tasks.finish(id, task.workerId(), task.stopRequested() ? "STOPPED" : "INTERRUPTED", "SERVICE_INTERRUPTED", clock.instant());
+        String reason = turn != null && "DISPATCHED".equals(turn.state()) ? "MODEL_RESULT_UNKNOWN" : "SERVICE_INTERRUPTED";
+        unappliedSteers(task, reason);
+        tasks.finish(id, task.workerId(), task.stopRequested() ? "STOPPED" : "INTERRUPTED", reason, clock.instant());
     }
 
     private void recoverIdle(CopilotTaskEntity task) {

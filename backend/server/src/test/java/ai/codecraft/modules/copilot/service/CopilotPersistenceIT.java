@@ -783,9 +783,12 @@ class CopilotPersistenceIT {
         String worker = UUID.randomUUID().toString();
         assertThat(execution.claim(task.id(), worker)).isNotNull();
         assertThat(execution.beginModel(task.id(), worker, measurement)).isNotNull();
+        steers.accept(SESSION, task.id(), CONTROL, "late-direction", new CopilotSteerRequest("Different direction"));
         clock.now = clock.now.plusSeconds(130);
         execution.recover(task.id());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("INTERRUPTED");
+        assertThat(tasks.find(SESSION, task.id()).reason()).isEqualTo("MODEL_RESULT_UNKNOWN");
+        assertThat(steers.list(SESSION, task.id(), 0).items().getFirst().reason()).isEqualTo("MODEL_RESULT_UNKNOWN");
         assertThat(data.quiescent(exercise)).isTrue();
     }
 

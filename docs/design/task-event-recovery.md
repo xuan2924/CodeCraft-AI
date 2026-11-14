@@ -159,7 +159,7 @@ Go 暂不可用时保持可查询的撤销操作未决，禁止新副作用，�
 | PruneTestEvidence | 完整演练/工作区/任务/执行身份；Go 再核实静默、清理及非最终验收；证据删除前持久化取消身份，副本保留仅标识的 released 墓碑以阻止迟到重建 |
 | ApplyBatch / QueryMutation | 实例、requestId、operationId、指纹、基线、gateEpoch、notAfter、变更；返回任务 04 回执/NOT_FOUND/UNKNOWN |
 | Freeze / QueryFreeze | 实例、关闭栅栏代次、operationId；返回冻结版本；不自行冻结一个仍 OPEN 的实例 |
-| StopSystemTask / QueryStop | 受信任生命周期调用，系统停止要求 CLOSED/FROZEN；返回执行快照或持久化取消回执，并绑定接受/观察取消的 hostEpoch。Java 在协调锁内重新读取派发代次，跨宿主代次的缺失登记不能据此释放隔离槽位 |
+| StopSystemTask / QueryStop | 受信任生命周期的精确取消调用，可在 OPEN/CLOSED/FROZEN 执行；OPEN 支持 Copilot 父任务停止，不关闭编辑权，也不授予任何新启动/写入权限。认证、完整任务/执行身份及取消墓碑仍必需；返回执行快照或持久化取消回执，并绑定接受/观察取消的 hostEpoch。Java 在协调锁内重新读取派发代次，跨宿主代次的缺失登记不能据此释放隔离槽位 |
 | StartTest / QueryTask / StopTask | exerciseId、taskId、executionInstanceId、purpose、实例/预期修订/目标/固定执行配置、gateEpoch、notAfter；FINAL_VERIFICATION 另含 finalizationId、attemptId、冻结回执及 finalizationDeadlineAt；返回执行登记/结果/静默与清理状态 |
 | WatchTask | taskId、executionInstanceId、afterSequence；服务端流 TaskEvent，支持显式 RESET_REQUIRED |
 | ListExecutions / Reconcile / Cleanup | 有界分页 inventory 与宿主执行代次；清理只作用于经校验归属的精确实例，不模糊匹配目录/容器名 |

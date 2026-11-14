@@ -28,6 +28,10 @@ if (workspaceTestOption !== undefined && (!workspaceMode || !boundaryOnly || !/^
 }
 const copilotTests = process.argv.includes('--copilot-tests');
 const copilotBrowser = process.argv.includes('--copilot-browser');
+const copilotRecovery = process.argv.includes('--copilot-recovery');
+if (copilotRecovery && (!workspaceMode || !boundaryOnly || identityMode || smoke || workspaceTest || copilotTests || copilotBrowser || process.argv.includes('--workspace-recovery-only'))) {
+  throw new Error('--copilot-recovery requires --workspace --boundary-only without other suite selections');
+}
 if (copilotBrowser && (!workspaceMode || identityMode || smoke || boundaryOnly || workspaceTest || copilotTests || process.argv.includes('--workspace-recovery-only'))) {
   throw new Error('--copilot-browser requires --workspace without other suite selections');
 }
@@ -37,7 +41,7 @@ if (copilotTests && (!workspaceMode || !boundaryOnly || workspaceTest || process
 }
 if ((copilotTests || copilotBrowser) && !liveCredential?.trim()) throw new Error('Paid Copilot validation requires DEEPSEEK (or DeepSeek) in the environment');
 if (copilotBrowser) maven(['-q', '-DskipTests', 'package']);
-else if (copilotTests) maven(['-q', '-DskipTests', 'test-compile']);
+else if (copilotTests || copilotRecovery) maven(['-q', '-DskipTests', 'test-compile']);
 const recoveryOnly = process.argv.includes('--workspace-recovery-only');
 if (recoveryOnly && (!workspaceMode || !boundaryOnly || workspaceTest)) {
   throw new Error('--workspace-recovery-only requires --workspace --boundary-only without --workspace-test');
@@ -263,9 +267,11 @@ try {
         { encoding: 'utf8', stdio: 'pipe' }).stdout.trim();
       assert.equal(remaining, '', 'Completed/stopped Copilot tests must leave no execution containers');
     }
-    if (!copilotTests && !recoveryOnly) await linuxJavaTests({ directory, project, values, database: 'workspace_boundary', mode: 'workspace',
+    if (copilotRecovery) await linuxJavaTests({ directory, project, values, database: 'workspace_boundary', mode: 'copilot-recovery',
+      sandbox: sandboxId(), test: 'CopilotCrashRecoveryIT' });
+    if (!copilotTests && !copilotRecovery && !recoveryOnly) await linuxJavaTests({ directory, project, values, database: 'workspace_boundary', mode: 'workspace',
       sandbox: sandboxId(), test: workspaceTest ? `WorkspaceIT#${workspaceTest}` : undefined });
-    if (!copilotTests && !workspaceTest) {
+    if (!copilotTests && !copilotRecovery && !workspaceTest) {
       compose(['exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB,
         '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE DATABASE workspace_recovery']);
       await linuxJavaTests({ directory, project, values, database: 'workspace_recovery', mode: 'recovery', test: 'WorkspaceCrashRecoveryIT' });

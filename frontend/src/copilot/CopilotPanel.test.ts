@@ -71,6 +71,14 @@ it('reconnects only reads, does not resubscribe for identical snapshots, and all
   expect(api.stop).toHaveBeenCalledTimes(1);
   wrapper.unmount(); wrappers.pop(); expect(close).toHaveBeenCalled(); expect(api.stop).toHaveBeenCalledTimes(1);
 });
+it('shows the charge uncertainty and incomplete preview after model recovery without restarting', async () => {
+  vi.mocked(api.latest).mockResolvedValue({ task: { ...task, state: 'INTERRUPTED', reason: 'MODEL_RESULT_UNKNOWN', completedAt: task.createdAt },
+    lastSequence: '1', textHistory: false, partial: { turnId: task.id, sequence: '1', text: 'Incomplete preview', truncated: false } });
+  const wrapper = panel(); await flushPromises();
+  expect(wrapper.text()).toContain('供应商可能已计费'); expect(wrapper.text()).toContain('不会自动重发');
+  expect(wrapper.get('[aria-label="未确认回复预览"]').text()).toContain('Incomplete preview');
+  expect(api.start).not.toHaveBeenCalled();
+});
 it('renders hostile tool text as plain text, not HTML', async () => {
   vi.mocked(api.messages).mockResolvedValue({ messages: [{ id: task.id, taskId: task.id, sequence: '1', kind: 'TOOL', text: '<script>attack()</script><img src=x onerror=attack()>' }], nextCursor: '1' });
   const wrapper = panel(); await flushPromises();

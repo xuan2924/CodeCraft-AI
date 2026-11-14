@@ -3,6 +3,11 @@
 # This command adapter is NOT a security boundary or a user-code execution facility.
 set -eu
 case "${1:-}" in
+  restart)
+    [ "$#" = 2 ] && [ "$2" = "$SANDBOX_TEST_CONTAINER" ]
+    exec curl --fail --silent --show-error --max-time 25 --unix-socket /var/run/docker.sock \
+      -X POST "http://localhost/v1.48/containers/$2/restart?t=0"
+    ;;
   pause|unpause)
     [ "$#" = 2 ] && [ "$2" = "$SANDBOX_TEST_CONTAINER" ]
     exec curl --fail --silent --show-error --max-time 25 --unix-socket /var/run/docker.sock \

@@ -41,6 +41,18 @@ test('paid validation refuses ambiguous suites or missing credentials before pro
   }
 });
 
+test('non-paid Copilot recovery requires its isolated suite before provisioning', () => {
+  for (const args of [['--copilot-recovery'], ['--workspace', '--copilot-recovery'],
+    ['--workspace', '--boundary-only', '--copilot-recovery', '--copilot-tests'],
+    ['--workspace', '--boundary-only', '--copilot-recovery', '--copilot-browser']]) {
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL('./test-tracer.mjs', import.meta.url)), ...args],
+      { encoding: 'utf8', timeout: 10000 });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--copilot-recovery requires --workspace --boundary-only without other suite selections/);
+    assert.equal(result.stdout, '');
+  }
+});
+
 test('Compose passes only explicit model settings and defaults maintenance off', () => {
   const values = javaComposeEnv({ ...parseConfig(base), ...configured, UNRELATED_PRIVATE_VALUE: 'fixture' });
   for (const [key, value] of Object.entries(configured)) assert.equal(values[key], value);
