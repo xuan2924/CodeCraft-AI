@@ -1,5 +1,9 @@
 package ai.codecraft.modules.copilot.model.dto;
 
-public record CopilotStartRequest(String text, boolean feeAcknowledged) {
+import java.util.List;
+
+public record CopilotStartRequest(String text, boolean feeAcknowledged, List<String> skillIds) {
+    public CopilotStartRequest { skillIds = skillIds == null ? List.of() : List.copyOf(skillIds); }
+    public CopilotStartRequest(String text, boolean feeAcknowledged) { this(text, feeAcknowledged, List.of()); }
     @Override public String toString() { return "CopilotStartRequest[redacted]"; }
 }

@@ -19,6 +19,16 @@ import static org.mockito.Mockito.when;
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.copilot.config.CopilotProperties;
 import ai.codecraft.modules.copilot.repository.CopilotUsageRepository;
+import ai.codecraft.modules.skills.repository.SkillSnapshotRepository;
+import ai.codecraft.modules.skills.repository.SkillRepository;
+import ai.codecraft.modules.skills.service.SkillService;
+import ai.codecraft.modules.skills.service.SkillStore;
+import ai.codecraft.modules.skills.service.SkillPackageParser;
+import ai.codecraft.modules.skills.config.SkillProperties;
+import ai.codecraft.modules.skills.model.dto.SkillPackageRequest;
+import ai.codecraft.modules.skills.model.dto.SkillFileDTO;
+import ai.codecraft.modules.skills.service.SkillSnapshots;
+import ai.codecraft.modules.skills.service.SkillExerciseData;
 import ai.codecraft.modules.modelaccess.service.ModelUsageAccounting;
 import ai.codecraft.modules.modelaccess.service.ModelUsageNormalizer;
 import ai.codecraft.modules.modelaccess.service.ModelPriceCatalog;
@@ -202,6 +212,9 @@ class CopilotPersistenceIT {
     private CopilotRunner runner;
     private CopilotContextService contexts;
     private CopilotContextPreparation contextPreparation;
+    private SkillSnapshots skillSnapshots;
+    private SkillService personalSkills;
+    private CopilotSkillContext skillContext;
     private CopilotEvidenceStore evidenceStore;
     private CopilotCompactionStore compactions;
     private CopilotCompactionExecution summaryExecution;
@@ -251,7 +264,7 @@ class CopilotPersistenceIT {
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
             ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
-            CopilotTaskRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class,
+            CopilotTaskRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
@@ -264,7 +277,7 @@ class CopilotPersistenceIT {
 
     @BeforeEach
     void seed() throws Exception {
-        jdbc.execute("TRUNCATE copilot_context,copilot_compaction_call,copilot_compaction,copilot_steer,copilot_approval_change,copilot_approval_mode,copilot_test_run,copilot_proposal,copilot_tool,copilot_message,copilot_turn,copilot_task,workspace_task_event,workspace_task_stream,workspace_test_stop,workspace_test_task,workspace_mutation,workspace_transition,workspace_operation");
+        jdbc.execute("TRUNCATE copilot_skill_snapshot,personal_skill_command,personal_skill,personal_skill_version,copilot_context,copilot_compaction_call,copilot_compaction,copilot_steer,copilot_approval_change,copilot_approval_mode,copilot_test_run,copilot_proposal,copilot_tool,copilot_message,copilot_turn,copilot_task,workspace_task_event,workspace_task_stream,workspace_test_stop,workspace_test_task,workspace_mutation,workspace_transition,workspace_operation");
         clock.now = "1".equals(System.getenv("COPILOT_LIVE_DEEPSEEK")) ? Instant.now() : Instant.parse("2026-01-01T00:00:00Z");
         String owner = UUID.randomUUID().toString(); exercise = UUID.randomUUID().toString();
         String instance = UUID.randomUUID().toString(); String preparation = UUID.randomUUID().toString();
@@ -306,7 +319,7 @@ class CopilotPersistenceIT {
         var alternate = models.create(SESSION, connection.id(), "alternate", new ModelConfigurationRequest("Alternate", "alternate", 1000000, 4096, ModelThinkingMode.OFF, null, null, null, null));
         alternateModelId = alternate.id();
         switchSelectedModel = () -> selection.select(SESSION, exercise, CONTROL, "switch", new ModelInvocationReferenceDTO(connection.id(), alternate.id(), 1, 1));
-        data = new ExerciseDataService(List.of(new CopilotExerciseData(sql.getMapper(CopilotRetentionRepository.class))));
+        data = new ExerciseDataService(List.of(new CopilotExerciseData(sql.getMapper(CopilotRetentionRepository.class)), new SkillExerciseData(sql.getMapper(SkillSnapshotRepository.class))));
         var budget = new StorageProperties(536870912, 268435456, 20);
         var capacityRepository = sql.getMapper(StorageCapacityRepository.class);
         capacityRepository.initialize(exercise);
@@ -327,18 +340,22 @@ class CopilotPersistenceIT {
         var operations = proxy(new WorkspaceAiOperationService(identity, exercises, writes, capacityStore, clock), WorkspaceAiOperationService.class);
         usage = proxy(new CopilotUsageService(sql.getMapper(CopilotUsageRepository.class), sql.getMapper(CopilotCompactionRepository.class), identity, lifecycle), CopilotUsageService.class);
         repository = sql.getMapper(CopilotTaskRepository.class);
-        tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class)), CopilotTaskStore.class);
+        var skillLimits = new SkillProperties(50, 262144, 65536, 5242880, 32, 256, 4);
+        personalSkills = new SkillService(new SkillPackageParser(skillLimits), proxy(new SkillStore(sql.getMapper(SkillRepository.class), identity, skillLimits, json, clock), SkillStore.class), json);
+        skillSnapshots = proxy(new SkillSnapshots(sql.getMapper(SkillSnapshotRepository.class)), SkillSnapshots.class);
+        skillContext = new CopilotSkillContext(skillSnapshots, repository, json, limits);
+        tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class), skillSnapshots), CopilotTaskStore.class);
         var contextRepository = sql.getMapper(CopilotCompactionRepository.class);
         compactions = proxy(new CopilotCompactionStore(contextRepository, repository, identity, secrets, lifecycle, coordination, operations, clock), CopilotCompactionStore.class);
         var callEvidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
         summaryExecution = proxy(new CopilotCompactionExecution(contextRepository, repository, sql.getMapper(CopilotSteerRepository.class), identity, coordination, operations, selection, limits, clock, callEvidence), CopilotCompactionExecution.class);
         var contextLimits = new CopilotContextProperties(80, 4, 8192, 4096, 8192, 512, 2048);
         execution = proxy(new CopilotExecutionStore(repository, identity, coordination, selection, operations, limits, clock, contextRepository,
-            sql.getMapper(CopilotProposalRepository.class), secrets, childLifecycle, sql.getMapper(CopilotSteerRepository.class), callEvidence), CopilotExecutionStore.class);
+            sql.getMapper(CopilotProposalRepository.class), secrets, childLifecycle, sql.getMapper(CopilotSteerRepository.class), callEvidence, skillSnapshots), CopilotExecutionStore.class);
         var requestFactory = new CopilotRequestFactory();
         var planner = new CopilotContextPlanner(requestFactory, contextLimits, json, limits);
         contextPreparation = proxy(new CopilotContextPreparation(contextRepository, sql.getMapper(CopilotSteerRepository.class),
-            planner, callEvidence, contextLimits, limits), CopilotContextPreparation.class);
+            planner, callEvidence, contextLimits, limits, skillContext), CopilotContextPreparation.class);
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 1, 0);
         sandbox = mock(SandboxWorkspaceGateway.class);
         when(sandbox.measureStorage(any())).thenAnswer(call -> measurement);
@@ -370,8 +387,100 @@ class CopilotPersistenceIT {
         testTools = new CopilotTestTools(testRuns, capacity, new CopilotTestResultFormatter(), json);
         evidenceStore = proxy(new CopilotEvidenceStore(repository, contextRepository, identity, coordination, clock), CopilotEvidenceStore.class);
         var evidenceTools = new CopilotEvidenceTools(evidenceStore, json);
-        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools);
+        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(execution, skillSnapshots, json));
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts);
+    }
+
+    @Test
+    void skillSnapshotCapacityFailureRollsBackTheWholeTaskWithoutDeletingPersonalOriginals() {
+        String main = "---\nname: large-guidance\ndescription: Large guidance\n---\nBody";
+        var original = personalSkills.save(SESSION, null, "large-skill", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", main),
+            new SkillFileDTO("references/data.txt", "x".repeat(262144 - main.length())))));
+        var enabled = personalSkills.change(SESSION, original.id(), "large-enable", original.version(), true, false);
+        var constrained = new StorageMeasurement(exercise, "A".repeat(26), 1, 268435456 - 300000);
+        assertThatThrownBy(() -> tasks.accept(SESSION, exercise, CONTROL, "capacity-skill", "Inspect", true, constrained)).hasMessageContaining("STORAGE_BUDGET_EXCEEDED");
+        assertThat(tasks.latest(SESSION, exercise)).isNull();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_skill_snapshot", Integer.class)).isZero();
+        assertThat(personalSkills.list(SESSION)).hasSize(1);
+        personalSkills.change(SESSION, original.id(), "large-disable", enabled.version(), false, false);
+        assertThat(tasks.accept(SESSION, exercise, CONTROL, "capacity-skill", "Inspect", true, constrained).state()).isEqualTo("QUEUED");
+    }
+
+    @Test
+    void taskAdmissionAndPersonalEditsSerializeToOneWholeSkillVersion() throws Exception {
+        String main = "---\nname: racing\ndescription: Guidance\n---\nOld body";
+        var created = personalSkills.save(SESSION, null, "skill-create", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", main))));
+        assertThatThrownBy(() -> tasks.acceptWithSkills(SESSION, exercise, CONTROL, "disabled-task", "Inspect", true, List.of(created.id()), measurement)).hasMessageContaining("SKILL_NOT_FOUND");
+        assertThat(tasks.latest(SESSION, exercise)).isNull();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_skill_snapshot", Integer.class)).isZero();
+        var enabled = personalSkills.change(SESSION, created.id(), "skill-enable", created.version(), true, false);
+        var barrier = new CyclicBarrier(2);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var edit = pool.submit(() -> {
+                barrier.await();
+                return personalSkills.save(SESSION, created.id(), "skill-update", enabled.version(),
+                    new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", main.replace("Old body", "New body")))));
+            });
+            var start = pool.submit(() -> { barrier.await(); return tasks.acceptWithSkills(SESSION, exercise, CONTROL, "race-task", "Inspect", true, List.of(created.id()), measurement); });
+            var updated = edit.get(10, TimeUnit.SECONDS); var task = start.get(10, TimeUnit.SECONDS);
+            String owner = repository.find(task.id()).userId();
+            var snapshot = skillSnapshots.list(owner, task.id()).getFirst();
+            assertThat(snapshot.versionId()).isIn(created.contentVersion(), updated.contentVersion());
+            assertThat(skillSnapshots.source(owner, task.id(), created.id()).filesPayload()).contains(snapshot.versionId().equals(created.contentVersion()) ? "Old body" : "New body");
+            personalSkills.change(SESSION, created.id(), "skill-disable", updated.version(), false, false);
+            assertThat(tasks.acceptWithSkills(SESSION, exercise, CONTROL, "race-task", "Inspect", true, List.of(created.id()), measurement)).isEqualTo(task);
+        }
+        verify(driver, never()).call(any(), any(), any(), anyInt(), any(), any());
+    }
+
+    @Test
+    void explicitSkillSelectionUsesTheTaskVersionAndRecordsLoadingOnlyOnDispatch() throws Exception {
+        String main = "---\nname: chosen\ndescription: Explicit guidance\n---\nMarker original-guidance.";
+        var created = personalSkills.save(SESSION, null, "skill-create", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", main))));
+        var enabled = personalSkills.change(SESSION, created.id(), "skill-enable", created.version(), true, false);
+        var task = tasks.acceptWithSkills(SESSION, exercise, CONTROL, "explicit-task", "Follow selected guidance", true, List.of(created.id()), measurement);
+        var owner = repository.find(task.id()).userId();
+        assertThat(skillSnapshots.list(owner, task.id())).singleElement().satisfies(item -> assertThat(item.explicitLoaded()).isFalse());
+        assertThatThrownBy(() -> tasks.acceptWithSkills(SESSION, exercise, CONTROL, "explicit-task", "Follow selected guidance", true, List.of(), measurement))
+            .hasMessageContaining("COPILOT_IDEMPOTENCY_CONFLICT");
+        personalSkills.save(SESSION, created.id(), "skill-update", enabled.version(), new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", main.replace("original-guidance", "new-guidance")))));
+        steers.accept(SESSION, task.id(), CONTROL, "skill-steer", new CopilotSteerRequest("Keep the original task guidance"));
+        assertThat(new SkillSnapshots(sql.getMapper(SkillSnapshotRepository.class)).list(owner, task.id())).isEqualTo(skillSnapshots.list(owner, task.id()));
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
+            ChatRequest request = call.getArgument(1);
+            assertThat(ChatMessageSerializer.messagesToJson(request.messages())).contains("original-guidance").doesNotContain("new-guidance");
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Selected guidance applied")).build(), 100);
+        });
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(skillSnapshots.list(owner, task.id())).singleElement().satisfies(item -> assertThat(item.explicitLoaded()).isTrue());
+    }
+
+    @Test
+    void taskLoadsOnlyItsPinnedSkillAfterThePersonalOriginalIsDeleted() throws Exception {
+        String main = "---\nname: review-java\ndescription: Review Java changes\n---\nUse deterministic clocks, marker pinned-original.";
+        var created = personalSkills.save(SESSION, null, "skill-create", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", main))));
+        var enabled = personalSkills.change(SESSION, created.id(), "skill-enable", created.version(), true, false);
+        var task = tasks.accept(SESSION, exercise, CONTROL, "skill-task", "Use applicable guidance", true, measurement);
+        var callsSeen = new AtomicInteger();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
+            ChatRequest request = call.getArgument(1);
+            String history = ChatMessageSerializer.messagesToJson(request.messages());
+            if (callsSeen.incrementAndGet() == 1) {
+                assertThat(history).contains("review-java", created.id()).doesNotContain("pinned-original");
+                personalSkills.change(SESSION, created.id(), "skill-delete", enabled.version(), false, true);
+                return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(ToolExecutionRequest.builder().id("load-guidance")
+                    .name("load_skill").arguments("{\"skill_id\":\"" + created.id() + "\"}").build())).build(), 100);
+            }
+            assertThat(request.messages().getLast()).isInstanceOf(ToolExecutionResultMessage.class);
+            assertThat(history).contains("pinned-original", created.contentVersion());
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Guidance applied")).build(), 100);
+        });
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(callsSeen.get()).isEqualTo(2);
+        assertThat(personalSkills.list(SESSION)).isEmpty();
+        assertThat(tasks.messages(SESSION, exercise, -1)).anySatisfy(message -> assertThat(message.payload()).contains("load_skill", "pinned-original"));
     }
 
     @Test
@@ -506,7 +615,7 @@ class CopilotPersistenceIT {
         var small = new CopilotContextProperties(80, 4, 8192, 4096, 8192, 32, 2048);
         var requests = new CopilotRequestFactory(); var evidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
         var planner = new CopilotContextPlanner(requests, small, json, limits);
-        var preparation = proxy(new CopilotContextPreparation(repository, sql.getMapper(CopilotSteerRepository.class), planner, evidence, small, limits), CopilotContextPreparation.class);
+        var preparation = proxy(new CopilotContextPreparation(repository, sql.getMapper(CopilotSteerRepository.class), planner, evidence, small, limits, skillContext), CopilotContextPreparation.class);
         var summaryWorker = new CopilotCompactionRunner(summaryExecution, preparation, planner, new CopilotSummaryCodec(json), evidence,
             requests, capacity, driver, limits, calls, json);
         var context = new CopilotContextService(execution, preparation, repository, compactions, summaryWorker, capacity);
@@ -1329,6 +1438,35 @@ class CopilotPersistenceIT {
             System.out.println("DeepSeek summary validation: fixture history/Go reads, real SDK summary and continuation; paid usage only: " + usage);
         }
         // The isolated fixture database owns this connection and is erased by the suite, including on assertion failure.
+    }
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "COPILOT_LIVE_DEEPSEEK", matches = "1")
+    void realDeepSeekLoadsPinnedSkillGuidanceOnDemandAndUsesItsPrivateMarker() throws Exception {
+        String key = System.getenv("DeepSeek");
+        assertThat(key != null && !key.isBlank()).as("Explicit DeepSeek credential is required").isTrue();
+        String marker = "SKILL_OK_" + UUID.randomUUID().toString().substring(0, 8);
+        var original = personalSkills.save(SESSION, null, "live-skill", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md",
+            "---\nname: response-verification\ndescription: Exact response verification guidance\n---\nReply with exactly this text and nothing else: " + marker))));
+        personalSkills.change(SESSION, original.id(), "live-skill-enable", original.version(), true, false);
+        var connection = connections.create(SESSION, "live-connection", new ModelConnectionRequest("Live skill fixture", "https://api.deepseek.com", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, key, null));
+        var model = models.create(SESSION, connection.id(), "live-model", new ModelConfigurationRequest("Live skill fixture", "deepseek-flash", 100000, 1024, ModelThinkingMode.OFF, null, null, null, null));
+        selection.select(SESSION, exercise, CONTROL, "live-select", new ModelInvocationReferenceDTO(connection.id(), model.id(), 1, 1));
+        var count = new AtomicInteger();
+        try (var live = new ModelCallDriver(new ModelSdkClientFactory(new ModelConnectionValidator(), calls), calls, clock)) {
+            doAnswer(call -> {
+                if (count.incrementAndGet() > 3) throw new BusinessException(ModelAccessErrorCode.MODEL_OUTPUT_LIMIT_EXCEEDED);
+                return live.call(call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4), call.getArgument(5));
+            }).when(driver).call(any(), any(), any(), anyInt(), any(), any());
+            var task = tasks.accept(SESSION, exercise, CONTROL, "live-skill-task", "Use load_skill once to read SKILL.md from the available response-verification Skill, then follow its exact response guidance. Do not use any other tool.", true, measurement);
+            runner.run(task.id(), UUID.randomUUID().toString());
+            assertThat(tasks.find(SESSION, task.id()).state()).as("live task reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("SUCCEEDED");
+            var messages = tasks.messages(SESSION, exercise, -1);
+            assertThat(messages).anySatisfy(message -> assertThat(message.payload()).contains("load_skill", marker));
+            assertThat(messages.getLast().payload()).contains(marker);
+            assertThat(count.get()).isBetween(2, 3);
+            System.out.println("DeepSeek Skill paid requests=" + count.get() + "; numeric usage=" + jdbc.queryForList("SELECT input_tokens,output_tokens,total_tokens FROM copilot_turn WHERE task_id=?::uuid ORDER BY ordinal", task.id()));
+        } finally { connections.delete(SESSION, connection.id(), "live-cleanup", connection.version()); }
     }
 
     @Test

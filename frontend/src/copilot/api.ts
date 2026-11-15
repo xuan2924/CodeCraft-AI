@@ -30,8 +30,8 @@ export async function latest(owner: string, exercise: string, signal: AbortSigna
   const value = await request(`/api/exercises/${path(exercise)}/copilot/tasks/latest`, signal, { headers: ownerHeaders(owner) });
   return value === null ? null : snapshot(value, exercise);
 }
-export async function start(owner: string, exercise: string, credential: string, text: string, key: string, signal: AbortSignal): Promise<Task> {
-  return task(await post(`/api/exercises/${path(exercise)}/copilot/tasks`, { text, feeAcknowledged: true }, signal, key, credential, owner), exercise);
+export async function start(owner: string, exercise: string, credential: string, text: string, key: string, signal: AbortSignal, skillIds: string[] = []): Promise<Task> {
+  return task(await post(`/api/exercises/${path(exercise)}/copilot/tasks`, { text, feeAcknowledged: true, ...(skillIds.length ? { skillIds: [...skillIds] } : {}) }, signal, key, credential, owner), exercise);
 }
 export async function stop(owner: string, exercise: string, id: string, key: string, signal: AbortSignal): Promise<Task> {
   const result = task(await post(`/api/copilot-tasks/${path(id)}/stop`, {}, signal, key, undefined, owner), exercise);

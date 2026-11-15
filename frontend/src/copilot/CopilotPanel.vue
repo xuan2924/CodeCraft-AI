@@ -12,6 +12,7 @@ import CopilotApprovalMode from './CopilotApprovalMode.vue';
 import CopilotSteers from './CopilotSteers.vue';
 import CopilotContext from './CopilotContext.vue';
 import CopilotUsage from './CopilotUsage.vue';
+import CopilotSkills from './CopilotSkills.vue';
 
 const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string] }>();
@@ -19,6 +20,7 @@ const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.credential}`);
 const text = ref('');
 const fee = ref(false);
+const selectedSkills = ref<string[]>([]);
 const contextBusy = ref(true);
 const saving = ref(false);
 const saveError = ref('');
@@ -32,9 +34,9 @@ const task = computed(() => latest.data.value?.task);
 const running = computed(() => api.active(task.value));
 watch([latest.error, history.error], (errors) => { if (errors.some(commandPolicy.identityFailure)) emit('unauthorized'); });
 watch(() => latest.data.value?.lastSequence, () => { void client.invalidateQueries({ queryKey: ['copilot', props.owner, props.exerciseId, 'messages'] }); });
-watch(scope, () => { text.value = ''; fee.value = false; saveError.value = ''; saving.value = false; }, { flush: 'sync' });
+watch(scope, () => { text.value = ''; fee.value = false; selectedSkills.value = []; saveError.value = ''; saving.value = false; }, { flush: 'sync' });
 const start = useCommand<api.Task>(() => scope.value, () => {
-  text.value = ''; fee.value = false; after.value = '-1'; void latest.refetch(); void history.refetch();
+  text.value = ''; fee.value = false; selectedSkills.value = []; after.value = '-1'; void latest.refetch(); void history.refetch();
 }, commandPolicy, () => emit('unauthorized'));
 const stop = useCommand<api.Task>(() => `${props.owner}/${props.exerciseId}/${task.value?.id}`, () => { void latest.refetch(); }, commandPolicy, () => emit('unauthorized'));
 const canSend = computed(() => !props.disabled && !!props.credential && !running.value && !contextBusy.value && !latest.isPending.value && !latest.isError.value
@@ -44,12 +46,13 @@ async function send() {
   if (new globalThis.TextEncoder().encode(text.value).length > 4096) { saveError.value = '请求文字最多 4 KiB，请缩短后再发送。'; return; }
   const before = scope.value;
   const prompt = text.value;
+  const skillIds = [...selectedSkills.value];
   const { owner, exerciseId, credential } = props;
   saving.value = true; saveError.value = '';
   try {
     if (!await props.prepare()) { if (scope.value === before) saveError.value = '草稿保存未完成，未创建 Copilot 请求。请处理冲突或返回编辑。'; return; }
     if (scope.value !== before || props.disabled) return;
-    await start.submit((key, signal) => api.start(owner, exerciseId, credential, prompt, key, signal));
+    await start.submit((key, signal) => api.start(owner, exerciseId, credential, prompt, key, signal, skillIds));
   } catch {
     if (scope.value === before) saveError.value = '操作结果待核对，请重新读取任务并检查编辑器；不要换键重发。';
   } finally { if (scope.value === before) saving.value = false; }
@@ -225,6 +228,13 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     <NButton @click="latest.refetch(); history.refetch()">
       重新读取
     </NButton>
+    <CopilotSkills
+      v-model="selectedSkills"
+      :owner="owner"
+      :task-id="task?.id ?? null"
+      :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
+      @unauthorized="emit('unauthorized')"
+    />
     <label :for="`copilot-text-${exerciseId}`">给 Copilot 的请求</label>
     <textarea
       :id="`copilot-text-${exerciseId}`"

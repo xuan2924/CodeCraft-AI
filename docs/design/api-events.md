@@ -181,6 +181,12 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - 写入结果未知先对账，不盲目重放副作用。
 - 测试先查询 Go 状态；可确认则接续跟踪或读取结果，否则明确标记中断。
 
+## 任务 Skill 快照读取
+
+- Copilot 启动请求增加可选 `skillIds` UUID 数组，表示显式加载哪些启用 Skill 的主文档；既有无该字段请求仍有效。任务始终固定全部启用版本，重放校验原文及显式选择集合。
+- `GET /api/copilot-tasks/{task}/skills` 返回 `skillId,versionId,name,description,explicitlySelected,explicitLoaded` 列表；后两个字段只描述显式加载，模型按需加载记录由原始 `load_skill` 工具结果呈现。
+- `GET /api/copilot-tasks/{task}/skills/{skill}/package` 返回固定版本原文包，仅用于本人核对；不修改模型上下文、不新增加载记录、不触发模型请求。两接口均校验当前用户、任务/演练归属和访问生命周期，采用 no-store 与 owner 条件头；原件删除后仍可读取合法保留的任务快照。
+
 ## 个人 Skill 文本管理
 
 - `/api/skills`：GET 返回本人原件元数据列表（含停用），POST 新建；`/api/skills/{id}` PUT 原子替换完整包，DELETE 删除原件引用。

@@ -37,7 +37,7 @@ import org.springframework.stereotype.Component;
 /** Pure, bounded preparation. Never call this codec while holding a database transaction. */
 @Component
 public class CopilotContextPlanner {
-    private static final Set<String> REREADABLE = Set.of("view_file", "glob_files", "grep_code", "read_evidence");
+    private static final Set<String> REREADABLE = Set.of("view_file", "glob_files", "grep_code", "read_evidence", "load_skill");
     private final CopilotRequestFactory requests;
     private final CopilotContextProperties limits;
     private final ObjectMapper json;
@@ -68,6 +68,12 @@ public class CopilotContextPlanner {
         }
         var units = completeUnits(items, source.hasMore());
         var history = new ArrayList<ChatMessage>();
+        // Stable task guidance precedes history; never insert a synthetic new user turn after a tool result.
+        for (String payload : source.skillPayloads()) {
+            var guidance = ChatMessageDeserializer.messageFromJson(payload);
+            if (!(guidance instanceof UserMessage)) throw new IllegalStateException("Skill guidance is not untrusted user content");
+            history.add(guidance);
+        }
         if (source.summaryText() != null) history.add(summaryMessage(source.summaryId(), source.throughSequence(), source.summaryText()));
         var pinned = new HashSet<String>();
         for (var goal : source.goals()) {

@@ -31,7 +31,7 @@ public class CopilotTaskService {
 
     public CopilotTaskResponse start(String session, String exercise, String credential, String key, CopilotStartRequest input) {
         if (input == null) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
-        return capacity.admit(session, exercise, measurement -> store.accept(session, exercise, credential, key, input.text(), input.feeAcknowledged(), measurement));
+        return capacity.admit(session, exercise, measurement -> store.acceptWithSkills(session, exercise, credential, key, input.text(), input.feeAcknowledged(), input.skillIds(), measurement));
     }
     public CopilotDeliveryDTO latest(String session, String exercise) {
         var task = store.latest(session, exercise);

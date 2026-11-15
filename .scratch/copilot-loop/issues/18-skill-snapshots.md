@@ -26,3 +26,19 @@
 ## Comments
 
 P2-21 收口演练删除与版本回收；本票必须先保证快照完整性、存储预留和引用不悬空。
+
+### 实施决定（2026-11-15）
+
+沿用用户持续推进授权：复用 #17 不可变版本及用户级锁，任务启动先计算新增归属快照存储预留，再原子保存任务与启用版本引用。已有 `ExerciseDataContributor` 接入共享预算/删除，不由 Copilot 直接修改 Skill 模块内部表。名称/描述清单在模型上下文准备阶段从本任务快照生成，不从个人当前配置读取，也不标为正文已加载。测试边界沿用 #05/#18 已约定的任务启动、真实持久化、受控加载和 UI，不为内部类分拆验收轮次。
+
+显式选择采用启动请求可选 `skillIds` 集合，不引入斜杠命令；用户可选启用列表中的任意项。目录/显式主文档作为非可信指导放在历史之前，避免每轮工具结果后插入人为的新用户轮次。显式加载范围固定 SKILL.md 全文 offset 0，首次派发时间连同任务/不可变版本引用为记录；按需加载沿既有工具结果保存精确路径、UTF-8 切片与版本。查看留存原文为纯读取，不冒充模型加载。
+
+### 当前实现与定向证据
+
+- V37 选择/首次显式加载标记、`SkillSnapshots` 模块边界、任务启动容量预留及原子 pin、只读 `load_skill`、上下文投影/压缩可重读引用已接入。目录并不加载全包正文，显式内容也不能扩大权限。原件修改/删除与任务启动共用用户锁，幂等重放核对文字及原快照显式选择，不重新抓取配置。
+- `SkillExerciseData` 通过既有 contributor 参加 512MiB 计量和删除；真实 PG 验证同演练同版本只计一次、跨演练各自计量、删除一场保留另一引用、最后引用消失后回收。原件删除不影响旧快照；快照预算不足时任务/引用一起回滚，原件保留。
+- 新任务 UI 可显式选择；当前任务显示固定 UUID、显式加载状态及私有原文，自动加载的完整内容/路径/版本/切片由对话工具结果展示。只读接口遵守账号/任务/演练归属及删除生命周期，不启动付费工作。
+- 定向 Java 单测/HTTP 与真实 PostgreSQL 通过：`SkillPersistenceIT`、`CopilotPersistenceIT#taskLoadsOnlyItsPinnedSkillAfterThePersonalOriginalIsDeleted+explicitSkillSelectionUsesTheTaskVersionAndRecordsLoadingOnlyOnDispatch+taskAdmissionAndPersonalEditsSerializeToOneWholeSkillVersion+skillSnapshotCapacityFailureRollsBackTheWholeTaskWithoutDeletingPersonalOriginals`。覆盖并发版本、禁用拒绝、重复任务不抓新配置、steer 不刷新、重建快照服务后数据仍在、显式/按需加载、UTF-8/路径/worker 边界、额度原子性和共享引用回收。
+- 前端 Copilot/Skill 受影响测试、类型与修改文件 Lint 通过；额外覆盖显式 IDs 在 CSRF 等待期间不被表单修改、晚到私有原文在账号/任务切换后隐藏并取消。
+- 真实 DeepSeek `deepseek-flash` / OpenAI Chat / OFF 显式执行 `realDeepSeekLoadsPinnedSkillGuidanceOnDemandAndUsesItsPrivateMarker`，硬上限 3 次，实际 2 次请求通过：先从仅名称/描述的目录选择 `load_skill`，再使用正文独有随机标记回答。数值 usage 为输入/输出/总量 `1837/82/1919`、`2058/9/2067`；不打印 Key 或请求正文，不因验证补做自动重试。此证据仅覆盖本组合，不冒充 #19/20。
+- 日志 `%TEMP%/skill-load-red.log` / `skill-load-green.log`、`skill-live-deepseek.log`、`skill-snapshot-final-directed.log`、`skill-snapshot-final-ui.log`、`skill-snapshot-final-typecheck.log`、`skill-snapshot-final-lint.log`。完整阶段回归、双轴审查及 #21/#22 跨功能证据继续收口，不把上述局部证据当作第二阶段已完成。

@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
-@RestControllerAdvice(assignableTypes = {CopilotController.class, CopilotApprovalController.class, CopilotSteerController.class, CopilotContextController.class})
+@RestControllerAdvice(assignableTypes = {CopilotController.class, CopilotApprovalController.class, CopilotSteerController.class, CopilotContextController.class, CopilotSkillController.class})
 public class CopilotErrors {
     private static final Logger LOG = LoggerFactory.getLogger(CopilotErrors.class);
     private final ObjectMapper json;

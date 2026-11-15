@@ -22,11 +22,12 @@ public class CopilotContextPreparation {
     private final CopilotCallEvidence evidence;
     private final CopilotContextProperties contextLimits;
     private final CopilotProperties executionLimits;
+    private final CopilotSkillContext skills;
 
     public CopilotContextPreparation(CopilotCompactionRepository contexts, CopilotSteerRepository steers,
-        CopilotContextPlanner planner, CopilotCallEvidence evidence, CopilotContextProperties contextLimits, CopilotProperties executionLimits) {
+        CopilotContextPlanner planner, CopilotCallEvidence evidence, CopilotContextProperties contextLimits, CopilotProperties executionLimits, CopilotSkillContext skills) {
         this.contexts = contexts; this.steers = steers; this.planner = planner; this.evidence = evidence;
-        this.contextLimits = contextLimits; this.executionLimits = executionLimits;
+        this.contextLimits = contextLimits; this.executionLimits = executionLimits; this.skills = skills;
     }
 
     @Transactional(propagation = Propagation.NEVER)
@@ -52,7 +53,7 @@ public class CopilotContextPreparation {
         if (!adjustments.stream().map(CopilotSteerEntity::id).toList().equals(ticket.steerIds())) return null;
         boolean more = !messages.isEmpty() && messages.getLast().sequence() < ticket.highWater();
         var input = new CopilotContextInputDTO(ticket.summaryId(), summary, ticket.throughSequence(), messages, goals,
-            adjustments.stream().map(CopilotSteerEntity::messagePayload).toList(), more, ticket.textHistoryThroughSequence());
+            adjustments.stream().map(CopilotSteerEntity::messagePayload).toList(), more, ticket.textHistoryThroughSequence(), skills.prepare(ticket));
         var plan = planner.plan(ticket.target(), input);
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Context preparation cancelled");
         return new CopilotContextPreparedDTO(ticket, input, plan, adjustments, evidence.configuration(ticket.target()));

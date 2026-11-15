@@ -12,6 +12,8 @@ import ai.codecraft.modules.skills.config.SkillProperties;
 import ai.codecraft.modules.skills.model.dto.SkillFileDTO;
 import ai.codecraft.modules.skills.model.dto.SkillPackageRequest;
 import ai.codecraft.modules.skills.repository.SkillRepository;
+import ai.codecraft.modules.skills.repository.SkillSnapshotRepository;
+import org.springframework.transaction.support.TransactionTemplate;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import java.time.Clock;
 import java.time.Instant;
@@ -42,7 +44,7 @@ class SkillPersistenceIT {
         var jdbc = new JdbcTemplate(source);
         String owner = UUID.randomUUID().toString();
         jdbc.update("INSERT INTO identity_user(id,username,password_hash,role,password_change_required) VALUES (?::uuid,?,'fixture','USER',false)", owner, "skill_" + owner.substring(0, 20));
-        var config = new Configuration(); config.setMapUnderscoreToCamelCase(true); config.setLocalCacheScope(LocalCacheScope.STATEMENT); config.addMapper(SkillRepository.class);
+        var config = new Configuration(); config.setMapUnderscoreToCamelCase(true); config.setLocalCacheScope(LocalCacheScope.STATEMENT); config.addMapper(SkillRepository.class); config.addMapper(SkillSnapshotRepository.class);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         var sql = new SqlSessionTemplate(factory.getObject());
         {
@@ -59,11 +61,31 @@ class SkillPersistenceIT {
             var original = service.save("owner", null, "create", null, pack("first", "Original"));
             assertThat(service.save("owner", null, "create", null, pack("first", "Original"))).isEqualTo(original);
             assertThatThrownBy(() -> service.save("owner", null, "second", null, pack("second", "Other"))).hasMessageContaining("SKILL_LIMIT_EXCEEDED");
-            // Arrange a retained task reference; task admission/loading is exercised separately in #18.
             String referencedTask = UUID.randomUUID().toString();
-            jdbc.update("INSERT INTO copilot_skill_snapshot(task_id,exercise_id,user_id,skill_id,version_id) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?::uuid)",
-                referencedTask, UUID.randomUUID().toString(), owner, original.id(), original.contentVersion());
-            var updated = service.save("owner", original.id(), "update", original.version(), pack("first", "Updated"));
+            String referencedExercise = UUID.randomUUID().toString();
+            var snapshots = new SkillSnapshots(sql.getMapper(SkillSnapshotRepository.class));
+            assertThatThrownBy(() -> snapshots.pin(owner, referencedTask, referencedExercise, List.of(original.id()))).hasMessageContaining("SKILL_NOT_FOUND");
+            var enabled = service.change("owner", original.id(), "enable", original.version(), true, false);
+            new TransactionTemplate(new DataSourceTransactionManager(source)).executeWithoutResult(status -> {
+                jdbc.queryForObject("SELECT id::text FROM identity_user WHERE id=?::uuid FOR UPDATE", String.class, owner);
+                assertThat(snapshots.additionalBytes(owner, referencedExercise)).isGreaterThan(0);
+                snapshots.pin(owner, referencedTask, referencedExercise, List.of(original.id()));
+            });
+            var retainedData = new SkillExerciseData(sql.getMapper(SkillSnapshotRepository.class));
+            long initialBytes = retainedData.retainedBytes(referencedExercise);
+            String secondTask = UUID.randomUUID().toString(); String otherExercise = UUID.randomUUID().toString();
+            String otherTask = UUID.randomUUID().toString();
+            new TransactionTemplate(new DataSourceTransactionManager(source)).executeWithoutResult(status -> {
+                jdbc.queryForObject("SELECT id::text FROM identity_user WHERE id=?::uuid FOR UPDATE", String.class, owner);
+                snapshots.pin(owner, secondTask, referencedExercise, List.of());
+                snapshots.pin(owner, otherTask, otherExercise, List.of());
+            });
+            assertThat(retainedData.retainedBytes(referencedExercise) - initialBytes).isPositive().isLessThan(initialBytes);
+            assertThat(retainedData.retainedBytes(otherExercise)).isEqualTo(initialBytes);
+            assertThat(snapshots.list(owner, referencedTask)).singleElement().satisfies(item -> {
+                assertThat(item.explicitlySelected()).isTrue(); assertThat(item.explicitLoaded()).isFalse();
+            });
+            var updated = service.save("owner", original.id(), "update", enabled.version(), pack("first", "Updated"));
             assertThat(updated.contentVersion()).isNotEqualTo(original.contentVersion());
             assertThatThrownBy(() -> service.save("owner", original.id(), "stale", original.version(), pack("first", "Stale"))).hasMessageContaining("SKILL_VERSION_CONFLICT");
             assertThat(service.contents("owner", original.id()).files().getFirst().content()).endsWith("Updated");
@@ -72,9 +94,21 @@ class SkillPersistenceIT {
             assertThatThrownBy(() -> service.save("owner", null, "disabled-counts", null, pack("second", "Other"))).hasMessageContaining("SKILL_LIMIT_EXCEEDED");
             service.change("owner", original.id(), "delete", disabled.version(), false, true);
             assertThat(service.list("owner")).isEmpty();
-            var retained = sql.getMapper(SkillRepository.class).version(owner, original.contentVersion());
-            assertThat(mapper.readValue(retained.filesPayload(), SkillPackageRequest.class).files().getFirst().content()).endsWith("Original");
+            String retained = snapshots.source(owner, referencedTask, original.id()).filesPayload();
+            assertThat(mapper.readValue(retained, SkillPackageRequest.class).files().getFirst().content()).endsWith("Original");
+            assertThatThrownBy(() -> snapshots.source(UUID.randomUUID().toString(), referencedTask, original.id())).hasMessageContaining("SKILL_NOT_FOUND");
             assertThat(sql.getMapper(SkillRepository.class).version(owner, updated.contentVersion())).isNull();
+            new TransactionTemplate(new DataSourceTransactionManager(source)).executeWithoutResult(status -> {
+                jdbc.queryForObject("SELECT id::text FROM identity_user WHERE id=?::uuid FOR UPDATE", String.class, owner);
+                retainedData.erase(referencedExercise);
+            });
+            assertThat(retainedData.retainedBytes(referencedExercise)).isZero();
+            assertThat(snapshots.source(owner, otherTask, original.id()).filesPayload()).contains("Original");
+            new TransactionTemplate(new DataSourceTransactionManager(source)).executeWithoutResult(status -> {
+                jdbc.queryForObject("SELECT id::text FROM identity_user WHERE id=?::uuid FOR UPDATE", String.class, owner);
+                retainedData.erase(otherExercise);
+            });
+            assertThat(sql.getMapper(SkillRepository.class).version(owner, original.contentVersion())).isNull();
             assertThatThrownBy(() -> service.contents("owner", original.id())).hasMessageContaining("SKILL_NOT_FOUND");
             try (var executor = Executors.newFixedThreadPool(2)) {
                 var start = new CountDownLatch(1);

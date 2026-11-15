@@ -15,6 +15,7 @@ import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
+import ai.codecraft.modules.skills.service.SkillSnapshots;
 import ai.codecraft.modules.workspace.service.ExerciseModelService;
 import ai.codecraft.modules.workspace.service.ExerciseTransactionService;
 import ai.codecraft.modules.workspace.service.WorkspaceAiOperationService;
@@ -42,17 +43,29 @@ public class CopilotTaskStore {
     private final CopilotTestLifecycle tests;
     private final CopilotSteerRepository steers;
     private final CopilotCompactionRepository contexts;
+    private final SkillSnapshots skills;
 
     public CopilotTaskStore(CopilotTaskRepository tasks, IdentityTransactionService identity, IdentitySecrets secrets,
         ExerciseTransactionService exercises, WorkspaceCoordinationStore control, ExerciseModelService models,
-        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCompactionRepository contexts) {
+        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCompactionRepository contexts, SkillSnapshots skills) {
         this.tasks = tasks; this.identity = identity; this.secrets = secrets; this.exercises = exercises;
-        this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals; this.tests = tests; this.steers = steers; this.contexts = contexts;
+        this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals; this.tests = tests; this.steers = steers; this.contexts = contexts; this.skills = skills;
     }
 
     @Transactional
     public CopilotTaskResponse accept(String session, String exercise, String credential, String key, String text,
         boolean feeAcknowledged, StorageMeasurement measurement) {
+        return acceptInternal(session, exercise, credential, key, text, feeAcknowledged, List.of(), measurement);
+    }
+
+    @Transactional
+    public CopilotTaskResponse acceptWithSkills(String session, String exercise, String credential, String key, String text,
+        boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement) {
+        return acceptInternal(session, exercise, credential, key, text, feeAcknowledged, selected == null ? List.of() : selected, measurement);
+    }
+
+    private CopilotTaskResponse acceptInternal(String session, String exercise, String credential, String key, String text,
+        boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement) {
         var grant = identity.authorizeMutation(session);
         exercises.find(session, exercise);
         control.checkControl(exercise, IdentitySecrets.digest(credential));
@@ -60,18 +73,25 @@ public class CopilotTaskStore {
         if (text == null || text.isBlank() || text.getBytes(StandardCharsets.UTF_8).length > 4096 || !feeAcknowledged) {
             throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
         }
+        if (selected.size() > 1000 || selected.stream().anyMatch(id -> id == null || !id.matches("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"))) {
+            throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+        }
         String fingerprint = secrets.fingerprint(text);
         var previous = tasks.receipt(exercise, key);
         if (previous != null) {
-            if (!previous.fingerprint().equals(fingerprint)) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
+            var previousSelection = skills.list(grant.userId(), previous.id()).stream().filter(item -> item.explicitlySelected()).map(item -> item.skillId()).sorted().toList();
+            if (!previous.fingerprint().equals(fingerprint) || !previousSelection.equals(selected.stream().sorted().toList())) {
+                throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
+            }
             return describe(previous);
         }
         if (tasks.active(exercise) || contexts.active(exercise)) throw new BusinessException(CopilotErrorCode.COPILOT_BUSY);
         models.resolveForCall(session, exercise);
         String id = UUID.randomUUID().toString();
-        operations.reserve(session, exercise, id, "COPILOT_START", measurement, START_CREDIT);
+        operations.reserve(session, exercise, id, "COPILOT_START", measurement, Math.addExact(START_CREDIT, skills.additionalBytes(grant.userId(), exercise)));
         var task = new CopilotTaskEntity(id, exercise, grant.userId(), session, key, fingerprint, "QUEUED", null, false, null, null, clock.instant(), null);
         tasks.insert(task);
+        skills.pin(grant.userId(), id, exercise, selected);
         tasks.message(new CopilotMessageEntity(0, UUID.randomUUID().toString(), id, exercise, "USER",
             ChatMessageSerializer.messageToJson(UserMessage.from(text)), clock.instant()));
         operations.settle(exercise, id, true);

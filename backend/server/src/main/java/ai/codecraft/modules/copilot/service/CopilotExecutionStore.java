@@ -33,6 +33,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.Set;
+import ai.codecraft.modules.skills.service.SkillSnapshots;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
@@ -54,12 +55,13 @@ public class CopilotExecutionStore {
     private final IdentitySecrets secrets;
     private final CopilotTestLifecycle tests;
     private final CopilotSteerRepository steers;
+    private final SkillSnapshots skills;
 
     public CopilotExecutionStore(CopilotTaskRepository tasks, IdentityTransactionService identity,
         WorkspaceCoordinationStore workspace, ExerciseModelService models, WorkspaceAiOperationService operations,
-        CopilotProperties limits, Clock clock, CopilotCompactionRepository contexts, CopilotProposalRepository proposals, IdentitySecrets secrets, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCallEvidence evidence) {
+        CopilotProperties limits, Clock clock, CopilotCompactionRepository contexts, CopilotProposalRepository proposals, IdentitySecrets secrets, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCallEvidence evidence, SkillSnapshots skills) {
         this.tasks = tasks; this.identity = identity; this.workspace = workspace; this.models = models;
-        this.operations = operations; this.limits = limits; this.clock = clock; this.contexts = contexts; this.proposals = proposals; this.secrets = secrets; this.tests = tests; this.steers = steers; this.evidence = evidence;
+        this.operations = operations; this.limits = limits; this.clock = clock; this.contexts = contexts; this.proposals = proposals; this.secrets = secrets; this.tests = tests; this.steers = steers; this.evidence = evidence; this.skills = skills;
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -150,6 +152,7 @@ public class CopilotExecutionStore {
         boolean converted = ticket.textHistory();
         var request = prepared.plan().projection().request();
         tasks.turn(turn);
+        skills.markExplicitLoaded(task.userId(), task.id(), turn.createdAt());
         tasks.configuration(turn.id(), prepared.configurationPayload());
         tasks.recordPrice(turn.id(), evidence.price(target, turn.createdAt()));
         tasks.historyMode(turn.id(), converted);

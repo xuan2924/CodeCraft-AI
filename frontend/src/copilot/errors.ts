@@ -3,6 +3,7 @@ import { identityFailure, errorMessage as modelMessage } from '../modelaccess/er
 import { message as workspaceMessage } from '../workspace/api';
 
 const messages: Record<string, string> = {
+  SKILL_NOT_FOUND: '显式选择的 Skill 已停用、删除或不可访问，任务未启动；请重新读取可选项。',
   COPILOT_INVALID_REQUEST: '请求格式不合法：任务/方向文字最多 4 KiB；新任务需确认费用，拒绝理由最多 2 KiB。',
   COPILOT_STEER_NOT_ACTIVE: '当前任务不能接收方向调整，指令未受理；不会自动另起任务。',
   COPILOT_STEER_LIMIT: '已有 32 条方向调整等待生效，请先等待处理，不会覆盖旧指令。',
@@ -50,7 +51,7 @@ export const commandPolicy = {
   definitiveRejection(failure: unknown) {
     return failure instanceof ApiError && [400, 403, 404, 409, 422, 429].includes(failure.status) && [
       'COPILOT_INVALID_REQUEST', 'COPILOT_COMPACTION_BUSY', 'COPILOT_COMPACTION_NOT_FOUND', 'COPILOT_STEER_NOT_ACTIVE', 'COPILOT_STEER_LIMIT', 'COPILOT_APPROVAL_MODE_INVALID', 'COPILOT_APPROVAL_MODE_CONFLICT', 'COPILOT_BUSY', 'COPILOT_NOT_FOUND', 'COPILOT_PROPOSAL_NOT_FOUND', 'COPILOT_PROPOSAL_DECIDED', 'IDEMPOTENCY_CONFLICT', 'COPILOT_IDEMPOTENCY_CONFLICT', 'COPILOT_INVALID_STATE',
-      'MODEL_SELECTION_REQUIRED', 'MODEL_CONNECTION_NOT_FOUND', 'MODEL_CONFIGURATION_NOT_FOUND', 'MODEL_VERSION_CONFLICT',
+      'SKILL_NOT_FOUND', 'MODEL_SELECTION_REQUIRED', 'MODEL_CONNECTION_NOT_FOUND', 'MODEL_CONFIGURATION_NOT_FOUND', 'MODEL_VERSION_CONFLICT',
       'STALE_CONTROL', 'CONTROL_TRANSITION_PENDING', 'INVALID_STATE', 'EXERCISE_DELETED', 'STORAGE_BUDGET_EXCEEDED',
       'CSRF_REJECTED', 'PASSWORD_CHANGE_REQUIRED', 'FORBIDDEN',
     ].includes(failure.code);
