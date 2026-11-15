@@ -25,6 +25,7 @@ function task(value: unknown, exercise: string, conversation?: string): Task {
   return { conversationId, id: uuid(value.id), exerciseId: uuid(value.exerciseId), state, reason: value.reason, stopRequested: value.stopRequested,
     createdAt: date(value.createdAt), completedAt: value.completedAt === null ? null : date(value.completedAt) };
 }
+export { task as parseTask };
 function snapshot(value: unknown, exercise: string, conversation?: string): Snapshot {
   if (!object(value) || typeof value.textHistory !== 'boolean' || !object(value.partial)) return invalid();
   const partial = value.partial;

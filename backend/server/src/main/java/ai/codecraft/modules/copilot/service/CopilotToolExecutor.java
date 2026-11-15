@@ -26,6 +26,7 @@ public class CopilotToolExecutor {
         this.reads = reads; this.preparation = preparation; this.proposals = proposals; this.json = json; this.tests = tests; this.evidence = evidence; this.skills = skills;
     }
     public CopilotToolExecutionDTO execute(CopilotTaskEntity task, String worker, CopilotToolEntity tool) throws JsonProcessingException, InterruptedException {
+        if (!CopilotToolPolicy.allows(task.lane(), tool.name())) return new CopilotToolExecutionDTO(false, "{\"code\":\"BTW_READ_ONLY\",\"notice\":\"This side conversation cannot execute or modify workspace state.\"}");
         if ("web_search".equals(tool.name()) || "web_read".equals(tool.name())) return new CopilotToolExecutionDTO(false, web.execute(task.sessionHash(), task.exerciseId(), tool.name(), tool.arguments()));
         if ("read_source".equals(tool.name())) return new CopilotToolExecutionDTO(false, references.execute(task.sessionHash(), task.exerciseId(), tool.arguments()));
         if ("load_skill".equals(tool.name())) return new CopilotToolExecutionDTO(false, skills.execute(task.id(), worker, tool.arguments()));

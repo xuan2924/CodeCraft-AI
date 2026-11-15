@@ -12,6 +12,7 @@ import CopilotCommands from './CopilotCommands.vue';
 import CopilotApprovalMode from './CopilotApprovalMode.vue';
 import CopilotSteers from './CopilotSteers.vue';
 import CopilotFollowups from './CopilotFollowups.vue';
+import CopilotBtw from './CopilotBtw.vue';
 import CopilotContext from './CopilotContext.vue';
 import CopilotUsage from './CopilotUsage.vue';
 import CopilotSkills from './CopilotSkills.vue';
@@ -32,6 +33,7 @@ const references = ref<ReferencePage[]>([]);
 const contextBusy = ref(true);
 const saving = ref(false);
 const saveError = ref('');
+const handoffNotice = ref('');
 const after = ref('-1');
 const connected = ref(false);
 const taskKey = computed(() => ['copilot', props.owner, props.exerciseId, 'task', props.conversationId ?? props.exerciseId]);
@@ -42,11 +44,29 @@ const task = computed(() => latest.data.value?.task);
 const running = computed(() => api.active(task.value));
 watch([latest.error, history.error], (errors) => { if (errors.some(commandPolicy.identityFailure)) emit('unauthorized'); });
 watch(() => latest.data.value?.lastSequence, () => { void client.invalidateQueries({ queryKey: ['copilot', props.owner, props.exerciseId, 'messages'] }); });
-watch(scope, () => { text.value = ''; fee.value = false; selectedSkills.value = []; references.value = []; saveError.value = ''; saving.value = false; }, { flush: 'sync' });
+watch(scope, () => { text.value = ''; fee.value = false; selectedSkills.value = []; references.value = []; saveError.value = ''; handoffNotice.value = ''; saving.value = false; }, { flush: 'sync' });
 const start = useCommand<api.Task>(() => scope.value, () => {
   text.value = ''; fee.value = false; selectedSkills.value = []; references.value = []; after.value = '-1'; void latest.refetch(); void history.refetch();
 }, commandPolicy, () => emit('unauthorized'));
 const stop = useCommand<api.Task>(() => `${props.owner}/${props.exerciseId}/${task.value?.id}`, () => { void latest.refetch(); }, commandPolicy, () => emit('unauthorized'));
+const handoff = useCommand<api.Steer>(() => `${scope.value}/${task.value?.id}`, receipt => {
+  handoffNotice.value = receipt.state === 'NOT_APPLIED' ? '旁支带回未生效，未另起任务。' : '旁支结论已作为 steer 接收；是否生效以主线方向调整记录为准。';
+  void client.invalidateQueries({ queryKey: ['copilot-steers', props.owner, props.exerciseId, receipt.taskId] });
+}, commandPolicy, () => emit('unauthorized'));
+const canSteer = computed(() => !!task.value && ['QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND'].includes(task.value.state));
+function bringBack(conclusion: string) {
+  if (props.disabled || saving.value || start.pending.value || start.uncertain.value || handoff.pending.value || handoff.uncertain.value) return;
+  if (new globalThis.TextEncoder().encode(conclusion).length > 4096) { handoffNotice.value = '带回内容过长，请缩短预览片段。'; return; }
+  if (running.value) {
+    if (!task.value || !canSteer.value) { handoffNotice.value = '主任务暂停或停止收敛中，当前不能接收 steer；旁支结论仍保留。'; return; }
+    const { owner, exerciseId, credential } = props; const id = task.value.id;
+    void handoff.submit((key, signal) => api.sendSteer(owner, exerciseId, id, credential, conclusion, key, signal));
+  } else {
+    const draft = text.value ? `${text.value}\n\n${conclusion}` : conclusion;
+    if (new globalThis.TextEncoder().encode(draft).length > 4096) { handoffNotice.value = '主请求已有草稿，合并后超过 4 KiB，未覆盖原草稿；请缩短或手动复制。'; return; }
+    text.value = draft; fee.value = false; handoffNotice.value = '已填入主请求草稿，尚未发送；请预览并确认费用。';
+  }
+}
 const canSend = computed(() => !props.disabled && !!props.credential && !running.value && !contextBusy.value && !latest.isPending.value && !latest.isError.value
   && !start.pending.value && !start.uncertain.value && !saving.value && fee.value && !!text.value.trim());
 async function send() {
@@ -343,6 +363,37 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       @unauthorized="emit('unauthorized')"
       @changed="latest.refetch()"
     />
+    <CopilotBtw
+      :owner="owner"
+      :exercise-id="exerciseId"
+      :parent-conversation-id="conversationId ?? exerciseId"
+      :credential="credential"
+      :main-running="running"
+      :disabled="disabled || saving || start.pending.value || start.uncertain.value"
+      :handoff-disabled="handoff.pending.value || handoff.uncertain.value || (running && !canSteer)"
+      @unauthorized="emit('unauthorized')"
+      @bringback="bringBack"
+    />
+    <p
+      v-if="handoffNotice"
+      role="status"
+    >
+      {{ handoffNotice }}
+    </p>
+    <p
+      v-if="handoff.error.value"
+      role="alert"
+    >
+      {{ handoff.error.value }}
+    </p>
+    <button
+      v-if="handoff.uncertain.value"
+      type="button"
+      :disabled="handoff.pending.value"
+      @click="handoff.retry()"
+    >
+      核对原旁支带回 steer（不换键）
+    </button>
     <CopilotUsage
       :conversation-id="conversationId"
       :owner="owner"

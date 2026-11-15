@@ -177,6 +177,14 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - `RECEIVED` 尚未纳入请求，`APPLIED` 已纳入持久请求上下文且带原 `turnId`，`NOT_APPLIED` 表示结束前未派发并带原因。后两者有完成时间；已纳入请求不等于供应商收到或成功回复。停止/到期不补发，已绑定写入/测试先按原 ID 收敛。
 - `COPILOT_STEER_NOT_ACTIVE`（409）表示新指令不被当前任务受理，`COPILOT_STEER_LIMIT`（429）表示待处理队列已满。先接受的 steer 使旧待审批提案 `INVALIDATED/STEER_SUPERSEDED`，已批准原写入不由 steer 撤销。
 
+### BTW 旁支
+
+- `GET /api/exercises/{exercise}/copilot/conversations/{parent}/btw`：私有读取主会话所属旁支，未创建返回 null；否则 `{exerciseId,parentConversationId,conversationId,createdAt}`。GET/打开页面不会创建或重发任务。
+- `POST .../{parent}/btw/tasks`：`{text,feeAcknowledged:true}`，文字最多 4 KiB；要求 CSRF、当前操作凭证和原幂等键，201 返回真实独立 Task（conversationId 为该主会话的 BTW 会话）。每场已存在活动 BTW 时返回 `COPILOT_BUSY`，不隐式排队。
+- 旁支最新任务、消息页、SSE、停止和用量复用原会话/任务 ID 接口；所有读取核对原身份。原 key 不同目标/旁支问题冲突，重试已受理请求不重新投影主线或再次调用模型。
+- 普通 start 与 follow-up 不接受 BTW conversationId；工具运行时强制只读，禁止能力返回 `BTW_READ_ONLY` 回执。讨论和历史链接不授予写权限。
+- 用户带回仍通过原 `/copilot-tasks/{id}/steers` 或普通新请求入口，不存在自动“合并旁支”接口。停止旁支不停止主任务，主会话切换不转移旁支记录。
+
 ### 上下文引用与保留来源
 
 - `GET /api/exercises/{exercise}/copilot/conversations/{conversation}/references?kind=FILE|CODE|TEST_LOG|COMMAND_LOG&source=...&offset=0&limit=2048&version=...`：核对私有演练/会话，返回 `kind,source,version,offset,limit,fingerprint,text,nextOffset,retainedBytes,sourceIncomplete,droppedBytes`。位置和限额为 UTF-8 字节，最大 2 KiB；首次预览可省略 version，续读传原版本。读取失败不返回空成功记录，真正空来源显式返回 retainedBytes=0。

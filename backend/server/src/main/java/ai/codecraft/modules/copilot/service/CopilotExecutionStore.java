@@ -132,7 +132,7 @@ public class CopilotExecutionStore {
         if (!id.equals(ticket.taskId()) || !worker.equals(ticket.workerId()) || !task.exerciseId().equals(ticket.exerciseId()) || !task.conversationId().equals(ticket.conversationId())) throw new IllegalArgumentException("Context ticket does not match this worker");
         var head = contexts.head(task.conversationId());
         if ((head == null ? 0 : head.version()) != ticket.version() || tasks.lastSequence(task.conversationId()) != ticket.highWater()
-            || !steers.pendingIds(id).equals(ticket.steerIds()) || contexts.active(task.exerciseId())) return null;
+            || !steers.pendingIds(id).equals(ticket.steerIds()) || contexts.activeInConversation(task.conversationId())) return null;
         var grant = identity.authorizeMutation(task.sessionHash());
         var target = models.resolveForCall(task.sessionHash(), task.exerciseId());
         if (!target.connection().equals(ticket.target().connection()) || !target.model().equals(ticket.target().model())) return null;

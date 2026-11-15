@@ -11,6 +11,7 @@ import ai.codecraft.modules.copilot.model.entity.CopilotMessageEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotSteerEntity;
 import ai.codecraft.modules.copilot.repository.CopilotCompactionRepository;
 import ai.codecraft.modules.copilot.repository.CopilotSteerRepository;
+import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
 import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -26,11 +27,12 @@ public class CopilotContextPreparation {
     private final CopilotProperties executionLimits;
     private final CopilotSkillContext skills;
     private final CopilotProjectInstructions instructions;
+    private final CopilotTaskRepository tasks;
 
     public CopilotContextPreparation(CopilotCompactionRepository contexts, CopilotSteerRepository steers,
-        CopilotContextPlanner planner, CopilotCallEvidence evidence, CopilotContextProperties contextLimits, CopilotProperties executionLimits, CopilotSkillContext skills, CopilotProjectInstructions instructions) {
+        CopilotContextPlanner planner, CopilotCallEvidence evidence, CopilotContextProperties contextLimits, CopilotProperties executionLimits, CopilotSkillContext skills, CopilotProjectInstructions instructions, CopilotTaskRepository tasks) {
         this.contexts = contexts; this.steers = steers; this.planner = planner; this.evidence = evidence;
-        this.contextLimits = contextLimits; this.executionLimits = executionLimits; this.skills = skills; this.instructions = instructions;
+        this.contextLimits = contextLimits; this.executionLimits = executionLimits; this.skills = skills; this.instructions = instructions; this.tasks = tasks;
     }
 
     @Transactional(propagation = Propagation.NEVER)
@@ -61,8 +63,9 @@ public class CopilotContextPreparation {
             if ("REVISION_CONFLICT".equals(failure.errorCode().code())) return null;
             throw failure;
         }
+        var task = ticket.taskId() == null ? null : tasks.find(ticket.taskId());
         var input = new CopilotContextInputDTO(ticket.summaryId(), summary, ticket.throughSequence(), messages, goals,
-            adjustments.stream().map(CopilotSteerEntity::messagePayload).toList(), more, ticket.textHistoryThroughSequence(), skills.prepare(ticket), instructions.payloads(project));
+            adjustments.stream().map(CopilotSteerEntity::messagePayload).toList(), more, ticket.textHistoryThroughSequence(), skills.prepare(ticket), instructions.payloads(project), task == null ? "MAIN" : task.lane());
         var plan = planner.plan(ticket.target(), input);
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Context preparation cancelled");
         return new CopilotContextPreparedDTO(ticket, input, plan, adjustments, evidence.configuration(ticket.target()),

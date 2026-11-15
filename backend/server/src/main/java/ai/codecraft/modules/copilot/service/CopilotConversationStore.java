@@ -55,13 +55,22 @@ public class CopilotConversationStore {
         return conversation;
     }
 
+    public boolean isBtw(String conversation) { return conversations.isBtw(conversation); }
+
+    @Transactional
+    public String resolveMain(String session, String exercise, String conversation) {
+        String resolved = resolve(session, exercise, conversation);
+        if (conversations.isBtw(resolved)) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+        return resolved;
+    }
+
     @Transactional
     public CopilotConversationResponse replay(String session, String exercise, String key) {
         identity.authorizePrivateDelivery(session);
         exercises.find(session, exercise);
         validateKey(key);
         var receipt = conversations.receipt(exercise, key);
-        if (receipt != null && receipt.forkSource() != null) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
+        if (receipt != null && (receipt.forkSource() != null || conversations.isBtw(receipt.id()))) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
         return receipt;
     }
 
@@ -73,7 +82,7 @@ public class CopilotConversationStore {
         validateKey(key);
         var previous = conversations.receipt(exercise, key);
         if (previous != null) {
-            if (previous.forkSource() != null) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
+            if (previous.forkSource() != null || conversations.isBtw(previous.id())) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
             return previous;
         }
         if (conversations.count(exercise) >= MAX_CONVERSATIONS) throw new BusinessException(CopilotErrorCode.COPILOT_CONVERSATION_LIMIT);

@@ -17,6 +17,7 @@ public interface CopilotRetentionRepository {
           SELECT sum(pg_column_size(t)) AS bytes FROM copilot_task t WHERE exercise_id=#{exercise}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM copilot_conversation t WHERE exercise_id=#{exercise}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM copilot_fork_message t WHERE exercise_id=#{exercise}::uuid
+          UNION ALL SELECT sum(pg_column_size(t)) FROM copilot_btw t WHERE exercise_id=#{exercise}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM copilot_followup t WHERE exercise_id=#{exercise}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM copilot_followup_resume t WHERE exercise_id=#{exercise}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM copilot_message t WHERE exercise_id=#{exercise}::uuid
@@ -66,6 +67,8 @@ public interface CopilotRetentionRepository {
     void deleteMessages(String exercise);
     @Delete("DELETE FROM copilot_turn WHERE exercise_id=#{exercise}::uuid")
     void deleteTurns(String exercise);
+    @Delete("DELETE FROM copilot_btw WHERE exercise_id=#{exercise}::uuid")
+    void deleteBtw(String exercise);
     @Delete("DELETE FROM copilot_followup WHERE exercise_id=#{exercise}::uuid")
     void deleteFollowups(String exercise);
     @Delete("DELETE FROM copilot_followup_resume WHERE exercise_id=#{exercise}::uuid")

@@ -3,6 +3,7 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import CopilotPanel from './CopilotPanel.vue';
 import CopilotReferences from './CopilotReferences.vue';
+import CopilotBtw from './CopilotBtw.vue';
 import { ApiError } from '../api/request';
 import * as api from './api';
 
@@ -93,6 +94,22 @@ it('shows the charge uncertainty and incomplete preview after model recovery wit
   expect(wrapper.text()).toContain('供应商可能已计费'); expect(wrapper.text()).toContain('不会自动重发');
   expect(wrapper.get('[aria-label="未确认回复预览"]').text()).toContain('Incomplete preview');
   expect(api.start).not.toHaveBeenCalled();
+});
+it('brings a side conclusion into an idle draft without sending or replacing existing text', async () => {
+  const wrapper = panel(); await prompt(wrapper);
+  wrapper.getComponent(CopilotBtw).vm.$emit('bringback', 'Selected side conclusion'); await flushPromises();
+  expect(wrapper.get('textarea').element.value).toBe('Inspect my saved code\n\nSelected side conclusion');
+  expect(wrapper.get<HTMLInputElement>('input[type="checkbox"]').element.checked).toBe(false);
+  expect(wrapper.text()).toContain('尚未发送'); expect(api.start).not.toHaveBeenCalled(); expect(api.sendSteer).not.toHaveBeenCalled();
+});
+it('uses original-key steer for explicit active-main handoff and never claims reception means effective', async () => {
+  vi.mocked(api.latest).mockResolvedValue({ task, lastSequence: '0', textHistory: false, partial: { turnId: null, sequence: '0', text: '', truncated: false } });
+  vi.mocked(api.sendSteer).mockRejectedValueOnce(new TypeError('offline')).mockResolvedValue({ id: task.id, sequence: '1', taskId: task.id, exerciseId: exercise, actorId: 'owner', text: 'Selected conclusion', state: 'RECEIVED', turnId: null, reason: null, createdAt: task.createdAt, completedAt: null });
+  const wrapper = panel(); await flushPromises(); wrapper.getComponent(CopilotBtw).vm.$emit('bringback', 'Selected conclusion'); await flushPromises();
+  await button(wrapper, '核对原旁支带回 steer（不换键）').trigger('click'); await flushPromises();
+  const calls = vi.mocked(api.sendSteer).mock.calls; expect(calls).toHaveLength(2); expect(calls[0]!.slice(0, 6)).toEqual(calls[1]!.slice(0, 6));
+  expect(calls[0]!.slice(0, 5)).toEqual(['owner', exercise, task.id, 'control', 'Selected conclusion']);
+  expect(wrapper.text()).toContain('是否生效以主线方向调整记录为准'); expect(api.start).not.toHaveBeenCalled();
 });
 it('renders hostile tool text as plain text, not HTML', async () => {
   vi.mocked(api.messages).mockResolvedValue({ messages: [{ id: task.id, taskId: task.id, sequence: '1', kind: 'TOOL', text: '<script>attack()</script><img src=x onerror=attack()>' }], nextCursor: '1' });

@@ -41,12 +41,12 @@ public class CopilotFollowupStore {
     }
     @Transactional
     public List<CopilotFollowupResponse> recent(String session, String exercise, String conversation) {
-        conversations.resolve(session, exercise, conversation);
+        conversations.resolveMain(session, exercise, conversation);
         return queue.recent(conversation).stream().sorted(Comparator.comparingLong(CopilotFollowupEntity::sequence)).map(this::describe).toList();
     }
     @Transactional
     public CopilotFollowupResponse previous(String session, String exercise, String conversation, String key, CopilotFollowupRequest input) {
-        conversations.resolve(session, exercise, conversation); validate(key, input);
+        conversations.resolveMain(session, exercise, conversation); validate(key, input);
         var previous = queue.receipt(exercise, key);
         if (previous == null) return null;
         if (!conversation.equals(previous.conversationId()) || !input.text().equals(previous.text())) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
@@ -55,7 +55,7 @@ public class CopilotFollowupStore {
     @Transactional
     public CopilotFollowupResponse accept(String session, String exercise, String conversation, String credential, String key, CopilotFollowupRequest input, StorageMeasurement measurement) {
         var grant = identity.authorizeMutation(session);
-        conversations.resolve(session, exercise, conversation); validate(key, input);
+        conversations.resolveMain(session, exercise, conversation); validate(key, input);
         var previous = queue.receipt(exercise, key);
         if (previous != null) {
             if (!conversation.equals(previous.conversationId()) || !input.text().equals(previous.text())) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
@@ -74,7 +74,7 @@ public class CopilotFollowupStore {
     }
     @Transactional
     public CopilotFollowupResponse cancel(String session, String exercise, String conversation, String id) {
-        identity.authorizeMutation(session); conversations.resolve(session, exercise, conversation);
+        identity.authorizeMutation(session); conversations.resolveMain(session, exercise, conversation);
         var item = queue.find(id);
         if (item == null || !conversation.equals(item.conversationId())) throw new BusinessException(CopilotErrorCode.COPILOT_NOT_FOUND);
         if ("DISPATCHED".equals(item.state())) throw new BusinessException(CopilotErrorCode.COPILOT_FOLLOWUP_STARTED);
@@ -83,7 +83,7 @@ public class CopilotFollowupStore {
     }
     @Transactional
     public CopilotFollowupResumeResponse previousResume(String session, String exercise, String conversation, String key, boolean fee) {
-        conversations.resolve(session, exercise, conversation); validateKey(key);
+        conversations.resolveMain(session, exercise, conversation); validateKey(key);
         if (!fee) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
         String previous = queue.resumeReceipt(exercise, key);
         if (previous == null) return null;
@@ -92,7 +92,7 @@ public class CopilotFollowupStore {
     }
     @Transactional
     public CopilotFollowupResumeResponse resume(String session, String exercise, String conversation, String credential, String key, boolean fee, StorageMeasurement measurement) {
-        identity.authorizeMutation(session); conversations.resolve(session, exercise, conversation);
+        identity.authorizeMutation(session); conversations.resolveMain(session, exercise, conversation);
         validateKey(key);
         if (!fee) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
         String previous = queue.resumeReceipt(exercise, key);

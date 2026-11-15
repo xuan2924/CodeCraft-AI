@@ -82,8 +82,9 @@ public class CopilotCompactionStore {
         if (!"ACTIVE".equals(active.state()) || active.deadlineAt() == null || !clock.instant().isBefore(active.deadlineAt())) {
             throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
         }
-        if (contexts.active(exercise)) throw new BusinessException(CopilotErrorCode.COPILOT_COMPACTION_BUSY);
-        var parent = tasks.activeTask(exercise);
+        boolean side = conversations.isBtw(conversation);
+        if (side ? contexts.activeInConversation(conversation) : contexts.active(exercise)) throw new BusinessException(CopilotErrorCode.COPILOT_COMPACTION_BUSY);
+        var parent = side ? tasks.activeInConversation(conversation) : tasks.activeTask(exercise);
         if (parent != null) {
             if (!conversation.equals(parent.conversationId())) throw new BusinessException(CopilotErrorCode.COPILOT_BUSY);
             var original = identity.tryAuthorizeMutation(parent.sessionHash());

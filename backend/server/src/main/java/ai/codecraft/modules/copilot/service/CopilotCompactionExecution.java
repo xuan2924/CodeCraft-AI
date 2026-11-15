@@ -53,7 +53,7 @@ public class CopilotCompactionExecution {
         if (job == null || !"WAITING".equals(job.state())) return null;
         String cancelled = cancellation(job);
         if (cancelled != null) { finish(job, "CANCELLED", null, cancelled); return null; }
-        var active = tasks.activeTask(job.exerciseId());
+        var active = tasks.activeInConversation(job.conversationId());
         if (inlineTask != null) {
             if (active == null || !inlineTask.equals(active.id()) || !worker.equals(active.workerId()) || active.workerNotAfter() == null
                 || !clock.instant().isBefore(active.workerNotAfter()) || !"RUNNING".equals(active.state()) || !settledBatch(active.id())) return null;

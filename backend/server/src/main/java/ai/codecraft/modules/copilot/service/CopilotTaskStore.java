@@ -74,14 +74,14 @@ public class CopilotTaskStore {
     public CopilotTaskResponse acceptInConversation(String session, String exercise, String credential, String key, String text,
         boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement, String conversation) {
         return acceptInternal(session, exercise, credential, key, text, feeAcknowledged,
-            selected == null ? List.of() : selected, measurement, conversations.resolve(session, exercise, conversation));
+            selected == null ? List.of() : selected, measurement, conversations.resolveMain(session, exercise, conversation));
     }
 
     @Transactional
     public CopilotTaskResponse acceptFollowup(String session, String exercise, String controlHash, String key, String text,
         StorageMeasurement measurement, String conversation) {
         return acceptWithControlHash(session, exercise, controlHash, key, text, true, List.of(), measurement,
-            conversations.resolve(session, exercise, conversation));
+            conversations.resolveMain(session, exercise, conversation));
     }
 
     private CopilotTaskResponse acceptInternal(String session, String exercise, String credential, String key, String text,
@@ -92,7 +92,7 @@ public class CopilotTaskStore {
     @Transactional
     public CopilotTaskResponse previousStart(String session, String exercise, String key, CopilotStartRequest input) {
         var grant = identity.authorizePrivateDelivery(session);
-        String conversation = conversations.resolve(session, exercise, input.conversationId());
+        String conversation = conversations.resolveMain(session, exercise, input.conversationId());
         validateStart(key, input.text(), input.feeAcknowledged(), input.skillIds());
         String fingerprint = references.requestFingerprint(input.text(), input.references());
         var previous = tasks.receipt(exercise, key);
@@ -105,18 +105,27 @@ public class CopilotTaskStore {
     public CopilotTaskResponse acceptPrepared(String session, String exercise, String credential, String key, CopilotStartRequest input,
         CopilotReferencesPreparedDTO prepared, StorageMeasurement measurement) {
         return acceptWithReferences(session, exercise, IdentitySecrets.digest(credential), key, input.text(), input.feeAcknowledged(), input.skillIds(),
-            measurement, conversations.resolve(session, exercise, input.conversationId()), input.references(), prepared);
+            measurement, conversations.resolveMain(session, exercise, input.conversationId()), input.references(), prepared, "MAIN", "");
     }
 
     private CopilotTaskResponse acceptWithControlHash(String session, String exercise, String controlHash, String key, String text,
         boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement, String conversation) {
         return acceptWithReferences(session, exercise, controlHash, key, text, feeAcknowledged, selected, measurement, conversation,
-            List.of(), new CopilotReferencesPreparedDTO(List.of(), ""));
+            List.of(), new CopilotReferencesPreparedDTO(List.of(), ""), "MAIN", "");
+    }
+
+    @Transactional
+    public CopilotTaskResponse acceptBtw(String session, String exercise, String credential, String key, String text, boolean fee,
+        String conversation, String projection, StorageMeasurement measurement) {
+        String resolved = conversations.resolve(session, exercise, conversation);
+        if (!conversations.isBtw(resolved)) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+        return acceptWithReferences(session, exercise, IdentitySecrets.digest(credential), key, text, fee, List.of(), measurement,
+            resolved, List.of(), new CopilotReferencesPreparedDTO(List.of(), ""), "BTW", projection);
     }
 
     private CopilotTaskResponse acceptWithReferences(String session, String exercise, String controlHash, String key, String text,
         boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement, String conversation,
-        List<CopilotReferenceSelectionDTO> selections, CopilotReferencesPreparedDTO prepared) {
+        List<CopilotReferenceSelectionDTO> selections, CopilotReferencesPreparedDTO prepared, String lane, String projection) {
         var grant = identity.authorizeMutation(session);
         exercises.find(session, exercise);
         control.checkControl(exercise, controlHash);
@@ -127,16 +136,16 @@ public class CopilotTaskStore {
             checkReplay(previous, conversation, fingerprint, grant.userId(), selected);
             return describe(previous);
         }
-        if (tasks.active(exercise) || contexts.active(exercise)) throw new BusinessException(CopilotErrorCode.COPILOT_BUSY);
+        if (tasks.activeLane(exercise, lane) || ("BTW".equals(lane) ? contexts.activeInConversation(conversation) : contexts.active(exercise))) throw new BusinessException(CopilotErrorCode.COPILOT_BUSY);
         models.resolveForCall(session, exercise);
         references.validateAdmission(session, exercise, prepared);
         String id = UUID.randomUUID().toString();
-        operations.reserve(session, exercise, id, "COPILOT_START", measurement, Math.addExact(START_CREDIT + 2L * prepared.payload().getBytes(StandardCharsets.UTF_8).length, skills.additionalBytes(grant.userId(), exercise)));
-        var task = new CopilotTaskEntity(id, exercise, grant.userId(), session, key, fingerprint, "QUEUED", null, false, null, null, clock.instant(), null, conversation);
+        operations.reserve(session, exercise, id, "COPILOT_START", measurement, Math.addExact(START_CREDIT + 2L * (prepared.payload() + projection).getBytes(StandardCharsets.UTF_8).length, skills.additionalBytes(grant.userId(), exercise)));
+        var task = new CopilotTaskEntity(id, exercise, grant.userId(), session, key, fingerprint, "QUEUED", null, false, null, null, clock.instant(), null, conversation, lane);
         tasks.insert(task);
         skills.pin(grant.userId(), id, exercise, selected);
         tasks.message(new CopilotMessageEntity(0, UUID.randomUUID().toString(), id, exercise, "USER",
-            ChatMessageSerializer.messageToJson(UserMessage.from(text + prepared.payload())), clock.instant()));
+            ChatMessageSerializer.messageToJson(UserMessage.from(text + prepared.payload() + projection)), clock.instant()));
         operations.settle(exercise, id, true);
         return describe(task);
     }

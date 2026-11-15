@@ -65,6 +65,8 @@ import io.grpc.StatusRuntimeException;
 import ai.codecraft.modules.copilot.repository.CopilotRetentionRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
 import ai.codecraft.modules.copilot.repository.CopilotFollowupRepository;
+import ai.codecraft.modules.copilot.repository.CopilotBtwRepository;
+import ai.codecraft.modules.copilot.model.dto.CopilotBtwRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotFollowupRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotReferenceSelectionDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotStartRequest;
@@ -195,6 +197,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.apache.ibatis.session.Configuration;
@@ -269,6 +272,8 @@ class CopilotPersistenceIT {
     private CopilotToolExecutor executor;
     private CopilotWebTools webTools;
     private CopilotReferences references;
+    private CopilotBtwStore btwStore;
+    private CopilotBtwService btw;
     private TestTaskStore childExecutions;
     private CommandTaskStore childCommands;
     private CopilotCommandLifecycle commandLifecycle;
@@ -302,7 +307,7 @@ class CopilotPersistenceIT {
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
             ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
-            CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotFollowupRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
+            CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotFollowupRepository.class, CopilotBtwRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
@@ -315,7 +320,7 @@ class CopilotPersistenceIT {
 
     @BeforeEach
     void seed() throws Exception {
-        jdbc.execute("TRUNCATE copilot_followup,copilot_followup_resume,copilot_command,workspace_command,copilot_skill_snapshot,personal_skill_command,personal_skill,personal_skill_version,copilot_context,copilot_compaction_call,copilot_compaction,copilot_steer,copilot_approval_change,copilot_approval_mode,copilot_test_run,copilot_proposal,copilot_tool,copilot_message,copilot_turn,copilot_task,workspace_task_event,workspace_task_stream,workspace_test_stop,workspace_test_task,workspace_mutation,workspace_transition,workspace_operation");
+        jdbc.execute("TRUNCATE copilot_btw,copilot_followup,copilot_followup_resume,copilot_command,workspace_command,copilot_skill_snapshot,personal_skill_command,personal_skill,personal_skill_version,copilot_context,copilot_compaction_call,copilot_compaction,copilot_steer,copilot_approval_change,copilot_approval_mode,copilot_test_run,copilot_proposal,copilot_tool,copilot_message,copilot_turn,copilot_task,workspace_task_event,workspace_task_stream,workspace_test_stop,workspace_test_task,workspace_mutation,workspace_transition,workspace_operation");
         clock.now = "1".equals(System.getenv("COPILOT_LIVE_DEEPSEEK")) ? Instant.now() : Instant.parse("2026-01-01T00:00:00Z");
         String owner = UUID.randomUUID().toString(); exercise = UUID.randomUUID().toString();
         String instance = UUID.randomUUID().toString(); String preparation = UUID.randomUUID().toString();
@@ -402,7 +407,7 @@ class CopilotPersistenceIT {
         var requestFactory = new CopilotRequestFactory();
         var planner = new CopilotContextPlanner(requestFactory, contextLimits, json, limits);
         contextPreparation = proxy(new CopilotContextPreparation(contextRepository, sql.getMapper(CopilotSteerRepository.class),
-            planner, callEvidence, contextLimits, limits, skillContext, mock(CopilotProjectInstructions.class)), CopilotContextPreparation.class);
+            planner, callEvidence, contextLimits, limits, skillContext, mock(CopilotProjectInstructions.class), repository), CopilotContextPreparation.class);
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 1, 0);
         sandbox = mock(SandboxWorkspaceGateway.class);
         when(sandbox.measureStorage(any())).thenAnswer(call -> measurement);
@@ -410,6 +415,9 @@ class CopilotPersistenceIT {
         var followupRepository = sql.getMapper(CopilotFollowupRepository.class);
         followups = proxy(new CopilotFollowupStore(followupRepository, repository, tasks, conversations, identity, coordination, operations, clock), CopilotFollowupStore.class);
         followupService = new CopilotFollowupService(followups, capacity, followupRepository, clock);
+        btwStore = proxy(new CopilotBtwStore(sql.getMapper(CopilotBtwRepository.class), sql.getMapper(CopilotConversationRepository.class), conversations,
+            repository, tasks, identity, secrets, operations, clock), CopilotBtwStore.class);
+        btw = new CopilotBtwService(btwStore, capacity, json);
         approvalModes = new CopilotApprovalModeService(proxy(new CopilotApprovalModeStore(sql.getMapper(CopilotApprovalModeRepository.class),
             identity, secrets, lifecycle, coordination, operations, clock), CopilotApprovalModeStore.class), capacity);
         when(files.find(SESSION, exercise)).thenReturn(new ExerciseResponse(exercise, "problem", instance, preparation, "ACTIVE", "1", "1", List.of("src/Main.java"), clock.instant(), clock.instant().plusSeconds(1800), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
@@ -692,7 +700,7 @@ class CopilotPersistenceIT {
         var small = new CopilotContextProperties(80, 4, 8192, 4096, 8192, 32, 2048);
         var requests = new CopilotRequestFactory(); var evidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
         var planner = new CopilotContextPlanner(requests, small, json, limits);
-        var preparation = proxy(new CopilotContextPreparation(repository, sql.getMapper(CopilotSteerRepository.class), planner, evidence, small, limits, skillContext, mock(CopilotProjectInstructions.class)), CopilotContextPreparation.class);
+        var preparation = proxy(new CopilotContextPreparation(repository, sql.getMapper(CopilotSteerRepository.class), planner, evidence, small, limits, skillContext, mock(CopilotProjectInstructions.class), this.repository), CopilotContextPreparation.class);
         var summaryWorker = new CopilotCompactionRunner(summaryExecution, preparation, planner, new CopilotSummaryCodec(json), evidence,
             requests, capacity, driver, limits, calls, json);
         var context = new CopilotContextService(execution, preparation, repository, compactions, summaryWorker, capacity);
@@ -1437,6 +1445,108 @@ class CopilotPersistenceIT {
         String configuration = jdbc.queryForObject("SELECT configuration_payload FROM copilot_turn WHERE task_id=?::uuid", String.class, task.id());
         assertThat(configuration).contains("OPENAI_CHAT", "https://example.test").doesNotContain("fixture-not-real", "apiKey");
         verify(driver, times(1)).call(any(), any(), any(), anyInt(), any(), any(), any());
+    }
+
+    @Test
+    void btwHasIndependentLoopHistoryAndCannotExecuteWriteToolsOrUpgradeItsLane() throws Exception {
+        var main = tasks.accept(SESSION, exercise, CONTROL, "btw-main", "Main goal", true, measurement);
+        repository.message(new CopilotMessageEntity(0, UUID.randomUUID().toString(), main.id(), exercise, "ASSISTANT",
+            ChatMessageSerializer.messageToJson(AiMessage.builder().text("Main saved answer").thinking("private-main-thinking").build()), clock.instant()));
+        var input = new CopilotBtwRequest("Side question", true);
+        var side = btw.start(SESSION, exercise, exercise, CONTROL, "btw-side", input);
+        assertThat(btw.start(SESSION, exercise, exercise, CONTROL, "btw-side", input).id()).isEqualTo(side.id());
+        assertThat(side.conversationId()).isNotEqualTo(exercise);
+        assertThat(repository.find(main.id()).state()).isEqualTo("QUEUED");
+        assertThat(conversations.list(SESSION, exercise)).extracting(item -> item.id()).containsExactly(exercise);
+        assertCode(() -> tasks.acceptInConversation(SESSION, exercise, CONTROL, "upgrade", "write", true, List.of(), measurement, side.conversationId()), "COPILOT_INVALID_REQUEST");
+        assertCode(() -> followups.accept(SESSION, exercise, side.conversationId(), CONTROL, "upgrade-queue", new CopilotFollowupRequest("write", true), measurement), "COPILOT_INVALID_REQUEST");
+        var turns = new AtomicInteger();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
+            ChatRequest request = call.getArgument(1);
+            assertThat(request.parameters().toolSpecifications()).extracting(tool -> tool.name()).doesNotContain("bash", "run_tests", "propose_changes").contains("view_file", "web_search");
+            if (turns.getAndIncrement() == 0) {
+                assertThat(ChatMessageSerializer.messagesToJson(request.messages())).contains("Main goal", "Main saved answer", "Side question", "Read-only main-conversation projection").doesNotContain("private-main-thinking");
+                return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(ToolExecutionRequest.builder().id("forbidden").name("bash").arguments("{\"command\":\"touch bad\",\"directory\":\".\",\"expected_revision\":\"1\"}").build()))).build(), 100);
+            }
+            assertThat(ChatMessageSerializer.messagesToJson(request.messages())).contains("BTW_READ_ONLY");
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Side conclusion")).build(), 100);
+        });
+        runner.run(side.id(), UUID.randomUUID().toString());
+        assertThat(repository.find(side.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(repository.find(main.id()).state()).isEqualTo("QUEUED");
+        assertThat(repository.context(exercise)).noneMatch(message -> message.payload().contains("Side question") || message.payload().contains("Side conclusion"));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_command WHERE exercise_id=?::uuid", Integer.class, exercise)).isZero();
+        assertThat(usage.currentInConversation(SESSION, exercise, side.conversationId()).totals()).anyMatch(total -> "2".equals(total.calls()));
+    }
+
+    @Test
+    void btwCompletesWhileTheMainModelRequestIsStillInFlight() throws Exception {
+        var main = tasks.accept(SESSION, exercise, CONTROL, "concurrent-main", "Main goal", true, measurement);
+        var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
+            ChatRequest request = call.getArgument(1);
+            boolean side = request.messages().stream().anyMatch(message -> message instanceof UserMessage user && user.singleText().startsWith("Side concurrent"));
+            if (!side) { entered.countDown(); assertThat(release.await(5, TimeUnit.SECONDS)).isTrue(); }
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(side ? "Side done" : "Main done")).build(), 100);
+        });
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var primary = pool.submit(() -> runner.run(main.id(), UUID.randomUUID().toString()));
+            try {
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                var side = btw.start(SESSION, exercise, exercise, CONTROL, "concurrent-side", new CopilotBtwRequest("Side concurrent question", true));
+                pool.submit(() -> runner.run(side.id(), UUID.randomUUID().toString())).get(5, TimeUnit.SECONDS);
+                assertThat(repository.find(side.id()).state()).isEqualTo("SUCCEEDED"); assertThat(repository.find(main.id()).state()).isEqualTo("RUNNING");
+            } finally { release.countDown(); }
+            primary.get(5, TimeUnit.SECONDS);
+        }
+        assertThat(repository.find(main.id()).state()).isEqualTo("SUCCEEDED");
+    }
+
+    @Test
+    void btwSummarySchedulingAndMainDispatchUseTheirOwnConversationGates() throws Exception {
+        var main = tasks.accept(SESSION, exercise, CONTROL, "summary-main", "Main", true, measurement);
+        String worker = UUID.randomUUID().toString(); assertThat(execution.claim(main.id(), worker)).isNotNull();
+        var side = btw.start(SESSION, exercise, exercise, CONTROL, "summary-side", new CopilotBtwRequest("Side", true));
+        jdbc.update("UPDATE copilot_task SET state='PAUSED' WHERE id=?::uuid", side.id());
+        var summary = compactions.accept(SESSION, exercise, CONTROL, "side-summary", new CopilotCompactionRequest(true, side.conversationId()), measurement);
+        var summaries = sql.getMapper(CopilotCompactionRepository.class);
+        assertThat(summaries.runnableStandalone()).contains(summary.id());
+        assertThat(summaryExecution.claim(summary.id(), UUID.randomUUID().toString(), null)).isNotNull();
+        assertThat(execution.beginModel(main.id(), worker, contexts.beforeModel(main.id(), worker), measurement)).isNotNull();
+        assertThat(repository.find(main.id()).state()).isEqualTo("RUNNING");
+    }
+
+    @Test
+    void btwUnknownModelRecoveryKeepsItsIdentityAndNeverRestartsMainOrPaidDispatch() throws Exception {
+        var main = tasks.accept(SESSION, exercise, CONTROL, "recovery-main", "Main", true, measurement);
+        var input = new CopilotBtwRequest("Side recovery", true);
+        var side = btw.start(SESSION, exercise, exercise, CONTROL, "recovery-side", input);
+        String worker = UUID.randomUUID().toString();
+        assertThat(execution.claim(side.id(), worker)).isNotNull();
+        assertThat(execution.beginModel(side.id(), worker, contexts.beforeModel(side.id(), worker), measurement)).isNotNull();
+        clock.now = clock.instant().plusSeconds(130); execution.recover(side.id());
+        assertThat(tasks.find(SESSION, side.id()).reason()).isEqualTo("MODEL_RESULT_UNKNOWN");
+        runner.run(side.id(), UUID.randomUUID().toString());
+        assertThat(btw.start(SESSION, exercise, exercise, CONTROL, "recovery-side", input).id()).isEqualTo(side.id());
+        assertThat(repository.find(main.id()).state()).isEqualTo("QUEUED");
+        verify(driver, never()).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void btwStopDoesNotStopMainAndExpiryErasesBothConversationScopes() {
+        var main = tasks.accept(SESSION, exercise, CONTROL, "btw-main", "Main", true, measurement);
+        var side = btw.start(SESSION, exercise, exercise, CONTROL, "btw-side", new CopilotBtwRequest("Side", true));
+        assertCode(() -> btw.start(SESSION, exercise, exercise, CONTROL, "another-side", new CopilotBtwRequest("Second", true)), "COPILOT_BUSY");
+        tasks.stop(SESSION, side.id(), "stop-side"); execution.recover(side.id());
+        assertThat(repository.find(side.id()).state()).isEqualTo("STOPPED");
+        assertThat(repository.find(main.id()).state()).isEqualTo("QUEUED");
+        assertCode(() -> btw.start(SESSION, exercise, exercise, "x".repeat(43), "stale-side", new CopilotBtwRequest("Stale", true)), "STALE_CONTROL");
+        clock.now = clock.instant().plusSeconds(1801); execution.recover(main.id());
+        assertCode(() -> btw.start(SESSION, exercise, exercise, CONTROL, "expired-side", new CopilotBtwRequest("Expired", true)), "INVALID_STATE");
+        assertThat(repository.find(main.id()).state()).isNotIn("QUEUED", "RUNNING");
+        new TransactionTemplate(transactions).executeWithoutResult(status -> data.erase(exercise));
+        assertThat(sql.getMapper(CopilotBtwRepository.class).find(exercise)).isNull();
+        assertThat(repository.context(side.conversationId())).isEmpty();
     }
 
     @Test

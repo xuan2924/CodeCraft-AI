@@ -15,7 +15,7 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface CopilotTaskRepository {
-    String TASK = "id::text,exercise_id::text,user_id::text,session_hash,request_key,fingerprint,state,reason,stop_requested,worker_id::text,worker_not_after,created_at,completed_at,conversation_id::text";
+    String TASK = "id::text,exercise_id::text,user_id::text,session_hash,request_key,fingerprint,state,reason,stop_requested,worker_id::text,worker_not_after,created_at,completed_at,conversation_id::text,lane";
     String TURN = "id::text,task_id::text,exercise_id::text,ordinal,state,connection_id::text,model_configuration_id::text,connection_configuration_version,model_configuration_version,protocol,model_id,context_window,assistant_message_id::text,tool_position,created_at,not_after,completed_at,error_code";
     String MESSAGE = "sequence,id::text,task_id::text,exercise_id::text,kind,payload,created_at";
 
@@ -32,13 +32,17 @@ public interface CopilotTaskRepository {
     CopilotTaskEntity receipt(String exercise, String key);
     @Select("SELECT " + TASK + " FROM copilot_task WHERE conversation_id=#{conversation}::uuid ORDER BY admission_sequence DESC LIMIT 1")
     CopilotTaskEntity latest(String conversation);
-    @Select("SELECT EXISTS(SELECT 1 FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','STOPPING'))")
+    @Select("SELECT EXISTS(SELECT 1 FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND lane='MAIN' AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','STOPPING'))")
     boolean active(String exercise);
-    @Select("SELECT " + TASK + " FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','STOPPING')")
+    @Select("SELECT " + TASK + " FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND lane='MAIN' AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','STOPPING')")
     CopilotTaskEntity activeTask(String exercise);
+    @Select("SELECT EXISTS(SELECT 1 FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND lane=#{lane} AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','STOPPING'))")
+    boolean activeLane(String exercise, String lane);
+    @Select("SELECT " + TASK + " FROM copilot_task WHERE conversation_id=#{conversation}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','STOPPING')")
+    CopilotTaskEntity activeInConversation(String conversation);
     @Insert("""
-        INSERT INTO copilot_task(id,exercise_id,user_id,session_hash,request_key,fingerprint,state,created_at,conversation_id)
-        VALUES(#{id}::uuid,#{exerciseId}::uuid,#{userId}::uuid,#{sessionHash},#{requestKey},#{fingerprint},'QUEUED',#{createdAt},#{conversationId}::uuid)
+        INSERT INTO copilot_task(id,exercise_id,user_id,session_hash,request_key,fingerprint,state,created_at,conversation_id,lane)
+        VALUES(#{id}::uuid,#{exerciseId}::uuid,#{userId}::uuid,#{sessionHash},#{requestKey},#{fingerprint},'QUEUED',#{createdAt},#{conversationId}::uuid,#{lane})
         """)
     void insert(CopilotTaskEntity task);
     @Update("UPDATE copilot_task SET no_progress_count=CASE WHEN last_progress_signature=#{signature} THEN no_progress_count+1 ELSE 0 END,last_progress_signature=#{signature} WHERE id=#{id}::uuid")

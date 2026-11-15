@@ -84,7 +84,7 @@ public class CopilotContextPlanner {
             if (!(message instanceof UserMessage)) throw new IllegalStateException("Pending direction is not a user message");
             history.add(message);
         }
-        var request = requests.draft(history);
+        var request = requests.draft(history, source.lane());
         long estimate = requests.estimate(request);
         var projection = new CopilotContextProjectionDTO(request, estimate, bytes(ChatMessageSerializer.messagesToJson(request.messages())));
         long occupied = estimate + target.model().maxOutputTokens();
@@ -194,7 +194,7 @@ public class CopilotContextPlanner {
         for (int index = eligible; index < units.size(); index++) for (var item : units.get(index)) retained.add(requests.historyMessage(item.message(), item.source().sequence() <= source.textHistoryThroughSequence()));
         for (String payload : source.pendingUserPayloads()) retained.add(ChatMessageDeserializer.messageFromJson(payload));
         // Even a tiny summary cannot fix oversized Skill guidance, pinned goals, pending directions or retained complete batches.
-        return requests.estimate(requests.draft(retained)) + 512L + target.model().maxOutputTokens() < window(target);
+        return requests.estimate(requests.draft(retained, source.lane())) + 512L + target.model().maxOutputTokens() < window(target);
     }
 
     private ArrayList<ChatMessage> guidance(CopilotContextInputDTO source) {
