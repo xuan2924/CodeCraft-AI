@@ -37,7 +37,7 @@
 ### 哈希、会话与续期
 
 - 使用 Spring Security `Argon2PasswordEncoder` 的 `encode` / `matches`，不自行实现密码学。技术参数基线为盐 16 字节、哈希 32 字节、并行度 1、内存 19456 KiB、迭代 2；参数随哈希存储，部署时验证耗时和并发容量。不能直接把框架 16 MiB 默认值称为 OWASP 的 19 MiB 基线。
-- 后续正式工程引入 Spring Security 及其 Argon2 所需 Bouncy Castle，理由是复用密码编码与 CSRF 安全组件；当前不新增依赖清单，版本随 Boot 3 依赖管理及正式锁定核实，见[验证记录](../validation/identity-02.md)。
+- 正式工程已使用 Spring Security 及 Argon2 所需 Bouncy Castle，复用密码编码与 CSRF 安全组件；实际版本以 `backend/server/pom.xml` 及依赖管理为准。[早期验证记录](../validation/identity-02.md)是选型证据，不是仍需新增这些依赖的待办。
 - 登录凭证是至少 256 位安全随机值，Cookie 携带原值，数据库只存不可逆摘要。它与用户、签发时间、最后有效活动时间、绝对到期时间、撤销状态及用户认证版本绑定；不使用 JWT，不把内存缓存当授权真相。
 - 有效条件：未撤销、认证版本一致，且服务端 `now < lastActivity + 7 天`、`now < issuedAt + 30 天`。到期边界拒绝，不能靠续期复活；续期不能修改签发时间或跨越绝对上限。
 - 仅由用户显式操作触发且鉴权成功的请求推进活动时间。SSE 建连/重连/心跳、后台轮询、CSRF 获取和会话状态查询不续期；不能信任客户端任意声明“用户活跃”。任务 07 按路由明确可续期操作清单。

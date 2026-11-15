@@ -1,6 +1,6 @@
 # 题目包与受控执行契约 v1
 
-状态：任务 #3 的题目、编辑和链接政策已由用户确认。最小包及 Docker Desktop Linux/amd64 执行已实测；以下资源值是首题的本机试用建议，不是所有题目的统一默认值。正式服务发布、部署宿主复验仍是上线门槛。
+状态：仓库题目包、本机发布验证、Java 发布持久化与 Linux/amd64 受控执行已交付。以下资源值属于首题，不是所有题目的统一默认值；当前发布绑定本机 Docker daemon，跨宿主发布与镜像复验仍是扩大部署范围时的门槛，不是尚未实现本机发布。
 
 ## 最小包与身份
 
@@ -25,7 +25,7 @@
 
 包摘要算法：按名称排序递归读取普通文件，对每个文件依次 SHA-256 更新 UTF-8 的 `JSON.stringify([相对POSIX路径, 字节数])` 和原始内容；包括 manifest、题面、参考解、测试、POM、Dockerfile。目录名不单独计入。禁止链接、硬链接、特殊文件、非规范路径及超过 1 MiB 的单文件。此限制是首个文本题目包的发布门槛，不等于最终工作区总配额。
 
-固定身份为 `(id, version, packageSha256, executionImageDigest, platform)`。本机验证 receipt 使用 Docker image ID（同 daemon 的不可变内容标识）；跨宿主发布必须补充推送后的仓库 `@sha256` 摘要并在目标宿主拉取复验，不能把 tag 或本机 image ID 冒充 registry digest。Java 发布记录保存该身份及验证证据；同 id/version 不同摘要拒绝发布。该业务持久化由后续任务实现。
+固定身份为 `(id, version, packageSha256, executionImageDigest, platform)`。本机验证 receipt 使用 Docker image ID（同 daemon 的不可变内容标识）；跨宿主发布必须补充推送后的仓库 `@sha256` 摘要并在目标宿主拉取复验，不能把 tag 或本机 image ID 冒充 registry digest。Java 发布记录保存该身份及验证证据；同 id/version 不同摘要拒绝发布。该业务持久化已由 `ProblemTransactionService` / `ProblemRepository` 实现；启动时从通过验证的发布产物导入，不覆盖冲突身份。
 
 ## 编辑与执行隔离
 

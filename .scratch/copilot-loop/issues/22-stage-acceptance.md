@@ -78,3 +78,15 @@
 - 需要提供 OpenAI、GLM、Kimi 的明确目标端点/模型与测试凭证，才能完成其支持声明；本轮仅检查常见变量存在性，均无凭证，未展示值。真正 Anthropic 服务亦未实测，不借 DeepSeek Anthropic 格式成功替代。
 - 若必须支持当前被拒绝的 OpenAI phase-aware Responses 组合，需要原生 SDK 补齐并验证，或另行确认另一正式 SDK 路线；不私自写 wire 适配或切换。保留这项组合缺口，不推定必须支持全部笛卡尔积。
 - 普通验证：`node scripts/verify.mjs --quick`、`node scripts/test-tracer.mjs --workspace --smoke`、`node scripts/test-tracer.mjs --workspace --smoke --skills-browser`。真实调用仅在明确 paid 选择及环境 Key 下运行，上述请求次数不是固定金额上限。没有新增远程 CI、重型 QA、生产 SLA 或备份欠账。
+
+### 阶段后环境清理与文档整理
+
+按用户明确授权，不备份过期开发测试数据，保留刚启动的 `codecraft-ai` 开发环境、`.env` 和当前题目发布引用。
+
+- 删除 6 个遗留容器：两套 `cc-tracer-49480-b5ea66f8` / `cc-tracer-7748-b92bf6e6` 的 5 个服务及 `cc-exercise-model-it`。后者带自动删除，停止时已自行删除容器与匿名卷，后续 rm 返回不存在；复核无残留后继续，没有误删当前数据库。
+- 删除 6 个对应测试卷：上述两套的 4 个具名卷、遗留 `cc-tracer-55360-9ce5ae4f_sandbox-data`、独立测试库的匿名卷；删除 2 个空 tracer 网络。
+- 使用项目现有 `clean-docker-images.mjs` 先预览再 `--apply`，移除 9 个不再引用的 Java/Go 镜像（9 个 tag）；当前应用、题目和其他镜像受引用保护。不使用全局 prune，不清理无法确认归属的匿名卷、其他项目网络或共享构建缓存。历史集成库端口 45745 不再可用；复验应新建隔离 fixture，旧日志不作环境保留承诺。
+- Docker 从 9 个容器 / 42 个卷 / 15 个镜像变为 3 / 36 / 6；镜像层约 2.087→1.705 GB、卷约 1.601→1.354 GB。共享构建缓存仍在，不能把镜像删除数量当作宿主已回收全部构建空间。清理后 `http://localhost:5173/api/internal/status` 返回 200，数据库与 sandbox 均 AVAILABLE。镜像预览/执行日志在 `%TEMP%/codecraft-image-cleanup-preview.log`、`codecraft-image-cleanup-apply.log`。
+- 文档整理不改产品决定或代码：新增当前文档/历史验证/原型导航，更新 README、架构及相关专题的过时实现状态；ADR 0001 的 PoC 边界标为历史，0004 的重定向待决与 0005 的编辑生效待决指向已确认后续结论。保留同域时钟、HTTPS/SSRF、统一容量、恢复安全操作等有效约束；第三阶段 FSM、平台配置、评价与报告待决项继续保留，不自动新增实施授权。
+- 本次不重跑功能或收费验收；复用未变代码的既有证据；19 个改动文档的 183 个本地链接路径及 `git diff --check` 通过，已自审有效/历史边界。原有 watchdog 文件及本票开工前的未提交入口记录继续保留。
+- 随后复查发现开发服务于 06:01 UTC 收到控制台中断（启动命令退出码 `0xC000013A`）：Java 143、Go 0，均非 OOM，前端同时退出。容器/镜像/卷仍保留，PostgreSQL 继续运行；无法确认中断来源，未擅自重启或把早先健康结果写成当前仍在线。此事与已删除的测试资源区分记录。

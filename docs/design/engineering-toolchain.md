@@ -15,13 +15,14 @@
 
 ## 版本与锁定
 
-以下是任务 01 验证的精确版本，不是“永远使用最新”的策略。任务 06 已按需落入正式清单；依赖按功能需要落入正式清单，已接入的 Docker SDK、编辑器和路由等以锁文件为准；不为后续模型功能提前添加依赖。正式新增静态检查为 Checkstyle Maven plugin 3.6.0、ESLint 10.14.0、@eslint/js 10.0.1、eslint-plugin-vue 10.12.0、typescript-eslint 8.72.1；选择理由是执行现有规范且避免初始化已停止支持的 ESLint 9。正式依赖树须持续审计。
+以下是任务 01 验证的精确版本，不是“永远使用最新”的策略。任务 06 已按需落入正式清单；依赖按功能需要落入正式清单，Docker SDK、编辑器、路由和第二阶段模型 SDK 均已接入，以正式 POM/锁文件为准；不把早期候选表或 PoC 依赖当成新的安装任务。正式新增静态检查为 Checkstyle Maven plugin 3.6.0、ESLint 10.14.0、@eslint/js 10.0.1、eslint-plugin-vue 10.12.0、typescript-eslint 8.72.1；选择理由是执行现有规范且避免初始化已停止支持的 ESLint 9。正式依赖树须持续审计。
 
 | 层 | 验证基线 | 锁定与用途 |
 |---|---|---|
 | Java | Temurin 21.0.11 | `release=21`，开发/CI 固定 JDK 补丁版本 |
 | Maven | 3.9.15；Wrapper plugin 3.3.4、only-script | Wrapper 分发地址使用 Maven Central，提交 SHA-256 校验值；插件版本写入 POM，不继承个人镜像地址 |
 | Java 服务 | Spring Boot 3.5.16、MyBatis starter 3.0.5 | Boot parent 管理 Spring/JDBC/测试基础依赖；不改为 Boot 4 |
+| 模型 SDK | LangChain4j 1.23.0 | 正式 core/open-ai/anthropic/JDK transport，同版本锁定；应用自管 Loop，不引入 agentic；组合边界见模型支持矩阵 |
 | 数据库 | PostgreSQL 17.11 | 本次拉取的 `postgres:17` 解析为 `postgres@sha256:748a18a54d3842d43bc156f0840d78029b8d349e0feca98c12b9c4ce3404a6b3`；正式 Compose 用摘要，不用浮动标签 |
 | 迁移/驱动 | Flyway core + database-postgresql 11.7.2；JDBC 42.7.11 | 由 Boot 3.5.16 管理，不分别漂移；PostgreSQL 必须包含 Flyway 数据库支持模块 |
 | Java gRPC | gRPC BOM / protoc-gen-grpc-java 1.85.1 | 使用 grpc-netty-shaded、grpc-protobuf、grpc-stub；不为初始化额外加入 gRPC Spring starter |
