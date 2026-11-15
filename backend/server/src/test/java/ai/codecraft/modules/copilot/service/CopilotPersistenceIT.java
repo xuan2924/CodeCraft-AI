@@ -61,6 +61,7 @@ import io.grpc.StatusRuntimeException;
 import ai.codecraft.modules.copilot.repository.CopilotRetentionRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
 import ai.codecraft.modules.copilot.repository.CopilotConversationRepository;
+import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTestRepository;
 import ai.codecraft.modules.workspace.repository.TestTaskRepository;
@@ -347,15 +348,15 @@ class CopilotPersistenceIT {
         var operations = proxy(new WorkspaceAiOperationService(identity, exercises, writes, capacityStore, clock), WorkspaceAiOperationService.class);
         conversations = proxy(new CopilotConversationStore(sql.getMapper(CopilotConversationRepository.class), identity,
             lifecycle, coordination, operations, clock), CopilotConversationStore.class);
-        usage = proxy(new CopilotUsageService(sql.getMapper(CopilotUsageRepository.class), sql.getMapper(CopilotCompactionRepository.class), identity, lifecycle), CopilotUsageService.class);
+        usage = proxy(new CopilotUsageService(sql.getMapper(CopilotUsageRepository.class), sql.getMapper(CopilotCompactionRepository.class), identity, lifecycle, conversations), CopilotUsageService.class);
         repository = sql.getMapper(CopilotTaskRepository.class);
         var skillLimits = new SkillProperties(50, 262144, 65536, 5242880, 32, 256, 4);
         personalSkills = new SkillService(new SkillPackageParser(skillLimits), proxy(new SkillStore(sql.getMapper(SkillRepository.class), identity, skillLimits, json, clock), SkillStore.class), json);
         skillSnapshots = proxy(new SkillSnapshots(sql.getMapper(SkillSnapshotRepository.class)), SkillSnapshots.class);
         skillContext = new CopilotSkillContext(skillSnapshots, repository, json, limits);
-        tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class), skillSnapshots), CopilotTaskStore.class);
+        tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class), skillSnapshots, conversations), CopilotTaskStore.class);
         var contextRepository = sql.getMapper(CopilotCompactionRepository.class);
-        compactions = proxy(new CopilotCompactionStore(contextRepository, repository, identity, secrets, lifecycle, coordination, operations, clock), CopilotCompactionStore.class);
+        compactions = proxy(new CopilotCompactionStore(contextRepository, repository, identity, secrets, lifecycle, coordination, operations, clock, conversations), CopilotCompactionStore.class);
         var callEvidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
         summaryExecution = proxy(new CopilotCompactionExecution(contextRepository, repository, sql.getMapper(CopilotSteerRepository.class), identity, coordination, operations, selection, limits, clock, callEvidence), CopilotCompactionExecution.class);
         var contextLimits = new CopilotContextProperties(80, 4, 8192, 4096, 8192, 512, 2048);
@@ -1378,6 +1379,74 @@ class CopilotPersistenceIT {
         assertThat(conversations.create(SESSION, exercise, CONTROL, "new-conversation", measurement)).isEqualTo(created);
         assertThat(conversations.list(SESSION, exercise)).hasSize(2);
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("QUEUED");
+    }
+
+    @Test
+    void newConversationSeparatesTaskHistoryAndPreparedModelContext() throws Exception {
+        var original = tasks.accept(SESSION, exercise, CONTROL, "original-session", "ONLY_IN_OLD_CONVERSATION", true, measurement);
+        var created = conversations.create(SESSION, exercise, CONTROL, "isolated-conversation", measurement);
+        assertThat(tasks.messagesInConversation(SESSION, exercise, -1, created.id())).isEmpty();
+        assertThat(tasks.latestInConversation(SESSION, exercise, created.id())).isNull();
+        assertThatThrownBy(() -> tasks.acceptInConversation(SESSION, exercise, CONTROL, "busy-conversation", "new", true,
+            List.of(), measurement, created.id())).isInstanceOfSatisfying(BusinessException.class,
+                failure -> assertThat(failure.errorCode()).isEqualTo(CopilotErrorCode.COPILOT_BUSY));
+        tasks.stop(SESSION, original.id(), "stop-original");
+        var current = tasks.acceptInConversation(SESSION, exercise, CONTROL, "new-conversation-task", "ONLY_IN_NEW_CONVERSATION", true,
+            List.of(), measurement, created.id());
+        assertThat(tasks.messages(SESSION, exercise, -1)).singleElement().satisfies(message -> assertThat(message.taskId()).isEqualTo(original.id()));
+        assertThat(tasks.messagesInConversation(SESSION, exercise, -1, created.id())).singleElement()
+            .satisfies(message -> assertThat(message.taskId()).isEqualTo(current.id()));
+        String worker = UUID.randomUUID().toString();
+        assertThat(execution.claim(current.id(), worker)).isNotNull();
+        var ticket = execution.contextTicket(current.id(), worker);
+        assertThat(ticket.conversationId()).isEqualTo(created.id());
+        String oldEvidence = tasks.messages(SESSION, exercise, -1).getFirst().id();
+        assertThatThrownBy(() -> evidenceStore.read(current.id(), worker, oldEvidence)).isInstanceOfSatisfying(BusinessException.class,
+            failure -> assertThat(failure.errorCode()).isEqualTo(CopilotErrorCode.COPILOT_EVIDENCE_NOT_FOUND));
+        var prepared = contextPreparation.prepare(ticket);
+        assertThat(ChatMessageSerializer.messagesToJson(prepared.plan().projection().request().messages()))
+            .contains("ONLY_IN_NEW_CONVERSATION").doesNotContain("ONLY_IN_OLD_CONVERSATION");
+        assertThatThrownBy(() -> tasks.acceptInConversation(SESSION, exercise, CONTROL, "new-conversation-task", "ONLY_IN_NEW_CONVERSATION", true,
+            List.of(), measurement, exercise)).isInstanceOfSatisfying(BusinessException.class,
+                failure -> assertThat(failure.errorCode()).isEqualTo(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT));
+        assertThatThrownBy(() -> conversations.resolve(SESSION, exercise, UUID.randomUUID().toString()))
+            .isInstanceOfSatisfying(BusinessException.class,
+                failure -> assertThat(failure.errorCode()).isEqualTo(CopilotErrorCode.COPILOT_CONVERSATION_NOT_FOUND));
+    }
+
+    @Test
+    void conversationLimitAndEndedExerciseRejectNewWritesButKeepHistoryReadable() {
+        var first = conversations.create(SESSION, exercise, CONTROL, "retained-conversation", measurement);
+        jdbc.update("INSERT INTO copilot_conversation(id,exercise_id,request_key,created_at) SELECT gen_random_uuid(),?::uuid,'seed-' || n,now() FROM generate_series(1,98) n", exercise);
+        assertThat(conversations.list(SESSION, exercise)).hasSize(100);
+        assertThat(conversations.create(SESSION, exercise, CONTROL, "retained-conversation", measurement)).isEqualTo(first);
+        assertThatThrownBy(() -> conversations.create(SESSION, exercise, CONTROL, "one-too-many", measurement))
+            .isInstanceOfSatisfying(BusinessException.class, failure -> assertThat(failure.errorCode()).isEqualTo(CopilotErrorCode.COPILOT_CONVERSATION_LIMIT));
+        jdbc.update("DELETE FROM copilot_conversation WHERE request_key LIKE 'seed-%'");
+        jdbc.update("UPDATE workspace_exercise SET state='ENDED' WHERE id=?::uuid", exercise);
+        assertThat(conversations.list(SESSION, exercise)).hasSize(2);
+        assertThatThrownBy(() -> conversations.create(SESSION, exercise, CONTROL, "after-end", measurement)).isInstanceOf(BusinessException.class);
+        assertThat(conversations.list(SESSION, exercise)).hasSize(2);
+    }
+
+    @Test
+    void publishedSummaryAndManualCompactionsRemainInTheirConversation() throws Exception {
+        String worker = UUID.randomUUID().toString();
+        var dispatch = dispatchedSummary(worker);
+        summaryExecution.complete(dispatch.call().compactionId(), worker, dispatch.call().id(), summaryReceipt(dispatch));
+        var created = conversations.create(SESSION, exercise, CONTROL, "new-after-summary", measurement);
+        var empty = compactions.currentInConversation(SESSION, exercise, created.id());
+        assertThat(empty.version()).isEqualTo("0");
+        assertThat(empty.summary()).isNull();
+        assertThat(empty.requests()).isEmpty();
+        assertThat(usage.currentInConversation(SESSION, exercise, created.id()).context().state()).isEqualTo("UNKNOWN");
+        var request = new CopilotCompactionRequest(true, created.id());
+        var job = compactions.accept(SESSION, exercise, CONTROL, "compact-new", request, measurement);
+        summaryRunner.runStandalone(job.id());
+        assertThat(compactions.currentInConversation(SESSION, exercise, created.id()).requests()).singleElement()
+            .satisfies(item -> assertThat(item.state()).isEqualTo("NOT_NEEDED"));
+        assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("1");
+        assertThat(compactions.current(SESSION, exercise).requests()).hasSize(1);
     }
 
     @Test

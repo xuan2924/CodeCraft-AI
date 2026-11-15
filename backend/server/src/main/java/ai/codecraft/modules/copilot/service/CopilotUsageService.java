@@ -17,20 +17,28 @@ public class CopilotUsageService {
     private final CopilotCompactionRepository contexts;
     private final IdentityTransactionService identity;
     private final ExerciseTransactionService exercises;
+    private final CopilotConversationStore conversations;
 
     public CopilotUsageService(CopilotUsageRepository usage, CopilotCompactionRepository contexts,
-        IdentityTransactionService identity, ExerciseTransactionService exercises) {
+        IdentityTransactionService identity, ExerciseTransactionService exercises, CopilotConversationStore conversations) {
+        this.conversations = conversations;
         this.usage = usage; this.contexts = contexts; this.identity = identity; this.exercises = exercises;
     }
 
     /** Private delivery serializes against revocation using the owner row lock; no model dispatch or bookkeeping writes. */
     @Transactional
     public CopilotUsageResponse current(String session, String exercise) {
+        return currentInConversation(session, exercise, exercise);
+    }
+
+    @Transactional
+    public CopilotUsageResponse currentInConversation(String session, String exercise, String conversation) {
         var grant = identity.authorizePrivateDelivery(session);
         if (!"USER".equals(grant.role())) throw new IdentityFailure(IdentityErrorCode.FORBIDDEN);
         exercises.find(session, exercise);
-        var head = contexts.head(exercise);
-        var latest = usage.latest(exercise);
+        String scope = conversations.resolve(session, exercise, conversation);
+        var head = contexts.head(scope);
+        var latest = usage.latest(scope);
         long version = head == null ? 0 : head.version();
         boolean waiting = version > 0 && (latest == null || latest.contextVersion() == null || version > latest.contextVersion());
         String input = waiting || latest == null ? null : latest.inputTokens();

@@ -109,7 +109,15 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 
 ## Copilot 任务与审批接口
 
-- `POST /api/exercises/{id}/copilot/tasks`：`{text, feeAcknowledged}`，最多 4 KiB UTF-8 请求文字；要求当前操作凭证、CSRF 与幂等键，返回 202。同演练仅一个活动任务，不排队；原键重放只读取原受理记录。
+### 项目内对话身份
+
+- `GET /api/exercises/{id}/copilot/conversations`：本人、no-store，返回至多 100 个 `{id, exerciseId, initial, createdAt}`。初始对话 ID 为演练 ID；New 使用独立 UUID，与登录 session 无关。
+- 同路径 `POST`：要求当前操作凭证、CSRF 与幂等键，返回 `201` 及不可变创建回执。创建不启动模型、停止已有任务、复制容器或改变代码。未知结果仅原键核对；达到含初始对话在内的 100 个上限返回 `429 COPILOT_CONVERSATION_LIMIT`。记录随演练计量、保留和删除。
+- 任务启动及手动压缩请求可携带 `conversationId`；`tasks/latest`、`messages`、`context`、`usage` 的 GET 可带 `?conversation=<UUID>`。省略时明确访问初始对话，不根据其他标签页最近选择猜测；无归属返回 `404 COPILOT_CONVERSATION_NOT_FOUND`。
+- 任务响应（含 SSE 快照）提供 `conversationId`。历史消息、模型上下文、证据读取、摘要版本及当前上下文用量按对话隔离；用量总额仍按演练累计。模型选择、审批模式和工作区继续按演练共享。
+- 主任务并发上限仍按演练为一；跨对话发起新任务返回 `COPILOT_BUSY`，不会暗中排队或抢占。另一对话有活动任务时，不把手动压缩绑定到它。页面切换只销毁旧观察者，不派发或停止任务。
+
+- `POST /api/exercises/{id}/copilot/tasks`：`{text, feeAcknowledged, skillIds?, conversationId?}`，最多 4 KiB UTF-8 请求文字；要求当前操作凭证、CSRF 与幂等键，返回 202。同演练仅一个活动任务，不排队；原键重放只读取原受理记录。
 - `GET /api/exercises/{id}/copilot/tasks/latest`：最近任务、消息高水位、历史文本转换提示、未确认回复预览；无任务返回 `null`。
 - `GET /api/copilot-tasks/{taskId}`、`POST /api/copilot-tasks/{taskId}/stop`：读取或单调停止。停止要求当前身份、CSRF 与幂等键，但不要求工作区写入凭证或新空间；不停止独立手动测试。
 - `GET /api/exercises/{id}/copilot/messages?after=...`：默认 `-1` 返回最近页，`0` 从最早记录开始，其余为向前读取游标。每页最多 100 条、数据库协议负载最多 512 KiB；前端不得把一页视为完整历史。
@@ -125,7 +133,7 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - `GET /api/copilot-proposals/{id}/status`：轻量状态、批准/拒绝及写入回执元数据，供只读轮询。审批已受理不等于文件已应用；`APPLYING` 仍须等待权威写入回执。
 - `POST /api/copilot-proposals/{id}/decision`：`{decision: "APPROVE"|"REJECT", reason?}`；拒绝理由最多 2 KiB UTF-8，批准不接收理由或替换内容。要求 CSRF、原幂等键及当前操作凭证，重新检查当前用户、归属和任务/演练/基线。批准与既有 FILE_BATCH 意图同事务落盘，RPC 在事务外由原写入协调器执行。
 - 同一提案只能决定一次；原键原内容重试读取原决定，不能覆盖它。页面读到该不可变提案已决定/取消可解除审批传输的不确定提示，但不能把 `APPLYING` 当已写入。新内容或新基线必须生成新提案。
-- `WAITING_APPROVAL`/`WAITING_WRITE` 属于活动任务，但不占 worker；保存原批次位置和已完成工具。新会话的显式有效审批可为原任务后续调用更新授权，单纯登录、查询或重复读取原审批回执不能重新授权。
+- `WAITING_APPROVAL`/`WAITING_WRITE` 属于活动任务，但不占 worker；保存原批次位置和已完成工具。新登录会话的显式有效审批可为原任务后续调用更新授权，单纯登录、查询或重复读取原审批回执不能重新授权。
 - 应用后前端失效工作区查询，沿用编辑器原有修订冲突处理；不自动保存、覆盖或清除本地草稿。停止在未知写入收敛前保持 `STOPPING`，不将未知结果伪报未应用。
 
 ### 演练审批模式
@@ -144,7 +152,7 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 ### Copilot 上下文与压缩
 
 - `GET /api/exercises/{exercise}/copilot/context`：私有、no-store，返回 `exerciseId, version, summaryId, throughSequence, summary, requests`；摘要为非权威文本，`requests` 为最近 20 条、按数字接收序号倒序。读取不准备上下文、不调用模型、不恢复任务。
-- `POST /api/exercises/{exercise}/copilot/compactions`：`{feeAcknowledged:true}`，需要 USER、归属、ACTIVE、CSRF、当前操作凭证及幂等键，返回 `202`。同键只返回原请求；结果未知时仅原键/原内容核对。既有回执可在控制权变化后读取，不借重试重新派发。已有活动请求返回 `COPILOT_COMPACTION_BUSY`（409）。
+- `POST /api/exercises/{exercise}/copilot/compactions`：`{feeAcknowledged:true, conversationId?}`，需要 USER、归属、ACTIVE、CSRF、当前操作凭证及幂等键，返回 `202`。同键只返回原请求；结果未知时仅原键/原内容核对。既有回执可在控制权变化后读取，不借重试重新派发。已有活动请求返回 `COPILOT_COMPACTION_BUSY`（409）。
 - `POST /api/exercises/{exercise}/copilot/compactions/{id}/stop`：归属与 USER/CSRF 校验，单调取消，无需页面操作凭证。等待请求立即取消；已派发调用须先收敛，不能据此推断未收费或退款，不取消原提案/写入/测试。
 - 请求记录为 `id, sequence, exerciseId, trigger, state, reason, attempts, stopRequested, sourceVersion, throughSequence, createdAt, completedAt`；序号/版本为十进制字符串，未派发来源字段可为 null。`trigger` 为 MANUAL/AUTO，状态为 WAITING/RUNNING/APPLIED/FAILED/INTERRUPTED/CANCELLED/NOT_NEEDED。`attempts` 只表示持久派发登记数（0–2），不保证供应商收到；NOT_NEEDED 表示当前无需继续压缩，不抹去此前已发生的调用。
 - 前端区分受理未知、等待安全点、取消待收敛及 `MODEL_RESULT_UNKNOWN`，不自动重发收费请求。账号/演练切换取消本地观察与迟到回调；换控制凭证不丢失原压缩请求的未知回执。运行或受理未知期间不能另起新目标。

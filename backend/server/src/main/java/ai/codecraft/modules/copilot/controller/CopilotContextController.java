@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -25,12 +26,14 @@ public class CopilotContextController {
     private final CopilotUsageService usage;
     public CopilotContextController(CopilotCompactionService compactions, CopilotUsageService usage) { this.compactions = compactions; this.usage = usage; }
     @GetMapping("/api/exercises/{exercise}/copilot/usage")
-    public ApiResponse<CopilotUsageResponse> usage(@PathVariable UUID exercise, HttpServletRequest request) {
-        return ApiResponse.success(usage.current(IdentityHttp.sessionHash(request), exercise.toString()));
+    public ApiResponse<CopilotUsageResponse> usage(@PathVariable UUID exercise, @RequestParam(required = false) UUID conversation, HttpServletRequest request) {
+        return ApiResponse.success(conversation == null ? usage.current(IdentityHttp.sessionHash(request), exercise.toString())
+            : usage.currentInConversation(IdentityHttp.sessionHash(request), exercise.toString(), conversation.toString()));
     }
     @GetMapping("/api/exercises/{exercise}/copilot/context")
-    public ApiResponse<CopilotContextResponse> current(@PathVariable UUID exercise, HttpServletRequest request) {
-        return ApiResponse.success(compactions.current(IdentityHttp.sessionHash(request), exercise.toString()));
+    public ApiResponse<CopilotContextResponse> current(@PathVariable UUID exercise, @RequestParam(required = false) UUID conversation, HttpServletRequest request) {
+        return ApiResponse.success(conversation == null ? compactions.current(IdentityHttp.sessionHash(request), exercise.toString())
+            : compactions.currentInConversation(IdentityHttp.sessionHash(request), exercise.toString(), conversation.toString()));
     }
     @PostMapping("/api/exercises/{exercise}/copilot/compactions")
     @ResponseStatus(HttpStatus.ACCEPTED)

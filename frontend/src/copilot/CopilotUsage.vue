@@ -5,10 +5,10 @@ import { NButton } from 'naive-ui';
 import { usage } from './usageApi';
 import { commandPolicy, errorMessage } from './errors';
 import UsageSummary from '../modelaccess/UsageSummary.vue';
-const props = defineProps<{ owner: string; exerciseId: string }>();
+const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string }>();
 const emit = defineEmits<{ unauthorized: [] }>();
-const result = useQuery({ queryKey: computed(() => ['copilot-usage', props.owner, props.exerciseId]),
-  queryFn: ({ signal }) => usage(props.owner, props.exerciseId, signal),
+const result = useQuery({ queryKey: computed(() => ['copilot-usage', props.owner, props.exerciseId, props.conversationId ?? props.exerciseId]),
+  queryFn: ({ signal }) => usage(props.owner, props.exerciseId, signal, props.conversationId),
   enabled: computed(() => !!props.owner && !!props.exerciseId), retry: false, gcTime: 0, refetchInterval: 5000 });
 watch(result.error, error => { if (commandPolicy.identityFailure(error)) emit('unauthorized'); });
 </script>

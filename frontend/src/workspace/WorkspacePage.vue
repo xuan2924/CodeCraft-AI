@@ -10,7 +10,7 @@ import WorkspaceLogout from './WorkspaceLogout.vue';
 import WorkspaceTests from './WorkspaceTests.vue';
 import WorkspaceStorage from './WorkspaceStorage.vue';
 import ExerciseModelPicker from '../modelaccess/ExerciseModelPicker.vue';
-import CopilotPanel from '../copilot/CopilotPanel.vue';
+import CopilotPanel from '../copilot/CopilotConversations.vue';
 import ClosedDrafts from './ClosedDrafts.vue';
 import WorkspaceRetention from './WorkspaceRetention.vue';
 import { cancelSaveLogout, saveLogoutOwner } from './logoutIntent';

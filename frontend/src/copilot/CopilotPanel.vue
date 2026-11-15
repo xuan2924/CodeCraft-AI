@@ -15,10 +15,10 @@ import CopilotUsage from './CopilotUsage.vue';
 import CopilotSkills from './CopilotSkills.vue';
 import CopilotMessageBody from './CopilotMessageBody.vue';
 
-const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
+const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string] }>();
 const client = useQueryClient();
-const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.credential}`);
+const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.conversationId ?? props.exerciseId}/${props.credential}`);
 const text = ref('');
 const fee = ref(false);
 const selectedSkills = ref<string[]>([]);
@@ -27,10 +27,10 @@ const saving = ref(false);
 const saveError = ref('');
 const after = ref('-1');
 const connected = ref(false);
-const taskKey = computed(() => ['copilot', props.owner, props.exerciseId, 'task']);
-const historyKey = computed(() => ['copilot', props.owner, props.exerciseId, 'messages', after.value]);
-const latest = useQuery({ queryKey: taskKey, queryFn: ({ signal }) => api.latest(props.owner, props.exerciseId, signal), retry: false, gcTime: 0, refetchInterval: 2000 });
-const history = useQuery({ queryKey: historyKey, queryFn: ({ signal }) => api.messages(props.owner, props.exerciseId, after.value, signal), retry: false, gcTime: 0 });
+const taskKey = computed(() => ['copilot', props.owner, props.exerciseId, 'task', props.conversationId ?? props.exerciseId]);
+const historyKey = computed(() => ['copilot', props.owner, props.exerciseId, 'messages', props.conversationId ?? props.exerciseId, after.value]);
+const latest = useQuery({ queryKey: taskKey, queryFn: ({ signal }) => api.latest(props.owner, props.exerciseId, signal, props.conversationId), retry: false, gcTime: 0, refetchInterval: 2000 });
+const history = useQuery({ queryKey: historyKey, queryFn: ({ signal }) => api.messages(props.owner, props.exerciseId, after.value, signal, props.conversationId), retry: false, gcTime: 0 });
 const task = computed(() => latest.data.value?.task);
 const running = computed(() => api.active(task.value));
 watch([latest.error, history.error], (errors) => { if (errors.some(commandPolicy.identityFailure)) emit('unauthorized'); });
@@ -48,12 +48,12 @@ async function send() {
   const before = scope.value;
   const prompt = text.value;
   const skillIds = [...selectedSkills.value];
-  const { owner, exerciseId, credential } = props;
+  const { owner, exerciseId, credential, conversationId } = props;
   saving.value = true; saveError.value = '';
   try {
     if (!await props.prepare()) { if (scope.value === before) saveError.value = '草稿保存未完成，未创建 Copilot 请求。请处理冲突或返回编辑。'; return; }
     if (scope.value !== before || props.disabled) return;
-    await start.submit((key, signal) => api.start(owner, exerciseId, credential, prompt, key, signal, skillIds));
+    await start.submit((key, signal) => api.start(owner, exerciseId, credential, prompt, key, signal, skillIds, conversationId));
   } catch {
     if (scope.value === before) saveError.value = '操作结果待核对，请重新读取任务并检查编辑器；不要换键重发。';
   } finally { if (scope.value === before) saving.value = false; }
@@ -287,11 +287,13 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       保存草稿并发送
     </NButton>
     <CopilotUsage
+      :conversation-id="conversationId"
       :owner="owner"
       :exercise-id="exerciseId"
       @unauthorized="emit('unauthorized')"
     />
     <CopilotContext
+      :conversation-id="conversationId"
       :owner="owner"
       :exercise-id="exerciseId"
       :credential="credential"

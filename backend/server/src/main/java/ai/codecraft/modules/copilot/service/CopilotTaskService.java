@@ -26,11 +26,19 @@ public class CopilotTaskService {
 
     public CopilotTaskResponse start(String session, String exercise, String credential, String key, CopilotStartRequest input) {
         if (input == null) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
-        return capacity.admit(session, exercise, measurement -> store.acceptWithSkills(session, exercise, credential, key, input.text(), input.feeAcknowledged(), input.skillIds(), measurement));
+        return capacity.admit(session, exercise, measurement -> store.acceptInConversation(session, exercise, credential, key, input.text(), input.feeAcknowledged(), input.skillIds(), measurement, input.conversationId()));
     }
     public CopilotDeliveryDTO latest(String session, String exercise) {
         var task = store.latest(session, exercise);
         return task == null ? null : store.delivery(session, task.id());
+    }
+    public CopilotDeliveryDTO latestInConversation(String session, String exercise, String conversation) {
+        var task = store.latestInConversation(session, exercise, conversation);
+        return task == null ? null : store.delivery(session, task.id());
+    }
+    public CopilotMessagesResponse messagesInConversation(String session, String exercise, long after, String conversation) {
+        var messages = store.messagesInConversation(session, exercise, after, conversation).stream().map(CopilotMessagePresentation::from).toList();
+        return new CopilotMessagesResponse(messages, messages.isEmpty() ? null : messages.getLast().sequence());
     }
     public CopilotTaskResponse find(String session, String task) { return store.find(session, task); }
     public CopilotTaskResponse stop(String session, String task, String key) { return store.stop(session, task, key); }

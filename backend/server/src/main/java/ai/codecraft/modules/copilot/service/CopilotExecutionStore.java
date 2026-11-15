@@ -110,12 +110,12 @@ public class CopilotExecutionStore {
         var previous = tasks.latestTurn(id);
         if (previous != null && ("DISPATCHED".equals(previous.state()) || "TOOLS".equals(previous.state()))) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
         var target = models.resolveForCall(task.sessionHash(), task.exerciseId());
-        var head = contexts.head(task.exerciseId());
+        var head = contexts.head(task.conversationId());
         long through = head == null ? 0 : head.throughSequence();
-        long convertedThrough = contexts.foreignThrough(task.exerciseId(), through, target.connection().id(), target.model().id(),
+        long convertedThrough = contexts.foreignThrough(task.conversationId(), through, target.connection().id(), target.model().id(),
             Long.parseLong(target.connection().configurationVersion()), Long.parseLong(target.model().configurationVersion()));
         return new CopilotContextTicketDTO(id, task.exerciseId(), task.sessionHash(), worker, head == null ? 0 : head.version(),
-            head == null ? null : head.summaryId(), through, tasks.lastSequence(task.exerciseId()), target, steers.pendingIds(id), convertedThrough);
+            head == null ? null : head.summaryId(), through, tasks.lastSequence(task.conversationId()), target, steers.pendingIds(id), convertedThrough, task.conversationId());
     }
 
     @Transactional
@@ -125,9 +125,9 @@ public class CopilotExecutionStore {
         var previous = tasks.latestTurn(id);
         if (previous != null && !("SUCCEEDED".equals(previous.state()) || "INTERRUPTED".equals(previous.state()) || "FAILED".equals(previous.state()))) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
         var ticket = prepared.ticket();
-        if (!id.equals(ticket.taskId()) || !worker.equals(ticket.workerId()) || !task.exerciseId().equals(ticket.exerciseId())) throw new IllegalArgumentException("Context ticket does not match this worker");
-        var head = contexts.head(task.exerciseId());
-        if ((head == null ? 0 : head.version()) != ticket.version() || tasks.lastSequence(task.exerciseId()) != ticket.highWater()
+        if (!id.equals(ticket.taskId()) || !worker.equals(ticket.workerId()) || !task.exerciseId().equals(ticket.exerciseId()) || !task.conversationId().equals(ticket.conversationId())) throw new IllegalArgumentException("Context ticket does not match this worker");
+        var head = contexts.head(task.conversationId());
+        if ((head == null ? 0 : head.version()) != ticket.version() || tasks.lastSequence(task.conversationId()) != ticket.highWater()
             || !steers.pendingIds(id).equals(ticket.steerIds()) || contexts.active(task.exerciseId())) return null;
         var grant = identity.authorizeMutation(task.sessionHash());
         var target = models.resolveForCall(task.sessionHash(), task.exerciseId());
@@ -157,7 +157,7 @@ public class CopilotExecutionStore {
         tasks.recordPrice(turn.id(), evidence.price(target, turn.createdAt()));
         tasks.historyMode(turn.id(), converted);
         contexts.dispatchContext(turn.id(), prepared.plan().projection().estimatedTokens(), prepared.plan().projection().encodedBytes(),
-            ticket.version(), ticket.summaryId(), ticket.throughSequence(), tasks.lastSequence(task.exerciseId()), ticket.textHistoryThroughSequence());
+            ticket.version(), ticket.summaryId(), ticket.throughSequence(), tasks.lastSequence(task.conversationId()), ticket.textHistoryThroughSequence());
         if (!adjustments.isEmpty()) {
             if (steers.applied(id, turn.id(), clock.instant()) != adjustments.size()) throw new IllegalStateException("Steer dispatch lost its ordered instructions");
             for (var steer : adjustments) operations.settle(task.exerciseId(), steer.id(), true);

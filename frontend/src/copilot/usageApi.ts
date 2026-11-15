@@ -10,8 +10,8 @@ function optionalText(value: unknown, max: number): string | null {
   if (typeof value !== 'string' || !value.length || value.length > max) return invalidUsage();
   return value;
 }
-export async function usage(owner: string, exerciseId: string, signal: AbortSignal): Promise<CopilotUsage> {
-  const value = await request(`/api/exercises/${encodeURIComponent(exerciseId)}/copilot/usage`, signal, { headers: ownerHeaders(owner) });
+export async function usage(owner: string, exerciseId: string, signal: AbortSignal, conversation?: string): Promise<CopilotUsage> {
+  const value = await request(`/api/exercises/${encodeURIComponent(exerciseId)}/copilot/usage${conversation ? `?conversation=${encodeURIComponent(conversation)}` : ''}`, signal, { headers: ownerHeaders(owner) });
   if (!object(value) || value.exerciseId !== exerciseId || !object(value.context)) return invalidUsage();
   const item = value.context;
   if (item.state !== 'UNKNOWN' && item.state !== 'REPORTED' && item.state !== 'WAITING_UPDATE') return invalidUsage();

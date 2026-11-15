@@ -30,7 +30,7 @@ public interface CopilotTaskRepository {
     CopilotTaskEntity find(String id);
     @Select("SELECT " + TASK + " FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND request_key=#{key}")
     CopilotTaskEntity receipt(String exercise, String key);
-    @Select("SELECT " + TASK + " FROM copilot_task WHERE exercise_id=#{exercise}::uuid ORDER BY created_at DESC,id DESC LIMIT 1")
+    @Select("SELECT " + TASK + " FROM copilot_task WHERE conversation_id=#{exercise}::uuid ORDER BY created_at DESC,id DESC LIMIT 1")
     CopilotTaskEntity latest(String exercise);
     @Select("SELECT EXISTS(SELECT 1 FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','STOPPING'))")
     boolean active(String exercise);
@@ -92,11 +92,11 @@ public interface CopilotTaskRepository {
     void batchProgress(String turn, String signature);
     @Select("SELECT " + MESSAGE + " FROM copilot_message WHERE id=#{id}::uuid")
     CopilotMessageEntity messageById(String id);
-    @Select("WITH candidates AS (SELECT " + MESSAGE + " FROM copilot_message WHERE exercise_id=#{exercise}::uuid AND sequence>#{after} ORDER BY sequence LIMIT 100), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence) AS bytes FROM candidates) SELECT " + MESSAGE + " FROM budgeted WHERE bytes<=524288 ORDER BY sequence")
+    @Select("WITH candidates AS (SELECT " + MESSAGE + " FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{exercise}::uuid) AND sequence>#{after} ORDER BY sequence LIMIT 100), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence) AS bytes FROM candidates) SELECT " + MESSAGE + " FROM budgeted WHERE bytes<=524288 ORDER BY sequence")
     List<CopilotMessageEntity> page(String exercise, long after);
-    @Select("WITH candidates AS (SELECT " + MESSAGE + " FROM copilot_message WHERE exercise_id=#{exercise}::uuid ORDER BY sequence DESC LIMIT 100), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence DESC) AS bytes FROM candidates) SELECT " + MESSAGE + " FROM budgeted WHERE bytes<=524288 ORDER BY sequence")
+    @Select("WITH candidates AS (SELECT " + MESSAGE + " FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{exercise}::uuid) ORDER BY sequence DESC LIMIT 100), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence DESC) AS bytes FROM candidates) SELECT " + MESSAGE + " FROM budgeted WHERE bytes<=524288 ORDER BY sequence")
     List<CopilotMessageEntity> recent(String exercise);
-    @Select("SELECT coalesce(max(sequence),0) FROM copilot_message WHERE exercise_id=#{exercise}::uuid")
+    @Select("SELECT coalesce(max(sequence),0) FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{exercise}::uuid)")
     long lastSequence(String exercise);
     @Select("SELECT coalesce(max(sequence),0) FROM copilot_message WHERE task_id=#{task}::uuid AND kind='USER'")
     long goalSequence(String task);
@@ -106,9 +106,9 @@ public interface CopilotTaskRepository {
     int partialText(String turn, String text, String thinking);
     @Select("SELECT coalesce((SELECT text_history FROM copilot_turn WHERE task_id=#{task}::uuid ORDER BY ordinal DESC LIMIT 1),false)")
     boolean textHistory(String task);
-    @Select("SELECT coalesce(sum(octet_length(payload)),0)::bigint FROM copilot_message WHERE exercise_id=#{exercise}::uuid")
+    @Select("SELECT coalesce(sum(octet_length(payload)),0)::bigint FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{exercise}::uuid)")
     long contextBytes(String exercise);
-    @Select("SELECT " + MESSAGE + " FROM copilot_message WHERE exercise_id=#{exercise}::uuid ORDER BY sequence")
+    @Select("SELECT " + MESSAGE + " FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{exercise}::uuid) ORDER BY sequence")
     List<CopilotMessageEntity> context(String exercise);
 
     @Insert("INSERT INTO copilot_tool(id,turn_id,task_id,exercise_id,position,call_id,name,arguments,state,created_at) VALUES(#{id}::uuid,#{turnId}::uuid,#{taskId}::uuid,#{exerciseId}::uuid,#{position},#{callId},#{name},#{arguments},'RUNNING',#{createdAt})")
@@ -122,7 +122,7 @@ public interface CopilotTaskRepository {
     @Update("UPDATE copilot_tool SET state=#{state},result_message_id=#{message}::uuid,completed_at=#{now} WHERE id=#{id}::uuid AND state IN ('RUNNING','WAITING_APPROVAL','APPLYING','WAITING_TEST')")
     int completeTool(String id, String state, String message, Instant now);
 
-    @Select("SELECT EXISTS(SELECT 1 FROM copilot_turn WHERE exercise_id=#{exercise}::uuid AND (connection_id<>#{connection}::uuid OR model_configuration_id<>#{model}::uuid OR connection_configuration_version<>#{connectionVersion} OR model_configuration_version<>#{modelVersion}))")
+    @Select("SELECT EXISTS(SELECT 1 FROM copilot_turn WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{exercise}::uuid) AND (connection_id<>#{connection}::uuid OR model_configuration_id<>#{model}::uuid OR connection_configuration_version<>#{connectionVersion} OR model_configuration_version<>#{modelVersion}))")
     boolean foreignHistory(String exercise, String connection, String model, long connectionVersion, long modelVersion);
     @Update("UPDATE copilot_turn SET text_history=#{converted} WHERE id=#{id}::uuid")
     void historyMode(String id, boolean converted);

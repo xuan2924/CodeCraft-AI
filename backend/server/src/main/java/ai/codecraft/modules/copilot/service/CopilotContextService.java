@@ -27,7 +27,7 @@ public class CopilotContextService {
             if (ticket == null) return null;
             var prepared = preparation.prepare(ticket);
             if (prepared == null) return null;
-            var pending = contexts.pending(ticket.exerciseId());
+            var pending = contexts.pendingConversation(ticket.conversationId());
             String id = pending == null ? null : pending.id();
             if (id == null && prepared.plan().automaticNeeded() && prepared.plan().compaction() != null) {
                 id = capacity.admit(ticket.sessionHash(), ticket.exerciseId(), measurement -> admissions.automatic(task, worker, prepared, measurement));

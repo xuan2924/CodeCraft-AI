@@ -6,6 +6,6 @@ public record CopilotCompactionEntity(String id, long sequence, String exerciseI
     long actorAuthVersion, String anchorTaskId, String boundTaskId, String requestKey, String fingerprint, String triggerKind,
     String state, boolean stopRequested, Long sourceVersion, String sourceSummaryId, Long throughSequence,
     String sourceIdsPayload, String summaryPayload, String failureCode, int attemptCount,
-    String workerId, String workerTaskId, Instant workerNotAfter, Instant createdAt, Instant completedAt) {
+    String workerId, String workerTaskId, Instant workerNotAfter, Instant createdAt, Instant completedAt, String conversationId) {
     @Override public String toString() { return "CopilotCompactionEntity[id=" + id + ", state=" + state + "]"; }
 }

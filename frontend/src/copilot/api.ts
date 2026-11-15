@@ -1,7 +1,7 @@
 import { ApiError, events, object, ownerHeaders, post, request } from '../api/request';
 
 const states = ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'STOPPING', 'STOPPED', 'SUCCEEDED', 'FAILED', 'INTERRUPTED'] as const;
-export interface Task { id: string; exerciseId: string; state: typeof states[number]; reason: string | null; stopRequested: boolean; createdAt: string; completedAt: string | null }
+export interface Task { conversationId?: string; id: string; exerciseId: string; state: typeof states[number]; reason: string | null; stopRequested: boolean; createdAt: string; completedAt: string | null }
 export interface Snapshot { task: Task; lastSequence: string; textHistory: boolean; partial: { turnId: string | null; sequence: string; text: string; truncated: boolean; thinking?: string; thinkingTruncated?: boolean } }
 export interface Message { sequence: string; id: string; taskId: string; kind: 'USER' | 'ASSISTANT' | 'TOOL'; text: string; thinking?: string }
 export interface Messages { messages: Message[]; nextCursor: string | null }
@@ -14,39 +14,60 @@ function thinkingText(value: unknown, maximum: number): string {
   return value;
 }
 function date(value: unknown): string { if (typeof value !== 'string' || value.length > 64 || !Number.isFinite(Date.parse(value))) return invalid(); return value; }
-function task(value: unknown, exercise: string): Task {
+function task(value: unknown, exercise: string, conversation?: string): Task {
   if (!object(value)) return invalid();
   const state = states.find((item) => item === value.state);
   if (!state || value.exerciseId !== exercise || typeof value.stopRequested !== 'boolean'
     || value.reason !== null && (typeof value.reason !== 'string' || value.reason.length > 128)) return invalid();
-  return { id: uuid(value.id), exerciseId: uuid(value.exerciseId), state, reason: value.reason, stopRequested: value.stopRequested,
+  const conversationId = uuid(value.conversationId ?? value.exerciseId);
+  if (conversation !== undefined && conversationId !== conversation) return invalid();
+  return { conversationId, id: uuid(value.id), exerciseId: uuid(value.exerciseId), state, reason: value.reason, stopRequested: value.stopRequested,
     createdAt: date(value.createdAt), completedAt: value.completedAt === null ? null : date(value.completedAt) };
 }
-function snapshot(value: unknown, exercise: string): Snapshot {
+function snapshot(value: unknown, exercise: string, conversation?: string): Snapshot {
   if (!object(value) || typeof value.textHistory !== 'boolean' || !object(value.partial)) return invalid();
   const partial = value.partial;
   if (typeof partial.text !== 'string' || partial.text.length > 8192 || typeof partial.truncated !== 'boolean'
     || partial.thinkingTruncated !== undefined && typeof partial.thinkingTruncated !== 'boolean') return invalid();
-  return { task: task(value.task, exercise), lastSequence: sequence(value.lastSequence), textHistory: value.textHistory,
+  return { task: task(value.task, exercise, conversation), lastSequence: sequence(value.lastSequence), textHistory: value.textHistory,
     partial: { turnId: partial.turnId === null ? null : uuid(partial.turnId), sequence: sequence(partial.sequence), text: partial.text, truncated: partial.truncated,
       thinking: thinkingText(partial.thinking, 8192), thinkingTruncated: partial.thinkingTruncated ?? false } };
 }
 function path(id: string) { return encodeURIComponent(uuid(id)); }
-export function active(task: Task | null | undefined) { return !!task && ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'STOPPING'].includes(task.state); }
-export async function latest(owner: string, exercise: string, signal: AbortSignal): Promise<Snapshot | null> {
-  const value = await request(`/api/exercises/${path(exercise)}/copilot/tasks/latest`, signal, { headers: ownerHeaders(owner) });
-  return value === null ? null : snapshot(value, exercise);
+export interface Conversation { id: string; exerciseId: string; initial: boolean; createdAt: string }
+function conversation(value: unknown, exercise: string): Conversation {
+  if (!object(value) || value.exerciseId !== exercise || typeof value.initial !== 'boolean') return invalid();
+  const id = uuid(value.id);
+  if (value.initial !== (id === exercise)) return invalid();
+  return { id, exerciseId: exercise, initial: value.initial, createdAt: date(value.createdAt) };
 }
-export async function start(owner: string, exercise: string, credential: string, text: string, key: string, signal: AbortSignal, skillIds: string[] = []): Promise<Task> {
-  return task(await post(`/api/exercises/${path(exercise)}/copilot/tasks`, { text, feeAcknowledged: true, ...(skillIds.length ? { skillIds: [...skillIds] } : {}) }, signal, key, credential, owner), exercise);
+export async function conversations(owner: string, exercise: string, signal: AbortSignal): Promise<Conversation[]> {
+  const value = await request(`/api/exercises/${path(exercise)}/copilot/conversations`, signal, { headers: ownerHeaders(owner) });
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100) return invalid();
+  const items = value.map((item: unknown) => conversation(item, exercise));
+  if (new Set(items.map(item => item.id)).size !== items.length || items.filter(item => item.initial).length !== 1) return invalid();
+  return items;
+}
+export async function newConversation(owner: string, exercise: string, credential: string, key: string, signal: AbortSignal): Promise<Conversation> {
+  const result = conversation(await post(`/api/exercises/${path(exercise)}/copilot/conversations`, {}, signal, key, credential, owner), exercise);
+  if (result.initial) return invalid();
+  return result;
+}
+export function active(task: Task | null | undefined) { return !!task && ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'STOPPING'].includes(task.state); }
+export async function latest(owner: string, exercise: string, signal: AbortSignal, conversation?: string): Promise<Snapshot | null> {
+  const value = await request(`/api/exercises/${path(exercise)}/copilot/tasks/latest${conversation ? `?conversation=${path(conversation)}` : ''}`, signal, { headers: ownerHeaders(owner) });
+  return value === null ? null : snapshot(value, exercise, conversation ?? exercise);
+}
+export async function start(owner: string, exercise: string, credential: string, text: string, key: string, signal: AbortSignal, skillIds: string[] = [], conversation?: string): Promise<Task> {
+  return task(await post(`/api/exercises/${path(exercise)}/copilot/tasks`, { text, feeAcknowledged: true, ...(skillIds.length ? { skillIds: [...skillIds] } : {}), ...(conversation ? { conversationId: conversation } : {}) }, signal, key, credential, owner), exercise, conversation ?? exercise);
 }
 export async function stop(owner: string, exercise: string, id: string, key: string, signal: AbortSignal): Promise<Task> {
   const result = task(await post(`/api/copilot-tasks/${path(id)}/stop`, {}, signal, key, undefined, owner), exercise);
   if (result.id !== id) return invalid(); return result;
 }
-export async function messages(owner: string, exercise: string, after: string, signal: AbortSignal): Promise<Messages> {
+export async function messages(owner: string, exercise: string, after: string, signal: AbortSignal, conversation?: string): Promise<Messages> {
   if (after !== '-1') sequence(after);
-  const value = await request(`/api/exercises/${path(exercise)}/copilot/messages?after=${encodeURIComponent(after)}`, signal, { headers: ownerHeaders(owner) });
+  const value = await request(`/api/exercises/${path(exercise)}/copilot/messages?after=${encodeURIComponent(after)}${conversation ? `&conversation=${path(conversation)}` : ''}`, signal, { headers: ownerHeaders(owner) });
   if (!object(value) || !Array.isArray(value.messages) || value.messages.length > 100) return invalid();
   let previous = BigInt(after); let characters = 0;
   const items = value.messages.map((entry: unknown): Message => {
@@ -118,8 +139,8 @@ function compaction(value: unknown, exercise: string): Compaction {
     reason: value.reason, attempts: value.attempts, stopRequested: value.stopRequested, sourceVersion, throughSequence,
     createdAt: date(value.createdAt), completedAt: value.completedAt === null ? null : date(value.completedAt) };
 }
-export async function context(owner: string, exercise: string, signal: AbortSignal): Promise<Context> {
-  const value = await request(`/api/exercises/${path(exercise)}/copilot/context`, signal, { headers: ownerHeaders(owner) });
+export async function context(owner: string, exercise: string, signal: AbortSignal, conversation?: string): Promise<Context> {
+  const value = await request(`/api/exercises/${path(exercise)}/copilot/context${conversation ? `?conversation=${path(conversation)}` : ''}`, signal, { headers: ownerHeaders(owner) });
   if (!object(value) || value.exerciseId !== exercise || !Array.isArray(value.requests) || value.requests.length > 20
     || value.summary !== null && (typeof value.summary !== 'string' || !value.summary.trim() || new globalThis.TextEncoder().encode(value.summary).length > 32768)) return invalid();
   const version = sequence(value.version); const throughSequence = sequence(value.throughSequence);
@@ -134,8 +155,8 @@ export async function context(owner: string, exercise: string, signal: AbortSign
   if (requests.filter((entry) => entry.state === 'WAITING' || entry.state === 'RUNNING').length > 1) return invalid();
   return { exerciseId: exercise, version, summaryId, throughSequence, summary: value.summary, requests };
 }
-export async function compact(owner: string, exercise: string, credential: string, key: string, signal: AbortSignal): Promise<Compaction> {
-  const result = compaction(await post(`/api/exercises/${path(exercise)}/copilot/compactions`, { feeAcknowledged: true }, signal, key, credential, owner), exercise);
+export async function compact(owner: string, exercise: string, credential: string, key: string, signal: AbortSignal, conversation?: string): Promise<Compaction> {
+  const result = compaction(await post(`/api/exercises/${path(exercise)}/copilot/compactions`, { feeAcknowledged: true, ...(conversation ? { conversationId: conversation } : {}) }, signal, key, credential, owner), exercise);
   if (result.trigger !== 'MANUAL') return invalid(); return result;
 }
 export async function cancelCompaction(owner: string, exercise: string, id: string, key: string, signal: AbortSignal): Promise<Compaction> {

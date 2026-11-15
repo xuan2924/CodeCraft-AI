@@ -36,27 +36,35 @@ public class CopilotCompactionStore {
     private final WorkspaceCoordinationStore workspace;
     private final WorkspaceAiOperationService operations;
     private final Clock clock;
+    private final CopilotConversationStore conversations;
 
     public CopilotCompactionStore(CopilotCompactionRepository contexts, CopilotTaskRepository tasks,
         IdentityTransactionService identity, IdentitySecrets secrets, ExerciseTransactionService exercises,
-        WorkspaceCoordinationStore workspace, WorkspaceAiOperationService operations, Clock clock) {
+        WorkspaceCoordinationStore workspace, WorkspaceAiOperationService operations, Clock clock, CopilotConversationStore conversations) {
+        this.conversations = conversations;
         this.contexts = contexts; this.tasks = tasks; this.identity = identity; this.secrets = secrets;
         this.exercises = exercises; this.workspace = workspace; this.operations = operations; this.clock = clock;
     }
 
     @Transactional
     public CopilotContextResponse current(String session, String exercise) {
+        return currentInConversation(session, exercise, exercise);
+    }
+
+    @Transactional
+    public CopilotContextResponse currentInConversation(String session, String exercise, String conversation) {
         owner(session, exercise);
-        var head = contexts.head(exercise);
+        String scope = conversations.resolve(session, exercise, conversation);
+        var head = contexts.head(scope);
         return new CopilotContextResponse(exercise, head == null ? "0" : Long.toString(head.version()),
             head == null ? null : head.summaryId(), head == null ? "0" : Long.toString(head.throughSequence()),
-            head == null || head.summaryId() == null ? null : contexts.summary(head.summaryId(), exercise), contexts.recent(exercise));
+            head == null || head.summaryId() == null ? null : contexts.summary(head.summaryId(), scope), contexts.recent(scope));
     }
 
     @Transactional
     public CopilotCompactionResponse replay(String session, String exercise, String key, CopilotCompactionRequest request) {
         owner(session, exercise); validate(key, request);
-        var previous = receipt(exercise, key);
+        var previous = receipt(exercise, key, conversations.resolve(session, exercise, request.conversationId()));
         return previous == null ? null : response(previous);
     }
 
@@ -65,7 +73,8 @@ public class CopilotCompactionStore {
         CopilotCompactionRequest request, StorageMeasurement measurement) {
         var grant = owner(session, exercise);
         validate(key, request);
-        var previous = receipt(exercise, key);
+        String conversation = conversations.resolve(session, exercise, request.conversationId());
+        var previous = receipt(exercise, key, conversation);
         if (previous != null) return response(previous);
         identity.authorizeMutation(session);
         workspace.checkControl(exercise, IdentitySecrets.digest(credential));
@@ -76,6 +85,7 @@ public class CopilotCompactionStore {
         if (contexts.active(exercise)) throw new BusinessException(CopilotErrorCode.COPILOT_COMPACTION_BUSY);
         var parent = tasks.activeTask(exercise);
         if (parent != null) {
+            if (!conversation.equals(parent.conversationId())) throw new BusinessException(CopilotErrorCode.COPILOT_BUSY);
             var original = identity.tryAuthorizeMutation(parent.sessionHash());
             if (parent.stopRequested() || "STOPPING".equals(parent.state()) || original == null
                 || !"USER".equals(original.role()) || !grant.userId().equals(original.userId())) {
@@ -84,11 +94,11 @@ public class CopilotCompactionStore {
         }
         String id = UUID.randomUUID().toString();
         operations.reserve(session, exercise, id, "COPILOT_COMPACTION", measurement, REQUEST_CREDIT);
-        contexts.ensureHead(exercise, clock.instant());
+        contexts.ensureHead(conversation, clock.instant());
         var job = new CopilotCompactionEntity(id, 0, exercise, grant.userId(), session, grant.authVersion(),
-            parent == null ? contexts.anchorTask(exercise) : parent.id(), parent == null ? null : parent.id(),
+            parent == null ? contexts.anchorTask(conversation) : parent.id(), parent == null ? null : parent.id(),
             key, fingerprint(), "MANUAL", "WAITING", false, null, null, null, null, null, null, 0,
-            null, null, null, clock.instant(), null);
+            null, null, null, clock.instant(), null, conversation);
         contexts.insert(job);
         return response(contexts.find(id));
     }
@@ -103,23 +113,23 @@ public class CopilotCompactionStore {
             || task.stopRequested() || !"RUNNING".equals(task.state())) return null;
         var grant = owner(task.sessionHash(), task.exerciseId());
         identity.authorizeMutation(task.sessionHash());
-        var pending = contexts.pending(task.exerciseId());
+        var pending = contexts.pendingConversation(task.conversationId());
         if (pending != null) return pending.id();
         var ticket = prepared.ticket();
         var candidate = prepared.plan().compaction();
-        if (!taskId.equals(ticket.taskId()) || !worker.equals(ticket.workerId()) || !task.exerciseId().equals(ticket.exerciseId())) {
+        if (!taskId.equals(ticket.taskId()) || !worker.equals(ticket.workerId()) || !task.exerciseId().equals(ticket.exerciseId()) || !task.conversationId().equals(ticket.conversationId())) {
             throw new IllegalArgumentException("Automatic summary does not belong to this worker");
         }
-        var head = contexts.head(task.exerciseId());
+        var head = contexts.head(task.conversationId());
         if (candidate == null || !prepared.plan().automaticNeeded() || (head == null ? 0 : head.version()) != ticket.version()
-            || tasks.lastSequence(task.exerciseId()) != ticket.highWater()
-            || contexts.failedSource(task.exerciseId(), ticket.version(), candidate.throughSequence())) return null;
+            || tasks.lastSequence(task.conversationId()) != ticket.highWater()
+            || contexts.failedSource(task.conversationId(), ticket.version(), candidate.throughSequence())) return null;
         String id = UUID.randomUUID().toString();
         operations.reserve(task.sessionHash(), task.exerciseId(), id, "COPILOT_COMPACTION", measurement, REQUEST_CREDIT);
-        contexts.ensureHead(task.exerciseId(), clock.instant());
+        contexts.ensureHead(task.conversationId(), clock.instant());
         contexts.insert(new CopilotCompactionEntity(id, 0, task.exerciseId(), grant.userId(), task.sessionHash(), grant.authVersion(),
             taskId, taskId, "auto-" + id, secrets.fingerprint("AUTO\n" + id), "AUTO", "WAITING", false,
-            null, null, null, null, null, null, 0, null, null, null, clock.instant(), null));
+            null, null, null, null, null, null, 0, null, null, null, clock.instant(), null, task.conversationId()));
         return id;
     }
 
@@ -150,9 +160,9 @@ public class CopilotCompactionStore {
         }
     }
     private String fingerprint() { return secrets.fingerprint("COPILOT_COMPACTION\nMANUAL\ntrue"); }
-    private CopilotCompactionEntity receipt(String exercise, String key) {
+    private CopilotCompactionEntity receipt(String exercise, String key, String conversation) {
         var previous = contexts.receipt(exercise, key);
-        if (previous != null && !previous.fingerprint().equals(fingerprint())) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
+        if (previous != null && (!previous.conversationId().equals(conversation) || !previous.fingerprint().equals(fingerprint()))) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
         return previous;
     }
     private CopilotCompactionResponse response(CopilotCompactionEntity job) {

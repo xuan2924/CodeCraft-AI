@@ -69,12 +69,12 @@ public class CopilotCompactionExecution {
         String cancelled = cancellation(job);
         if (cancelled != null) { finish(job, "CANCELLED", null, cancelled); return null; }
         var target = models.resolveForCall(job.sessionHash(), job.exerciseId());
-        var head = contexts.head(job.exerciseId());
-        long convertedThrough = contexts.foreignThrough(job.exerciseId(), head.throughSequence(), target.connection().id(), target.model().id(),
+        var head = contexts.head(job.conversationId());
+        long convertedThrough = contexts.foreignThrough(job.conversationId(), head.throughSequence(), target.connection().id(), target.model().id(),
             Long.parseLong(target.connection().configurationVersion()), Long.parseLong(target.model().configurationVersion()));
         return new CopilotContextTicketDTO(job.anchorTaskId(), job.exerciseId(), job.sessionHash(), worker, head.version(), head.summaryId(),
-            head.throughSequence(), tasks.lastSequence(job.exerciseId()), target,
-            job.boundTaskId() == null ? List.of() : steers.pendingIds(job.boundTaskId()), convertedThrough);
+            head.throughSequence(), tasks.lastSequence(job.conversationId()), target,
+            job.boundTaskId() == null ? List.of() : steers.pendingIds(job.boundTaskId()), convertedThrough, job.conversationId());
     }
 
     @Transactional
@@ -88,11 +88,11 @@ public class CopilotCompactionExecution {
         if (previous != null && "DISPATCHED".equals(previous.state())) throw new IllegalStateException("Summary request is already dispatched");
         if (job.attemptCount() >= 2) throw new IllegalStateException("Summary repair limit reached");
         var ticket = prepared.ticket();
-        if (!job.exerciseId().equals(ticket.exerciseId()) || !worker.equals(ticket.workerId()) || !job.sessionHash().equals(ticket.sessionHash())) {
+        if (!job.exerciseId().equals(ticket.exerciseId()) || !job.conversationId().equals(ticket.conversationId()) || !worker.equals(ticket.workerId()) || !job.sessionHash().equals(ticket.sessionHash())) {
             throw new IllegalArgumentException("Summary snapshot does not belong to this worker");
         }
-        var head = contexts.head(job.exerciseId());
-        if (head.version() != ticket.version() || tasks.lastSequence(job.exerciseId()) != ticket.highWater()) return null;
+        var head = contexts.head(job.conversationId());
+        if (head.version() != ticket.version() || tasks.lastSequence(job.conversationId()) != ticket.highWater()) return null;
         var target = models.resolveForCall(job.sessionHash(), job.exerciseId());
         if (!target.connection().equals(ticket.target().connection()) || !target.model().equals(ticket.target().model())) return null;
         if (candidate.throughSequence() < head.throughSequence() || candidate.throughSequence() > ticket.highWater()) {
@@ -138,7 +138,7 @@ public class CopilotCompactionExecution {
         String cancelled = cancellation(job);
         if (cancelled != null) { finish(job, "CANCELLED", null, cancelled); return false; }
         if (valid) {
-            if (contexts.publish(job.exerciseId(), call.sourceVersion(), id, call.throughSequence(), clock.instant()) != 1) {
+            if (contexts.publish(job.conversationId(), call.sourceVersion(), id, call.throughSequence(), clock.instant()) != 1) {
                 finish(job, "INTERRUPTED", null, "CONTEXT_VERSION_CHANGED"); return false;
             }
             finish(job, "APPLIED", receipt.summaryPayload(), null);

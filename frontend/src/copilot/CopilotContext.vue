@@ -7,13 +7,13 @@ import { useCommand } from '../api/useCommand';
 import * as api from './api';
 import { commandPolicy, errorMessage } from './errors';
 
-const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean }>();
+const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string; credential: string; disabled: boolean }>();
 const emit = defineEmits<{ unauthorized: []; busy: [value: boolean] }>();
 const client = useQueryClient();
 const fee = ref(false);
-const scope = computed(() => `${props.owner}/${props.exerciseId}`);
-const key = computed(() => ['copilot-context', props.owner, props.exerciseId]);
-const history = useQuery({ queryKey: key, queryFn: ({ signal }) => api.context(props.owner, props.exerciseId, signal), retry: false, gcTime: 0, refetchInterval: 2000 });
+const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.conversationId ?? props.exerciseId}`);
+const key = computed(() => ['copilot-context', props.owner, props.exerciseId, props.conversationId ?? props.exerciseId]);
+const history = useQuery({ queryKey: key, queryFn: ({ signal }) => api.context(props.owner, props.exerciseId, signal, props.conversationId), retry: false, gcTime: 0, refetchInterval: 2000 });
 function refresh() {
   void client.invalidateQueries({ queryKey: key.value });
   void client.invalidateQueries({ queryKey: ['copilot', props.owner, props.exerciseId, 'task'] });
@@ -35,8 +35,8 @@ const canStart = computed(() => !busy.value && !props.disabled && !!props.creden
 const labels: Record<api.Compaction['state'], string> = { WAITING: '等待安全点或执行名额', RUNNING: '正在生成摘要', APPLIED: '已更新后续输入', FAILED: '压缩失败，原上下文保持', INTERRUPTED: '已中断，不自动重发', CANCELLED: '已取消', NOT_NEEDED: '当前无需压缩，输入视图未改动' };
 function compact() {
   if (!canStart.value) return;
-  const { owner, exerciseId, credential } = props;
-  void start.submit((id, signal) => api.compact(owner, exerciseId, credential, id, signal));
+  const { owner, exerciseId, credential, conversationId } = props;
+  void start.submit((id, signal) => api.compact(owner, exerciseId, credential, id, signal, conversationId));
 }
 function cancel() {
   if (!active.value || stop.pending.value || stop.uncertain.value) return;

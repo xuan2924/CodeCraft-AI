@@ -43,6 +43,18 @@ public class CopilotConversationStore {
     }
 
     @Transactional
+    public String resolve(String session, String exercise, String conversation) {
+        identity.authorizePrivateDelivery(session);
+        exercises.find(session, exercise);
+        if (conversation == null || exercise.equals(conversation)) return exercise;
+        if (!conversation.matches("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")) {
+            throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+        }
+        if (conversations.find(exercise, conversation) == null) throw new BusinessException(CopilotErrorCode.COPILOT_CONVERSATION_NOT_FOUND);
+        return conversation;
+    }
+
+    @Transactional
     public CopilotConversationResponse create(String session, String exercise, String credential, String key, StorageMeasurement measurement) {
         identity.authorizeMutation(session);
         var owner = exercises.find(session, exercise);

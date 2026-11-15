@@ -14,6 +14,9 @@ public class CopilotCompactionService {
         this.store = store; this.capacity = capacity;
     }
     public CopilotContextResponse current(String session, String exercise) { return store.current(session, exercise); }
+    public CopilotContextResponse currentInConversation(String session, String exercise, String conversation) {
+        return store.currentInConversation(session, exercise, conversation);
+    }
     public CopilotCompactionResponse accept(String session, String exercise, String credential, String key, CopilotCompactionRequest request) {
         var previous = store.replay(session, exercise, key, request);
         return previous != null ? previous : capacity.admit(session, exercise, measured -> store.accept(session, exercise, credential, key, request, measured));

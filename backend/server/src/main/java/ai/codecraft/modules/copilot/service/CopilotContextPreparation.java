@@ -37,7 +37,7 @@ public class CopilotContextPreparation {
         String summary = null;
         if (ticket.summaryId() != null) {
             var retained = contexts.find(ticket.summaryId());
-            if (retained == null || !ticket.exerciseId().equals(retained.exerciseId()) || !"APPLIED".equals(retained.state())) {
+            if (retained == null || !ticket.exerciseId().equals(retained.exerciseId()) || !ticket.conversationId().equals(retained.conversationId()) || !"APPLIED".equals(retained.state())) {
                 throw new IllegalStateException("Context summary reference is not retained by this exercise");
             }
             summary = retained.summaryPayload();
@@ -46,7 +46,7 @@ public class CopilotContextPreparation {
         // the planner never discards an unfinished trailing unit just to satisfy the input limit.
         long rawBudget = Math.max(executionLimits.contextBytes(),
             2L * (executionLimits.responseBytes() + (long) executionLimits.batchTools() * CopilotProperties.MAX_TOOL_PAYLOAD_BYTES));
-        var messages = contexts.source(ticket.exerciseId(), ticket.throughSequence(), ticket.highWater(), contextLimits.sourceMessages(), rawBudget);
+        var messages = contexts.source(ticket.conversationId(), ticket.throughSequence(), ticket.highWater(), contextLimits.sourceMessages(), rawBudget);
         if (messages.isEmpty() && ticket.highWater() > ticket.throughSequence()) throw new IllegalStateException("Context evidence is unavailable within its source bound");
         List<CopilotMessageEntity> goals = ticket.taskId() == null ? List.of() : contexts.goals(ticket.taskId());
         List<CopilotSteerEntity> adjustments = ticket.steerIds().isEmpty() ? List.of() : steers.pending(ticket.taskId());

@@ -33,11 +33,12 @@ public class CopilotEvidenceStore {
     public CopilotEvidenceDTO read(String taskId, String worker, String id) {
         var task = authorize(taskId, worker);
         var message = tasks.messageById(id);
-        if (message != null && task.exerciseId().equals(message.exerciseId())) {
+        var origin = message == null ? null : tasks.find(message.taskId());
+        if (message != null && origin != null && task.exerciseId().equals(message.exerciseId()) && task.conversationId().equals(origin.conversationId())) {
             return new CopilotEvidenceDTO(id, message.kind(), message.sequence(), message.payload(), null, null);
         }
         var summary = contexts.find(id);
-        if (summary != null && task.exerciseId().equals(summary.exerciseId()) && "APPLIED".equals(summary.state())) {
+        if (summary != null && task.exerciseId().equals(summary.exerciseId()) && task.conversationId().equals(summary.conversationId()) && "APPLIED".equals(summary.state())) {
             return new CopilotEvidenceDTO(id, "SUMMARY", summary.throughSequence(), summary.summaryPayload(), summary.sourceIdsPayload(), summary.sourceSummaryId());
         }
         throw new BusinessException(CopilotErrorCode.COPILOT_EVIDENCE_NOT_FOUND);

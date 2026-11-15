@@ -44,10 +44,12 @@ public class CopilotTaskStore {
     private final CopilotSteerRepository steers;
     private final CopilotCompactionRepository contexts;
     private final SkillSnapshots skills;
+    private final CopilotConversationStore conversations;
 
     public CopilotTaskStore(CopilotTaskRepository tasks, IdentityTransactionService identity, IdentitySecrets secrets,
         ExerciseTransactionService exercises, WorkspaceCoordinationStore control, ExerciseModelService models,
-        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCompactionRepository contexts, SkillSnapshots skills) {
+        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCompactionRepository contexts, SkillSnapshots skills, CopilotConversationStore conversations) {
+        this.conversations = conversations;
         this.tasks = tasks; this.identity = identity; this.secrets = secrets; this.exercises = exercises;
         this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals; this.tests = tests; this.steers = steers; this.contexts = contexts; this.skills = skills;
     }
@@ -55,17 +57,24 @@ public class CopilotTaskStore {
     @Transactional
     public CopilotTaskResponse accept(String session, String exercise, String credential, String key, String text,
         boolean feeAcknowledged, StorageMeasurement measurement) {
-        return acceptInternal(session, exercise, credential, key, text, feeAcknowledged, List.of(), measurement);
+        return acceptInternal(session, exercise, credential, key, text, feeAcknowledged, List.of(), measurement, exercise);
     }
 
     @Transactional
     public CopilotTaskResponse acceptWithSkills(String session, String exercise, String credential, String key, String text,
         boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement) {
-        return acceptInternal(session, exercise, credential, key, text, feeAcknowledged, selected == null ? List.of() : selected, measurement);
+        return acceptInternal(session, exercise, credential, key, text, feeAcknowledged, selected == null ? List.of() : selected, measurement, exercise);
+    }
+
+    @Transactional
+    public CopilotTaskResponse acceptInConversation(String session, String exercise, String credential, String key, String text,
+        boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement, String conversation) {
+        return acceptInternal(session, exercise, credential, key, text, feeAcknowledged,
+            selected == null ? List.of() : selected, measurement, conversations.resolve(session, exercise, conversation));
     }
 
     private CopilotTaskResponse acceptInternal(String session, String exercise, String credential, String key, String text,
-        boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement) {
+        boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement, String conversation) {
         var grant = identity.authorizeMutation(session);
         exercises.find(session, exercise);
         control.checkControl(exercise, IdentitySecrets.digest(credential));
@@ -80,7 +89,7 @@ public class CopilotTaskStore {
         var previous = tasks.receipt(exercise, key);
         if (previous != null) {
             var previousSelection = skills.list(grant.userId(), previous.id()).stream().filter(item -> item.explicitlySelected()).map(item -> item.skillId()).sorted().toList();
-            if (!previous.fingerprint().equals(fingerprint) || !previousSelection.equals(selected.stream().sorted().toList())) {
+            if (!previous.conversationId().equals(conversation) || !previous.fingerprint().equals(fingerprint) || !previousSelection.equals(selected.stream().sorted().toList())) {
                 throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
             }
             return describe(previous);
@@ -89,7 +98,7 @@ public class CopilotTaskStore {
         models.resolveForCall(session, exercise);
         String id = UUID.randomUUID().toString();
         operations.reserve(session, exercise, id, "COPILOT_START", measurement, Math.addExact(START_CREDIT, skills.additionalBytes(grant.userId(), exercise)));
-        var task = new CopilotTaskEntity(id, exercise, grant.userId(), session, key, fingerprint, "QUEUED", null, false, null, null, clock.instant(), null, exercise);
+        var task = new CopilotTaskEntity(id, exercise, grant.userId(), session, key, fingerprint, "QUEUED", null, false, null, null, clock.instant(), null, conversation);
         tasks.insert(task);
         skills.pin(grant.userId(), id, exercise, selected);
         tasks.message(new CopilotMessageEntity(0, UUID.randomUUID().toString(), id, exercise, "USER",
@@ -107,6 +116,12 @@ public class CopilotTaskStore {
     }
 
     @Transactional
+    public CopilotTaskResponse latestInConversation(String session, String exercise, String conversation) {
+        var task = tasks.latest(conversations.resolve(session, exercise, conversation));
+        return task == null ? null : describe(task);
+    }
+
+    @Transactional
     public CopilotTaskResponse find(String session, String id) {
         return describe(authorize(session, id));
     }
@@ -115,7 +130,7 @@ public class CopilotTaskStore {
     public CopilotDeliveryDTO delivery(String session, String id) {
         var task = authorize(session, id);
         var partial = tasks.partial(id);
-        return new CopilotDeliveryDTO(task.userId(), describe(task), Long.toString(tasks.lastSequence(task.exerciseId())), tasks.textHistory(id),
+        return new CopilotDeliveryDTO(task.userId(), describe(task), Long.toString(tasks.lastSequence(task.conversationId())), tasks.textHistory(id),
             partial == null ? new CopilotPartialResponse(null, "0", "", false, "", false) : partial);
     }
 
@@ -125,6 +140,13 @@ public class CopilotTaskStore {
         exercises.find(session, exercise);
         if (after < -1) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
         return after == -1 ? tasks.recent(exercise) : tasks.page(exercise, after);
+    }
+
+    @Transactional
+    public List<CopilotMessageEntity> messagesInConversation(String session, String exercise, long after, String conversation) {
+        String scope = conversations.resolve(session, exercise, conversation);
+        if (after < -1) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+        return after == -1 ? tasks.recent(scope) : tasks.page(scope, after);
     }
 
     /** Monotone stop needs no fresh capacity; it does not cancel an independent manual test. */
@@ -161,6 +183,6 @@ public class CopilotTaskStore {
     }
 
     private CopilotTaskResponse describe(CopilotTaskEntity task) {
-        return new CopilotTaskResponse(task.id(), task.exerciseId(), task.state(), task.reason(), task.stopRequested(), task.createdAt(), task.completedAt());
+        return new CopilotTaskResponse(task.id(), task.exerciseId(), task.state(), task.reason(), task.stopRequested(), task.createdAt(), task.completedAt(), task.conversationId());
     }
 }
