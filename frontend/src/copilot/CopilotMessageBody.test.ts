@@ -21,6 +21,16 @@ it('separates real thinking and fenced code, copies only code, and never renders
   wrapper.unmount();
 });
 
+it.each(['> ```sh\n> echo ok\n> ```', '1. Run this:\n\n   ```sh\n   echo ok\n   ```'])('copies nested code without Markdown container markers: %s', async (text) => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { clipboard: { writeText } });
+  const wrapper = mount(CopilotMessageBody, { props: { text } });
+  expect(wrapper.get('code').text()).toBe('echo ok');
+  await wrapper.get('button').trigger('click'); await flushPromises();
+  expect(writeText).toHaveBeenCalledWith('echo ok');
+  wrapper.unmount();
+});
+
 it('does not invent thinking and reports clipboard failure without losing code', async () => {
   vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
   const wrapper = mount(CopilotMessageBody, { props: { text: '```sh\necho ok\n```' } });

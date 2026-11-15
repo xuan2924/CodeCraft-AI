@@ -1,11 +1,25 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { marked } from 'marked';
+import { marked, type Token, type Tokens } from 'marked';
 
 const props = defineProps<{ text: string; thinking?: string }>();
-const blocks = computed(() => marked.lexer(props.text).map((token) => token.type === 'code'
-  ? { code: true, text: token.text, language: token.lang ?? '' }
-  : { code: false, text: token.raw, language: '' }));
+interface DisplayBlock { code: boolean; text: string; language: string }
+function displayBlocks(tokens: Token[]): DisplayBlock[] {
+  return tokens.flatMap((token): DisplayBlock[] => {
+    // The lexer has no custom extensions; these tags identify built-in block tokens.
+    if (token.type === 'blockquote') return displayBlocks((token as Tokens.Blockquote).tokens);
+    if (token.type === 'list') {
+      const list = token as Tokens.List;
+      return list.items.flatMap((item, index) => [
+        { code: false, text: list.ordered ? `${Number(list.start) + index}. ` : '• ', language: '' },
+        ...displayBlocks(item.tokens),
+      ]);
+    }
+    return [token.type === 'code' ? { code: true, text: token.text, language: token.lang ?? '' }
+      : { code: false, text: token.raw, language: '' }];
+  });
+}
+const blocks = computed(() => displayBlocks(marked.lexer(props.text)));
 const copyStatus = ref('');
 const copying = ref(false);
 let generation = 0;
