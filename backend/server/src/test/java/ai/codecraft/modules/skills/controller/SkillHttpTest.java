@@ -65,7 +65,9 @@ class SkillHttpTest {
                 .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"));
             mvc.perform(post("/api/skills").servletPath("/api/skills").cookie(new Cookie(IdentityHttp.SESSION_COOKIE, token)).header("Origin", "https://app.example.test")
                 .contentType("application/json").content("{}")).andExpect(status().isForbidden());
-            for (String body : List.of("{\"formatVersion\":1,\"formatVersion\":1,\"files\":[]}", "{\"formatVersion\":1,\"files\":[],\"extra\":true}")) {
+            for (String body : List.of("{\"formatVersion\":1,\"formatVersion\":1,\"files\":[]}", "{\"formatVersion\":1,\"files\":[],\"extra\":true}",
+                "{\"formatVersion\":1.9,\"files\":[]}", "{\"formatVersion\":\"1\",\"files\":[]}",
+                "{\"formatVersion\":1,\"files\":[{\"path\":\"references/a.txt\",\"content\":42}]}")) {
                 mvc.perform(post("/api/skills").servletPath("/api/skills").cookie(new Cookie(IdentityHttp.SESSION_COOKIE, token))
                     .header("Origin", "https://app.example.test").header(IdentityHttp.CSRF_HEADER, "csrf").header("Idempotency-Key", "import")
                     .contentType("application/json").content(body)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("SKILL_INVALID_PACKAGE"));

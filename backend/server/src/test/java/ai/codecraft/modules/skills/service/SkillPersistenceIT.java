@@ -59,6 +59,10 @@ class SkillPersistenceIT {
             var original = service.save("owner", null, "create", null, pack("first", "Original"));
             assertThat(service.save("owner", null, "create", null, pack("first", "Original"))).isEqualTo(original);
             assertThatThrownBy(() -> service.save("owner", null, "second", null, pack("second", "Other"))).hasMessageContaining("SKILL_LIMIT_EXCEEDED");
+            // Arrange a retained task reference; task admission/loading is exercised separately in #18.
+            String referencedTask = UUID.randomUUID().toString();
+            jdbc.update("INSERT INTO copilot_skill_snapshot(task_id,exercise_id,user_id,skill_id,version_id) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?::uuid)",
+                referencedTask, UUID.randomUUID().toString(), owner, original.id(), original.contentVersion());
             var updated = service.save("owner", original.id(), "update", original.version(), pack("first", "Updated"));
             assertThat(updated.contentVersion()).isNotEqualTo(original.contentVersion());
             assertThatThrownBy(() -> service.save("owner", original.id(), "stale", original.version(), pack("first", "Stale"))).hasMessageContaining("SKILL_VERSION_CONFLICT");
@@ -68,6 +72,9 @@ class SkillPersistenceIT {
             assertThatThrownBy(() -> service.save("owner", null, "disabled-counts", null, pack("second", "Other"))).hasMessageContaining("SKILL_LIMIT_EXCEEDED");
             service.change("owner", original.id(), "delete", disabled.version(), false, true);
             assertThat(service.list("owner")).isEmpty();
+            var retained = sql.getMapper(SkillRepository.class).version(owner, original.contentVersion());
+            assertThat(mapper.readValue(retained.filesPayload(), SkillPackageRequest.class).files().getFirst().content()).endsWith("Original");
+            assertThat(sql.getMapper(SkillRepository.class).version(owner, updated.contentVersion())).isNull();
             assertThatThrownBy(() -> service.contents("owner", original.id())).hasMessageContaining("SKILL_NOT_FOUND");
             try (var executor = Executors.newFixedThreadPool(2)) {
                 var start = new CountDownLatch(1);

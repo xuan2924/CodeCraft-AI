@@ -38,4 +38,10 @@
 - 管理 REST、严格 SnakeYAML SafeConstructor、路径/UTF-8/字节/文件数保护、用户锁下配额和版本控制已接入。`/skills` 页面支持原文编辑、参考文件、原子 JSON 导入、当前编辑内容导出、启停和删除；账号导航可达。管理页不启动任何模型请求。
 - 定向 Java `SkillPackageParserTest,SkillHttpTest` 及 PostgreSQL `SkillPersistenceIT` 通过。覆盖 64KiB/256KiB/32 文件边界、非法编码/重复元数据/别名/路径、重复 JSON 字段、2MiB 路由限额、CSRF/owner、管理员/跨用户、幂等/旧版本冲突、并发数量拒绝、实际 50 个含停用与 5MiB 总额度。
 - 前端组件/API 定向测试、vue-tsc 与修改文件 Lint 通过。真实 Java/PostgreSQL/浏览器 `node scripts/test-tracer.mjs --workspace --smoke --skills-browser` 通过导入失败整包拒绝→导入→启用→编辑→删除。该选择仅验证 Skill 管理，不冒充 workspace smoke 修复；无付费调用。
-- 首轮浏览器发现 smoke 选择器要求 `@smoke`，未执行测试；补标签并重新构建 Java 包和 Web 后运行通过。日志 `%TEMP%/skill-final-directed.log`、`skill-ui-green.log`、`skill-ui-typecheck.log`、`skill-ui-lint.log`、`skill-browser.log`；浏览器证据在对应 `.runtime/cc-tracer-*/browser-1`。正式任务快照引用/删除/清理跨功能证据在 #18/#21 接线后补齐，尚未宣布阶段或本票审查收口。
+- 首轮浏览器发现 smoke 选择器要求 `@smoke`，未执行测试；补标签并重新构建 Java 包和 Web 后运行通过。日志 `%TEMP%/skill-final-directed.log`、`skill-ui-green.log`、`skill-ui-typecheck.log`、`skill-ui-lint.log`、`skill-browser.log`；浏览器证据在对应 `.runtime/cc-tracer-*/browser-1`。正式任务快照引用/删除/清理跨功能证据在 #18/#21 接线后补齐，尚未宣布第二阶段完成。
+
+### 双轴审查与修复
+
+对 `dd30472...a6cab3b` 运行独立 Standards / Spec 审查。Standards：1 项规范测试缺口（重复提交/迟到响应/卸载），1 项重复账号门禁代码的启发式建议；Spec：1 项格式版本标量隐式转换缺陷，1 项被任务引用版本的删除测试缺口。已补 deferred-promise 组件测试（含失败保留草稿），补真实数据库引用保留断言；先复现 HTTP 红测，再在 Skill 专用 mapper 禁用浮点/字符串转整数及数值/布尔转文本，确保 `formatVersion:1.9`、`"1"`、非字符串文件内容整次拒绝。定向 Java/PG、6 项 Skill 前端测试、类型和 Lint 复验通过，日志 `%TEMP%/skill-review-green.log`、`skill-review-ui.log`、`skill-review-typecheck.log`、`skill-review-lint.log`。
+
+门禁 composable 抽取属于启发式维护建议，不是授权缺陷：本轮保持与既有模型设置页相同的账号/过期/取消行为，已为新功能补行为测试，不将无需求的跨页面重构混入本票。功能项与审查已覆盖；按本轮连续实施约定，完整受影响套件在第二阶段最终收口统一执行，#18/#21 补真实任务引用链路而非替代已通过的 #17 管理行为。
