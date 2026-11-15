@@ -2579,9 +2579,30 @@ class CopilotPersistenceIT {
             .addLogs(TestLogChunk.newBuilder().setChannel("stdout").setData(ByteString.copyFromUtf8("command log")))).build();
     }
 
-    private CopilotTaskResponse beginBash() throws Exception {
+    @Test
+    void bashMaximumCommandAndDirectoryReachApprovalThroughTheRunner() throws Exception {
+        String command = "echo " + "x".repeat(4091);
+        String directory = "d/".repeat(511) + "dd";
+        var task = beginBash(command, directory);
+        var proposal = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        assertThat(proposal.command()).isEqualTo(command);
+        assertThat(proposal.directory()).isEqualTo(directory);
+        assertThat(proposal.commandTaskId()).isNull();
+    }
+
+    @Test
+    void bashJsonEscapeExpansionDoesNotRejectALegalCommandBeforeApproval() throws Exception {
+        String command = "echo " + "\n".repeat(4091);
+        var task = beginBash(command, ".");
+        assertThat(commandTools.recent(SESSION, task.id(), 0).commands().getFirst().command()).isEqualTo(command);
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    private CopilotTaskResponse beginBash() throws Exception { return beginBash("echo hello; exit 7", "."); }
+
+    private CopilotTaskResponse beginBash(String command, String directory) throws Exception {
         var request = ToolExecutionRequest.builder().id("bash-first").name("bash")
-            .arguments("{\"expected_revision\":\"1\",\"command\":\"echo hello; exit 7\",\"directory\":\".\"}").build();
+            .arguments(json.writeValueAsString(Map.of("expected_revision", "1", "command", command, "directory", directory))).build();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(request))).build(), 100),
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Command result understood.")).build(), 100));

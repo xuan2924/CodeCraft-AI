@@ -140,9 +140,14 @@ public class CopilotRunner {
         if (message.toolExecutionRequests().size() > limits.batchTools()) invalidResponse();
         var ids = new HashSet<String>();
         for (var call : message.toolExecutionRequests()) {
-            int argumentLimit = "propose_changes".equals(call.name()) ? CopilotProposalPreparation.MAX_ARGUMENT_BYTES : 4096;
             if (call.id() == null || call.id().isBlank() || call.id().length() > 256 || !ids.add(call.id()) || call.name() == null || call.name().isBlank()
-                || call.name().length() > 128 || call.arguments() == null || call.arguments().getBytes(StandardCharsets.UTF_8).length > argumentLimit) invalidResponse();
+                || call.name().length() > 128 || call.arguments() == null) invalidResponse();
+            int argumentLimit = switch (call.name()) {
+                case "propose_changes" -> CopilotProposalPreparation.MAX_ARGUMENT_BYTES;
+                case "bash" -> CopilotCommandService.MAX_ARGUMENT_BYTES;
+                default -> 4096;
+            };
+            if (call.arguments().getBytes(StandardCharsets.UTF_8).length > argumentLimit) invalidResponse();
         }
     }
     private void invalidResponse() { throw new BusinessException(ModelAccessErrorCode.MODEL_INVALID_RESPONSE); }

@@ -33,6 +33,7 @@ import org.springframework.stereotype.Service;
 /** External capacity measurement and complete evidence codecs stay outside authorization transactions. */
 @Service
 public class CopilotCommandService {
+    public static final int MAX_ARGUMENT_BYTES = 32768;
     private final CopilotCommandStore store;
     private final CopilotCommandRepository commands;
     private final CommandTaskStore children;
@@ -111,7 +112,7 @@ public class CopilotCommandService {
     }
 
     CommandStartRequest parse(String arguments) {
-        if (arguments == null || arguments.getBytes(StandardCharsets.UTF_8).length > 32768) throw invalid();
+        if (arguments == null || arguments.getBytes(StandardCharsets.UTF_8).length > MAX_ARGUMENT_BYTES) throw invalid();
         try {
             JsonNode value = input.readValue(arguments);
             if (!value.isObject() || value.size() != 3 || !value.path("expected_revision").isTextual()
