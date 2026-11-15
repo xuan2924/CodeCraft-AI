@@ -77,29 +77,13 @@ jobs:
         run: |
           cd backend/server && ./mvnw -B -ntp -DskipTests package
           cd ../../frontend && npm run build
-      - name: Inspect runner socket permissions
+      - name: Map runner Docker socket group to trusted coordinator
         if: matrix.lane != 'quick'
-        run: stat -c 'Docker socket mode=%a uid=%u gid=%g' /var/run/docker.sock
+        run: echo "DOCKER_SOCKET_GID=$(stat -c '%g' /var/run/docker.sock)" >> "$GITHUB_ENV"
       - name: Golden paths only (synthetic model; no supplier keys)
         if: matrix.lane == 'smoke'
         run: node scripts/test-tracer.mjs --smoke --identity --workspace
       - run: node scripts/verify.mjs --all
         if: matrix.lane == 'heavy'
-      - name: Classify startup failure without exposing log contents
-        if: failure() && matrix.lane != 'quick'
-        run: |
-          node --input-type=module <<'NODE'
-          import { readdir, readFile } from 'node:fs/promises';
-          for (const entry of await readdir('.runtime').catch(() => [])) {
-            if (!entry.startsWith('cc-tracer-')) continue;
-            const text = await readFile(`.runtime/${entry}/sandbox.log`, 'utf8').catch(() => '');
-            console.log('[startup-diagnostic]', JSON.stringify({
-              socketPermissionDenied: /docker.sock[^\r\n]*permission denied/.test(text),
-              publicationPermissionDenied: /published inputs[^\r\n]*permission denied/.test(text),
-              permissionDenied: text.includes('permission denied'),
-              addressInUse: text.includes('address already in use'),
-            }));
-          }
-          NODE
       # Public repository: no automatic upload of browser traces, .runtime,
       # databases, environment files or other potentially sensitive payloads.
