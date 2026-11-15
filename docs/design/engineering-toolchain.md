@@ -88,7 +88,7 @@ Go 官方要求 Windows race 使用 mingw-w64 runtime 8+。本机 GCC 8.1.0 配�
 
 开发中优先运行下表的定向入口；完整代码功能收口的默认聚合入口为 `node scripts/verify.mjs --quick`，仅文档修改检查差异与链接即可。验证频率及结果复用遵循根规范，不因内部步骤或提交数量重复运行。quick 汇总编译、静态检查和多语言快速测试，30 秒为热缓存优化目标，60 秒为默认脚本硬超时；超过软目标不代表功能未完成，也不自动授权性能整改。`--all`/`--heavy` 和完整 tracer 仅按明确安排或具体问题运行，不作为逐票默认收口。
 
-当前没有远程仓库，GitHub Actions 仅预置配置，无远程通过证据。启用后 PR/主分支 push 只运行 quick 与有限黄金路径 smoke；heavy 仅手动明确选择，不在每张 issue、每次 PR、合并或 nightly 自动运行。CI 不能隐含新增生产、跨服务故障或收费模型验证要求；未来扩大触发范围须另行确认。
+用户已确认采用公开 GitHub 仓库与单人开发优先的 CI：主分支 push/可选 PR 只跑 quick，纯 Markdown/票据改动跳过；每天北京时间 03:23 或手动运行非收费黄金路径 smoke。heavy（全量/故障/race 等）仍仅手动选择，不在日常提交、合并或 nightly 自动运行。不设置强制 PR、审批或必过合并门禁；同分支同档运行自动取消旧实例。共享 runner 的 quick 硬超时显式为 180 秒，本地仍默认 60 秒，30 秒热缓存目标不变；安装/首次编译单列准备。CI 仅 contents:read、不持久化 checkout 凭证、不配置供应商 Key、不自动上传 trace/日志/运行目录。远程结果见 [CI 验证记录](../validation/github-ci.md)，不隐含生产发布、SLA 或收费模型验证要求。
 
 下表列出可用检查入口，不是每张票必须全跑的清单；`scripts/test-tracer.mjs` 用隔离真实依赖补充 Failsafe 与浏览器验证。涉及跨端截止的 Java 测试 JVM 也运行于同一 Linux daemon，离线复用只读 Maven repository，各模式复制编译产物并隔离报告，零执行或跳过所选测试失败。可信工作区故障测试容器拥有临时 Docker socket 权限，不能充当用户代码沙箱。迁移及真实链路证据见 [#10–#12 验证](../validation/workspace-write-browser-10-12.md)，专项时钟异常保护已按 [ADR 0003](../adr/0003-accept-shared-system-clock-risk.md) 排除首期范围，不作为未完成的验收门槛；正常时间前提下的过期拒绝与重启恢复测试仍保留：
 

@@ -1,12 +1,21 @@
 name: Layered verification
 on:
-  pull_request:
   push:
     branches: [main, master]
+    paths-ignore:
+      - '**/*.md'
+      - '.scratch/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - '.scratch/**'
+  schedule:
+    # Daily 03:23 China time: disposable, non-paid golden paths only.
+    - cron: '23 19 * * *'
   workflow_dispatch:
     inputs:
       scope:
-        description: Verification scope (heavy is opt-in, never a routine PR gate)
+        description: quick = daily development; smoke = nightly; heavy = explicit full regression
         type: choice
         default: quick
         options:
@@ -15,17 +24,25 @@ on:
           - heavy
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.scope || (github.event_name == 'schedule' && 'smoke' || 'quick') }}
+  cancel-in-progress: true
 jobs:
   verify:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        # Heavy runs only when explicitly selected; no per-issue/merge/nightly matrix.
-        lane: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.scope) || '["quick","smoke"]') }}
-    timeout-minutes: ${{ matrix.lane == 'heavy' && 15 || 5 }}
+        # Push/PR never start Docker/browser smoke or the heavy regression.
+        lane: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.scope) || (github.event_name == 'schedule' && '["smoke"]' || '["quick"]')) }}
+    timeout-minutes: ${{ matrix.lane == 'heavy' && 40 || 20 }}
+    env:
+      # Shared runners need headroom; local quick remains 60s, target remains 30s.
+      CODECRAFT_QUICK_TIMEOUT_SECONDS: '180'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
@@ -48,12 +65,11 @@ jobs:
         working-directory: frontend
       - run: ./scripts/generate-proto.sh
       - run: git diff --exit-code -- backend/sandbox/internal/gen
-      # Dependency download/first compilation is explicit setup, not a hidden part
-      # of the 30-second warm-cache feedback target (60-second default hard timeout).
+      # Downloads/first compilation are setup, not warm-cache quick feedback.
       - name: Prepare Java and Go caches
         run: |
           cd backend/server && ./mvnw -B -ntp -DskipTests test-compile
-          cd ../sandbox && go test -run '^$' ./internal/status ./internal/execution
+          cd ../sandbox && go test -run '^$' ./...
       - run: node scripts/verify.mjs --quick
         if: matrix.lane == 'quick'
       - name: Build smoke applications
@@ -61,21 +77,10 @@ jobs:
         run: |
           cd backend/server && ./mvnw -B -ntp -DskipTests package
           cd ../../frontend && npm run build
-      - name: Golden paths only
+      - name: Golden paths only (synthetic model; no supplier keys)
         if: matrix.lane == 'smoke'
         run: node scripts/test-tracer.mjs --smoke --identity --workspace
       - run: node scripts/verify.mjs --all
         if: matrix.lane == 'heavy'
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: failure()
-        with:
-          name: diagnostics-${{ matrix.lane }}
-          retention-days: 3
-          include-hidden-files: true
-          path: |
-            .runtime/**/browser-*/**
-            .runtime/**/*.log
-            .runtime/**/failsafe-reports/**
-            backend/server/target/surefire-reports/**
-            frontend/test-results/**
-          # Do not upload .env, publication inputs or the seeded database.
+      # Public repository: no automatic upload of browser traces, .runtime,
+      # databases, environment files or other potentially sensitive payloads.

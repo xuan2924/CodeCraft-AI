@@ -100,7 +100,7 @@ node scripts/clean-docker-images.mjs --keep IMAGE --publication FILE
 
 当前分层与历史实测结果见 [测试分层整改记录](docs/validation/testing-layers.md)。默认以本地 L1 和代码审查收口；核心单测反馈回路控制在 10 秒内，quick 的多语言汇总耗时另计。额外真实链路与故障验证只按明确安排或具体问题最小执行，不逐 issue/PR 跑重型矩阵，也不自动生成 QA 欠账。
 
-当前没有远程仓库；GitHub Actions 仅预置配置，不作为当前 Dev Done 前提。未来启用后，PR/主分支 push 运行 quick 与有限黄金路径 smoke；heavy 仅手动明确选择，无自动合并后/nightly 重型运行。收费模型验证不进入默认 CI。
+公开仓库：[xuan2924/CodeCraft-AI](https://github.com/xuan2924/CodeCraft-AI)。单人开发直接提交即可，不要求 PR、审批或合并门禁；主分支 push/可选 PR 只跑 quick，纯 Markdown/票据改动跳过。每天北京时间 03:23 跑非收费黄金路径 smoke，也可手动运行；全量 heavy 仅手动选择。CI 不配置供应商 Key、不运行收费验证，不以本轮配置建设生产级发布流程。
 
 ### 快速反馈
 
@@ -183,7 +183,7 @@ cd ..
 cd backend/server && ./mvnw -B -ntp -DskipTests package
 cd ../../frontend && npm run build
 cd ..
-# PR 黄金路径：跳过 Java IT、崩溃和依赖停机矩阵
+# nightly/手动黄金路径：跳过 Java IT、崩溃和依赖停机矩阵
 node scripts/test-tracer.mjs --smoke --identity --workspace
 # 单例独立运行（另一个工作区用例无需先成功）
 node scripts/test-tracer.mjs --smoke --workspace "--browser-test=save and run"
@@ -248,7 +248,7 @@ Java 集成测试使用已有 `~/.m2/repository` 的只读挂载，以离线 Mav
 
 脚本还检查 Go 非 root、只读根、私有具名卷、宿主 loopback 端口与无数据库/管理员凭证。浏览器同时检查响应形状、HTTP 200/503、`no-store`、键盘重试和窄屏。没有替换浏览器 API。清理仅针对该次随机项目的进程、容器和卷；删除临时凭证文件，日志保存在忽略的 `.runtime/`。Docker/浏览器/依赖缺失均非零失败，不能算作通过。若终端被强制关闭，检查 `.runtime/cc-tracer-*` 对应的测试项目并只清理该项目，勿清理开发资源。
 
-`--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器保留管理员改密、邀请及退出黄金路径；重置、越权和时间边界由 Java 身份 IT 覆盖，并验证 Java 重启后数据库会话仍可用。失败保留 trace、截图、录屏及 HTML 报告，各次运行使用独立输出目录。这些产物只允许来自已销毁的临时测试凭证；预置 CI 配置限定白名单上传诊断、保留 3 天，不上传 `.env`、数据库或开发凭证。不能把跳过的测试算作通过。`--workspace` 还覆盖选题/准备/只读浏览/开始/放弃、跨用户拒绝、Go 暂停期间的撤销恢复；授权到期使用可控 Clock 快进，以及 16 个损坏清理实例不阻塞新准备。另在独立测试库启动子 JVM：收到 Go 真实提交回执后立即 halt，重启后只用 REST GET 确认原操作/内容/修订，任何重新 Apply 都使测试失败。验证边界见 [#09 记录](docs/validation/problem-workspace-09.md)和 [#10–#12 记录](docs/validation/workspace-write-browser-10-12.md)。
+`--identity` 另外创建独立边界测试数据库，以显式测试时钟验证到期、续期和撤销，使用真实 PostgreSQL 验证事务及并发；生产进程没有测试时钟接口。浏览器保留管理员改密、邀请及退出黄金路径；重置、越权和时间边界由 Java 身份 IT 覆盖，并验证 Java 重启后数据库会话仍可用。失败保留 trace、截图、录屏及 HTML 报告，各次运行使用独立输出目录。这些产物只允许来自已销毁的临时测试凭证；公开 CI 不自动上传这些诊断产物、`.runtime`、`.env` 或数据库，避免 trace/日志携带敏感载荷；本机产物也不应直接分享。不能把跳过的测试算作通过。`--workspace` 还覆盖选题/准备/只读浏览/开始/放弃、跨用户拒绝、Go 暂停期间的撤销恢复；授权到期使用可控 Clock 快进，以及 16 个损坏清理实例不阻塞新准备。另在独立测试库启动子 JVM：收到 Go 真实提交回执后立即 halt，重启后只用 REST GET 确认原操作/内容/修订，任何重新 Apply 都使测试失败。验证边界见 [#09 记录](docs/validation/problem-workspace-09.md)和 [#10–#12 记录](docs/validation/workspace-write-browser-10-12.md)。
 
 已有独立服务时，可在 `frontend/` 设置 `TRACER_WEB_URL=http://127.0.0.1:<端口>` 后执行 `npm run test:e2e -- e2e/status.spec.ts`；默认断言两项依赖可用。普通 `npm run test:e2e` 不会偷偷启动假服务。
 
@@ -265,6 +265,6 @@ scripts/                        初始化、生成、检查与真实链路测试
 
 `GET /api/internal/status` 返回 `{"database":"AVAILABLE|UNAVAILABLE","sandbox":"AVAILABLE|UNAVAILABLE"}`。全部可用时 200，否则 503；固定字段，不返回内部连接信息、凭证或堆栈。该内部运维接口不冒充任务 05 的业务 REST/鉴权协议。
 
-Go 生成文件提交，Java 生成文件仅在 `target/`。生成脚本固定插件版本、下载校验 protoc；Wrapper 分发也校验 SHA-256。预置 CI 重新生成后检查 Go 契约漂移；PR/主分支 push 并行 quick 和 smoke，手动触发默认 quick，可明确选择 smoke 或 heavy（含 Linux race 和全量真实链路）。heavy 不自动随合并或 nightly 运行；**添加了 CI 配置不代表远程 CI 已通过**。
+Go 生成文件提交，Java 生成文件仅在 `target/`。生成脚本固定插件版本、下载校验 protoc；Wrapper 分发也校验 SHA-256。CI 重新生成后检查 Go 契约漂移；PR/主分支 push 只跑 quick，nightly 只跑 smoke。手动触发默认 quick，可明确选择 smoke 或 heavy（含 Linux race 和全量真实链路）；heavy 不自动随合并或 nightly 运行。同分支同档新运行取消旧运行，避免浪费。共享 runner 的 quick 硬超时显式设为 180 秒，本地默认仍为 60 秒；首次下载/编译不混入热缓存目标。远程执行结果见 [CI 验证记录](docs/validation/github-ci.md)。
 
 具体决策见 [工程工具链](docs/design/engineering-toolchain.md) 和 [身份契约](docs/design/api-events.md)，执行证据见 [任务 06 验证记录](docs/validation/service-tracer-06.md)、[任务 07 验证记录](docs/validation/account-login-07.md)和[任务 08 验证记录](docs/validation/password-revocation-08.md)。
