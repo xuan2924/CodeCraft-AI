@@ -44,6 +44,11 @@ identity:
   fingerprint-key: ${IDENTITY_FINGERPRINT_KEY:}
   bootstrap-username: ${BOOTSTRAP_ADMIN_USERNAME:}
   bootstrap-password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+copilot:
+  web:
+    api-key: ${COPILOT_WEB_API_KEY:}
+    base-url: ${COPILOT_WEB_BASE_URL:https://api.tavily.com/}
+    timeout: ${COPILOT_WEB_TIMEOUT:20s}
 model:
   credential-rotation:
     enabled: ${MODEL_CREDENTIAL_ROTATION_ENABLED:false}

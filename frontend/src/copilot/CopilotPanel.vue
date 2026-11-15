@@ -15,6 +15,7 @@ import CopilotContext from './CopilotContext.vue';
 import CopilotUsage from './CopilotUsage.vue';
 import CopilotSkills from './CopilotSkills.vue';
 import CopilotProjectInstructions from './CopilotProjectInstructions.vue';
+import CopilotWebResult from './CopilotWebResult.vue';
 import CopilotMessageBody from './CopilotMessageBody.vue';
 
 const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
@@ -218,7 +219,13 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
         >
           Fork 到此消息
         </NButton>
+        <CopilotWebResult
+          v-if="message.kind === 'TOOL' && /^web_(search|read) \[/.test(message.text)"
+          :text="message.text"
+          :scope="`${scope}/${message.id}`"
+        />
         <CopilotMessageBody
+          v-else
           :text="message.text"
           :thinking="message.thinking"
         />

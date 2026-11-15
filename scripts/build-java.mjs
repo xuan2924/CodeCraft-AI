@@ -22,6 +22,9 @@ export function javaComposeEnv(values) {
   for (const key of ['JAVA_PORT', 'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD',
     'IDENTITY_FINGERPRINT_KEY', 'SANDBOX_RPC_KEY', 'MODEL_CREDENTIAL_ACTIVE_KEY_ID', 'MODEL_CREDENTIAL_KEYS']) env[key] = values[key] ?? '';
   env.MODEL_CREDENTIAL_ROTATION_ENABLED = values.MODEL_CREDENTIAL_ROTATION_ENABLED ?? 'false';
+  env.COPILOT_WEB_API_KEY = values.COPILOT_WEB_API_KEY ?? '';
+  env.COPILOT_WEB_BASE_URL = values.COPILOT_WEB_BASE_URL ?? 'https://api.tavily.com/';
+  env.COPILOT_WEB_TIMEOUT = values.COPILOT_WEB_TIMEOUT ?? '20s';
   env.PUBLIC_ORIGIN = values.PUBLIC_ORIGIN ?? `http://localhost:${values.WEB_PORT}`;
   env.JAVA_PUBLICATION_FILE = values.PROBLEM_PUBLICATION_FILE ? '/app/publication.json' : '';
   return env;

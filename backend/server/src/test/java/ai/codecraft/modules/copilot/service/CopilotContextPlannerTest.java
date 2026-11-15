@@ -32,6 +32,17 @@ class CopilotContextPlannerTest {
         new CopilotProperties(2, 262144, 1048576, 16, 3, Duration.ofSeconds(130)));
     private final ToolExecutionRequest call = ToolExecutionRequest.builder().id("read-1").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
 
+    @Test void longWebEvidenceUsesOriginalMessageIdentityForRetainedPaging() {
+        var request = ToolExecutionRequest.builder().id("web").name("web_read").arguments("{\"url\":\"https://example.com\"}").build();
+        var rows = List.of(row(1, UserMessage.from("read docs")), row(2, AiMessage.from(List.of(request))),
+            row(3, ToolExecutionResultMessage.from(request, "retained body ".repeat(3000))));
+        String original = rows.getLast().payload();
+        var plan = planner.plan(target(100000, ModelThinkingMode.OFF), input(rows, false));
+        var output = (ToolExecutionResultMessage) plan.projection().request().messages().getLast();
+        assertThat(output.text()).contains("CONTEXT_EVIDENCE_TRUNCATED", "read_evidence", rows.getLast().id());
+        assertThat(rows.getLast().payload()).isEqualTo(original);
+    }
+
     @Test void projectGuidancePrecedesSkillsAndTaskWithoutBecomingSystemAuthority() {
         var source = new CopilotContextInputDTO(null, null, 0, List.of(row(1, UserMessage.from("task"))), List.of(), List.of(), false, 0,
             List.of(ChatMessageSerializer.messageToJson(UserMessage.from("skill"))),

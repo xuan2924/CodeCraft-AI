@@ -258,6 +258,7 @@ class CopilotPersistenceIT {
     private WorkspaceWriteCoordinator writeCoordinator;
     private StorageCapacityService capacity;
     private CopilotToolExecutor executor;
+    private CopilotWebTools webTools;
     private TestTaskStore childExecutions;
     private CommandTaskStore childCommands;
     private CopilotCommandLifecycle commandLifecycle;
@@ -426,7 +427,8 @@ class CopilotPersistenceIT {
             mock(CommandTaskCoordinator.class), capacity, new CopilotCommandResultFormatter(), json);
         evidenceStore = proxy(new CopilotEvidenceStore(repository, contextRepository, identity, coordination, clock, skillSnapshots), CopilotEvidenceStore.class);
         var evidenceTools = new CopilotEvidenceTools(evidenceStore, json);
-        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(evidenceStore, json), commandTools);
+        webTools = mock(CopilotWebTools.class);
+        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(evidenceStore, json), commandTools, webTools);
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts);
     }
 
@@ -1543,6 +1545,26 @@ class CopilotPersistenceIT {
             .satisfies(item -> assertThat(item.state()).isEqualTo("NOT_NEEDED"));
         assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("1");
         assertThat(compactions.current(SESSION, exercise).requests()).hasSize(1);
+    }
+
+    @Test
+    void webToolResultReturnsToOriginalLoopAndRecoveryDoesNotRepeatTheCall() throws Exception {
+        String body = "{\"code\":\"OK\",\"kind\":\"SEARCH_SNIPPETS\",\"sources\":[{\"url\":\"https://example.com/docs\",\"content\":\"confirmed snippet\"}]}";
+        when(webTools.execute(SESSION, exercise, "web_search", "{\"query\":\"docs\"}")).thenReturn(body);
+        var count = new AtomicInteger();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
+            if (count.getAndIncrement() == 0) return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(
+                ToolExecutionRequest.builder().id("web-call").name("web_search").arguments("{\"query\":\"docs\"}").build()))).build(), 100);
+            ChatRequest request = call.getArgument(1);
+            assertThat(ChatMessageSerializer.messagesToJson(request.messages())).contains("confirmed snippet", "https://example.com/docs");
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("source-based answer")).build(), 100);
+        });
+        var task = tasks.accept(SESSION, exercise, CONTROL, "web-task", "Search docs", true, measurement);
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+        runner.run(task.id(), UUID.randomUUID().toString());
+        verify(webTools, times(1)).execute(SESSION, exercise, "web_search", "{\"query\":\"docs\"}");
+        assertThat(repository.context(exercise)).anyMatch(message -> message.payload().contains("confirmed snippet"));
     }
 
     @Test

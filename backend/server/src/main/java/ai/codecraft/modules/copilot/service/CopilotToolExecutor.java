@@ -19,11 +19,13 @@ public class CopilotToolExecutor {
     private final CopilotEvidenceTools evidence;
     private final CopilotSkillTools skills;
     private final CopilotCommandService commands;
-    public CopilotToolExecutor(CopilotReadTools reads, CopilotProposalPreparation preparation, CopilotProposalStore proposals, ObjectMapper json, CopilotTestTools tests, CopilotEvidenceTools evidence, CopilotSkillTools skills, CopilotCommandService commands) {
-        this.commands = commands;
+    private final CopilotWebTools web;
+    public CopilotToolExecutor(CopilotReadTools reads, CopilotProposalPreparation preparation, CopilotProposalStore proposals, ObjectMapper json, CopilotTestTools tests, CopilotEvidenceTools evidence, CopilotSkillTools skills, CopilotCommandService commands, CopilotWebTools web) {
+        this.commands = commands; this.web = web;
         this.reads = reads; this.preparation = preparation; this.proposals = proposals; this.json = json; this.tests = tests; this.evidence = evidence; this.skills = skills;
     }
-    public CopilotToolExecutionDTO execute(CopilotTaskEntity task, String worker, CopilotToolEntity tool) throws JsonProcessingException {
+    public CopilotToolExecutionDTO execute(CopilotTaskEntity task, String worker, CopilotToolEntity tool) throws JsonProcessingException, InterruptedException {
+        if ("web_search".equals(tool.name()) || "web_read".equals(tool.name())) return new CopilotToolExecutionDTO(false, web.execute(task.sessionHash(), task.exerciseId(), tool.name(), tool.arguments()));
         if ("load_skill".equals(tool.name())) return new CopilotToolExecutionDTO(false, skills.execute(task.id(), worker, tool.arguments()));
         if ("run_tests".equals(tool.name())) return tests.execute(task, worker, tool);
         if ("bash".equals(tool.name())) return commands.execute(task, worker, tool);

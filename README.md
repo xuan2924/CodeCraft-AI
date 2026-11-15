@@ -81,6 +81,14 @@ node scripts/dev.mjs web
 
 `MODEL_CREDENTIAL_ROTATION_ENABLED` 默认 false。仅在全部实例已切到同一新 active ID 且保留旧密钥时，在受信维护实例启用分批轮换；旧引用清零后关闭开关，再移除旧项。完整顺序与安全核对见 [部署轮换说明](docs/design/model-access.md#部署加密密钥轮换维护)。轮换本身不发供应商请求、不改变模型配置修订。
 
+## 可选联网资料工具
+
+Copilot 内置 `web_search`（搜索摘要）和 `web_read`（单网页正文），使用 Tavily 官方 Search/Extract 服务；不依赖 Bash、浏览器自动化或 Pi 扩展。未配置时明确返回 `WEB_NOT_CONFIGURED`，不会假造结果。
+
+在未跟踪 `.env` 设置 `COPILOT_WEB_API_KEY`，然后重新执行 `node scripts/dev.mjs java`。可选 `COPILOT_WEB_BASE_URL` 默认 `https://api.tavily.com/`（须以 `/` 结束），`COPILOT_WEB_TIMEOUT` 默认 `20s`，最大 30 秒。专用 Key 只传 Java，不传浏览器、Go 或题目容器，不复用用户模型 Key。此资料服务账户可能另收 credits；回执按原用户任务展示服务报告值，缺失标未知，不伪造货币估价或混入模型 Token。
+
+单请求不自动重试；超时/取消/断线仍可能消耗 credits。最多保留 5 条各 4 KiB 搜索摘要或 32 KiB 正文，传输响应上限 1 MiB，超过保留限额明确标记。页面继续查看只分页保留文本，不重新抓取；模型通过原 `read_evidence` 获取尚保留证据。源链接/正文不授予任何审批或文件权限。配置及契约测试使用本地 HTTP 替身，不要求真实 Tavily 调用作为开发验收。
+
 ## Docker 镜像复用与清理
 
 Java/Go 镜像只打包稳定程序，发布产物由脚本生成受控快照并只读挂载；不挂整个仓库或 `.env`。相同构建输入直接复用已有镜像，Java 固定构建时间戳、Go 排除 VCS 元数据以避免无关提交导致新镜像。题目验证与执行共用一个内容标签，复用镜像不会跳过发布校验。

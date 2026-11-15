@@ -27,6 +27,18 @@ test('only Java receives explicitly configured wrapping keys; other services can
   assert.equal(absent.MODEL_CREDENTIAL_ACTIVE_KEY_ID, undefined);
   assert.equal(absent.MODEL_CREDENTIAL_ROTATION_ENABLED, 'false');
 });
+test('dedicated web service configuration is explicit, Java-only and container-bound', () => {
+  const configured = { COPILOT_WEB_API_KEY: 'fixture-web-key', COPILOT_WEB_BASE_URL: 'https://api.tavily.com/', COPILOT_WEB_TIMEOUT: '10s' };
+  const values = parseConfig(base + Object.entries(configured).map(([key, value]) => `${key}=${value}`).join('\n'));
+  for (const service of ['web', 'sandbox', 'postgres']) {
+    const env = serviceEnv(values, service, configured);
+    for (const key of Object.keys(configured)) assert.equal(env[key], undefined);
+  }
+  for (const env of [serviceEnv(values, 'java', {}), javaComposeEnv(values)]) {
+    for (const [key, value] of Object.entries(configured)) assert.equal(env[key], value);
+  }
+  assert.equal(javaComposeEnv(parseConfig(base)).COPILOT_WEB_API_KEY, '');
+});
 test('paid validation refuses ambiguous suites or missing credentials before provisioning', () => {
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.toUpperCase() === 'DEEPSEEK') delete env[key];
