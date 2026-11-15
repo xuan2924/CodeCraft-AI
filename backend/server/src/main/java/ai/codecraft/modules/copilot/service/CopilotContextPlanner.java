@@ -37,7 +37,7 @@ import org.springframework.stereotype.Component;
 /** Pure, bounded preparation. Never call this codec while holding a database transaction. */
 @Component
 public class CopilotContextPlanner {
-    private static final Set<String> REREADABLE = Set.of("view_file", "glob_files", "grep_code", "read_evidence", "load_skill", "web_search", "web_read");
+    private static final Set<String> REREADABLE = Set.of("view_file", "glob_files", "grep_code", "read_evidence", "load_skill", "web_search", "web_read", "read_source");
     private final CopilotRequestFactory requests;
     private final CopilotContextProperties limits;
     private final ObjectMapper json;

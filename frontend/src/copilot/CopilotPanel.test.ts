@@ -2,6 +2,8 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import CopilotPanel from './CopilotPanel.vue';
+import CopilotReferences from './CopilotReferences.vue';
+import { ApiError } from '../api/request';
 import * as api from './api';
 
 vi.mock('./api', async (original) => ({ ...await original<typeof import('./api')>(), latest: vi.fn(), messages: vi.fn(), start: vi.fn(), stop: vi.fn(), watchTask: vi.fn(), tests: vi.fn(), approvalMode: vi.fn(), changeApprovalMode: vi.fn(), steers: vi.fn(), sendSteer: vi.fn(), context: vi.fn(), compact: vi.fn(), cancelCompaction: vi.fn() }));
@@ -51,6 +53,18 @@ it('saves first and retains the original key and text after an unknown admission
   expect(calls).toHaveLength(2); expect(calls[0]?.slice(0, 5)).toEqual(calls[1]?.slice(0, 5));
   expect(calls[0]?.slice(0, 4)).toEqual(['owner', exercise, 'control', 'Inspect my saved code']);
   expect(prepare).toHaveBeenCalledTimes(1); expect(wrapper.get('textarea').element.value).toBe('');
+});
+it('keeps the prompt editable and permits removing an unavailable reference after definitive 410 rejection', async () => {
+  vi.mocked(api.start).mockRejectedValueOnce(new ApiError(410, 'COPILOT_REFERENCE_UNAVAILABLE')).mockResolvedValue(task);
+  const wrapper = panel(); await prompt(wrapper);
+  wrapper.getComponent(CopilotReferences).vm.$emit('update:modelValue', [{ kind: 'FILE', source: 'src/Main.java', version: 'workspace:1', offset: 0, limit: 1,
+    fingerprint: 'a'.repeat(64), text: 'a', nextOffset: null, retainedBytes: 1, sourceIncomplete: false, droppedBytes: '0' }]);
+  await flushPromises(); await button(wrapper, '保存草稿并发送').trigger('click'); await flushPromises();
+  expect(wrapper.text()).toContain('引用来源已不可用'); expect(wrapper.text()).not.toContain('受理结果未知');
+  expect(wrapper.get('textarea').element.value).toBe('Inspect my saved code'); expect(wrapper.get('textarea').attributes('disabled')).toBeUndefined();
+  expect(button(wrapper, '移除此引用').attributes('disabled')).toBeUndefined(); await button(wrapper, '移除此引用').trigger('click');
+  await button(wrapper, '保存草稿并发送').trigger('click'); await flushPromises();
+  expect(vi.mocked(api.start).mock.calls[1]![8]).toEqual([]); expect(api.start).toHaveBeenCalledTimes(2);
 });
 it('drops a prepared intent after identity changes before saving completes', async () => {
   let done: (value: boolean) => void = () => {};

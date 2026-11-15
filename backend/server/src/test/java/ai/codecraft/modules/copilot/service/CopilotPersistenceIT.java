@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.clearInvocations;
@@ -65,6 +66,8 @@ import ai.codecraft.modules.copilot.repository.CopilotRetentionRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
 import ai.codecraft.modules.copilot.repository.CopilotFollowupRepository;
 import ai.codecraft.modules.copilot.model.dto.CopilotFollowupRequest;
+import ai.codecraft.modules.copilot.model.dto.CopilotReferenceSelectionDTO;
+import ai.codecraft.modules.copilot.model.dto.CopilotStartRequest;
 import ai.codecraft.modules.copilot.model.entity.CopilotFollowupEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
 import ai.codecraft.modules.copilot.repository.CopilotConversationRepository;
@@ -135,6 +138,8 @@ import ai.codecraft.modules.workspace.service.DeletionStore;
 import ai.codecraft.modules.workspace.service.ExerciseModelService;
 import ai.codecraft.modules.workspace.service.ExerciseService;
 import ai.codecraft.modules.workspace.service.ExerciseTransactionService;
+import ai.codecraft.modules.workspace.service.TestTaskService;
+import ai.codecraft.modules.workspace.service.CommandTaskService;
 import ai.codecraft.modules.workspace.service.ProblemTransactionService;
 import ai.codecraft.modules.workspace.service.StorageCapacityService;
 import ai.codecraft.modules.workspace.service.StorageCapacityStore;
@@ -263,6 +268,7 @@ class CopilotPersistenceIT {
     private StorageCapacityService capacity;
     private CopilotToolExecutor executor;
     private CopilotWebTools webTools;
+    private CopilotReferences references;
     private TestTaskStore childExecutions;
     private CommandTaskStore childCommands;
     private CopilotCommandLifecycle commandLifecycle;
@@ -383,7 +389,9 @@ class CopilotPersistenceIT {
         personalSkills = new SkillService(new SkillPackageParser(skillLimits), proxy(new SkillStore(sql.getMapper(SkillRepository.class), identity, skillLimits, json, clock), SkillStore.class), json);
         skillSnapshots = proxy(new SkillSnapshots(sql.getMapper(SkillSnapshotRepository.class)), SkillSnapshots.class);
         skillContext = new CopilotSkillContext(skillSnapshots, repository, json, limits);
-        tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class), skillSnapshots, conversations, commandLifecycle), CopilotTaskStore.class);
+        files = mock(ExerciseService.class);
+        references = new CopilotReferences(files, mock(TestTaskService.class), mock(CommandTaskService.class), coordination, secrets, json);
+        tasks = proxy(new CopilotTaskStore(repository, identity, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class), skillSnapshots, conversations, commandLifecycle, references), CopilotTaskStore.class);
         var contextRepository = sql.getMapper(CopilotCompactionRepository.class);
         compactions = proxy(new CopilotCompactionStore(contextRepository, repository, identity, secrets, lifecycle, coordination, operations, clock, conversations), CopilotCompactionStore.class);
         var callEvidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
@@ -404,7 +412,6 @@ class CopilotPersistenceIT {
         followupService = new CopilotFollowupService(followups, capacity, followupRepository, clock);
         approvalModes = new CopilotApprovalModeService(proxy(new CopilotApprovalModeStore(sql.getMapper(CopilotApprovalModeRepository.class),
             identity, secrets, lifecycle, coordination, operations, clock), CopilotApprovalModeStore.class), capacity);
-        files = mock(ExerciseService.class);
         when(files.find(SESSION, exercise)).thenReturn(new ExerciseResponse(exercise, "problem", instance, preparation, "ACTIVE", "1", "1", List.of("src/Main.java"), clock.instant(), clock.instant().plusSeconds(1800), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
         when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(new WorkspaceFileResponse(instance, "1", "src/Main.java", "class Main {}"));
         driver = mock(ModelCallDriver.class);
@@ -437,7 +444,7 @@ class CopilotPersistenceIT {
         evidenceStore = proxy(new CopilotEvidenceStore(repository, contextRepository, identity, coordination, clock, skillSnapshots), CopilotEvidenceStore.class);
         var evidenceTools = new CopilotEvidenceTools(evidenceStore, json);
         webTools = mock(CopilotWebTools.class);
-        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(evidenceStore, json), commandTools, webTools);
+        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(evidenceStore, json), commandTools, webTools, new CopilotReferenceService(references, conversations, json));
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts);
     }
 
@@ -1430,6 +1437,33 @@ class CopilotPersistenceIT {
         String configuration = jdbc.queryForObject("SELECT configuration_payload FROM copilot_turn WHERE task_id=?::uuid", String.class, task.id());
         assertThat(configuration).contains("OPENAI_CHAT", "https://example.test").doesNotContain("fixture-not-real", "apiKey");
         verify(driver, times(1)).call(any(), any(), any(), anyInt(), any(), any(), any());
+    }
+
+    @Test
+    void referencesRetainVerifiedExcerptsAndReplayBeforeUnavailableSourceReads() {
+        var page = references.page(SESSION, exercise, "CODE", "src/Main.java", null, 0, 5);
+        var selected = new CopilotReferenceSelectionDTO(page.kind(), page.source(), page.version(), page.offset(), page.limit(), page.fingerprint());
+        var input = new CopilotStartRequest("Inspect reference", true, List.of(), exercise, List.of(selected));
+        var service = new CopilotTaskService(tasks, capacity, json, references);
+        var accepted = service.start(SESSION, exercise, CONTROL, "reference-start", input);
+        assertThat(repository.context(exercise).getFirst().payload()).contains("Verified reference excerpts", "src/Main.java", "class");
+        doThrow(new IllegalStateException("Source is no longer reachable")).when(files).read(SESSION, exercise, "src/Main.java");
+        assertThat(service.start(SESSION, exercise, CONTROL, "reference-start", input).id()).isEqualTo(accepted.id());
+        verify(files, times(2)).read(SESSION, exercise, "src/Main.java"); // Preview and submit verification only; replay must not reread.
+        assertCode(() -> service.start(SESSION, exercise, CONTROL, "reference-start", new CopilotStartRequest("Inspect reference", true)), "COPILOT_IDEMPOTENCY_CONFLICT");
+        var other = conversations.create(SESSION, exercise, CONTROL, "reference-other", measurement);
+        assertThat(tasks.messagesInConversation(SESSION, exercise, -1, other.id())).isEmpty();
+    }
+
+    @Test
+    void referenceAdmissionRechecksSavedVersionAfterExternalPreparation() {
+        var page = references.page(SESSION, exercise, "FILE", "src/Main.java", null, 0, 5);
+        var selected = new CopilotReferenceSelectionDTO(page.kind(), page.source(), page.version(), page.offset(), page.limit(), page.fingerprint());
+        var input = new CopilotStartRequest("Inspect", true, List.of(), exercise, List.of(selected));
+        var prepared = references.prepare(SESSION, exercise, input.references());
+        jdbc.update("UPDATE workspace_exercise SET revision=2 WHERE id=?::uuid", exercise);
+        assertCode(() -> tasks.acceptPrepared(SESSION, exercise, CONTROL, "changed-source", input, prepared, measurement), "COPILOT_REFERENCE_CHANGED");
+        assertThat(repository.receipt(exercise, "changed-source")).isNull();
     }
 
     private static void assertCode(Runnable action, String code) {

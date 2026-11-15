@@ -19,14 +19,18 @@ public class CopilotTaskService {
     private final CopilotTaskStore store;
     private final StorageCapacityService capacity;
     private final ObjectMapper json;
+    private final CopilotReferences references;
 
-    public CopilotTaskService(CopilotTaskStore store, StorageCapacityService capacity, ObjectMapper json) {
-        this.store = store; this.capacity = capacity; this.json = json;
+    public CopilotTaskService(CopilotTaskStore store, StorageCapacityService capacity, ObjectMapper json, CopilotReferences references) {
+        this.store = store; this.capacity = capacity; this.json = json; this.references = references;
     }
 
     public CopilotTaskResponse start(String session, String exercise, String credential, String key, CopilotStartRequest input) {
         if (input == null) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
-        return capacity.admit(session, exercise, measurement -> store.acceptInConversation(session, exercise, credential, key, input.text(), input.feeAcknowledged(), input.skillIds(), measurement, input.conversationId()));
+        var previous = store.previousStart(session, exercise, key, input);
+        if (previous != null) return previous;
+        var prepared = references.prepare(session, exercise, input.references());
+        return capacity.admit(session, exercise, measurement -> store.acceptPrepared(session, exercise, credential, key, input, prepared, measurement));
     }
     public CopilotDeliveryDTO latest(String session, String exercise) {
         var task = store.latest(session, exercise);

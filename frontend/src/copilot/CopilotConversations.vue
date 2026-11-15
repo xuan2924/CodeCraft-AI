@@ -7,7 +7,7 @@ import { commandPolicy, errorMessage } from './errors';
 import * as api from './api';
 import CopilotPanel from './CopilotPanel.vue';
 
-const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
+const props = defineProps<{ owner: string; exerciseId: string; paths?: string[]; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string] }>();
 const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exerciseId}`);
@@ -122,6 +122,7 @@ const current = computed(() => list.data.value?.find(item => item.id === selecte
       :key="`${scope}/${current.id}`"
       :owner="owner"
       :exercise-id="exerciseId"
+      :paths="paths"
       :conversation-id="current.id"
       :credential="credential"
       :disabled="disabled || create.pending.value || create.uncertain.value"

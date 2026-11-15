@@ -1,4 +1,5 @@
 import { ApiError, events, object, ownerHeaders, post, request } from '../api/request';
+import type { ReferenceSelection } from './referenceApi';
 
 const states = ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND', 'STOPPING', 'STOPPED', 'SUCCEEDED', 'FAILED', 'INTERRUPTED'] as const;
 export interface Task { conversationId?: string; id: string; exerciseId: string; state: typeof states[number]; reason: string | null; stopRequested: boolean; createdAt: string; completedAt: string | null }
@@ -66,8 +67,8 @@ export async function latest(owner: string, exercise: string, signal: AbortSigna
   const value = await request(`/api/exercises/${path(exercise)}/copilot/tasks/latest${conversation ? `?conversation=${path(conversation)}` : ''}`, signal, { headers: ownerHeaders(owner) });
   return value === null ? null : snapshot(value, exercise, conversation ?? exercise);
 }
-export async function start(owner: string, exercise: string, credential: string, text: string, key: string, signal: AbortSignal, skillIds: string[] = [], conversation?: string): Promise<Task> {
-  return task(await post(`/api/exercises/${path(exercise)}/copilot/tasks`, { text, feeAcknowledged: true, ...(skillIds.length ? { skillIds: [...skillIds] } : {}), ...(conversation ? { conversationId: conversation } : {}) }, signal, key, credential, owner), exercise, conversation ?? exercise);
+export async function start(owner: string, exercise: string, credential: string, text: string, key: string, signal: AbortSignal, skillIds: string[] = [], conversation?: string, references: ReferenceSelection[] = []): Promise<Task> {
+  return task(await post(`/api/exercises/${path(exercise)}/copilot/tasks`, { text, feeAcknowledged: true, ...(references.length ? { references: references.map(item => ({ ...item })) } : {}), ...(skillIds.length ? { skillIds: [...skillIds] } : {}), ...(conversation ? { conversationId: conversation } : {}) }, signal, key, credential, owner), exercise, conversation ?? exercise);
 }
 export async function stop(owner: string, exercise: string, id: string, key: string, signal: AbortSignal): Promise<Task> {
   const result = task(await post(`/api/copilot-tasks/${path(id)}/stop`, {}, signal, key, undefined, owner), exercise);

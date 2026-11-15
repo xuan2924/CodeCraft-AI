@@ -177,6 +177,13 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - `RECEIVED` 尚未纳入请求，`APPLIED` 已纳入持久请求上下文且带原 `turnId`，`NOT_APPLIED` 表示结束前未派发并带原因。后两者有完成时间；已纳入请求不等于供应商收到或成功回复。停止/到期不补发，已绑定写入/测试先按原 ID 收敛。
 - `COPILOT_STEER_NOT_ACTIVE`（409）表示新指令不被当前任务受理，`COPILOT_STEER_LIMIT`（429）表示待处理队列已满。先接受的 steer 使旧待审批提案 `INVALIDATED/STEER_SUPERSEDED`，已批准原写入不由 steer 撤销。
 
+### 上下文引用与保留来源
+
+- `GET /api/exercises/{exercise}/copilot/conversations/{conversation}/references?kind=FILE|CODE|TEST_LOG|COMMAND_LOG&source=...&offset=0&limit=2048&version=...`：核对私有演练/会话，返回 `kind,source,version,offset,limit,fingerprint,text,nextOffset,retainedBytes,sourceIncomplete,droppedBytes`。位置和限额为 UTF-8 字节，最大 2 KiB；首次预览可省略 version，续读传原版本。读取失败不返回空成功记录，真正空来源显式返回 retainedBytes=0。
+- 同前缀 `/references/sources?kind=TEST_LOG|COMMAND_LOG&after=...` 返回原保留任务的 `{sources:[{id,label,revision,state}],nextCursor}`，不含日志正文，不重新执行；命令可按游标取下一页，测试复用现有最近记录保留界限。
+- Copilot start 可选 `references:[{kind,source,version,offset,limit,fingerprint}]`，最多 4 项，原用户文字仍限 4 KiB。服务端验证并保存实际正文，不采纳客户端文本。已受理回执优先重放，来源后来删除不影响原键核对；同键改变引用返回幂等冲突。
+- `COPILOT_REFERENCE_CHANGED`（409）表示源版本/节选指纹变化；`COPILOT_REFERENCE_UNAVAILABLE`（410）表示源路径不可用或超过读取范围，执行记录本身不存在时沿原任务查询错误码。前端应保留用户输入并要求显式重新选择，不能自动替换引用后重发。
+
 ### Copilot follow-up 队列
 
 - `GET /api/exercises/{exercise}/copilot/conversations/{conversation}/followups`：私有读取，返回按接收序排列的最近 100 项及全部未派发项（总计最多 132）。字段 `id,sequence,exerciseId,conversationId,text,state,reason,taskId,createdAt,completedAt`；序号十进制字符串，状态 `WAITING/PAUSED/DISPATCHED/CANCELLED`。

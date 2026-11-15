@@ -506,6 +506,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :exercise-id="exercise.exerciseId"
             :credential="credential"
             :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
+            :paths="exercise.paths"
             :prepare="prepareCopilot"
             @inspect-test="testView?.inspect($event)"
             @changed="refreshWorkspace"

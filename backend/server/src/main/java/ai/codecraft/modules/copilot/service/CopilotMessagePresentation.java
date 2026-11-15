@@ -19,7 +19,7 @@ public final class CopilotMessagePresentation {
         else if (message instanceof AiMessage assistant) {
             text = (assistant.text() == null ? "" : assistant.text()) + (assistant.hasToolExecutionRequests()
                 ? "\n工具调用：" + assistant.toolExecutionRequests().stream().map(call -> call.name() + " [" + call.id() + "]"
-                    + ("web_search".equals(call.name()) || "web_read".equals(call.name()) ? " 参数：" + call.arguments() : "")).toList() : "");
+                    + ("web_search".equals(call.name()) || "web_read".equals(call.name()) || "read_source".equals(call.name()) ? " 参数：" + call.arguments() : "")).toList() : "");
             thinking = assistant.thinking() == null ? "" : assistant.thinking();
         } else if (message instanceof ToolExecutionResultMessage result) text = result.toolName() + " [" + result.id() + "]\n" + result.text();
         else throw new IllegalStateException("Unsupported stored message");

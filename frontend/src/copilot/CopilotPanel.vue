@@ -15,17 +15,20 @@ import CopilotFollowups from './CopilotFollowups.vue';
 import CopilotContext from './CopilotContext.vue';
 import CopilotUsage from './CopilotUsage.vue';
 import CopilotSkills from './CopilotSkills.vue';
+import CopilotReferences from './CopilotReferences.vue';
+import { selection, type ReferencePage } from './referenceApi';
 import CopilotProjectInstructions from './CopilotProjectInstructions.vue';
 import CopilotWebResult from './CopilotWebResult.vue';
 import CopilotMessageBody from './CopilotMessageBody.vue';
 
-const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
+const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string; paths?: string[]; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string]; fork: [messageId: string] }>();
 const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.conversationId ?? props.exerciseId}/${props.credential}`);
 const text = ref('');
 const fee = ref(false);
 const selectedSkills = ref<string[]>([]);
+const references = ref<ReferencePage[]>([]);
 const contextBusy = ref(true);
 const saving = ref(false);
 const saveError = ref('');
@@ -39,9 +42,9 @@ const task = computed(() => latest.data.value?.task);
 const running = computed(() => api.active(task.value));
 watch([latest.error, history.error], (errors) => { if (errors.some(commandPolicy.identityFailure)) emit('unauthorized'); });
 watch(() => latest.data.value?.lastSequence, () => { void client.invalidateQueries({ queryKey: ['copilot', props.owner, props.exerciseId, 'messages'] }); });
-watch(scope, () => { text.value = ''; fee.value = false; selectedSkills.value = []; saveError.value = ''; saving.value = false; }, { flush: 'sync' });
+watch(scope, () => { text.value = ''; fee.value = false; selectedSkills.value = []; references.value = []; saveError.value = ''; saving.value = false; }, { flush: 'sync' });
 const start = useCommand<api.Task>(() => scope.value, () => {
-  text.value = ''; fee.value = false; selectedSkills.value = []; after.value = '-1'; void latest.refetch(); void history.refetch();
+  text.value = ''; fee.value = false; selectedSkills.value = []; references.value = []; after.value = '-1'; void latest.refetch(); void history.refetch();
 }, commandPolicy, () => emit('unauthorized'));
 const stop = useCommand<api.Task>(() => `${props.owner}/${props.exerciseId}/${task.value?.id}`, () => { void latest.refetch(); }, commandPolicy, () => emit('unauthorized'));
 const canSend = computed(() => !props.disabled && !!props.credential && !running.value && !contextBusy.value && !latest.isPending.value && !latest.isError.value
@@ -52,12 +55,13 @@ async function send() {
   const before = scope.value;
   const prompt = text.value;
   const skillIds = [...selectedSkills.value];
+  const referenceSelections = references.value.map(selection);
   const { owner, exerciseId, credential, conversationId } = props;
   saving.value = true; saveError.value = '';
   try {
     if (!await props.prepare()) { if (scope.value === before) saveError.value = '草稿保存未完成，未创建 Copilot 请求。请处理冲突或返回编辑。'; return; }
     if (scope.value !== before || props.disabled) return;
-    await start.submit((key, signal) => api.start(owner, exerciseId, credential, prompt, key, signal, skillIds, conversationId));
+    await start.submit((key, signal) => api.start(owner, exerciseId, credential, prompt, key, signal, skillIds, conversationId, referenceSelections));
   } catch {
     if (scope.value === before) saveError.value = '操作结果待核对，请重新读取任务并检查编辑器；不要换键重发。';
   } finally { if (scope.value === before) saving.value = false; }
@@ -289,6 +293,15 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       type="checkbox"
       :disabled="saving || start.pending.value || start.uncertain.value"
     >我确认模型请求可能收费</label>
+    <CopilotReferences
+      v-model="references"
+      :owner="owner"
+      :exercise-id="exerciseId"
+      :conversation-id="conversationId ?? exerciseId"
+      :paths="paths"
+      :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
+      @unauthorized="emit('unauthorized')"
+    />
     <p>发送前将尝试保存当前页全部草稿；如需继续编辑，请不要发送。保存冲突或期间产生新编辑时不会启动请求。</p>
     <p
       v-if="saveError"
