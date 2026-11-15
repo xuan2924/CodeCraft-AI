@@ -57,6 +57,8 @@ public interface WorkspaceWriteRepository {
     List<WorkspaceOperationEntity> pendingMutations();
     @Update("UPDATE workspace_mutation SET revision = #{revision}, changed = #{changed}, failure_code = #{failure} WHERE operation_id = #{id}::uuid")
     void result(@Param("id") String id, @Param("revision") Long revision, @Param("changed") Boolean changed, @Param("failure") String failure);
+    @Update("UPDATE workspace_operation SET state='PENDING_RECONCILIATION' WHERE id=#{id}::uuid AND kind='FILE_BATCH' AND state='PENDING'")
+    void unknown(String id);
     @Update("UPDATE workspace_exercise SET revision = #{revision}, paths = #{paths}::jsonb, state_version = state_version + 1 WHERE id = #{id}::uuid AND (revision IS NULL OR revision <= #{revision})")
     void observed(@Param("id") String id, @Param("revision") long revision, @Param("paths") String paths);
 }

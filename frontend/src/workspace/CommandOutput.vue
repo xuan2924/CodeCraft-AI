@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
 import { NButton } from 'naive-ui';
 import { ApiError } from '../api/request';
@@ -7,21 +7,16 @@ import { message } from './api';
 import * as api from './commandApi';
 import { stateLabels, syncLabels, reasonLabels } from './commandPresentation';
 import ReadOnlyTestLog from './ReadOnlyTestLog.vue';
+import WorkspaceFileDiff from './WorkspaceFileDiff.vue';
 
 const props = defineProps<{ owner: string; task: api.CommandTask }>();
 const emit = defineEmits<{ unauthorized: [] }>();
-const CodeDiff = defineAsyncComponent(() => import('../components/CodeDiff.vue'));
 const showChanges = ref(false);
-const chosenFile = ref('');
 const scope = computed(() => `${props.owner}/${props.task.exerciseId}/${props.task.workspaceInstanceId}/${props.task.id}`);
-watch(scope, () => { showChanges.value = false; chosenFile.value = ''; }, { flush: 'sync' });
+watch(scope, () => { showChanges.value = false; }, { flush: 'sync' });
 const changes = useQuery({ queryKey: computed(() => ['workspace-commands', props.owner, props.task.exerciseId, props.task.workspaceInstanceId, 'changes', props.task.id]),
   enabled: computed(() => showChanges.value && props.task.quiescent && props.task.synchronization !== 'PENDING'), retry: false, gcTime: 0,
   queryFn: ({ signal }) => api.changes(props.owner, props.task.exerciseId, props.task.workspaceInstanceId, props.task, signal) });
-watch(() => changes.data.value?.changes, files => {
-  if (!files?.some(item => item.path === chosenFile.value)) chosenFile.value = files?.[0]?.path ?? '';
-});
-const file = computed(() => changes.data.value?.changes.find(item => item.path === chosenFile.value) ?? changes.data.value?.changes[0]);
 watch(changes.error, failure => {
   if (failure instanceof ApiError && (failure.status === 401 || failure.code === 'PASSWORD_CHANGE_REQUIRED')) emit('unauthorized');
 });
@@ -87,25 +82,11 @@ watch(changes.error, failure => {
           重新读取 Diff
         </NButton>
       </p>
-      <p v-if="changes.data.value?.changes.length === 0">
-        受管理文件没有变化。
-      </p>
-      <label v-if="file">比较文件<select
-        v-model="chosenFile"
-        aria-label="选择 Bash Diff 文件"
-      >
-        <option
-          v-for="change in changes.data.value?.changes"
-          :key="change.path"
-          :value="change.path"
-        >{{ change.kind }} · {{ change.path }}</option>
-      </select></label>
-      <CodeDiff
-        v-if="file"
-        :key="`${task.id}/${file.path}`"
-        :path="file.path"
-        :before="file.previousContent"
-        :after="file.content"
+      <WorkspaceFileDiff
+        v-if="changes.data.value"
+        :files="changes.data.value.changes"
+        :scope="scope"
+        label="选择 Bash Diff 文件"
       />
     </template>
   </section>
@@ -116,6 +97,4 @@ watch(changes.error, failure => {
 p { margin: 0; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 code { overflow-wrap: anywhere; }
-label { display: grid; gap: 6px; }
-select { box-sizing: border-box; width: 100%; padding: 6px; font: inherit; color: inherit; background: transparent; }
 </style>

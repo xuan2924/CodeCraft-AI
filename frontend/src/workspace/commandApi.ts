@@ -1,4 +1,5 @@
 import { ApiError, object, ownerHeaders, post, request } from '../api/request';
+import { parseFileDifferences, type FileDifference } from './fileDifference';
 
 export interface CommandTask {
   id: string; exerciseId: string; workspaceInstanceId: string; executionInstanceId: string;
@@ -12,7 +13,7 @@ export interface CommandHistory { commands: CommandTask[]; nextCursor: string | 
 export interface CommandInput { command: string; directory: string; expectedRevision: string }
 export interface CommandChanges {
   commandId: string; exerciseId: string; workspaceInstanceId: string; executionInstanceId: string; baseRevision: string;
-  changes: { kind: string; path: string; previousContent: string; content: string }[];
+  changes: FileDifference[];
 }
 export type CommandOutcome = CommandTask | { retired: true };
 const states = new Set(['ACCEPTED', 'STARTING', 'RUNNING', 'STOPPING', 'EXITED', 'TIMED_OUT', 'STOPPED', 'ENVIRONMENT_ERROR', 'INTERRUPTED']);
@@ -107,17 +108,7 @@ export async function changes(owner: string, exercise: string, workspace: string
   if (!object(value) || value.commandId !== command.id || value.exerciseId !== exercise || value.workspaceInstanceId !== workspace
     || value.executionInstanceId !== command.executionInstanceId || value.baseRevision !== command.revision
     || !Array.isArray(value.changes) || value.changes.length > 400) return invalid();
-  let size = 0;
-  const paths = new Set<string>();
-  const files = value.changes.map((entry: unknown) => {
-    if (!object(entry) || typeof entry.kind !== 'string' || !['CREATE', 'UPDATE', 'DELETE'].includes(entry.kind)
-      || typeof entry.path !== 'string' || entry.path.length > 4096 || /[\\\0]/.test(entry.path)
-      || entry.path.split('/').some(part => !part || part === '.' || part === '..') || paths.has(entry.path)
-      || typeof entry.previousContent !== 'string' || typeof entry.content !== 'string') return invalid();
-    paths.add(entry.path); size += entry.previousContent.length + entry.content.length;
-    if (size > 20 * 1024 * 1024) return invalid();
-    return { kind: entry.kind, path: entry.path, previousContent: entry.previousContent, content: entry.content };
-  });
+  const files = parseFileDifferences(value.changes);
   return { commandId: command.id, exerciseId: exercise, workspaceInstanceId: workspace, executionInstanceId: command.executionInstanceId,
     baseRevision: command.revision, changes: files };
 }

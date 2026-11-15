@@ -75,7 +75,7 @@ class EndFenceRecoveryTest {
             calls.add("close end");
             return gate("end", 5, "CLOSED");
         });
-        WorkspaceCoordinationStore store = new WorkspaceCoordinationStore(writes, exercises, new ObjectMapper());
+        WorkspaceCoordinationStore store = new WorkspaceCoordinationStore(writes, exercises, new ObjectMapper(), mock(WorkspaceHistoryLedger.class));
         WorkspaceWriteCoordinator coordinator = new WorkspaceWriteCoordinator(store, sandbox, mock(WorkspaceBatchCodec.class));
         coordinator.drive("end");
         coordinator.drive("end");

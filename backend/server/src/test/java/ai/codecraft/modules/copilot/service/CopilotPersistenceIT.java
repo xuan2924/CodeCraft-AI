@@ -133,6 +133,9 @@ import ai.codecraft.modules.workspace.service.StorageCapacityService;
 import ai.codecraft.modules.workspace.service.StorageCapacityStore;
 import ai.codecraft.modules.workspace.service.WorkspaceAiOperationService;
 import ai.codecraft.modules.workspace.service.WorkspaceCoordinationStore;
+import ai.codecraft.modules.workspace.service.WorkspaceHistoryLedger;
+import ai.codecraft.modules.workspace.service.WorkspaceHistoryData;
+import ai.codecraft.modules.workspace.repository.WorkspaceHistoryRepository;
 import ai.codecraft.modules.workspace.service.WorkspaceBatchCodec;
 import ai.codecraft.modules.workspace.service.WorkspaceWriteTransactionService;
 import ai.codecraft.modules.workspace.service.WorkspaceWriteCoordinator;
@@ -284,7 +287,7 @@ class CopilotPersistenceIT {
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
             ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
             CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
-            TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class)) config.addMapper(mapper);
+            TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
     }
@@ -330,7 +333,10 @@ class CopilotPersistenceIT {
         exercises.start(exercise, clock.instant(), clock.instant().plusSeconds(1800));
         jdbc.update("INSERT INTO workspace_control(exercise_id,gate_epoch,gate_state,credential_hash) VALUES(?::uuid,1,'OPEN',?)", exercise, IdentitySecrets.digest(CONTROL));
         var writes = sql.getMapper(WorkspaceWriteRepository.class);
-        var coordination = proxy(new WorkspaceCoordinationStore(writes, exercises, json), WorkspaceCoordinationStore.class);
+        var historyRepository = sql.getMapper(WorkspaceHistoryRepository.class);
+        data = new ExerciseDataService(List.of(new CopilotExerciseData(sql.getMapper(CopilotRetentionRepository.class)), new SkillExerciseData(sql.getMapper(SkillSnapshotRepository.class)), new WorkspaceHistoryData(historyRepository)));
+        var history = new WorkspaceHistoryLedger(historyRepository, data, clock);
+        var coordination = proxy(new WorkspaceCoordinationStore(writes, exercises, json, history), WorkspaceCoordinationStore.class);
         var invocations = proxy(new ModelInvocationService(identity, connectionRepository, modelRepository, cipher), ModelInvocationService.class);
         selection = proxy(new ExerciseModelService(sql.getMapper(ExerciseModelRepository.class), exercises, identity, coordination, invocations,
             mock(ModelCheckService.class), clock, secrets), ExerciseModelService.class);
@@ -338,13 +344,12 @@ class CopilotPersistenceIT {
         var alternate = models.create(SESSION, connection.id(), "alternate", new ModelConfigurationRequest("Alternate", "alternate", 1000000, 4096, ModelThinkingMode.OFF, null, null, null, null));
         alternateModelId = alternate.id();
         switchSelectedModel = () -> selection.select(SESSION, exercise, CONTROL, "switch", new ModelInvocationReferenceDTO(connection.id(), alternate.id(), 1, 1));
-        data = new ExerciseDataService(List.of(new CopilotExerciseData(sql.getMapper(CopilotRetentionRepository.class)), new SkillExerciseData(sql.getMapper(SkillSnapshotRepository.class))));
         var budget = new StorageProperties(536870912, 268435456, 20);
         var capacityRepository = sql.getMapper(StorageCapacityRepository.class);
         capacityRepository.initialize(exercise);
         var capacityStore = proxy(new StorageCapacityStore(capacityRepository, exercises, writes, identity, budget, clock, data), StorageCapacityStore.class);
         maintenance = proxy(new WorkspaceMaintenanceStore(sql.getMapper(WorkspaceMaintenanceRepository.class), exercises,
-            sql.getMapper(DeletionRepository.class), identity, clock, budget, data), WorkspaceMaintenanceStore.class);
+            sql.getMapper(DeletionRepository.class), identity, clock, budget, data, historyRepository), WorkspaceMaintenanceStore.class);
         var executionProblems = mock(ProblemRepository.class);
         String problemId = exercises.find(exercise).problemVersionId();
         when(executionProblems.find(problemId)).thenReturn(new ProblemVersionEntity(problemId, "fixture", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", "{}"));
@@ -355,7 +360,7 @@ class CopilotPersistenceIT {
             streams, publisher, sql.getMapper(FinalizationRepository.class), budget, maintenance, capacityStore), TestTaskStore.class);
         childLifecycle = proxy(new CopilotTestLifecycle(sql.getMapper(CopilotTestRepository.class), childExecutions), CopilotTestLifecycle.class);
         childCommands = proxy(new CommandTaskStore(identity, secrets, exercises, writes, sql.getMapper(TestTaskRepository.class),
-            sql.getMapper(CommandTaskRepository.class), executionProblems, capacityStore, json, clock, data), CommandTaskStore.class);
+            sql.getMapper(CommandTaskRepository.class), executionProblems, capacityStore, json, clock, data, history), CommandTaskStore.class);
         commandLifecycle = proxy(new CopilotCommandLifecycle(sql.getMapper(CopilotCommandRepository.class), childCommands, clock), CopilotCommandLifecycle.class);
         var lifecycle = proxy(new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock, secrets, coordination,
             new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, selection), ExerciseTransactionService.class);
@@ -2007,6 +2012,12 @@ class CopilotPersistenceIT {
         verify(driver, times(2)).call(any(), any(), any(), anyInt(), any());
         assertThat(data.quiescent(exercise)).isTrue();
         assertThat(data.retainedBytes(exercise)).isPositive();
+        var change = sql.getMapper(WorkspaceHistoryRepository.class).recent(exercise, 0).getFirst();
+        assertThat(change.source()).isEqualTo("AI_PATCH");
+        assertThat(change.taskId()).isEqualTo(task.id());
+        assertThat(change.conversationId()).isEqualTo(repository.find(task.id()).conversationId());
+        assertThat(change.baseRevision()).isEqualTo(1);
+        assertThat(change.resultRevision()).isEqualTo(2);
         new TransactionTemplate(transactions).executeWithoutResult(status -> data.erase(exercise));
         assertThat(sql.getMapper(CopilotProposalRepository.class).find(proposal)).isNull();
         assertThat(data.retainedBytes(exercise)).isZero();
@@ -2560,6 +2571,27 @@ class CopilotPersistenceIT {
         assertThat(childCommands.find(accepted.commandTaskId()).stopRequested()).isFalse();
         assertThat(steers.list(SESSION, task.id(), 0).items().getFirst().state()).isEqualTo("RECEIVED");
         verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void bashSynchronizedCodeHistoryRetainsTheActualParentAndConversation() throws Exception {
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        var accepted = commandTools.decide(SESSION, command.id(), CONTROL, "approve-history", new CopilotProposalDecisionRequest("APPROVE", null));
+        var child = childCommands.find(accepted.commandTaskId());
+        assertThat(childCommands.claim(child.id(), "A".repeat(26))).isTrue();
+        var snapshot = bashSnapshot(child, true).toBuilder().setSynchronization("SYNCED").setMutation(MutationReceipt.newBuilder()
+            .setWorkspaceInstanceId(child.workspaceInstanceId()).setOperationId(child.id()).setRequestId(child.executionInstanceId())
+            .setFingerprint("a".repeat(64)).setRevision(2).setChanged(true)).build();
+        childCommands.observe(child.id(), snapshot, WorkspaceSnapshot.newBuilder().setWorkspaceInstanceId(child.workspaceInstanceId())
+            .setRevision(2).addPaths("src/main/java/Main.java").build());
+        var change = sql.getMapper(WorkspaceHistoryRepository.class).find(child.id());
+        assertThat(change.source()).isEqualTo("BASH");
+        assertThat(change.taskId()).isEqualTo(task.id());
+        assertThat(change.conversationId()).isEqualTo(repository.find(task.id()).conversationId());
+        assertThat(change.resultRevision()).isEqualTo(2);
+        commandTools.recoverTask(task.id());
+        assertThat(commandTools.read(SESSION, command.id()).state()).isEqualTo("RESOLVED");
     }
 
     private String raceBashApproval(String command, String key, CyclicBarrier barrier) throws Exception {

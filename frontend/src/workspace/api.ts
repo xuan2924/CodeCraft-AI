@@ -92,7 +92,7 @@ export async function control(exercise: string, kind: 'acquire' | 'takeover' | '
 }
 export interface FileChange { path: string; kind: 'CREATE' | 'UPDATE' | 'DELETE'; content: string }
 export interface Mutation { operationId: string; exerciseId: string; state: string; revision: string | null; changed: boolean | null; failureCode: string | null }
-function mutation(value: unknown): Mutation {
+export function parseMutation(value: unknown): Mutation {
   if (!object(value) || typeof value.operationId !== 'string' || typeof value.exerciseId !== 'string'
     || !['PENDING', 'PENDING_RECONCILIATION', 'SUCCEEDED', 'REJECTED'].includes(String(value.state))
     || (value.revision !== null && (typeof value.revision !== 'string' || !/^\d+$/.test(value.revision)))
@@ -102,9 +102,9 @@ function mutation(value: unknown): Mutation {
     changed: value.changed, failureCode: value.failureCode };
 }
 export async function save(exercise: string, revision: string, changes: FileChange[], key: string, credential: string, signal: AbortSignal): Promise<Mutation> {
-  return mutation(await post(`/api/exercises/${encodeURIComponent(exercise)}/file-batches`, { expectedRevision: revision, changes }, signal, key, credential));
+  return parseMutation(await post(`/api/exercises/${encodeURIComponent(exercise)}/file-batches`, { expectedRevision: revision, changes }, signal, key, credential));
 }
-export async function operation(id: string, signal: AbortSignal): Promise<Mutation> { return mutation(await request(`/api/operations/${encodeURIComponent(id)}`, signal)); }
+export async function operation(id: string, signal: AbortSignal): Promise<Mutation> { return parseMutation(await request(`/api/operations/${encodeURIComponent(id)}`, signal)); }
 export function message(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401 || error.code === 'PASSWORD_CHANGE_REQUIRED') return '登录已失效或需要改密，请前往账号页面。';
@@ -117,6 +117,10 @@ export function message(error: unknown): string {
     if (error.code === 'EXERCISE_EXPIRED') return '作答已到期，本地内容不会自动提交。';
     if (error.code === 'TEST_TARGET_UNAVAILABLE') return '这个固定题目版本尚未配备正式执行配置，不会替换已有工作区版本，请联系维护者。';
     if (error.code === 'TEST_SLOT_BUSY' || error.code === 'COMMAND_SLOT_BUSY') return '已有命令或测试占用执行名额，不会排队。请查询原执行，确认结束后再运行。';
+    if (error.code === 'CODE_HISTORY_UNAVAILABLE') return '此版本未被历史保留或已清理，不能预览或恢复；当前代码和草稿不受影响。';
+    if (error.code === 'RESTORE_CONFLICT') return '选中修改的文件已有后续变更，不能安全撤销；不会自动合并或覆盖。';
+    if (error.code === 'RESTORE_PREVIEW_CHANGED') return '恢复预览已变化，请重新预览并确认；本次没有应用恢复。';
+    if (error.code === 'RESTORE_BUSY') return '仍有写入或命令未收敛，请先核对原操作；不会抢先恢复代码。';
     if (error.code === 'COMMAND_UNAVAILABLE') return '这个题目版本尚未配备开发命令执行配置。';
     if (error.code === 'COMMAND_HISTORY_PRUNED') return '这条命令的输出记录已清理，不能重新读取；不会因此重放命令。';
     if (error.code === 'COMMAND_OUTPUT_UNAVAILABLE') return '候选文件无法完整读取或不符合受管理文本文件规则；文件同步没有被宣称成功，请保留原执行身份。';

@@ -1,5 +1,6 @@
 package ai.codecraft.modules.workspace.service;
 
+import ai.codecraft.modules.workspace.model.dto.WorkspaceChangeContext;
 import java.util.List;
 import java.util.Set;
 import java.util.HashSet;
@@ -31,6 +32,14 @@ public class ExerciseDataService {
         var protectedRecords = new HashSet<String>();
         for (var contributor : contributors) protectedRecords.addAll(contributor.protectedCommandRecords(exerciseId));
         return Set.copyOf(protectedRecords);
+    }
+
+    /** Resolves optional origin metadata without depending on an attached domain's tables. */
+    public WorkspaceChangeContext changeContext(String exerciseId, String operationId) {
+        var matches = contributors.stream().map(value -> value.changeContext(exerciseId, operationId))
+            .filter(java.util.Objects::nonNull).toList();
+        if (matches.size() > 1) throw new IllegalStateException("Ambiguous code change origin");
+        return matches.isEmpty() ? null : matches.getFirst();
     }
 
     public boolean quiescent(String exerciseId) {

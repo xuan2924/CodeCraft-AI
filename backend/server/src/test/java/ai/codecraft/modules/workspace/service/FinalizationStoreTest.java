@@ -135,7 +135,7 @@ class FinalizationStoreTest {
         SandboxWorkspaceGateway sandbox = mock(SandboxWorkspaceGateway.class);
         GateResponse receipt = GateResponse.newBuilder().setWorkspaceInstanceId("workspace").setTransitionId("final").setState("FROZEN").setEpoch(4).setFrozenRevision(7).build();
         when(sandbox.freeze("workspace", "final", 3)).thenThrow(Status.UNAVAILABLE.asRuntimeException()).thenReturn(receipt);
-        WorkspaceCoordinationStore coordination = new WorkspaceCoordinationStore(fixture.writes, fixture.exercises, fixture.json);
+        WorkspaceCoordinationStore coordination = new WorkspaceCoordinationStore(fixture.writes, fixture.exercises, fixture.json, mock(WorkspaceHistoryLedger.class));
         WorkspaceWriteCoordinator fences = new WorkspaceWriteCoordinator(coordination, sandbox, mock(WorkspaceBatchCodec.class));
         FinalizationCoordinator coordinator = new FinalizationCoordinator(fixture.service(), coordination, fences, mock(TestTaskCoordinator.class), sandbox, mock(StorageCapacityService.class));
         assertThrows(RuntimeException.class, () -> coordinator.drive("exercise"));

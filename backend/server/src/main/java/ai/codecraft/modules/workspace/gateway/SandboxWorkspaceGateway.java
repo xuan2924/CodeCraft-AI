@@ -1,5 +1,9 @@
 package ai.codecraft.modules.workspace.gateway;
 
+import ai.codecraft.modules.workspace.model.entity.WorkspaceChangeEntity;
+import ai.codecraft.workspace.v1.WorkspaceHistoryRequest;
+import ai.codecraft.workspace.v1.WorkspaceHistoryPreview;
+
 import ai.codecraft.modules.workspace.config.WorkspaceProperties;
 import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
@@ -124,6 +128,15 @@ public class SandboxWorkspaceGateway {
     public void reconcileCommand(CommandTaskEntity task) { client().reconcileTask(commandIdentity(task)); }
 
     public StopTaskResponse stopCommand(CommandTaskEntity task) { return client().stopSystemTask(commandIdentity(task)); }
+
+    /** Reads a bounded historical projection without authorizing a write or starting an execution. */
+    public WorkspaceHistoryPreview historyPreview(
+        WorkspaceChangeEntity change, long currentRevision, String mode, Long targetRevision) {
+        var request = WorkspaceHistoryRequest.newBuilder().setWorkspaceInstanceId(change.workspaceInstanceId())
+            .setBaseRevision(change.baseRevision()).setResultRevision(change.resultRevision()).setExpectedRevision(currentRevision)
+            .setMode(mode).setTargetRevision(targetRevision == null ? 0 : targetRevision).build();
+        return client().withMaxInboundMessageSize(24 * 1024 * 1024).previewWorkspaceHistory(request);
+    }
 
     public CommandChanges commandChanges(CommandTaskEntity task) {
         // Both the original and final managed trees can be 10 MiB; other RPCs

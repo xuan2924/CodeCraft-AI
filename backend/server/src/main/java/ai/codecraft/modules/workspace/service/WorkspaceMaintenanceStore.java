@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Set;
 import ai.codecraft.modules.workspace.repository.WorkspaceMaintenanceRepository;
+import ai.codecraft.modules.workspace.repository.WorkspaceHistoryRepository;
 import java.time.Clock;
 import java.util.List;
 import org.springframework.stereotype.Service;
@@ -26,15 +27,22 @@ public class WorkspaceMaintenanceStore {
     private final Clock clock;
     private final StorageProperties limits;
     private final ExerciseDataService data;
+    private final WorkspaceHistoryRepository history;
 
     public WorkspaceMaintenanceStore(WorkspaceMaintenanceRepository maintenance, ExerciseRepository exercises,
-        DeletionRepository deletions, IdentityTransactionService identity, Clock clock, StorageProperties limits, ExerciseDataService data) {
+        DeletionRepository deletions, IdentityTransactionService identity, Clock clock, StorageProperties limits, ExerciseDataService data, WorkspaceHistoryRepository history) {
         this.maintenance = maintenance; this.exercises = exercises; this.deletions = deletions;
-        this.identity = identity; this.clock = clock; this.limits = limits; this.data = data;
+        this.identity = identity; this.clock = clock; this.limits = limits; this.data = data; this.history = history;
     }
 
     @Transactional(readOnly = true)
     public List<String> candidates() { return maintenance.candidates(); }
+
+    /** Discretionary code-history pins may be retired only after an explicit capacity rejection. */
+    @Transactional
+    public void retireHistoryForCapacity(String id, Set<String> protectedIds) {
+        if (lockEligible(id) != null) history.retireForCapacity(id, protectedIds);
+    }
 
     @Transactional
     public List<TestHistoryRecord> pruningPlan(String id) {

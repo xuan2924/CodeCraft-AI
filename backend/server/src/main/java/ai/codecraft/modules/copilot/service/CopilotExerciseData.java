@@ -2,6 +2,7 @@ package ai.codecraft.modules.copilot.service;
 
 import ai.codecraft.modules.copilot.repository.CopilotRetentionRepository;
 import ai.codecraft.modules.workspace.service.ExerciseDataContributor;
+import ai.codecraft.modules.workspace.model.dto.WorkspaceChangeContext;
 import org.springframework.stereotype.Service;
 import java.util.Set;
 
@@ -14,6 +15,7 @@ public class CopilotExerciseData implements ExerciseDataContributor {
     @Override public boolean quiescent(String exerciseId) { return repository.quiescent(exerciseId); }
     @Override public Set<String> protectedTestRecords(String exerciseId) { return repository.protectedTestRecords(exerciseId); }
     @Override public Set<String> protectedCommandRecords(String exerciseId) { return repository.protectedCommandRecords(exerciseId); }
+    @Override public WorkspaceChangeContext changeContext(String exerciseId, String operationId) { return repository.changeContext(exerciseId, operationId); }
     @Override public void erase(String exerciseId) {
         repository.deleteContext(exerciseId);
         repository.deleteCompactionCalls(exerciseId);

@@ -10,7 +10,7 @@ import CodeEditor from './CodeEditor.vue';
 import ClosedDrafts from './ClosedDrafts.vue';
 
 const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean; testBusy?: boolean; answeringClosed?: boolean }>();
-const emit = defineEmits<{ saved: []; select: [path: string]; 'stale-control': []; 'run-test': [revision: string] }>();
+const emit = defineEmits<{ saved: []; select: [path: string]; 'stale-control': []; 'run-test': [revision: string]; 'write-busy': [value: boolean] }>();
 const theme = useThemeVars();
 const buffers = reactive(new Map<string, Buffer>());
 const deleted = reactive(new Map<string, string>());
@@ -45,6 +45,7 @@ let backupQueue = Promise.resolve();
 let loadGeneration = 0;
 interface Pending { key: string; revision: string; changes: api.FileChange[]; operationId?: string; select?: string }
 const unresolved = ref<Pending | null>(null);
+watch(() => busy.value || unresolved.value !== null, value => emit('write-busy', value), { immediate: true, flush: 'sync' });
 const editorLocked = computed(() => props.locked || props.answeringClosed || props.exercise.state !== 'ACTIVE' || !current.value || !/^src\/(main|test)\/java\//.test(props.selected) ||
   unresolved.value?.changes.some((change) => change.path === props.selected && change.kind === 'DELETE') === true);
 const leaving = ref(false);

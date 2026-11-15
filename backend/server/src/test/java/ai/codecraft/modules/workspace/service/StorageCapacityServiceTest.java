@@ -3,7 +3,7 @@ package ai.codecraft.modules.workspace.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +15,7 @@ import ai.codecraft.modules.workspace.model.dto.StorageScope;
 import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import io.grpc.Status;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -27,7 +28,7 @@ class StorageCapacityServiceTest {
             if (attempts.getAndIncrement() == 0) throw new BusinessException(WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED);
             return "accepted";
         }));
-        verify(fixture.maintenance).collect("exercise");
+        verify(fixture.maintenance).collectForAdmission("exercise", Set.of());
         assertEquals(2, attempts.get());
     }
 
@@ -39,6 +40,7 @@ class StorageCapacityServiceTest {
         var failure = assertThrows(BusinessException.class, () -> fixture.service.admit("session", "exercise", measured -> attempts.incrementAndGet()));
         assertEquals("STORAGE_METER_UNAVAILABLE", failure.code());
         assertEquals(0, attempts.get());
+        verifyNoInteractions(fixture.maintenance);
     }
 
     @Test
@@ -50,7 +52,19 @@ class StorageCapacityServiceTest {
         }));
         assertEquals("REVISION_CONFLICT", failure.code());
         assertEquals(1, attempts.get());
-        verify(fixture.maintenance, never()).collect("exercise");
+        verifyNoInteractions(fixture.maintenance);
+    }
+
+    @Test
+    void restoreSourceIsProtectedDuringItsOwnCapacityRetry() {
+        var fixture = new Fixture();
+        var attempts = new AtomicInteger();
+        assertEquals("accepted", fixture.service.admit("session", "exercise", Set.of("selected-change"), measured -> {
+            if (attempts.getAndIncrement() == 0) throw new BusinessException(WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED);
+            return "accepted";
+        }));
+        verify(fixture.maintenance).collectForAdmission("exercise", Set.of("selected-change"));
+        assertEquals(2, attempts.get());
     }
 
     private static final class Fixture {

@@ -37,7 +37,7 @@ class CommandParentBoundaryTest {
     private final ExerciseDataService data = mock(ExerciseDataService.class);
     private final CommandTaskStore store = new CommandTaskStore(identity, secrets, exercises, mock(WorkspaceWriteRepository.class),
         mock(TestTaskRepository.class), commands, mock(ProblemRepository.class), mock(StorageCapacityStore.class),
-        JsonMapper.builder().build(), Clock.fixed(now, ZoneOffset.UTC), data);
+        JsonMapper.builder().build(), Clock.fixed(now, ZoneOffset.UTC), data, mock(WorkspaceHistoryLedger.class));
 
     @Test void backgroundAdmissionNeverAdoptsAManualReceiptEvenWithAnIdenticalKeyAndPayload() {
         when(identity.authorizeMutation("session")).thenReturn(new SessionAuthorizationDTO("owner", "USER", false, 1, now.plusSeconds(60)));

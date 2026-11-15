@@ -2,6 +2,7 @@ package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.modules.workspace.model.dto.TestHistoryRecord;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -20,7 +21,13 @@ public class WorkspaceMaintenanceCoordinator {
     @Scheduled(fixedDelayString = "${workspace.retention.collection-delay-millis:5000}")
     public void collect() { for (String id : store.candidates()) collect(id); }
 
-    /** Also used before rejecting capacity admission. No RPC runs in a DB transaction. */
+    /** A capacity retry can relinquish discretionary history, but not its selected restore source. */
+    public void collectForAdmission(String id, Set<String> protectedHistory) {
+        store.retireHistoryForCapacity(id, protectedHistory);
+        collect(id);
+    }
+
+    /** No RPC runs in a DB transaction. */
     public void collect(String id) {
         try {
             for (var record : store.pruningPlan(id)) prune(id, record);

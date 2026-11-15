@@ -1,12 +1,17 @@
 package ai.codecraft.modules.copilot.repository;
 
+import ai.codecraft.modules.workspace.model.dto.WorkspaceChangeContext;
 import java.util.Set;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface CopilotRetentionRepository {
+    @Select("SELECT t.id::text AS task_id,t.conversation_id::text FROM copilot_proposal p JOIN copilot_task t ON t.id=p.task_id WHERE p.operation_id=#{operation}::uuid AND p.exercise_id=#{exercise}::uuid AND t.exercise_id=#{exercise}::uuid UNION SELECT t.id::text,t.conversation_id::text FROM copilot_command c JOIN copilot_task t ON t.id=c.task_id WHERE c.command_task_id=#{operation}::uuid AND c.exercise_id=#{exercise}::uuid AND t.exercise_id=#{exercise}::uuid")
+    WorkspaceChangeContext changeContext(@Param("exercise") String exercise, @Param("operation") String operation);
+
     @Select("""
         SELECT coalesce(sum(bytes),0)::bigint FROM (
           SELECT sum(pg_column_size(t)) AS bytes FROM copilot_task t WHERE exercise_id=#{exercise}::uuid

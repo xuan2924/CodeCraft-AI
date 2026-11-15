@@ -48,12 +48,13 @@ public class CommandTaskStore {
     private final ObjectMapper json;
     private final Clock clock;
     private final ExerciseDataService data;
+    private final WorkspaceHistoryLedger history;
 
     public CommandTaskStore(IdentityTransactionService identity, IdentitySecrets secrets, ExerciseRepository exercises,
         WorkspaceWriteRepository writes, TestTaskRepository admission, CommandTaskRepository commands, ProblemRepository problems,
-        StorageCapacityStore capacity, @Qualifier("workspaceJson") ObjectMapper json, Clock clock, ExerciseDataService data) {
+        StorageCapacityStore capacity, @Qualifier("workspaceJson") ObjectMapper json, Clock clock, ExerciseDataService data, WorkspaceHistoryLedger history) {
         this.identity = identity; this.secrets = secrets; this.exercises = exercises; this.writes = writes; this.admission = admission;
-        this.commands = commands; this.problems = problems; this.capacity = capacity; this.json = json; this.clock = clock; this.data = data;
+        this.commands = commands; this.problems = problems; this.capacity = capacity; this.json = json; this.clock = clock; this.data = data; this.history = history;
     }
 
     @Transactional
@@ -213,8 +214,11 @@ public class CommandTaskStore {
                 || workspace.getRevision() < Long.parseLong(result.synchronizedRevision()) || workspace.getPathsCount() > 200) {
                 throw new IllegalStateException("Command revision has not been reconciled");
             }
-            if (exercise.revision() == null || exercise.revision() < workspace.getRevision()) {
-                writes.observed(exercise.id(), workspace.getRevision(), encode(workspace.getPathsList()));
+            history.command(task, Long.parseLong(result.synchronizedRevision()));
+            long synchronizedRevision = Long.parseLong(result.synchronizedRevision());
+            if (exercise.revision() == null || exercise.revision() < synchronizedRevision) {
+                if (workspace.getRevision() != synchronizedRevision) throw new IllegalStateException("Unrelated workspace revision cannot publish command history");
+                writes.observed(exercise.id(), synchronizedRevision, encode(workspace.getPathsList()));
             }
         }
         save(task, result);

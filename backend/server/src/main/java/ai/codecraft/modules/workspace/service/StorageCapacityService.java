@@ -9,6 +9,7 @@ import ai.codecraft.modules.workspace.model.dto.StorageReconciliationPlan;
 import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import io.grpc.StatusRuntimeException;
 import java.util.function.Function;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 
 /** Measurement/collection are outside DB transactions; only admission is retried. */
@@ -23,10 +24,16 @@ public class StorageCapacityService {
     }
 
     public <T> T admit(String session, String exercise, Function<StorageMeasurement, T> acceptance) {
+        return admit(session, exercise, Set.of(), acceptance);
+    }
+
+    /** Protects the selected history item during this request's own capacity retry. */
+    public <T> T admit(String session, String exercise, Set<String> protectedHistory, Function<StorageMeasurement, T> acceptance) {
+        var protectedIds = Set.copyOf(protectedHistory);
         try { return acceptance.apply(measure(session, exercise)); }
         catch (BusinessException failure) {
             if (failure.errorCode() != WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED) throw failure;
-            maintenance.collect(exercise);
+            maintenance.collectForAdmission(exercise, protectedIds);
             return acceptance.apply(measure(session, exercise));
         }
     }

@@ -18,6 +18,8 @@ service WorkspaceStorage {
   // Scope is monotonic at the durable meter; delayed subset requests never forget old owners.
   rpc MeasureExerciseStorage(MeasureExerciseStorageRequest) returns (StorageMeasurement);
   rpc ReadWorkspaceFile(ReadWorkspaceFileRequest) returns (ReadWorkspaceFileResponse);
+  // Pure historical comparison / restore preview; publication still uses ApplyBatch.
+  rpc PreviewWorkspaceHistory(WorkspaceHistoryRequest) returns (WorkspaceHistoryPreview);
   rpc CancelPreparation(CancelPreparationRequest) returns (WorkspaceSnapshot);
   rpc CloseGate(CloseGateRequest) returns (GateResponse);
   rpc QueryGate(QueryWorkspaceRequest) returns (GateResponse);
@@ -207,7 +209,7 @@ message CommandSnapshot {
   string synchronization_reason = 3;
   MutationReceipt mutation = 4;
 }
-message CommandFileChange {
+message WorkspaceFileDifference {
   FileChange change = 1;
   string previous_content = 2;
 }
@@ -215,7 +217,30 @@ message CommandChanges {
   string workspace_instance_id = 1;
   string execution_instance_id = 2;
   uint64 base_revision = 3;
-  repeated CommandFileChange changes = 4;
+  repeated WorkspaceFileDifference changes = 4;
+}
+message WorkspaceHistoryRequest {
+  string workspace_instance_id = 1;
+  uint64 base_revision = 2;
+  uint64 result_revision = 3;
+  uint64 expected_revision = 4;
+  // DIFF: recorded change; UNDO: inverse on current; ROLLBACK: selected version on current.
+  string mode = 5;
+  // ROLLBACK only: must equal base_revision or result_revision.
+  uint64 target_revision = 6;
+}
+message WorkspaceHistoryPreview {
+  string workspace_instance_id = 1;
+  uint64 base_revision = 2;
+  uint64 result_revision = 3;
+  uint64 current_revision = 4;
+  string mode = 5;
+  repeated WorkspaceFileDifference changes = 6;
+  repeated string conflicts = 7;
+  // SHA-256 of the deterministic protobuf projection before this field is set.
+  string fingerprint = 8;
+  // Only meaningful for ROLLBACK (UNDO does not recreate a whole old version).
+  uint64 target_revision = 9;
 }
 message QueryTaskRequest {
   string exercise_id = 1;

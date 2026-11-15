@@ -3,7 +3,7 @@ package ai.codecraft.modules.workspace.service;
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.modules.workspace.model.dto.CommandChangesResponse;
-import ai.codecraft.modules.workspace.model.dto.CommandFileChangeResponse;
+import ai.codecraft.modules.workspace.model.dto.WorkspaceFileDifferenceResponse;
 import ai.codecraft.modules.workspace.model.dto.CommandHistoryResponse;
 import ai.codecraft.modules.workspace.model.dto.CommandStartRequest;
 import ai.codecraft.modules.workspace.model.dto.CommandTaskResponse;
@@ -82,7 +82,7 @@ public class CommandTaskService {
             if (bytes > 20L * 1024 * 1024) throw new IllegalStateException("Command changes exceed managed tree bounds");
         }
         return new CommandChangesResponse(id, exercise, task.workspaceInstanceId(), task.executionInstanceId(), Long.toString(task.revision()),
-            result.getChangesList().stream().map(change -> new CommandFileChangeResponse(change.getChange().getKind(), change.getChange().getPath(),
+            result.getChangesList().stream().map(change -> new WorkspaceFileDifferenceResponse(change.getChange().getKind(), change.getChange().getPath(),
                 change.getPreviousContent(), change.getChange().getContent())).toList());
     }
 }

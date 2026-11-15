@@ -19,6 +19,7 @@ import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import ai.codecraft.modules.workspace.repository.DeletionRepository;
 import ai.codecraft.modules.workspace.repository.ExerciseRepository;
 import ai.codecraft.modules.workspace.repository.WorkspaceMaintenanceRepository;
+import ai.codecraft.modules.workspace.repository.WorkspaceHistoryRepository;
 import ai.codecraft.workspace.v1.WorkspaceCollectionReceipt;
 import io.grpc.Status;
 import java.time.Clock;
@@ -37,7 +38,7 @@ class WorkspaceMaintenanceTest {
         var deletions = mock(DeletionRepository.class);
         var sandbox = mock(SandboxWorkspaceGateway.class);
         Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
-        var store = new WorkspaceMaintenanceStore(repository, exercises, deletions, identity, clock, limits(), new ExerciseDataService(List.of()));
+        var store = new WorkspaceMaintenanceStore(repository, exercises, deletions, identity, clock, limits(), new ExerciseDataService(List.of()), mock(WorkspaceHistoryRepository.class));
         var coordinator = new WorkspaceMaintenanceCoordinator(store, sandbox);
         when(exercises.find("exercise")).thenReturn(exercise(5));
         when(repository.referencedRevisions("exercise")).thenReturn(List.of(2L, 3L, 5L));
@@ -59,7 +60,7 @@ class WorkspaceMaintenanceTest {
         var exercises = mock(ExerciseRepository.class);
         var sandbox = mock(SandboxWorkspaceGateway.class);
         var store = new WorkspaceMaintenanceStore(repository, exercises, mock(DeletionRepository.class),
-            mock(IdentityTransactionService.class), Clock.systemUTC(), limits(), new ExerciseDataService(List.of()));
+            mock(IdentityTransactionService.class), Clock.systemUTC(), limits(), new ExerciseDataService(List.of()), mock(WorkspaceHistoryRepository.class));
         when(exercises.find("exercise")).thenReturn(exercise(5));
         when(exercises.deleted("exercise")).thenReturn(true);
         assertNull(store.plan("exercise"));
@@ -74,7 +75,7 @@ class WorkspaceMaintenanceTest {
         var repository = mock(WorkspaceMaintenanceRepository.class);
         var exercises = mock(ExerciseRepository.class);
         var store = new WorkspaceMaintenanceStore(repository, exercises, mock(DeletionRepository.class),
-            mock(IdentityTransactionService.class), Clock.systemUTC(), limits(), new ExerciseDataService(List.of()));
+            mock(IdentityTransactionService.class), Clock.systemUTC(), limits(), new ExerciseDataService(List.of()), mock(WorkspaceHistoryRepository.class));
         when(exercises.find("exercise")).thenReturn(exercise(30));
         var records = new ArrayList<TestHistoryRecord>();
         records.add(history("final", true, true, "SUCCEEDED", false, false));
@@ -99,7 +100,7 @@ class WorkspaceMaintenanceTest {
         var exercises = mock(ExerciseRepository.class);
         var domain = mock(ExerciseDataContributor.class);
         var store = new WorkspaceMaintenanceStore(repository, exercises, mock(DeletionRepository.class),
-            mock(IdentityTransactionService.class), Clock.systemUTC(), limits(), new ExerciseDataService(List.of(domain)));
+            mock(IdentityTransactionService.class), Clock.systemUTC(), limits(), new ExerciseDataService(List.of(domain)), mock(WorkspaceHistoryRepository.class));
         when(exercises.find("exercise")).thenReturn(exercise(30));
         var records = new ArrayList<TestHistoryRecord>();
         for (int index = 20; index >= 0; index--) records.add(history(Integer.toString(index), false, true, "SUCCEEDED", false, false));
@@ -110,6 +111,19 @@ class WorkspaceMaintenanceTest {
         when(domain.protectedTestRecords("exercise")).thenReturn(Set.of());
         when(repository.markPruningBatch(anyList())).thenAnswer(call -> ((List<?>) call.getArgument(0)).size());
         assertEquals(List.of("0"), store.pruningPlan("exercise").stream().map(TestHistoryRecord::taskId).toList());
+    }
+
+    @Test
+    void capacityRetirementPreservesTheSelectedHistoryAndDoesNotRunAfterDeletion() {
+        var history = mock(WorkspaceHistoryRepository.class);
+        var exercises = mock(ExerciseRepository.class);
+        var store = new WorkspaceMaintenanceStore(mock(WorkspaceMaintenanceRepository.class), exercises, mock(DeletionRepository.class),
+            mock(IdentityTransactionService.class), Clock.systemUTC(), limits(), new ExerciseDataService(List.of()), history);
+        when(exercises.find("exercise")).thenReturn(exercise(30));
+        store.retireHistoryForCapacity("exercise", Set.of("selected"));
+        when(exercises.deleted("exercise")).thenReturn(true);
+        store.retireHistoryForCapacity("exercise", Set.of("selected"));
+        verify(history).retireForCapacity("exercise", Set.of("selected"));
     }
 
     @Test

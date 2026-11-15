@@ -118,6 +118,14 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - Java–Go 使用 `StartCommand`、`QueryCommand`、`SynchronizeCommand`、`ReadCommandChanges`、`PruneCommandEvidence`，停止、库存与恢复复用已有精确身份协议。Diff 可以包含两个 10 MiB 树，只有 Diff RPC 将 Java 入站上限提升至 24 MiB，其余 RPC 保留 2 MiB 限制。
 - 首期浏览器用有界只读快照轮询恢复：历史元数据 2 秒、未收敛详情 1 秒；终态停止详情轮询。以状态高水位、不可逆同步事实与停止意图抵挡迟到快照，不自动重试任何 Bash 副作用。沿用安全只读终端展示，不新增 PTY 或另一套 SSE 事件日志。
 
+## 代码历史与恢复接口
+
+- `GET /api/exercises/{exercise}/history?before={revision}`：按结果修订倒序，每页最多 20 条；返回 `changes` 和 `nextBefore`，包含来源、基线/结果修订、可用任务/会话关联及 `retained`。
+- `GET /api/exercises/{exercise}/history/{change}/preview?revision={current}&mode={DIFF|UNDO|ROLLBACK}&targetRevision={target}`：只读，返回完整有界文件 Diff、冲突路径及指纹；Rollback 目标仅可选该变化前/后修订。版本已清理不能伪造空 Diff。
+- `POST /api/exercises/{exercise}/history/restore`：`{changeId,mode,expectedRevision,targetRevision,previewFingerprint}`，要求 CSRF、原幂等键和新写入操作凭证。响应回显 `exerciseId,requestKey,intent`，且 `operation` 与 `notAcceptedReason` 恰有一项非空。正常回执 HTTP 202，已证明未受理 HTTP 200；后者仅在同一准入锁下先核对原回执，再以不可逆引用退役或同工作区当前修订超过原基线证明。普通 409/410 不足以解除原请求未知状态。
+- 已受理的未决恢复沿 `/api/operations/{operation}` 核对终态，不重发新写入。浏览器绑定原所有者/演练/工作区/基线，凭证轮换只更新核对凭证；终态回执不被迟到未决快照覆盖。完成后刷新当前工作区，不将旧结果修订直接赋为最新修订。
+- 所有读取沿既有归属检查和 no-store；冻结后允许历史读取但禁止新恢复。
+
 ## Copilot 任务与审批接口
 
 ### Copilot Bash 命令

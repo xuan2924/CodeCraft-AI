@@ -15,6 +15,11 @@ import ai.codecraft.modules.workspace.model.entity.CommandTaskEntity;
 import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
 import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import ai.codecraft.modules.workspace.repository.CommandTaskRepository;
+import ai.codecraft.modules.workspace.repository.WorkspaceHistoryRepository;
+import ai.codecraft.modules.workspace.repository.WorkspaceMaintenanceRepository;
+import ai.codecraft.modules.workspace.model.entity.WorkspaceChangeEntity;
+import ai.codecraft.modules.workspace.model.dto.WorkspaceRestoreRequest;
+import java.util.Set;
 import ai.codecraft.modules.workspace.repository.DeletionRepository;
 import ai.codecraft.modules.workspace.repository.ExerciseRepository;
 import ai.codecraft.modules.workspace.repository.ProblemRepository;
@@ -72,6 +77,7 @@ class CommandPersistenceIT {
     private MutableClock clock;
     private IdentityTransactionService identity;
     private CommandTaskStore store;
+    private IdentitySecrets secrets;
 
     @BeforeAll void migrateIsolatedDatabase() throws Exception {
         String name = "command_it_" + UUID.randomUUID().toString().replace("-", "");
@@ -89,7 +95,7 @@ class CommandPersistenceIT {
         var configuration = new org.apache.ibatis.session.Configuration();
         configuration.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(CommandTaskRepository.class, ExerciseRepository.class, WorkspaceWriteRepository.class,
-            TestTaskRepository.class, StorageCapacityRepository.class, DeletionRepository.class)) configuration.addMapper(mapper);
+            TestTaskRepository.class, StorageCapacityRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class, WorkspaceMaintenanceRepository.class)) configuration.addMapper(mapper);
         var factory = new SqlSessionFactoryBean();
         factory.setDataSource(source); factory.setConfiguration(configuration);
         sql = new SqlSessionTemplate(factory.getObject());
@@ -113,22 +119,19 @@ class CommandPersistenceIT {
         when(identity.authorizeMutation(SESSION)).thenReturn(grant);
         when(identity.authorizePrivateDelivery(SESSION)).thenReturn(grant);
         when(identity.tryAuthorizeMutation(SESSION)).thenReturn(grant);
-        var secrets = mock(IdentitySecrets.class);
+        secrets = mock(IdentitySecrets.class);
         when(secrets.fingerprint(anyString())).thenAnswer(call -> java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
             .digest(((String) call.getArgument(0)).getBytes(java.nio.charset.StandardCharsets.UTF_8))));
         var problems = mock(ProblemRepository.class);
         when(problems.find(problem.id())).thenReturn(problem);
         when(problems.executionAvailable(problem.id())).thenReturn(true);
         var json = JsonMapper.builder().addModule(new JavaTimeModule()).disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS).build();
+        var historyRepository = sql.getMapper(WorkspaceHistoryRepository.class);
+        var data = new ExerciseDataService(List.of(new WorkspaceHistoryData(historyRepository)));
         var target = new CommandTaskStore(identity, secrets, sql.getMapper(ExerciseRepository.class), sql.getMapper(WorkspaceWriteRepository.class),
-            sql.getMapper(TestTaskRepository.class), sql.getMapper(CommandTaskRepository.class), problems, mock(StorageCapacityStore.class), json, clock, new ExerciseDataService(List.of()));
-        var proxy = new ProxyFactory(target);
-        proxy.setProxyTargetClass(true);
-        var interceptor = new TransactionInterceptor();
-        interceptor.setTransactionManager(transactions);
-        interceptor.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
-        proxy.addAdvice(interceptor);
-        store = (CommandTaskStore) proxy.getProxy();
+            sql.getMapper(TestTaskRepository.class), sql.getMapper(CommandTaskRepository.class), problems, mock(StorageCapacityStore.class), json, clock, data,
+            new WorkspaceHistoryLedger(historyRepository, data, clock));
+        store = transactional(target, CommandTaskStore.class);
     }
 
     @Test void receiptSurvivesChangedCredentialAndClosedGateWithoutASecondCommand() {
@@ -172,9 +175,20 @@ class CommandPersistenceIT {
             .setOperationId(task.id()).setRequestId(task.executionInstanceId()).setFingerprint("d".repeat(64)).setRevision(2).setChanged(true)).build();
         assertThatThrownBy(() -> store.observe(task.id(), result, null)).isInstanceOf(IllegalStateException.class);
         assertThat(store.find(task.id()).state()).isEqualTo("STARTING");
+        assertThat(sql.getMapper(WorkspaceHistoryRepository.class).find(task.id())).isNull();
         store.observe(task.id(), result, WorkspaceSnapshot.newBuilder().setWorkspaceInstanceId(workspace).setRevision(2).addPaths("src/main/java/Main.java").build());
         assertThat(sql.getMapper(ExerciseRepository.class).find(exercise).revision()).isEqualTo(2);
         assertThat(store.response(store.read(SESSION, exercise, task.id())).synchronizedRevision()).isEqualTo("2");
+        var change = sql.getMapper(WorkspaceHistoryRepository.class).find(task.id());
+        assertThat(change.source()).isEqualTo("BASH");
+        assertThat(change.baseRevision()).isEqualTo(1);
+        assertThat(change.resultRevision()).isEqualTo(2);
+        assertThat(change.retained()).isTrue();
+        // A later cleanup observation of the old Bash must not publish another writer's unindexed revision.
+        store.observe(task.id(), result, WorkspaceSnapshot.newBuilder().setWorkspaceInstanceId(workspace).setRevision(3)
+            .addPaths("src/main/java/Other.java").build());
+        assertThat(sql.getMapper(ExerciseRepository.class).find(exercise).revision()).isEqualTo(2);
+        assertThat(sql.getMapper(WorkspaceHistoryRepository.class).recent(exercise, 0)).hasSize(1);
     }
 
     @Test void retentionProtectsConflictsPaginatesAndRetiresUnknownPruningIdentity() {
@@ -213,6 +227,150 @@ class CommandPersistenceIT {
         assertThatThrownBy(() -> store.read(SESSION, exercise, task.id())).isInstanceOfSatisfying(BusinessException.class,
             error -> assertThat(error.errorCode()).isEqualTo(WorkspaceErrorCode.RESOURCE_NOT_FOUND));
         assertThat(store.find(task.id()).stopRequested()).isFalse();
+    }
+
+    @Test void restoreNoOpReceiptSurvivesRetirementAndChangedControlWithoutRenewingAuthority() {
+        String change = historyChange(0);
+        var restores = restores();
+        var input = new WorkspaceRestoreRequest(change, "ROLLBACK", "1", "1", "b".repeat(64));
+        String payload = "{\"expectedRevision\":\"1\",\"changes\":[]}";
+        var operation = restores.admit(SESSION, exercise, "restore-once", CREDENTIAL, input, "a".repeat(64), payload, true, null);
+        assertThat(operation.state()).isEqualTo("SUCCEEDED");
+        assertThat(sql.getMapper(WorkspaceWriteRepository.class).mutation(operation.id()).changed()).isFalse();
+        assertThat(sql.getMapper(ExerciseRepository.class).find(exercise).revision()).isEqualTo(1);
+        assertThat(sql.getMapper(WorkspaceHistoryRepository.class).recent(exercise, 0)).hasSize(1);
+        sql.getMapper(WorkspaceHistoryRepository.class).retireForCapacity(exercise, Set.of());
+        jdbc.update("UPDATE workspace_control SET credential_hash=?,gate_state='CLOSED' WHERE exercise_id=?::uuid", IdentitySecrets.digest("d".repeat(43)), exercise);
+        when(identity.authorizeMutation(SESSION)).thenThrow(new AssertionError("receipt must not request new authority"));
+        assertThat(restores.admit(SESSION, exercise, "restore-once", "obsolete", input, "a".repeat(64), payload, true, null).id()).isEqualTo(operation.id());
+        assertThat(restores.resolve(SESSION, exercise, "restore-once", "a".repeat(64), input).operation().id()).isEqualTo(operation.id());
+        assertThatThrownBy(() -> restores.resolve(SESSION, exercise, "restore-once", "c".repeat(64), input))
+            .isInstanceOfSatisfying(BusinessException.class, error -> assertThat(error.errorCode()).isEqualTo(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT));
+    }
+
+    @Test void confirmedRestoreAddsANewRevisionAndKeepsItsOriginalHistoryWhileStalePreviewsFail() {
+        String original = historyChange(0);
+        var restores = restores();
+        var input = new WorkspaceRestoreRequest(original, "UNDO", "1", null, "b".repeat(64));
+        String payload = "{\"expectedRevision\":\"1\",\"changes\":[{\"path\":\"src/main/java/Main.java\",\"kind\":\"UPDATE\",\"content\":\"restored\"}]}";
+        var operation = restores.admit(SESSION, exercise, "restore-change", CREDENTIAL, input, "a".repeat(64), payload, false, null);
+        var history = sql.getMapper(WorkspaceHistoryRepository.class);
+        var ledger = new WorkspaceHistoryLedger(history, new ExerciseDataService(List.of(new WorkspaceHistoryData(history))), clock);
+        var coordination = transactional(new WorkspaceCoordinationStore(sql.getMapper(WorkspaceWriteRepository.class), sql.getMapper(ExerciseRepository.class),
+            new com.fasterxml.jackson.databind.ObjectMapper(), ledger), WorkspaceCoordinationStore.class);
+        assertThat(coordination.claim(operation)).isNotNull();
+        assertThat(coordination.claim(operation)).isNull();
+        var receipt = MutationReceipt.newBuilder().setWorkspaceInstanceId(workspace).setRequestId(operation.id()).setOperationId(operation.id())
+            .setFingerprint("d".repeat(64)).setRevision(2).setChanged(true).build();
+        var snapshot = WorkspaceSnapshot.newBuilder().setWorkspaceInstanceId(workspace).setRevision(2).addPaths("src/main/java/Main.java").build();
+        coordination.result(operation, receipt, snapshot, null);
+        coordination.unknown(operation.id()); // A late failed observer cannot regress the committed outcome.
+        assertThat(sql.getMapper(ExerciseRepository.class).operation(operation.id()).state()).isEqualTo("SUCCEEDED");
+        coordination.result(operation, receipt, snapshot, null);
+        var change = history.find(operation.id());
+        assertThat(change.source()).isEqualTo("UNDO");
+        assertThat(change.originChangeId()).isEqualTo(original);
+        assertThat(change.baseRevision()).isEqualTo(1);
+        assertThat(change.resultRevision()).isEqualTo(2);
+        assertThat(history.find(original).retained()).isTrue();
+        assertThat(history.recent(exercise, 0)).hasSize(2);
+        assertThat(restores.resolve(SESSION, exercise, "restore-change", "a".repeat(64), input).operation().state()).isEqualTo("SUCCEEDED");
+        assertThatThrownBy(() -> restores.admit(SESSION, exercise, "stale-preview", CREDENTIAL, input, "a".repeat(64), payload, false, null))
+            .isInstanceOfSatisfying(BusinessException.class, error -> assertThat(error.errorCode()).isEqualTo(WorkspaceErrorCode.REVISION_CONFLICT));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_restore WHERE exercise_id=?::uuid", Integer.class, exercise)).isEqualTo(1);
+    }
+
+    @Test void restoreCannotAdoptAManualIntentOrJumpAheadOfAnUnsettledCommand() {
+        String change = historyChange(0);
+        var input = new WorkspaceRestoreRequest(change, "UNDO", "1", null, "b".repeat(64));
+        var restores = restores();
+        var manual = writeStore().batch(SESSION, exercise, "manual-key", CREDENTIAL,
+            "{\"expectedRevision\":\"1\",\"changes\":[{\"path\":\"src/main/java/Main.java\",\"kind\":\"UPDATE\",\"content\":\"manual\"}]}", 1, null);
+        assertThatThrownBy(() -> restores.resolve(SESSION, exercise, "manual-key", "a".repeat(64), input))
+            .isInstanceOfSatisfying(BusinessException.class, error -> assertThat(error.errorCode()).isEqualTo(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT));
+        assertThatThrownBy(() -> restores.ready(SESSION, exercise, input))
+            .isInstanceOfSatisfying(BusinessException.class, error -> assertThat(error.errorCode()).isEqualTo(WorkspaceErrorCode.RESTORE_BUSY));
+        var coordination = transactional(new WorkspaceCoordinationStore(sql.getMapper(WorkspaceWriteRepository.class), sql.getMapper(ExerciseRepository.class),
+            new com.fasterxml.jackson.databind.ObjectMapper(), mock(WorkspaceHistoryLedger.class)), WorkspaceCoordinationStore.class);
+        coordination.result(manual, null, null, "WRITE_NOT_COMMITTED");
+        accept("still-running");
+        assertThatThrownBy(() -> restores.ready(SESSION, exercise, input))
+            .isInstanceOfSatisfying(BusinessException.class, error -> assertThat(error.errorCode()).isEqualTo(WorkspaceErrorCode.RESTORE_BUSY));
+    }
+
+    @Test void frozenOrExpiredExerciseNeverAdmitsANewRestoreEvenWhenItWouldBeUnchanged() {
+        String change = historyChange(0);
+        var input = new WorkspaceRestoreRequest(change, "ROLLBACK", "1", "1", "b".repeat(64));
+        var restores = restores();
+        jdbc.update("UPDATE workspace_exercise SET state='ENDED',ended_at=? WHERE id=?::uuid", Timestamp.from(clock.now), exercise);
+        assertThatThrownBy(() -> restores.admit(SESSION, exercise, "frozen", CREDENTIAL, input, "a".repeat(64), "{}", true, null))
+            .isInstanceOfSatisfying(BusinessException.class, error -> assertThat(error.errorCode()).isEqualTo(WorkspaceErrorCode.INVALID_STATE));
+        jdbc.update("UPDATE workspace_exercise SET state='ACTIVE',ended_at=NULL WHERE id=?::uuid", exercise);
+        clock.now = clock.now.plusSeconds(2700);
+        assertThatThrownBy(() -> restores.admit(SESSION, exercise, "expired", CREDENTIAL, input, "a".repeat(64), "{}", true, null))
+            .isInstanceOfSatisfying(BusinessException.class, error -> assertThat(error.errorCode()).isEqualTo(WorkspaceErrorCode.EXERCISE_EXPIRED));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_restore WHERE exercise_id=?::uuid", Integer.class, exercise)).isZero();
+    }
+
+    @Test void unknownUnadmittedRestoreCanBeResolvedOnlyBehindAMonotonicBarrier() {
+        String change = historyChange(0);
+        var input = new WorkspaceRestoreRequest(change, "UNDO", "1", null, "b".repeat(64));
+        var restores = restores();
+        assertThat(restores.resolve(SESSION, exercise, "unknown", "a".repeat(64), input).notAcceptedReason()).isNull();
+        historyChange(1);
+        jdbc.update("UPDATE workspace_exercise SET revision=2 WHERE id=?::uuid", exercise);
+        var advanced = restores.resolve(SESSION, exercise, "unknown", "a".repeat(64), input);
+        assertThat(advanced.operation()).isNull();
+        assertThat(advanced.notAcceptedReason()).isEqualTo("REVISION_CONFLICT");
+        assertThatThrownBy(() -> restores.admit(SESSION, exercise, "unknown", CREDENTIAL, input, "a".repeat(64), "{}", false, null))
+            .isInstanceOfSatisfying(BusinessException.class, error -> assertThat(error.errorCode()).isEqualTo(WorkspaceErrorCode.REVISION_CONFLICT));
+        sql.getMapper(WorkspaceHistoryRepository.class).retireForCapacity(exercise, Set.of());
+        assertThat(restores.resolve(SESSION, exercise, "unknown", "a".repeat(64), input).notAcceptedReason()).isEqualTo("CODE_HISTORY_UNAVAILABLE");
+        assertThatThrownBy(() -> restores.admit(SESSION, exercise, "unknown", CREDENTIAL, input, "a".repeat(64), "{}", false, null))
+            .isInstanceOfSatisfying(BusinessException.class, error -> assertThat(error.errorCode()).isEqualTo(WorkspaceErrorCode.CODE_HISTORY_UNAVAILABLE));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_restore WHERE exercise_id=?::uuid", Integer.class, exercise)).isZero();
+    }
+
+    @Test void codeHistoryRetainsTwentyChangesAndCapacityRetirementProtectsItsSelectedSource() {
+        String selected = null;
+        for (int base = 0; base < 25; base++) selected = historyChange(base);
+        jdbc.update("UPDATE workspace_exercise SET revision=25 WHERE id=?::uuid", exercise);
+        var history = sql.getMapper(WorkspaceHistoryRepository.class);
+        assertThat(history.retireExcess(exercise)).isEqualTo(5);
+        assertThat(history.recent(exercise, 0)).hasSize(21);
+        assertThat(sql.getMapper(WorkspaceMaintenanceRepository.class).referencedRevisions(exercise)).contains(5L, 25L).doesNotContain(0L, 4L);
+        assertThat(history.retireForCapacity(exercise, Set.of(selected))).isEqualTo(19);
+        assertThat(sql.getMapper(WorkspaceMaintenanceRepository.class).referencedRevisions(exercise)).containsExactlyInAnyOrder(24L, 25L);
+        assertThat(history.retainedBytes(exercise)).isPositive();
+        new WorkspaceHistoryData(history).erase(exercise);
+        assertThat(history.retainedBytes(exercise)).isZero();
+    }
+
+    private String historyChange(long base) {
+        String id = id();
+        sql.getMapper(WorkspaceHistoryRepository.class).insert(new WorkspaceChangeEntity(id, exercise, workspace, "MANUAL", base, base + 1,
+            null, null, null, true, clock.now));
+        return id;
+    }
+
+    private WorkspaceWriteTransactionService writeStore() {
+        return transactional(new WorkspaceWriteTransactionService(identity, secrets, sql.getMapper(ExerciseRepository.class),
+            sql.getMapper(WorkspaceWriteRepository.class), clock, mock(StorageCapacityStore.class)), WorkspaceWriteTransactionService.class);
+    }
+
+    private WorkspaceHistoryStore restores() {
+        return transactional(new WorkspaceHistoryStore(identity, sql.getMapper(ExerciseRepository.class), sql.getMapper(WorkspaceWriteRepository.class),
+            sql.getMapper(CommandTaskRepository.class), sql.getMapper(WorkspaceHistoryRepository.class), writeStore()), WorkspaceHistoryStore.class);
+    }
+
+    private <T> T transactional(T target, Class<T> type) {
+        var proxy = new ProxyFactory(target);
+        proxy.setProxyTargetClass(true);
+        var interceptor = new TransactionInterceptor();
+        interceptor.setTransactionManager(transactions);
+        interceptor.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+        proxy.addAdvice(interceptor);
+        return type.cast(proxy.getProxy());
     }
 
     private CommandTaskEntity accept(String key) { return store.accept(SESSION, exercise, key, CREDENTIAL, INPUT, null); }

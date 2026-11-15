@@ -9,6 +9,7 @@ import * as api from './api';
 import WorkspaceLogout from './WorkspaceLogout.vue';
 import WorkspaceTests from './WorkspaceTests.vue';
 import WorkspaceCommands from './WorkspaceCommands.vue';
+import WorkspaceHistory from './WorkspaceHistory.vue';
 import WorkspaceStorage from './WorkspaceStorage.vue';
 import ExerciseModelPicker from '../modelaccess/ExerciseModelPicker.vue';
 import CopilotPanel from '../copilot/CopilotConversations.vue';
@@ -64,6 +65,8 @@ const logoutBusy = ref(false);
 const testView = ref<{ start: (revision: string) => void; inspect: (taskId: string) => void }>();
 const testBusy = ref(true);
 const commandBusy = ref(true);
+const historyBusy = ref(false);
+const editorWriteBusy = ref(false);
 const editorGeneration = ref(0);
 async function saveForLogout() {
   if (!writable.value || pending.value || unresolved.value) return false;
@@ -92,7 +95,7 @@ const controlState = useQuery({ queryKey: ['workspace', owner, 'control', comput
 watch(() => controlState.data.value?.generation, (value) => {
   if (value && credential.value && value !== credentialGeneration.value) credential.value = '';
 });
-watch(() => exercise.value?.workspaceInstanceId, () => { selected.value = ''; credential.value = ''; testBusy.value = true; commandBusy.value = true; });
+watch(() => exercise.value?.workspaceInstanceId, () => { selected.value = ''; credential.value = ''; testBusy.value = true; commandBusy.value = true; historyBusy.value = false; editorWriteBusy.value = false; });
 const source = useQuery({ queryKey: ['workspace', owner, 'file', computed(() => exercise.value?.workspaceInstanceId), selected, computed(() => exercise.value?.revision)],
   queryFn: ({ signal }) => {
     if (!exercise.value) throw new Error('Workspace is not available');
@@ -502,7 +505,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :owner="owner"
             :exercise-id="exercise.exerciseId"
             :credential="credential"
-            :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy"
+            :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
             :prepare="prepareCopilot"
             @inspect-test="testView?.inspect($event)"
             @changed="refreshWorkspace"
@@ -514,9 +517,20 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :owner="owner"
             :exercise="exercise"
             :credential="credential"
-            :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || testBusy"
+            :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || testBusy || historyBusy"
             :prepare="prepareCommand"
             @locked="commandBusy = $event"
+            @changed="refreshWorkspace"
+            @unauthorized="credential = ''; account.refetch()"
+          />
+          <WorkspaceHistory
+            v-if="['ACTIVE', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
+            :key="owner + exercise.workspaceInstanceId"
+            :owner="owner"
+            :exercise="exercise"
+            :credential="credential"
+            :disabled="!writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || commandBusy || editorWriteBusy"
+            @locked="historyBusy = $event"
             @changed="refreshWorkspace"
             @unauthorized="credential = ''; account.refetch()"
           />
@@ -597,16 +611,17 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               v-if="hasEditor"
               :key="owner + exercise.workspaceInstanceId + editorGeneration"
               ref="editorView"
-              :locked="logoutBusy || ending"
+              :locked="logoutBusy || ending || historyBusy"
               :answering-closed="answeringClosed"
-              :test-busy="testBusy || commandBusy || !problem?.executionAvailable"
+              :test-busy="testBusy || commandBusy || historyBusy || !problem?.executionAvailable"
               :owner="owner"
               :exercise="exercise"
               :file="source.data.value"
               :selected="selected"
-              :credential="writable ? credential : ''"
+              :credential="writable && !historyBusy ? credential : ''"
               @saved="refreshWorkspace"
-              @run-test="!commandBusy && testView?.start($event)"
+              @write-busy="editorWriteBusy = $event"
+              @run-test="!commandBusy && !historyBusy && testView?.start($event)"
               @select="selected = $event"
               @stale-control="credential = ''"
             />

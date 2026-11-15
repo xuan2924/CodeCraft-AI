@@ -129,7 +129,7 @@ class LifecycleConvergenceTest {
             // One attempt is an allowed bound; environmental failure must release business activity.
             store = new FinalizationStore(finals, exercises, writes, tasks, mock(TaskStreamRepository.class), mock(ProblemRepository.class), identity,
                 mock(IdentitySecrets.class), clock, new FinalizationProperties(1, 600, 5, 30), new FinalVerificationPolicy(clock), json, mock(StorageCapacityStore.class));
-            coordination = new WorkspaceCoordinationStore(writes, exercises, json);
+            coordination = new WorkspaceCoordinationStore(writes, exercises, json, mock(WorkspaceHistoryLedger.class));
             when(finals.find("exercise")).thenAnswer(call -> finalization);
             when(exercises.find("exercise")).thenAnswer(call -> exercise());
             when(writes.lock("exercise")).thenAnswer(call -> control);

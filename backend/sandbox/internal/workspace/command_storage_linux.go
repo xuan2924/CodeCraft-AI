@@ -258,7 +258,7 @@ func commandChanges(parent int, record *commandRecord) (*rpc.CommandChanges, err
 		if existed && exists && oldHash == newHash {
 			continue
 		}
-		change := &rpc.CommandFileChange{Change: &rpc.FileChange{Path: path, Kind: "UPDATE"}}
+		change := &rpc.WorkspaceFileDifference{Change: &rpc.FileChange{Path: path, Kind: "UPDATE"}}
 		if existed {
 			content, err := readPath(parent, "base/"+path)
 			if err != nil || sum(content) != oldHash {

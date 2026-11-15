@@ -25,11 +25,13 @@ public class WorkspaceCoordinationStore {
     private final WorkspaceWriteRepository writes;
     private final ExerciseRepository exercises;
     private final ObjectMapper json;
+    private final WorkspaceHistoryLedger history;
 
-    public WorkspaceCoordinationStore(WorkspaceWriteRepository writes, ExerciseRepository exercises, ObjectMapper json) {
+    public WorkspaceCoordinationStore(WorkspaceWriteRepository writes, ExerciseRepository exercises, ObjectMapper json, WorkspaceHistoryLedger history) {
         this.writes = writes;
         this.exercises = exercises;
         this.json = json;
+        this.history = history;
     }
 
     @Transactional
@@ -151,7 +153,7 @@ public class WorkspaceCoordinationStore {
     }
 
     @Transactional
-    public void unknown(String id) { exercises.operationState(id, "PENDING_RECONCILIATION"); }
+    public void unknown(String id) { writes.unknown(id); }
 
     @Transactional
     public void result(WorkspaceOperationEntity operation, MutationReceipt receipt, WorkspaceSnapshot snapshot, String failure) {
@@ -162,9 +164,14 @@ public class WorkspaceCoordinationStore {
             writes.result(operation.id(), null, null, failure);
             exercises.operationState(operation.id(), "REJECTED");
         } else {
-            try {
-                writes.observed(operation.exerciseId(), snapshot.getRevision(), json.writeValueAsString(snapshot.getPathsList()));
-            } catch (JsonProcessingException error) { throw new IllegalStateException("Invalid workspace paths", error); }
+            // A no-op must not expose another writer's newer Go snapshot before
+            // that writer's history references have committed in Java.
+            if (receipt.getChanged()) {
+                history.mutation(current, receipt.getRevision());
+                try {
+                    writes.observed(operation.exerciseId(), snapshot.getRevision(), json.writeValueAsString(snapshot.getPathsList()));
+                } catch (JsonProcessingException error) { throw new IllegalStateException("Invalid workspace paths", error); }
+            }
             writes.result(operation.id(), receipt.getRevision(), receipt.getChanged(), null);
             exercises.operationState(operation.id(), "SUCCEEDED");
         }
