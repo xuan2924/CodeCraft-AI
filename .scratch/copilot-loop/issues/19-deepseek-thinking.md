@@ -15,12 +15,12 @@
 
 ## Acceptance criteria
 
-- [ ] 显式配置并记录本次实际思考模式，不自动降级为非思考，不忽略供应商必需的 reasoning_content 或等效字段。
-- [ ] 流式文本/推理/工具参数、调用 ID 与回填消息完整保存和重组，参数未完成不执行工具，协议错误不伪装普通回复。
-- [ ] 多轮、多工具、审批暂停/拒绝、auto 的真实闭环通过，不重新生成已完成批次。
-- [ ] 停止、steer、重启恢复和压缩后的上下文符合该协议要求；需补结果而非任意伪造新工具调用，具体行为依已核验契约。
-- [ ] 用量、上下文与存储计量包含实际供应商口径，推理字段不因流分片重复计数；缺失数据仍标未知。
-- [ ] 可控协议夹具与真实 DeepSeek 验收分别记录；显式付费触发且不泄漏环境 Key，真实配置不可用时标未验证。
+- [x] 显式配置并记录本次实际思考模式，不自动降级为非思考，不忽略供应商必需的 reasoning_content 或等效字段。
+- [x] 流式文本/推理/工具参数、调用 ID 与回填消息完整保存和重组，参数未完成不执行工具，协议错误不伪装普通回复。
+- [x] 多轮、多工具、审批暂停/拒绝、auto 的真实闭环通过，不重新生成已完成批次。
+- [x] 停止、steer、重启恢复和压缩后的上下文符合该协议要求；需补结果而非任意伪造新工具调用，具体行为依已核验契约。
+- [x] 用量、上下文与存储计量包含实际供应商口径，推理字段不因流分片重复计数；缺失数据仍标未知。
+- [x] 可控协议夹具与真实 DeepSeek 验收分别记录；显式付费触发且不泄漏环境 Key，真实配置不可用时标未验证。
 
 ## Comments
 
@@ -44,4 +44,4 @@
 
 上述通过链路共 14 次真实请求；Go 文件/写入仍是确定性夹具，不冒充全进程浏览器验收。首轮三条审批链路已完成业务但被“每轮 reasoning 必须非空”的错误断言判失败，单条硬上限 8（合计上限 24），未输出准确次数，不纳入上述 14 次通过计数。官方契约与返回事实不支持非空保证；修正为原生消息与持久化逐条完全相等，并要求本次 ON 验证至少出现一条真实 reasoning。没有改模式、重造 reasoning 或加生产回退。
 
-显式 `COPILOT_LIVE_DEEPSEEK=1`；可用 `COPILOT_LIVE_DECISION=APPROVE/REJECT/AUTO` 仅运行一个场景，每场最多 8 次；摘要场景最多 4 次。调用次数不是固定金额承诺。证据：`%TEMP%/deepseek-thinking-protocol.log`、`deepseek-thinking-fixture.log`、`deepseek-thinking-controls.log`、`deepseek-thinking-live-approve.log`、`deepseek-thinking-live-REJECT.log`、`deepseek-thinking-live-AUTO.log`、`deepseek-thinking-live-summary.log`。原始摘要证据在忽略目录 `backend/server/target/copilot-summary-live-b29ed0ff-5768-4461-bfac-e0158bac742c.json`。完整受影响 L1 在阶段收口继续执行，供应商矩阵另见 #20。`d6266c2` 已经独立 Standards / Spec 双轴审查，无新增阻塞；审查确认 native/live 边界、首轮失败披露及原生 reasoning 为空的处理，未将 worker 重建误称进程强杀恢复。
+显式 `COPILOT_LIVE_DEEPSEEK=1`；可用 `COPILOT_LIVE_DECISION=APPROVE/REJECT/AUTO` 仅运行一个场景，每场最多 8 次；摘要场景最多 4 次。调用次数不是固定金额承诺。证据：`%TEMP%/deepseek-thinking-protocol.log`、`deepseek-thinking-fixture.log`、`deepseek-thinking-controls.log`、`deepseek-thinking-live-approve.log`、`deepseek-thinking-live-REJECT.log`、`deepseek-thinking-live-AUTO.log`、`deepseek-thinking-live-summary.log`。原始摘要证据在忽略目录 `backend/server/target/copilot-summary-live-b29ed0ff-5768-4461-bfac-e0158bac742c.json`。完整受影响 L1 已于 #21/#22 收口通过；#22 另外通过 ON/low 的真实浏览器→Java/PostgreSQL→Go/Docker→DeepSeek 链路，10 次请求（3 检查+7 Copilot），7 个完成轮次均落库 ON，4 轮有真实 reasoning。供应商矩阵另见 #20。`d6266c2` 已经独立 Standards / Spec 双轴审查，无新增阻塞；审查确认 native/live 边界、首轮失败披露及原生 reasoning 为空的处理，未将 worker 重建误称进程强杀恢复。

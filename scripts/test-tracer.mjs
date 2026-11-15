@@ -31,6 +31,12 @@ if (workspaceTestOption !== undefined && (!workspaceMode || !boundaryOnly || !/^
 const copilotTests = process.argv.includes('--copilot-tests');
 const copilotBrowser = process.argv.includes('--copilot-browser');
 const copilotRecovery = process.argv.includes('--copilot-recovery');
+const workspaceBrowser = workspaceMode && !boundaryOnly && !copilotBrowser && !skillsBrowser;
+const thinkingOption = process.argv.find((argument) => argument.startsWith('--copilot-thinking='));
+const copilotThinking = thinkingOption?.slice('--copilot-thinking='.length) ?? 'OFF';
+if (thinkingOption !== undefined && (!copilotBrowser || !['OFF', 'ON'].includes(copilotThinking))) {
+  throw new Error('--copilot-thinking=OFF|ON requires --copilot-browser');
+}
 if (copilotRecovery && (!workspaceMode || !boundaryOnly || identityMode || smoke || workspaceTest || copilotTests || copilotBrowser || process.argv.includes('--workspace-recovery-only'))) {
   throw new Error('--copilot-recovery requires --workspace --boundary-only without other suite selections');
 }
@@ -42,7 +48,7 @@ if (copilotTests && (!workspaceMode || !boundaryOnly || workspaceTest || process
   throw new Error('--copilot-tests requires --workspace --boundary-only without other test selections');
 }
 if ((copilotTests || copilotBrowser) && !liveCredential?.trim()) throw new Error('Paid Copilot validation requires DEEPSEEK (or DeepSeek) in the environment');
-if (copilotBrowser) maven(['-q', '-DskipTests', 'package']);
+if (copilotBrowser || workspaceBrowser) maven(['-q', '-DskipTests', 'package']);
 else if (copilotTests || copilotRecovery) maven(['-q', '-DskipTests', 'test-compile']);
 const recoveryOnly = process.argv.includes('--workspace-recovery-only');
 if (recoveryOnly && (!workspaceMode || !boundaryOnly || workspaceTest)) {
@@ -70,7 +76,7 @@ const values = {
   IDENTITY_FINGERPRINT_KEY: randomBytes(32).toString('hex'),
   ...(workspaceMode ? { SANDBOX_RPC_KEY: randomBytes(32).toString('hex'),
     PROBLEM_PUBLICATION_FILE: join(directory, 'problem-publication.json') } : {}),
-  ...(copilotBrowser ? { MODEL_CREDENTIAL_ACTIVE_KEY_ID: 'fixture', MODEL_CREDENTIAL_KEYS: `fixture:${randomBytes(32).toString('base64')}` } : {}),
+  ...((copilotBrowser || workspaceBrowser) ? { MODEL_CREDENTIAL_ACTIVE_KEY_ID: 'fixture', MODEL_CREDENTIAL_KEYS: `fixture:${randomBytes(32).toString('base64')}` } : {}),
   POSTGRES_PORT: await reservePort(), JAVA_PORT: await reservePort(),
   SANDBOX_PORT: await reservePort(), WEB_PORT: await reservePort(),
 };
@@ -78,17 +84,20 @@ const envFile = join(directory, '.env');
 await writeFile(envFile, Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n'), { mode: 0o600 });
 await Promise.all(reservations.map((server) => new Promise((resolve) => server.close(resolve))));
 const composeArgs = ['compose', '-p', project, '--env-file', envFile, '-f', join(root, 'compose.yaml')];
-async function configurePaidBrowser() {
-  if (!copilotBrowser) return;
+async function configureBrowserModels() {
+  if (!copilotBrowser && !workspaceBrowser) return;
   const support = join(directory, 'model-budget');
   await mkdir(join(support, 'ai/codecraft/fixture'), { recursive: true });
-  for (const name of ['CopilotBrowserBudget', 'CopilotBrowserFixtureController']) {
+  const classes = copilotBrowser ? ['CopilotBrowserBudget', 'CopilotBrowserFixtureController'] : ['WorkspaceBrowserModelFixture'];
+  for (const name of classes) {
     await copyFile(join(root, `backend/server/target/test-classes/ai/codecraft/fixture/${name}.class`), join(support, `ai/codecraft/fixture/${name}.class`));
   }
   const override = join(directory, 'browser-override.json');
   await writeFile(override, JSON.stringify({ services: { java: {
     entrypoint: ['java', '-cp', '/app/server.jar', 'org.springframework.boot.loader.launch.PropertiesLauncher'],
-    environment: { LOADER_PATH: '/test-support', COPILOT_BROWSER_E2E: 'disposable', DEEPSEEK: null },
+    environment: { LOADER_PATH: '/test-support', ...(copilotBrowser
+      ? { COPILOT_BROWSER_E2E: 'disposable', DEEPSEEK: null }
+      : { WORKSPACE_BROWSER_E2E: 'disposable' }) },
     volumes: [{ type: 'bind', source: support, target: '/test-support', read_only: true }],
   } } }), { mode: 0o600 });
   composeArgs.push('-f', override);
@@ -193,7 +202,7 @@ async function browser(database = 'AVAILABLE', sandboxState = 'AVAILABLE', javaS
         IDENTITY_TEST_ADMIN: values.BOOTSTRAP_ADMIN_USERNAME, IDENTITY_TEST_PASSWORD: values.BOOTSTRAP_ADMIN_PASSWORD,
         IDENTITY_TEST_NEW_PASSWORD: updatedIdentityPassword,
         BROWSER_FIXTURE_URL: fixtures?.url ?? '', BROWSER_FIXTURE_KEY: fixtures?.key ?? '',
-        ...(copilotBrowser ? { COPILOT_BROWSER_E2E: 'disposable' } : {}) },
+        ...(copilotBrowser ? { COPILOT_BROWSER_E2E: 'disposable', COPILOT_BROWSER_THINKING: copilotThinking } : {}) },
     });
     child.once('error', reject);
     child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`Browser failed (${code}); artifacts: ${output}`)));
@@ -216,7 +225,7 @@ function inspectJava() {
   assert(info.Mounts.some((mount) => mount.Type === 'bind' && mount.Destination === '/app/publication.json' && !mount.RW));
   assert(info.Mounts.every((mount) => (mount.Type === 'tmpfs' && mount.Destination === '/tmp')
     || (mount.Type === 'bind' && mount.Destination === '/app/publication.json' && !mount.RW)
-    || (copilotBrowser && mount.Type === 'bind' && mount.Destination === '/test-support' && !mount.RW)), 'Java receives only explicitly scoped read-only inputs and tmpfs');
+    || ((copilotBrowser || workspaceBrowser) && mount.Type === 'bind' && mount.Destination === '/test-support' && !mount.RW)), 'Java receives only explicitly scoped read-only inputs and tmpfs');
   assert.equal(info.HostConfig.PortBindings['8080/tcp'][0].HostIp, '127.0.0.1');
 }
 function inspectSandbox() {
@@ -241,7 +250,7 @@ function inspectSandbox() {
 let failure;
 try {
   run('docker', ['info'], { stdio: 'ignore' });
-  await configurePaidBrowser();
+  await configureBrowserModels();
   if (workspaceMode) run(process.execPath, ['scripts/publish-problem.mjs', 'problems/cart-total/1.0.1',
     join(directory, 'publication-evidence'), values.PROBLEM_PUBLICATION_FILE]);
   Object.assign(composeEnv, await prepareContainerInputs(values.PROBLEM_PUBLICATION_FILE));
@@ -290,7 +299,13 @@ try {
     await waitFor(webUrl, 200, webProcess);
     await browser('AVAILABLE', 'AVAILABLE', 'AVAILABLE', ['copilot.spec.ts']);
     compose(['exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB, '-v', 'ON_ERROR_STOP=1', '-c',
-      'SELECT ordinal, state, input_tokens, output_tokens, total_tokens, usage_incomplete FROM public.copilot_turn ORDER BY created_at;']);
+      "SELECT ordinal, state, configuration_payload::jsonb->'model'->>'thinkingMode' AS thinking_mode, input_tokens, output_tokens, total_tokens, usage_incomplete FROM public.copilot_turn ORDER BY created_at;"]);
+    const observed = run('docker', [...composeArgs, 'exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB, '-At', '-v', 'ON_ERROR_STOP=1', '-c',
+      `SELECT count(*), count(*) FILTER (WHERE t.configuration_payload::jsonb->'model'->>'thinkingMode'='${copilotThinking}'), count(*) FILTER (WHERE length(m.payload::jsonb->>'thinking')>0) FROM copilot_turn t LEFT JOIN copilot_message m ON m.id=t.assistant_message_id WHERE t.state='SUCCEEDED'`],
+    { env: composeEnv, encoding: 'utf8', stdio: 'pipe' }).stdout.trim().split('|').map(Number);
+    assert(observed[0] > 0 && observed[0] === observed[1], 'Every completed browser turn must retain the explicitly selected mode');
+    if (copilotThinking === 'ON') assert(observed[2] > 0, 'Thinking browser evidence must include genuine provider reasoning');
+    console.log(`Browser mode evidence: mode=${copilotThinking}, completed=${observed[0]}, withNativeReasoning=${observed[2]}`);
     assert.equal(run('docker', ['ps', '-aq', '--filter', `label=codecraft.execution.volume=${project}_sandbox-data`],
       { encoding: 'utf8', stdio: 'pipe' }).stdout.trim(), '', 'Browser validation must leave no execution containers');
   } else if (smoke) {

@@ -8,6 +8,8 @@ test.skip(process.env.COPILOT_BROWSER_E2E !== 'disposable', 'Use the explicit pa
 test.use({ trace: 'off', video: 'off', screenshot: 'off', actionTimeout: 15000 });
 const source = 'src/main/java/interview/CartTotal.java';
 const marker = '// Copilot integration edit';
+const thinking = process.env.COPILOT_BROWSER_THINKING ?? 'OFF';
+if (!['OFF', 'ON'].includes(thinking)) throw new Error('Invalid explicit Copilot browser thinking mode');
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid fixture response object');
   return value as Record<string, unknown>;
@@ -47,8 +49,10 @@ test('real DeepSeek approved and automatic edits, Docker test, draft isolation a
   try {
     const connection = object(await api('POST', '/api/test-fixtures/copilot-connection', {}, 201));
     connectionId = text(connection.id); connectionVersion = text(connection.version);
-    const model = object(await api('POST', `/api/model-connections/${connectionId}/models`, { name: 'DeepSeek flash non-thinking', modelId: 'deepseek-flash',
-      contextWindow: 100000, maxOutputTokens: 2048, thinkingMode: 'OFF' }, 201));
+    const model = object(await api('POST', `/api/model-connections/${connectionId}/models`, { name: `DeepSeek flash ${thinking}`, modelId: 'deepseek-flash',
+      contextWindow: 100000, maxOutputTokens: thinking === 'ON' ? 4096 : 2048, thinkingMode: thinking,
+      reasoningEffort: thinking === 'ON' ? 'low' : null }, 201));
+    expect(model.thinkingMode).toBe(thinking);
     const modelId = text(model.id);
     const problem = object(array(await api('GET', '/api/problems'))[0]);
     exerciseId = text(object(await api('POST', '/api/exercises', { problemVersionId: text(problem.problemVersionId) }, 202)).exerciseId);
@@ -133,7 +137,7 @@ test('real DeepSeek approved and automatic edits, Docker test, draft isolation a
       await recovered.screenshot({ path: join(output, 'approved-proposal.png') });
       await shown.screenshot({ path: join(output, 'structured-test-result.png') });
     }
-    console.log(`Live browser evidence: model=deepseek-flash thinking=OFF, task=${taskId}, proposal=${proposalId}, test=${text(bound.testTaskId)}, revision=1, structured result=FAILED`);
+    console.log(`Live browser evidence: model=deepseek-flash thinking=${thinking}, task=${taskId}, proposal=${proposalId}, test=${text(bound.testTaskId)}, revision=1, structured result=FAILED`);
 
     const mode = current.getByRole('region', { name: 'Copilot 审批模式', exact: true });
     await expect(mode).toContainText('已生效：逐次审批');
