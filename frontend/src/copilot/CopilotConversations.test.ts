@@ -2,9 +2,10 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import CopilotConversations from './CopilotConversations.vue';
+import CopilotContext from './CopilotContext.vue';
 import * as api from './api';
 
-vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), conversations: vi.fn(), newConversation: vi.fn(), latest: vi.fn(), messages: vi.fn(), start: vi.fn(), stop: vi.fn(), watchTask: vi.fn(), tests: vi.fn(), approvalMode: vi.fn(), steers: vi.fn(), context: vi.fn() }));
+vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), conversations: vi.fn(), newConversation: vi.fn(), latest: vi.fn(), messages: vi.fn(), start: vi.fn(), stop: vi.fn(), watchTask: vi.fn(), tests: vi.fn(), approvalMode: vi.fn(), steers: vi.fn(), context: vi.fn(), compact: vi.fn() }));
 const exercise = '10000000-0000-0000-0000-000000000001';
 const second = '10000000-0000-0000-0000-000000000002';
 const initial: api.Conversation = { id: exercise, exerciseId: exercise, initial: true, createdAt: '2026-01-01T00:00:00Z' };
@@ -69,14 +70,32 @@ it('switches subscriptions and rejects a late old-history response without stopp
   expect(api.watchTask).toHaveBeenCalledTimes(2);
 });
 
+it('retains the selected conversation and unresolved compaction when only control credentials rotate', async () => {
+  vi.mocked(api.compact).mockRejectedValue(new TypeError('offline'));
+  const wrapper = panel(); await flushPromises();
+  await wrapper.get('select').setValue(second); await flushPromises();
+  const context = wrapper.findComponent(CopilotContext);
+  await context.get('input[type="checkbox"]').setValue(true);
+  await button(wrapper, '手动压缩上下文').trigger('click'); await flushPromises();
+  expect(wrapper.text()).toContain('压缩受理结果未知');
+  await wrapper.setProps({ credential: 'rotated-control' }); await flushPromises();
+  expect(wrapper.get('select').element.value).toBe(second);
+  await button(wrapper, '核对原压缩请求').trigger('click'); await flushPromises();
+  const calls = vi.mocked(api.compact).mock.calls;
+  expect(calls).toHaveLength(2); expect(calls[0]?.slice(0, 4)).toEqual(calls[1]?.slice(0, 4));
+});
+
 it('reuses the original creation key after an unknown result and keeps ended exercises read-only', async () => {
   vi.mocked(api.newConversation).mockRejectedValueOnce(new TypeError('offline')).mockResolvedValue(created);
   const wrapper = panel(); await flushPromises();
   await button(wrapper, 'New · 新会话').trigger('click'); await flushPromises();
   expect(button(wrapper, 'New · 新会话').attributes('disabled')).toBeDefined();
+  await wrapper.setProps({ credential: 'rotated-control' });
+  expect(button(wrapper, 'New · 新会话').attributes('disabled')).toBeDefined();
   await button(wrapper, '使用原请求键核对新建结果').trigger('click'); await flushPromises();
   const calls = vi.mocked(api.newConversation).mock.calls;
-  expect(calls).toHaveLength(2); expect(calls[0]?.slice(0, 4)).toEqual(calls[1]?.slice(0, 4));
+  expect(calls).toHaveLength(2); expect(calls[0]?.[3]).toEqual(calls[1]?.[3]);
+  expect(calls[1]?.[2]).toBe('rotated-control');
   await wrapper.setProps({ disabled: true });
   expect(button(wrapper, 'New · 新会话').attributes('disabled')).toBeDefined();
   expect(wrapper.get('select').attributes('disabled')).toBeUndefined();

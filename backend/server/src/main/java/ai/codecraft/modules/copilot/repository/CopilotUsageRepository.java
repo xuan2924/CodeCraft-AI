@@ -37,8 +37,8 @@ public interface CopilotUsageRepository {
 
     @Select("""
         SELECT id::text AS turn_id,model_id,context_window,context_version,usage_facts->>'inputTokens' AS input_tokens,created_at AS dispatched_at
-        FROM copilot_turn WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{exercise}::uuid)
+        FROM copilot_turn WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid)
         ORDER BY created_at DESC,context_source_high_water DESC NULLS LAST,ordinal DESC,id DESC LIMIT 1
         """)
-    CopilotUsageContextDTO latest(String exercise);
+    CopilotUsageContextDTO latest(String conversation);
 }

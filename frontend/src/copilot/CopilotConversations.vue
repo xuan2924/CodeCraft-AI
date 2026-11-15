@@ -10,7 +10,7 @@ import CopilotPanel from './CopilotPanel.vue';
 const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string] }>();
 const client = useQueryClient();
-const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.credential}`);
+const scope = computed(() => `${props.owner}/${props.exerciseId}`);
 const key = computed(() => ['copilot-conversations', props.owner, props.exerciseId]);
 const selected = ref(props.exerciseId);
 const list = useQuery({ queryKey: key, queryFn: ({ signal }) => api.conversations(props.owner, props.exerciseId, signal), retry: false, gcTime: 0 });
@@ -23,8 +23,8 @@ const create = useCommand<api.Conversation>(() => scope.value, result => {
 }, commandPolicy, () => emit('unauthorized'));
 function newConversation() {
   if (props.disabled || !props.credential || !list.data.value || create.pending.value || create.uncertain.value) return;
-  const { owner, exerciseId, credential } = props;
-  void create.submit((id, signal) => api.newConversation(owner, exerciseId, credential, id, signal));
+  const { owner, exerciseId } = props;
+  void create.submit((id, signal) => api.newConversation(owner, exerciseId, props.credential, id, signal));
 }
 const current = computed(() => list.data.value?.find(item => item.id === selected.value));
 </script>

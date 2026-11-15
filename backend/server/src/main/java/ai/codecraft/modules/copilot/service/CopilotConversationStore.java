@@ -55,13 +55,19 @@ public class CopilotConversationStore {
     }
 
     @Transactional
+    public CopilotConversationResponse replay(String session, String exercise, String key) {
+        identity.authorizePrivateDelivery(session);
+        exercises.find(session, exercise);
+        validateKey(key);
+        return conversations.receipt(exercise, key);
+    }
+
+    @Transactional
     public CopilotConversationResponse create(String session, String exercise, String credential, String key, StorageMeasurement measurement) {
         identity.authorizeMutation(session);
         var owner = exercises.find(session, exercise);
         workspace.checkControl(exercise, IdentitySecrets.digest(credential));
-        if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}") || "initial".equals(key)) {
-            throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
-        }
+        validateKey(key);
         var previous = conversations.receipt(exercise, key);
         if (previous != null) return previous;
         if (conversations.count(exercise) >= MAX_CONVERSATIONS) throw new BusinessException(CopilotErrorCode.COPILOT_CONVERSATION_LIMIT);
@@ -71,5 +77,11 @@ public class CopilotConversationStore {
         conversations.insert(id, exercise, key, clock.instant());
         operations.settle(exercise, id, true);
         return conversations.find(exercise, id);
+    }
+
+    private void validateKey(String key) {
+        if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}") || "initial".equals(key)) {
+            throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+        }
     }
 }

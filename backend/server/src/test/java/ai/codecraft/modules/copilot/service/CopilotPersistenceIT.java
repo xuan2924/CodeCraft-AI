@@ -1420,6 +1420,8 @@ class CopilotPersistenceIT {
         jdbc.update("INSERT INTO copilot_conversation(id,exercise_id,request_key,created_at) SELECT gen_random_uuid(),?::uuid,'seed-' || n,now() FROM generate_series(1,98) n", exercise);
         assertThat(conversations.list(SESSION, exercise)).hasSize(100);
         assertThat(conversations.create(SESSION, exercise, CONTROL, "retained-conversation", measurement)).isEqualTo(first);
+        assertThat(new CopilotConversationService(conversations, capacity).create(SESSION, exercise, "expired-control", "retained-conversation"))
+            .isEqualTo(first);
         assertThatThrownBy(() -> conversations.create(SESSION, exercise, CONTROL, "one-too-many", measurement))
             .isInstanceOfSatisfying(BusinessException.class, failure -> assertThat(failure.errorCode()).isEqualTo(CopilotErrorCode.COPILOT_CONVERSATION_LIMIT));
         jdbc.update("DELETE FROM copilot_conversation WHERE request_key LIKE 'seed-%'");

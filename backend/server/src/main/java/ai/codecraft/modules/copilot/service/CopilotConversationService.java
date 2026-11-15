@@ -14,6 +14,8 @@ public class CopilotConversationService {
     }
     public List<CopilotConversationResponse> list(String session, String exercise) { return store.list(session, exercise); }
     public CopilotConversationResponse create(String session, String exercise, String credential, String key) {
+        var previous = store.replay(session, exercise, key);
+        if (previous != null) return previous;
         return capacity.admit(session, exercise, measurement -> store.create(session, exercise, credential, key, measurement));
     }
 }

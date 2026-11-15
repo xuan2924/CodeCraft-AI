@@ -25,12 +25,12 @@ public interface CopilotCompactionRepository {
     String JOB = "id::text,sequence,exercise_id::text,user_id::text,session_hash,actor_auth_version,anchor_task_id::text,bound_task_id::text,request_key,fingerprint,trigger_kind,state,stop_requested,source_version,source_summary_id::text,through_sequence,source_ids_payload,summary_payload,failure_code,attempt_count,worker_id::text,worker_task_id::text,worker_not_after,created_at,completed_at,conversation_id::text";
     String CALL = "id::text,compaction_id::text,exercise_id::text,ordinal,state,connection_id::text,model_configuration_id::text,connection_configuration_version,model_configuration_version,protocol,model_id,context_window,output_limit,source_version,source_summary_id::text,through_sequence,source_ids_payload,estimated_input_tokens,configuration_payload,response_payload,input_tokens,output_tokens,total_tokens,usage_incomplete,usage_payload,error_code,created_at,not_after,completed_at";
 
-    @Select("SELECT exercise_id::text,version,summary_id::text,through_sequence,updated_at FROM copilot_context WHERE conversation_id=#{exercise}::uuid")
-    CopilotContextEntity head(String exercise);
-    @Insert("INSERT INTO copilot_context(exercise_id,conversation_id,updated_at) VALUES(coalesce((SELECT exercise_id FROM copilot_conversation WHERE id=#{exercise}::uuid),#{exercise}::uuid),#{exercise}::uuid,#{now}) ON CONFLICT(conversation_id) DO NOTHING")
-    void ensureHead(String exercise, Instant now);
-    @Update("UPDATE copilot_context SET version=version+1,summary_id=#{summary}::uuid,through_sequence=#{through},updated_at=#{now} WHERE conversation_id=#{exercise}::uuid AND version=#{expected} AND through_sequence<=#{through}")
-    int publish(String exercise, long expected, String summary, long through, Instant now);
+    @Select("SELECT exercise_id::text,version,summary_id::text,through_sequence,updated_at FROM copilot_context WHERE conversation_id=#{conversation}::uuid")
+    CopilotContextEntity head(String conversation);
+    @Insert("INSERT INTO copilot_context(exercise_id,conversation_id,updated_at) VALUES(coalesce((SELECT exercise_id FROM copilot_conversation WHERE id=#{conversation}::uuid),#{conversation}::uuid),#{conversation}::uuid,#{now}) ON CONFLICT(conversation_id) DO NOTHING")
+    void ensureHead(String conversation, Instant now);
+    @Update("UPDATE copilot_context SET version=version+1,summary_id=#{summary}::uuid,through_sequence=#{through},updated_at=#{now} WHERE conversation_id=#{conversation}::uuid AND version=#{expected} AND through_sequence<=#{through}")
+    int publish(String conversation, long expected, String summary, long through, Instant now);
 
     @Select("SELECT " + JOB + " FROM copilot_compaction WHERE id=#{id}::uuid")
     CopilotCompactionEntity find(String id);
@@ -42,10 +42,10 @@ public interface CopilotCompactionRepository {
     CopilotCompactionEntity pendingConversation(String conversation);
     @Select("SELECT EXISTS(SELECT 1 FROM copilot_compaction WHERE exercise_id=#{exercise}::uuid AND state IN ('WAITING','RUNNING'))")
     boolean active(String exercise);
-    @Select("SELECT id::text,sequence::text,exercise_id::text,trigger_kind AS trigger,state,failure_code AS reason,attempt_count AS attempts,stop_requested,source_version::text,through_sequence::text,created_at,completed_at FROM copilot_compaction c WHERE conversation_id=#{exercise}::uuid ORDER BY c.sequence DESC LIMIT 20")
-    List<CopilotCompactionResponse> recent(String exercise);
-    @Select("SELECT summary_payload FROM copilot_compaction WHERE id=#{id}::uuid AND conversation_id=#{exercise}::uuid AND state='APPLIED'")
-    String summary(String id, String exercise);
+    @Select("SELECT id::text,sequence::text,exercise_id::text,trigger_kind AS trigger,state,failure_code AS reason,attempt_count AS attempts,stop_requested,source_version::text,through_sequence::text,created_at,completed_at FROM copilot_compaction c WHERE conversation_id=#{conversation}::uuid ORDER BY c.sequence DESC LIMIT 20")
+    List<CopilotCompactionResponse> recent(String conversation);
+    @Select("SELECT summary_payload FROM copilot_compaction WHERE id=#{id}::uuid AND conversation_id=#{conversation}::uuid AND state='APPLIED'")
+    String summary(String id, String conversation);
     @Insert("""
         INSERT INTO copilot_compaction(id,exercise_id,user_id,session_hash,actor_auth_version,anchor_task_id,bound_task_id,request_key,fingerprint,trigger_kind,state,created_at,conversation_id)
         VALUES(#{id}::uuid,#{exerciseId}::uuid,#{userId}::uuid,#{sessionHash},#{actorAuthVersion},#{anchorTaskId}::uuid,#{boundTaskId}::uuid,#{requestKey},#{fingerprint},#{triggerKind},'WAITING',#{createdAt},#{conversationId}::uuid)
@@ -91,29 +91,29 @@ public interface CopilotCompactionRepository {
     void partial(String id, String payload);
     @Update("UPDATE copilot_compaction_call SET state='INTERRUPTED',error_code=#{reason},completed_at=#{now} WHERE id=#{id}::uuid AND state='DISPATCHED'")
     int interruptCall(String id, String reason, Instant now);
-    @Select("SELECT EXISTS(SELECT 1 FROM copilot_compaction_call k JOIN copilot_compaction c ON c.id=k.compaction_id WHERE c.conversation_id=#{exercise}::uuid AND k.source_version=#{version} AND k.through_sequence>=#{through} AND c.state IN ('FAILED','INTERRUPTED'))")
-    boolean failedSource(String exercise, long version, long through);
+    @Select("SELECT EXISTS(SELECT 1 FROM copilot_compaction_call k JOIN copilot_compaction c ON c.id=k.compaction_id WHERE c.conversation_id=#{conversation}::uuid AND k.source_version=#{version} AND k.through_sequence>=#{through} AND c.state IN ('FAILED','INTERRUPTED'))")
+    boolean failedSource(String conversation, long version, long through);
 
-    @Select("WITH candidates AS (SELECT " + CopilotTaskRepository.MESSAGE + " FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{exercise}::uuid) AND sequence>#{after} AND sequence<=#{through} ORDER BY sequence LIMIT #{limit}), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence) AS bytes FROM candidates) SELECT " + CopilotTaskRepository.MESSAGE + " FROM budgeted WHERE bytes<=#{maximumBytes} ORDER BY sequence")
-    List<CopilotMessageEntity> source(String exercise, long after, long through, int limit, long maximumBytes);
+    @Select("WITH candidates AS (SELECT " + CopilotTaskRepository.MESSAGE + " FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid) AND sequence>#{after} AND sequence<=#{through} ORDER BY sequence LIMIT #{limit}), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence) AS bytes FROM candidates) SELECT " + CopilotTaskRepository.MESSAGE + " FROM budgeted WHERE bytes<=#{maximumBytes} ORDER BY sequence")
+    List<CopilotMessageEntity> source(String conversation, long after, long through, int limit, long maximumBytes);
     @Select("SELECT " + CopilotTaskRepository.MESSAGE + " FROM copilot_message WHERE task_id=#{task}::uuid AND kind='USER' AND sequence IN ((SELECT min(sequence) FROM copilot_message WHERE task_id=#{task}::uuid AND kind='USER'),(SELECT max(sequence) FROM copilot_message WHERE task_id=#{task}::uuid AND kind='USER')) ORDER BY sequence")
     List<CopilotMessageEntity> goals(String task);
-    @Select("SELECT task_id::text FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{exercise}::uuid) ORDER BY sequence DESC LIMIT 1")
-    String anchorTask(String exercise);
+    @Select("SELECT task_id::text FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid) ORDER BY sequence DESC LIMIT 1")
+    String anchorTask(String conversation);
     @Select("""
         WITH foreign_origins AS (
           SELECT a.sequence FROM copilot_turn t JOIN copilot_message a ON a.id=t.assistant_message_id
-          WHERE t.task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{exercise}::uuid) AND a.sequence>#{after}
+          WHERE t.task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid) AND a.sequence>#{after}
             AND (t.connection_id<>#{connection}::uuid OR t.model_configuration_id<>#{model}::uuid
               OR t.connection_configuration_version<>#{connectionVersion} OR t.model_configuration_version<>#{modelVersion})
         ), ordered_messages AS (
           SELECT sequence,kind,max(sequence) FILTER (WHERE kind<>'TOOL') OVER (ORDER BY sequence) AS origin_sequence
-          FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{exercise}::uuid) AND sequence>#{after}
+          FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid) AND sequence>#{after}
         )
         SELECT coalesce(max(m.sequence),0) FROM ordered_messages m JOIN foreign_origins f ON f.sequence=m.origin_sequence
         WHERE m.kind IN ('ASSISTANT','TOOL')
         """)
-    long foreignThrough(String exercise, long after, String connection, String model, long connectionVersion, long modelVersion);
+    long foreignThrough(String conversation, long after, String connection, String model, long connectionVersion, long modelVersion);
     @Update("UPDATE copilot_turn SET estimated_input_tokens=#{estimate},context_input_bytes=#{bytes},context_version=#{version},context_summary_id=#{summary}::uuid,context_through_sequence=#{through},context_source_high_water=#{highWater},context_text_history_through=#{convertedThrough} WHERE id=#{turn}::uuid")
     void dispatchContext(String turn, long estimate, long bytes, long version, String summary, long through, long highWater, long convertedThrough);
 }
