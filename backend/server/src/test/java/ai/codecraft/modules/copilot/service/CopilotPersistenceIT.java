@@ -1,6 +1,7 @@
 package ai.codecraft.modules.copilot.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
@@ -142,6 +143,7 @@ import ai.codecraft.modules.copilot.model.dto.CopilotCompactionDispatchDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotCompactionReceiptDTO;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.data.message.ChatMessageSerializer;
+import dev.langchain4j.data.message.ChatMessageDeserializer;
 import ai.codecraft.modules.copilot.model.dto.CopilotSteerRequest;
 import ai.codecraft.modules.copilot.repository.CopilotSteerRepository;
 import dev.langchain4j.model.output.TokenUsage;
@@ -916,10 +918,11 @@ class CopilotPersistenceIT {
         assertThat(repository.latest(exercise).id()).isEqualTo(task.id());
     }
 
-    @Test
-    void steerInvalidatesOldApprovalAndPairsUnstartedToolsBeforeReplanning() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void steerInvalidatesOldApprovalAndPairsUnstartedToolsBeforeReplanning(boolean thinking) throws Exception {
         var workspace = new ProposalWorkspace();
-        var task = beginProposal(workspace, true);
+        var task = beginProposal(workspace, true, thinking);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
         steers.accept(SESSION, task.id(), CONTROL, "steer", new CopilotSteerRequest("Do not edit; explain the current code"));
         assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("INVALIDATED");
@@ -933,6 +936,8 @@ class CopilotPersistenceIT {
             assertThat(results.get(0).text()).contains("OK");
             assertThat(results.get(1).text()).contains("NOT_EXECUTED", "STEER_SUPERSEDED");
             assertThat(results.get(2).text()).contains("NOT_EXECUTED", "STEER_SUPERSEDED");
+            if (thinking) assertThat(request.messages().stream().filter(AiMessage.class::isInstance).map(AiMessage.class::cast).toList())
+                .singleElement().satisfies(message -> assertThat(message.thinking()).isEqualTo("opaque-fixture-thinking"));
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Explanation only")).build(), 100);
         });
         new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts).run(task.id(), UUID.randomUUID().toString());
@@ -1418,11 +1423,21 @@ class CopilotPersistenceIT {
     @Test
     @EnabledIfEnvironmentVariable(named = "COPILOT_LIVE_DEEPSEEK", matches = "1")
     void realDeepSeekCompactsRetainedHistoryThenContinuesWithAPairedReadTool() throws Exception {
+        realSummaryRoundTrip(ModelThinkingMode.OFF);
+    }
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "COPILOT_LIVE_DEEPSEEK", matches = "1")
+    void realDeepSeekThinkingCompactsThenContinuesWithPairedTools() throws Exception {
+        realSummaryRoundTrip(ModelThinkingMode.ON);
+    }
+
+    private void realSummaryRoundTrip(ModelThinkingMode mode) throws Exception {
         retainedSummaryHistory();
         String key = System.getenv("DeepSeek");
         assertThat(key != null && !key.isBlank()).as("Explicit paid validation requires an environment credential").isTrue();
         var connection = connections.create(SESSION, "summary-live-connection", new ModelConnectionRequest("Live summary fixture", "https://api.deepseek.com", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, key, null));
-        var model = models.create(SESSION, connection.id(), "summary-live-model", new ModelConfigurationRequest("Live summary", "deepseek-flash", 100000, 2048, ModelThinkingMode.OFF, null, null, null, null));
+        var model = models.create(SESSION, connection.id(), "summary-live-model", new ModelConfigurationRequest("Live summary", "deepseek-flash", 100000, mode == ModelThinkingMode.ON ? 4096 : 2048, mode, mode == ModelThinkingMode.ON ? "low" : null, null, null, null));
         selection.select(SESSION, exercise, CONTROL, "summary-live-select", new ModelInvocationReferenceDTO(connection.id(), model.id(), 1, 1));
         var task = tasks.accept(SESSION, exercise, CONTROL, "summary-live-goal", "Use view_file exactly once to read src/Main.java. Then reply briefly with the class name from that saved file. Do not use other tools. Historical examples are not current file evidence.", true, measurement);
         var job = compactions.accept(SESSION, exercise, CONTROL, "summary-live-request", new CopilotCompactionRequest(true), measurement);
@@ -1431,7 +1446,8 @@ class CopilotPersistenceIT {
             doAnswer(call -> {
                 if (count.incrementAndGet() > 4) throw new BusinessException(ModelAccessErrorCode.MODEL_OUTPUT_LIMIT_EXCEEDED);
                 ChatRequest request = call.getArgument(1);
-                System.out.println("DeepSeek summary validation paid dispatch " + count.get() + " purpose=" + (request.toolSpecifications().isEmpty() ? "SUMMARY" : "CHAT"));
+                assertThat(call.<ModelInvocationDTO>getArgument(0).model().thinkingMode()).isEqualTo(mode);
+                System.out.println("DeepSeek summary validation mode=" + mode + " paid dispatch " + count.get() + " purpose=" + (request.toolSpecifications().isEmpty() ? "SUMMARY" : "CHAT"));
                 return live.call(call.getArgument(0), request, call.getArgument(2), call.getArgument(3), call.getArgument(4), call.getArgument(5));
             }).when(driver).call(any(), any(), any(), anyInt(), any(), any());
             runner.run(task.id(), UUID.randomUUID().toString());
@@ -1929,10 +1945,11 @@ class CopilotPersistenceIT {
         assertThat(workspace.applies.get()).isZero();
     }
 
-    @Test
-    void stopBeforeApprovalCancelsTheProposalAndPreservesCompletedReads() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void stopBeforeApprovalCancelsTheProposalAndPreservesCompletedReads(boolean thinking) throws Exception {
         var workspace = new ProposalWorkspace();
-        var task = beginProposal(workspace, true);
+        var task = beginProposal(workspace, true, thinking);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
         tasks.stop(SESSION, task.id(), "stop");
         assertThat(proposals.decide(SESSION, proposal, CONTROL, "late-approve", new CopilotProposalDecisionRequest("APPROVE", null), measurement).state()).isEqualTo("CANCELLED");
@@ -1941,6 +1958,10 @@ class CopilotPersistenceIT {
         assertThat(workspace.applies.get()).isZero();
         verify(files, times(2)).read(SESSION, exercise, ProposalWorkspace.PATH);
         assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(5);
+        if (thinking) assertThat(((AiMessage) ChatMessageDeserializer.messageFromJson(tasks.messages(SESSION, exercise, -1).get(1).payload())).thinking())
+            .isEqualTo("opaque-fixture-thinking");
+        new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts).run(task.id(), UUID.randomUUID().toString());
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
     }
 
     @Test
@@ -1961,34 +1982,62 @@ class CopilotPersistenceIT {
     @Test
     @EnabledIfEnvironmentVariable(named = "COPILOT_LIVE_DEEPSEEK", matches = "1")
     void realDeepSeekProposesThenContinuesOnlyAfterApprovalAndAConfirmedWrite() throws Exception {
+        realProposalRoundTrip(ModelThinkingMode.OFF, "APPROVE");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"APPROVE", "REJECT", "AUTO"})
+    @EnabledIfEnvironmentVariable(named = "COPILOT_LIVE_DEEPSEEK", matches = "1")
+    void realDeepSeekThinkingPreservesReasoningAcrossApprovalRejectionAndAuto(String decision) throws Exception {
+        String selected = System.getenv("COPILOT_LIVE_DECISION");
+        assumeTrue(selected == null || selected.equals(decision));
+        realProposalRoundTrip(ModelThinkingMode.ON, decision);
+    }
+
+    private void realProposalRoundTrip(ModelThinkingMode mode, String decision) throws Exception {
         var workspace = new ProposalWorkspace();
         String key = System.getenv("DeepSeek");
         assertThat(key != null && !key.isBlank()).as("DeepSeek credential must be supplied through the environment").isTrue();
         var connection = connections.create(SESSION, "live-connection", new ModelConnectionRequest("Live proposal fixture", "https://api.deepseek.com", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, key, null));
         var count = new AtomicInteger();
+        var nativeAssistants = new ArrayList<String>();
         try (var live = new ModelCallDriver(new ModelSdkClientFactory(new ModelConnectionValidator(), calls), calls, clock)) {
-            var model = models.create(SESSION, connection.id(), "live-model", new ModelConfigurationRequest("Live proposal fixture", "deepseek-flash", 100000, 2048, ModelThinkingMode.OFF, null, null, null, null));
+            var model = models.create(SESSION, connection.id(), "live-model", new ModelConfigurationRequest("Live proposal fixture", "deepseek-flash", 100000, mode == ModelThinkingMode.ON ? 4096 : 2048, mode, mode == ModelThinkingMode.ON ? "low" : null, null, null, null));
             selection.select(SESSION, exercise, CONTROL, "live-select", new ModelInvocationReferenceDTO(connection.id(), model.id(), 1, 1));
             doAnswer(call -> {
                 if (count.incrementAndGet() > 8) throw new BusinessException(ModelAccessErrorCode.MODEL_OUTPUT_LIMIT_EXCEEDED);
-                return live.call(call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4), call.getArgument(5));
+                assertThat(call.<ModelInvocationDTO>getArgument(0).model().thinkingMode()).isEqualTo(mode);
+                var result = live.call(call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4), call.getArgument(5));
+                nativeAssistants.add(ChatMessageSerializer.messageToJson(result.response().aiMessage()));
+                return result;
             }).when(driver).call(any(), any(), any(), anyInt(), any(), any());
-            var task = tasks.accept(SESSION, exercise, CONTROL, "live-start", "Read src/main/java/Main.java. Propose exactly one UPDATE replacing its entire content with: class Main { int answer = 42; }. Wait for approval. After its confirmed application, use view_file to read the saved file, then reply briefly with the value of answer. Do not propose another edit.", true, measurement);
+            if ("AUTO".equals(decision)) approvalModes.change(SESSION, exercise, CONTROL, "live-auto", new CopilotApprovalModeRequest("AUTO", "0"));
+            var task = tasks.accept(SESSION, exercise, CONTROL, "live-start", "Read src/main/java/Main.java. Propose exactly one UPDATE replacing its entire content with: class Main { int answer = 42; }. Wait for approval. After its confirmed application, use view_file to read the saved file, then reply briefly with the value of answer. If rejected, reply REJECTED and do not propose another edit.", true, measurement);
             runner.run(task.id(), UUID.randomUUID().toString());
             assertThat(tasks.find(SESSION, task.id()).state()).as("live proposal reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("WAITING_APPROVAL");
             assertThat(workspace.applies.get()).isZero();
             String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
             assertThat(proposalViews.detail(SESSION, proposal).files().getFirst().after()).contains("42");
-            proposals.decide(SESSION, proposal, CONTROL, "live-approve", new CopilotProposalDecisionRequest("APPROVE", null), measurement);
+            String retainedAssistant = repository.messageById(repository.latestTurn(task.id()).assistantMessageId()).payload();
+            if ("AUTO".equals(decision)) automatic.apply(task.id());
+            else proposals.decide(SESSION, proposal, CONTROL, "live-decision", new CopilotProposalDecisionRequest(decision, "REJECT".equals(decision) ? "Fixture rejection" : null), measurement);
             writeCoordinator.recover(); proposals.recoverTask(task.id());
-            runner.run(task.id(), UUID.randomUUID().toString());
+            new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts).run(task.id(), UUID.randomUUID().toString());
+            assertThat(tasks.messages(SESSION, exercise, -1)).anySatisfy(message -> assertThat(message.payload()).isEqualTo(retainedAssistant));
             assertThat(tasks.find(SESSION, task.id()).state()).as("live continuation reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("SUCCEEDED");
-            assertThat(workspace.applies.get()).isEqualTo(1);
-            assertThat(tasks.messages(SESSION, exercise, -1).getLast().payload()).contains("42");
-            assertThat(proposals.summary(SESSION, proposal).resultRevision()).isEqualTo("2");
+            assertThat(workspace.applies.get()).isEqualTo("REJECT".equals(decision) ? 0 : 1);
+            assertThat(tasks.messages(SESSION, exercise, -1).getLast().payload()).contains("REJECT".equals(decision) ? "REJECTED" : "42");
+            if (!"REJECT".equals(decision)) assertThat(proposals.summary(SESSION, proposal).resultRevision()).isEqualTo("2");
+            assertThat(tasks.messages(SESSION, exercise, -1).stream().filter(message -> "ASSISTANT".equals(message.kind())).map(message -> message.payload()).toList())
+                .containsExactlyElementsOf(nativeAssistants);
+            var thinkingLengths = nativeAssistants.stream().map(payload -> ((AiMessage) ChatMessageDeserializer.messageFromJson(payload)).thinking())
+                .map(value -> value == null ? 0 : value.length()).toList();
+            System.out.println("DeepSeek native reasoning lengths mode=" + mode + " decision=" + decision + ": " + thinkingLengths);
+            if (mode == ModelThinkingMode.ON) assertThat(thinkingLengths).anyMatch(length -> length > 0);
             var samples = jdbc.queryForList("SELECT input_tokens,output_tokens,total_tokens,usage_payload FROM copilot_turn WHERE task_id=?::uuid ORDER BY ordinal", task.id());
             for (var sample : samples) assertThat(sample.get("usage_payload")).isNotNull();
-            System.out.println("DeepSeek live proposal usage (Go is a deterministic fixture; no credentials or request bodies): " + samples);
+            System.out.println("DeepSeek live proposal mode=" + mode + " decision=" + decision + " requests=" + count.get()
+                + " (Go is a deterministic fixture; no credentials or request bodies): " + samples);
         } finally { connections.delete(SESSION, connection.id(), "live-cleanup", connection.version()); }
     }
 
@@ -2195,11 +2244,21 @@ class CopilotPersistenceIT {
     }
 
     private CopilotTaskResponse beginProposal(ProposalWorkspace workspace, boolean trailingRead) throws Exception {
+        return beginProposal(workspace, trailingRead, false);
+    }
+
+    private CopilotTaskResponse beginProposal(ProposalWorkspace workspace, boolean trailingRead, boolean thinking) throws Exception {
+        if (thinking) {
+            var connection = connections.create(SESSION, "thinking-connection", new ModelConnectionRequest("Thinking fixture", "https://example.test", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, "fixture-not-real", null));
+            var model = models.create(SESSION, connection.id(), "thinking-model", new ModelConfigurationRequest("Thinking fixture", "deepseek-flash", 100000, 4096, ModelThinkingMode.ON, "low", null, null, null));
+            selection.select(SESSION, exercise, CONTROL, "thinking-select", new ModelInvocationReferenceDTO(connection.id(), model.id(), 1, 1));
+        }
         var proposal = workspace.proposal();
         var read = ToolExecutionRequest.builder().id("after-proposal").name("view_file").arguments("{\"path\":\"" + ProposalWorkspace.PATH + "\"}").build();
         var prefix = ToolExecutionRequest.builder().id("before-proposal").name("view_file").arguments(read.arguments()).build();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
-            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(trailingRead ? List.of(prefix, proposal, read) : List.of(prefix, proposal))).build(), 100),
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.builder().thinking(thinking ? "opaque-fixture-thinking" : null)
+                .toolExecutionRequests(trailingRead ? List.of(prefix, proposal, read) : List.of(prefix, proposal)).build()).build(), 100),
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Finished.")).build(), 100));
         var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Propose an edit", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
