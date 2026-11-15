@@ -63,7 +63,7 @@
 
 #### 剩余事项与运行边界
 
-- #17/#18/#19 已完成独立双轴审查；#20 的 `d3be51c` 审查通过但交付缺口仍在；#21 与本节新增入口在最后固定差异审查中收口。
+- #17/#18/#19 已完成独立双轴审查；#20 的 `d3be51c` 审查通过但交付缺口仍在。最后对固定范围 `d3be51c...1f1d05f` 的独立 Standards / Spec 审查均未发现问题，覆盖 #21 与本节新增入口、#17 账号回归修复。Standards：OK；Spec：OK with notes，明确不证明阶段整体完成。审查运行 `725a7db6-9246-4c94-8b6a-907d6634fd45`，子报告 `1b443d6a-b7f2-4f04-b94d-3892cec3cf69`、`a42020fa-7e1c-40f9-881a-08ea935234b3`；审查没有修改代码、重跑测试或新增收费调用。
 - 需要提供 OpenAI、GLM、Kimi 的明确目标端点/模型与测试凭证，才能完成其支持声明；本轮仅检查常见变量存在性，均无凭证，未展示值。真正 Anthropic 服务亦未实测，不借 DeepSeek Anthropic 格式成功替代。
 - 若必须支持当前被拒绝的 OpenAI phase-aware Responses 组合，需要原生 SDK 补齐并验证，或另行确认另一正式 SDK 路线；不私自写 wire 适配或切换。保留这项组合缺口，不推定必须支持全部笛卡尔积。
 - 普通验证：`node scripts/verify.mjs --quick`、`node scripts/test-tracer.mjs --workspace --smoke`、`node scripts/test-tracer.mjs --workspace --smoke --skills-browser`。真实调用仅在明确 paid 选择及环境 Key 下运行，上述请求次数不是固定金额上限。没有新增远程 CI、重型 QA、生产 SLA 或备份欠账。
