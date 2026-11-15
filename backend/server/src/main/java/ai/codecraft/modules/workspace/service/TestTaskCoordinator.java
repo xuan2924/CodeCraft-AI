@@ -56,6 +56,7 @@ public class TestTaskCoordinator {
                 var identity = entry.getTask();
                 TestTaskEntity task = known.stream().filter(value -> value.executionInstanceId().equals(identity.getExecutionInstanceId())).findFirst().orElse(null);
                 if (task == null) {
+                    if (store.ownsCommand(identity.getExerciseId(), identity.getTaskId(), identity.getWorkspaceInstanceId(), identity.getExecutionInstanceId())) continue;
                     LOG.warn("Execution {} has no business receipt; retaining isolation", identity.getExecutionInstanceId());
                     continue;
                 }

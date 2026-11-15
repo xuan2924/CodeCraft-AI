@@ -24,6 +24,7 @@ const (
 	WorkspaceStorage_DeleteWorkspace_FullMethodName        = "/codecraft.workspace.v1.WorkspaceStorage/DeleteWorkspace"
 	WorkspaceStorage_CollectWorkspace_FullMethodName       = "/codecraft.workspace.v1.WorkspaceStorage/CollectWorkspace"
 	WorkspaceStorage_PruneTestEvidence_FullMethodName      = "/codecraft.workspace.v1.WorkspaceStorage/PruneTestEvidence"
+	WorkspaceStorage_PruneCommandEvidence_FullMethodName   = "/codecraft.workspace.v1.WorkspaceStorage/PruneCommandEvidence"
 	WorkspaceStorage_MeasureExerciseStorage_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/MeasureExerciseStorage"
 	WorkspaceStorage_ReadWorkspaceFile_FullMethodName      = "/codecraft.workspace.v1.WorkspaceStorage/ReadWorkspaceFile"
 	WorkspaceStorage_CancelPreparation_FullMethodName      = "/codecraft.workspace.v1.WorkspaceStorage/CancelPreparation"
@@ -37,6 +38,10 @@ const (
 	WorkspaceStorage_PrepareTestCopy_FullMethodName        = "/codecraft.workspace.v1.WorkspaceStorage/PrepareTestCopy"
 	WorkspaceStorage_QueryTestCopy_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/QueryTestCopy"
 	WorkspaceStorage_StartTest_FullMethodName              = "/codecraft.workspace.v1.WorkspaceStorage/StartTest"
+	WorkspaceStorage_StartCommand_FullMethodName           = "/codecraft.workspace.v1.WorkspaceStorage/StartCommand"
+	WorkspaceStorage_QueryCommand_FullMethodName           = "/codecraft.workspace.v1.WorkspaceStorage/QueryCommand"
+	WorkspaceStorage_SynchronizeCommand_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/SynchronizeCommand"
+	WorkspaceStorage_ReadCommandChanges_FullMethodName     = "/codecraft.workspace.v1.WorkspaceStorage/ReadCommandChanges"
 	WorkspaceStorage_QueryTask_FullMethodName              = "/codecraft.workspace.v1.WorkspaceStorage/QueryTask"
 	WorkspaceStorage_StopTask_FullMethodName               = "/codecraft.workspace.v1.WorkspaceStorage/StopTask"
 	WorkspaceStorage_StopSystemTask_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/StopSystemTask"
@@ -59,6 +64,7 @@ type WorkspaceStorageClient interface {
 	// Java supplies a consistent reference snapshot; a stale current revision rejects collection.
 	CollectWorkspace(ctx context.Context, in *CollectWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceCollectionReceipt, error)
 	PruneTestEvidence(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestEvidencePruningReceipt, error)
+	PruneCommandEvidence(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestEvidencePruningReceipt, error)
 	// Scope is monotonic at the durable meter; delayed subset requests never forget old owners.
 	MeasureExerciseStorage(ctx context.Context, in *MeasureExerciseStorageRequest, opts ...grpc.CallOption) (*StorageMeasurement, error)
 	ReadWorkspaceFile(ctx context.Context, in *ReadWorkspaceFileRequest, opts ...grpc.CallOption) (*ReadWorkspaceFileResponse, error)
@@ -74,6 +80,11 @@ type WorkspaceStorageClient interface {
 	PrepareTestCopy(ctx context.Context, in *PrepareTestCopyRequest, opts ...grpc.CallOption) (*TestCopyReceipt, error)
 	QueryTestCopy(ctx context.Context, in *QueryTestCopyRequest, opts ...grpc.CallOption) (*TestCopyReceipt, error)
 	StartTest(ctx context.Context, in *StartTestRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error)
+	// Development commands never constitute authority-test evidence.
+	StartCommand(ctx context.Context, in *StartCommandRequest, opts ...grpc.CallOption) (*CommandSnapshot, error)
+	QueryCommand(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*CommandSnapshot, error)
+	SynchronizeCommand(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*CommandSnapshot, error)
+	ReadCommandChanges(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*CommandChanges, error)
 	QueryTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error)
 	StopTask(ctx context.Context, in *StopTaskRequest, opts ...grpc.CallOption) (*StopTaskResponse, error)
 	// Trusted lifecycle cancellation; never exposed as browser-selected authority.
@@ -136,6 +147,16 @@ func (c *workspaceStorageClient) PruneTestEvidence(ctx context.Context, in *Quer
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TestEvidencePruningReceipt)
 	err := c.cc.Invoke(ctx, WorkspaceStorage_PruneTestEvidence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) PruneCommandEvidence(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestEvidencePruningReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TestEvidencePruningReceipt)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_PruneCommandEvidence_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +293,46 @@ func (c *workspaceStorageClient) StartTest(ctx context.Context, in *StartTestReq
 	return out, nil
 }
 
+func (c *workspaceStorageClient) StartCommand(ctx context.Context, in *StartCommandRequest, opts ...grpc.CallOption) (*CommandSnapshot, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CommandSnapshot)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_StartCommand_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) QueryCommand(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*CommandSnapshot, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CommandSnapshot)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_QueryCommand_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) SynchronizeCommand(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*CommandSnapshot, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CommandSnapshot)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_SynchronizeCommand_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) ReadCommandChanges(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*CommandChanges, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CommandChanges)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_ReadCommandChanges_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *workspaceStorageClient) QueryTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TestTaskSnapshot)
@@ -364,6 +425,7 @@ type WorkspaceStorageServer interface {
 	// Java supplies a consistent reference snapshot; a stale current revision rejects collection.
 	CollectWorkspace(context.Context, *CollectWorkspaceRequest) (*WorkspaceCollectionReceipt, error)
 	PruneTestEvidence(context.Context, *QueryTaskRequest) (*TestEvidencePruningReceipt, error)
+	PruneCommandEvidence(context.Context, *QueryTaskRequest) (*TestEvidencePruningReceipt, error)
 	// Scope is monotonic at the durable meter; delayed subset requests never forget old owners.
 	MeasureExerciseStorage(context.Context, *MeasureExerciseStorageRequest) (*StorageMeasurement, error)
 	ReadWorkspaceFile(context.Context, *ReadWorkspaceFileRequest) (*ReadWorkspaceFileResponse, error)
@@ -379,6 +441,11 @@ type WorkspaceStorageServer interface {
 	PrepareTestCopy(context.Context, *PrepareTestCopyRequest) (*TestCopyReceipt, error)
 	QueryTestCopy(context.Context, *QueryTestCopyRequest) (*TestCopyReceipt, error)
 	StartTest(context.Context, *StartTestRequest) (*TestTaskSnapshot, error)
+	// Development commands never constitute authority-test evidence.
+	StartCommand(context.Context, *StartCommandRequest) (*CommandSnapshot, error)
+	QueryCommand(context.Context, *QueryTaskRequest) (*CommandSnapshot, error)
+	SynchronizeCommand(context.Context, *QueryTaskRequest) (*CommandSnapshot, error)
+	ReadCommandChanges(context.Context, *QueryTaskRequest) (*CommandChanges, error)
 	QueryTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error)
 	StopTask(context.Context, *StopTaskRequest) (*StopTaskResponse, error)
 	// Trusted lifecycle cancellation; never exposed as browser-selected authority.
@@ -411,6 +478,9 @@ func (UnimplementedWorkspaceStorageServer) CollectWorkspace(context.Context, *Co
 }
 func (UnimplementedWorkspaceStorageServer) PruneTestEvidence(context.Context, *QueryTaskRequest) (*TestEvidencePruningReceipt, error) {
 	return nil, status.Error(codes.Unimplemented, "method PruneTestEvidence not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) PruneCommandEvidence(context.Context, *QueryTaskRequest) (*TestEvidencePruningReceipt, error) {
+	return nil, status.Error(codes.Unimplemented, "method PruneCommandEvidence not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) MeasureExerciseStorage(context.Context, *MeasureExerciseStorageRequest) (*StorageMeasurement, error) {
 	return nil, status.Error(codes.Unimplemented, "method MeasureExerciseStorage not implemented")
@@ -450,6 +520,18 @@ func (UnimplementedWorkspaceStorageServer) QueryTestCopy(context.Context, *Query
 }
 func (UnimplementedWorkspaceStorageServer) StartTest(context.Context, *StartTestRequest) (*TestTaskSnapshot, error) {
 	return nil, status.Error(codes.Unimplemented, "method StartTest not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) StartCommand(context.Context, *StartCommandRequest) (*CommandSnapshot, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartCommand not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) QueryCommand(context.Context, *QueryTaskRequest) (*CommandSnapshot, error) {
+	return nil, status.Error(codes.Unimplemented, "method QueryCommand not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) SynchronizeCommand(context.Context, *QueryTaskRequest) (*CommandSnapshot, error) {
+	return nil, status.Error(codes.Unimplemented, "method SynchronizeCommand not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) ReadCommandChanges(context.Context, *QueryTaskRequest) (*CommandChanges, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReadCommandChanges not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) QueryTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryTask not implemented")
@@ -579,6 +661,24 @@ func _WorkspaceStorage_PruneTestEvidence_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WorkspaceStorageServer).PruneTestEvidence(ctx, req.(*QueryTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_PruneCommandEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).PruneCommandEvidence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_PruneCommandEvidence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).PruneCommandEvidence(ctx, req.(*QueryTaskRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -817,6 +917,78 @@ func _WorkspaceStorage_StartTest_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkspaceStorage_StartCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartCommandRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).StartCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_StartCommand_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).StartCommand(ctx, req.(*StartCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_QueryCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).QueryCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_QueryCommand_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).QueryCommand(ctx, req.(*QueryTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_SynchronizeCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).SynchronizeCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_SynchronizeCommand_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).SynchronizeCommand(ctx, req.(*QueryTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_ReadCommandChanges_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).ReadCommandChanges(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_ReadCommandChanges_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).ReadCommandChanges(ctx, req.(*QueryTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _WorkspaceStorage_QueryTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryTaskRequest)
 	if err := dec(in); err != nil {
@@ -964,6 +1136,10 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _WorkspaceStorage_PruneTestEvidence_Handler,
 		},
 		{
+			MethodName: "PruneCommandEvidence",
+			Handler:    _WorkspaceStorage_PruneCommandEvidence_Handler,
+		},
+		{
 			MethodName: "MeasureExerciseStorage",
 			Handler:    _WorkspaceStorage_MeasureExerciseStorage_Handler,
 		},
@@ -1014,6 +1190,22 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "StartTest",
 			Handler:    _WorkspaceStorage_StartTest_Handler,
+		},
+		{
+			MethodName: "StartCommand",
+			Handler:    _WorkspaceStorage_StartCommand_Handler,
+		},
+		{
+			MethodName: "QueryCommand",
+			Handler:    _WorkspaceStorage_QueryCommand_Handler,
+		},
+		{
+			MethodName: "SynchronizeCommand",
+			Handler:    _WorkspaceStorage_SynchronizeCommand_Handler,
+		},
+		{
+			MethodName: "ReadCommandChanges",
+			Handler:    _WorkspaceStorage_ReadCommandChanges_Handler,
 		},
 		{
 			MethodName: "QueryTask",

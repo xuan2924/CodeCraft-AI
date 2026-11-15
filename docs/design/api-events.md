@@ -107,6 +107,17 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - 流使用有界缓冲、输出上限及慢消费者策略；截断明确提示，不能静默丢失最终状态。
 - 路由退出可关闭订阅，关页面不停止任务；用户通过“停止任务”请求停止。前端以服务端结构化状态结束加载，不从聊天或日志猜测成功。
 
+## 手动 Bash 命令接口
+
+- `POST /api/exercises/{exercise}/commands`：`{command,directory,expectedRevision}`，携带 CSRF、`Idempotency-Key` 与操作凭证；返回 202 的持久化命令身份，不在 HTTP 生命周期持有执行。原键及相同载荷的回执先于新控制权/容量检查读取，不重新运行。
+- `GET /api/exercises/{exercise}/commands?after={commandId}`：按创建时间/身份倒序分页，每页最多 20 条元数据，不携带日志正文；返回 `nextCursor`。只读请求不触发执行或停止。
+- `GET /api/exercises/{exercise}/commands/{command}`：独立的执行状态、stdout/stderr 保留尾部、实际退出码、截断字节数、记录缺失标志、同步与清理状态。普通命令状态没有 `PASSED` / `FAILED` 权威成绩；`EXITED` 可以携带非零退出码。
+- `POST /api/exercises/{exercise}/commands/{command}/stop`：对固定命令身份的单调停止意图。ACTIVE 下要求当前操作凭证；已受理停止重试不再次依赖旧凭证。结束后的所有者恢复只允许取消，不授予执行/写入权限。真实静默前不得显示停止已完成。
+- `GET /api/exercises/{exercise}/commands/{command}/changes`：静默后的候选文件 Diff，包含基线修订、旧内容与新内容；外部读取前后均核对私有归属。文件不符合受管理文本规则时明确返回 `COMMAND_OUTPUT_UNAVAILABLE`，不伪造空 Diff。此接口不提交修改。
+- 所有公开接口绑定当前 cookie 所有者、演练和命令身份，响应 `no-store`。历史清理意图已受理或完成后返回 `COMMAND_HISTORY_PRUNED`；同键同载荷的该回执可解除原受理不确定性，但不能冒充输出仍在或自动重放命令。
+- Java–Go 使用 `StartCommand`、`QueryCommand`、`SynchronizeCommand`、`ReadCommandChanges`、`PruneCommandEvidence`，停止、库存与恢复复用已有精确身份协议。Diff 可以包含两个 10 MiB 树，只有 Diff RPC 将 Java 入站上限提升至 24 MiB，其余 RPC 保留 2 MiB 限制。
+- 首期浏览器用有界只读快照轮询恢复：历史元数据 2 秒、未收敛详情 1 秒；终态停止详情轮询。以状态高水位、不可逆同步事实与停止意图抵挡迟到快照，不自动重试任何 Bash 副作用。沿用安全只读终端展示，不新增 PTY 或另一套 SSE 事件日志。
+
 ## Copilot 任务与审批接口
 
 ### 项目内对话身份

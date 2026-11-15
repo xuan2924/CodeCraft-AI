@@ -2,7 +2,13 @@
 // It is an internal adapter, not a browser API or an authorization authority.
 package execution
 
-import "time"
+import (
+	"context"
+	"time"
+)
+
+// InputMonitor observes a mutable command copy without granting write authority.
+type InputMonitor func(context.Context, Input) error
 
 // Limits are trusted, validated publication settings, not user overrides.
 type Limits struct {
@@ -20,29 +26,37 @@ type Limits struct {
 // reserve its business slot and persist identity before invoking Run. Root and
 // Volume are deployment configuration; Subpath must identify only this copy.
 type Input struct {
-	Purpose        string    `json:"purpose,omitempty"`
-	FinalizationID string    `json:"finalizationId,omitempty"`
-	AttemptID      string    `json:"attemptId,omitempty"`
-	FreezeID       string    `json:"freezeId,omitempty"`
-	FinalDeadline  int64     `json:"finalDeadline,omitempty"`
-	HostEpoch      string    `json:"hostEpoch,omitempty"`
-	ExerciseID     string    `json:"exerciseId,omitempty"`
-	TaskID         string    `json:"taskId,omitempty"`
-	ProblemID      string    `json:"problemId,omitempty"`
-	ProblemVersion string    `json:"problemVersion,omitempty"`
-	GateEpoch      uint64    `json:"gateEpoch,omitempty"`
-	ExecutionID    string    `json:"executionId"`
-	WorkspaceID    string    `json:"workspaceId"`
-	Revision       uint64    `json:"revision"`
-	Image          string    `json:"image"`
-	PackageSHA256  string    `json:"packageSha256"`
-	Platform       string    `json:"platform"`
-	Target         string    `json:"target"`
-	Subpath        string    `json:"subpath"`
-	NotAfter       time.Time `json:"notAfter"`
-	Limits         Limits    `json:"limits"`
-	Suite          string    `json:"suite"`
-	Tests          []string  `json:"tests"`
+	Command        *CommandSpec `json:"command,omitempty"`
+	Purpose        string       `json:"purpose,omitempty"`
+	FinalizationID string       `json:"finalizationId,omitempty"`
+	AttemptID      string       `json:"attemptId,omitempty"`
+	FreezeID       string       `json:"freezeId,omitempty"`
+	FinalDeadline  int64        `json:"finalDeadline,omitempty"`
+	HostEpoch      string       `json:"hostEpoch,omitempty"`
+	ExerciseID     string       `json:"exerciseId,omitempty"`
+	TaskID         string       `json:"taskId,omitempty"`
+	ProblemID      string       `json:"problemId,omitempty"`
+	ProblemVersion string       `json:"problemVersion,omitempty"`
+	GateEpoch      uint64       `json:"gateEpoch,omitempty"`
+	ExecutionID    string       `json:"executionId"`
+	WorkspaceID    string       `json:"workspaceId"`
+	Revision       uint64       `json:"revision"`
+	Image          string       `json:"image"`
+	PackageSHA256  string       `json:"packageSha256"`
+	Platform       string       `json:"platform"`
+	Target         string       `json:"target"`
+	Subpath        string       `json:"subpath"`
+	NotAfter       time.Time    `json:"notAfter"`
+	Limits         Limits       `json:"limits"`
+	Suite          string       `json:"suite"`
+	Tests          []string     `json:"tests"`
+}
+
+// CommandSpec describes an explicitly authorized development command. It is not
+// an authority test target and cannot grant access to a published workspace tree.
+type CommandSpec struct {
+	Text      string `json:"text"`
+	Directory string `json:"directory"`
 }
 
 // LogChunk preserves stdout/stderr separately; bytes are bounded before encoding.
@@ -52,7 +66,7 @@ type LogChunk struct {
 }
 
 // Result keeps execution outcome, process quiescence and cleanup distinct.
-// ExitCode belongs to the controlled Maven invocation, not the holding shell.
+// ExitCode belongs to the controlled test or Bash invocation, not the holding shell.
 type Result struct {
 	Version           uint64     `json:"stateVersion,omitempty"`
 	CounterUncertain  bool       `json:"counterUncertain,omitempty"`

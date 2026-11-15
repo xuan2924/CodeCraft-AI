@@ -14,6 +14,7 @@ service WorkspaceStorage {
   // Java supplies a consistent reference snapshot; a stale current revision rejects collection.
   rpc CollectWorkspace(CollectWorkspaceRequest) returns (WorkspaceCollectionReceipt);
   rpc PruneTestEvidence(QueryTaskRequest) returns (TestEvidencePruningReceipt);
+  rpc PruneCommandEvidence(QueryTaskRequest) returns (TestEvidencePruningReceipt);
   // Scope is monotonic at the durable meter; delayed subset requests never forget old owners.
   rpc MeasureExerciseStorage(MeasureExerciseStorageRequest) returns (StorageMeasurement);
   rpc ReadWorkspaceFile(ReadWorkspaceFileRequest) returns (ReadWorkspaceFileResponse);
@@ -29,6 +30,11 @@ service WorkspaceStorage {
   rpc PrepareTestCopy(PrepareTestCopyRequest) returns (TestCopyReceipt);
   rpc QueryTestCopy(QueryTestCopyRequest) returns (TestCopyReceipt);
   rpc StartTest(StartTestRequest) returns (TestTaskSnapshot);
+  // Development commands never constitute authority-test evidence.
+  rpc StartCommand(StartCommandRequest) returns (CommandSnapshot);
+  rpc QueryCommand(QueryTaskRequest) returns (CommandSnapshot);
+  rpc SynchronizeCommand(QueryTaskRequest) returns (CommandSnapshot);
+  rpc ReadCommandChanges(QueryTaskRequest) returns (CommandChanges);
   rpc QueryTask(QueryTaskRequest) returns (TestTaskSnapshot);
   rpc StopTask(StopTaskRequest) returns (StopTaskResponse);
   // Trusted lifecycle cancellation; never exposed as browser-selected authority.
@@ -182,6 +188,34 @@ message StartTestRequest {
   int64 not_after_unix_millis = 9;
   string host_epoch = 10; // Opaque durable boot generation; never reused after restart.
   FinalVerificationAuthority final_verification = 11;
+}
+message StartCommandRequest {
+  string exercise_id = 1;
+  string task_id = 2;
+  string execution_instance_id = 3;
+  string workspace_instance_id = 4;
+  uint64 expected_revision = 5;
+  uint64 gate_epoch = 6;
+  int64 not_after_unix_millis = 7;
+  string host_epoch = 8;
+  string command = 9;
+  string directory = 10;
+}
+message CommandSnapshot {
+  TestTaskSnapshot execution = 1;
+  string synchronization = 2; // PENDING, SYNCED, UNCHANGED, CONFLICT, REJECTED
+  string synchronization_reason = 3;
+  MutationReceipt mutation = 4;
+}
+message CommandFileChange {
+  FileChange change = 1;
+  string previous_content = 2;
+}
+message CommandChanges {
+  string workspace_instance_id = 1;
+  string execution_instance_id = 2;
+  uint64 base_revision = 3;
+  repeated CommandFileChange changes = 4;
 }
 message QueryTaskRequest {
   string exercise_id = 1;

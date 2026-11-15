@@ -246,7 +246,7 @@ func (r *Runner) Query(ctx context.Context, id string) (Result, error) {
 		if result.Quiescent || result.FinishedAt != nil {
 			return Result{}, errors.New("invalid active execution record")
 		}
-	case "PASSED", "FAILED", "TIMED_OUT", "STOPPED", "ENVIRONMENT_ERROR", "INTERRUPTED":
+	case "EXITED", "PASSED", "FAILED", "TIMED_OUT", "STOPPED", "ENVIRONMENT_ERROR", "INTERRUPTED":
 		if result.FinishedAt == nil {
 			return Result{}, errors.New("missing terminal execution time")
 		}
@@ -302,6 +302,12 @@ func (r *Runner) Query(ctx context.Context, id string) (Result, error) {
 	}
 	if retained > result.Input.Limits.LogBytes {
 		return Result{}, errors.New("recorded logs exceed limit")
+	}
+	if result.Input.Purpose == "COMMAND" && (result.State == "PASSED" || result.State == "FAILED" || len(result.Report) != 0 || len(result.CompilationReport) != 0) {
+		return Result{}, errors.New("command cannot contain authority evidence")
+	}
+	if result.State == "EXITED" && (result.Input.Purpose != "COMMAND" || !result.Quiescent || result.ExitCode == nil || *result.ExitCode < 0 || *result.ExitCode > 255) {
+		return Result{}, errors.New("invalid command exit outcome")
 	}
 	if result.State == "PASSED" || result.State == "FAILED" {
 		if !result.Quiescent || result.ExitCode == nil {
@@ -411,14 +417,17 @@ func validateInput(input Input) error {
 		return errors.New("invalid task ownership")
 	}
 	limits := input.Limits
-	if !uuid.MatchString(input.ExecutionID) || !uuid.MatchString(input.WorkspaceID) || !strings.HasPrefix(input.Image, "sha256:") || !sha256.MatchString(strings.TrimPrefix(input.Image, "sha256:")) || !sha256.MatchString(input.PackageSHA256) || input.Platform != "linux/amd64" || input.Target != "base" || input.NotAfter.IsZero() {
+	if !uuid.MatchString(input.ExecutionID) || !uuid.MatchString(input.WorkspaceID) || !strings.HasPrefix(input.Image, "sha256:") || !sha256.MatchString(strings.TrimPrefix(input.Image, "sha256:")) || !sha256.MatchString(input.PackageSHA256) || input.Platform != "linux/amd64" || input.NotAfter.IsZero() {
 		return errors.New("invalid fixed execution input")
 	}
-	if input.Subpath != input.WorkspaceID+"/copy-"+input.ExecutionID+"/tree" {
+	if input.Command == nil && input.Purpose != "COMMAND" && (input.Target != "base" || input.Subpath != input.WorkspaceID+"/copy-"+input.ExecutionID+"/tree") {
 		return errors.New("input must identify exactly one stable copy")
 	}
 	if limits.CPUs < 1 || limits.CPUs > 16 || limits.MemoryMiB < 64 || limits.MemoryMiB > 8192 || limits.PIDs < 16 || limits.PIDs > 1024 || limits.WorkMiB < 1 || limits.WorkMiB > 1024 || limits.TmpMiB < 1 || limits.TmpMiB > 1024 || limits.ShmMiB < 1 || limits.ShmMiB > 128 || limits.TimeoutSeconds < 1 || limits.TimeoutSeconds > 600 || limits.LogBytes < 1 || limits.LogBytes > 1048576 {
 		return errors.New("invalid execution resource limits")
+	}
+	if input.Command != nil || input.Purpose == "COMMAND" {
+		return ValidateCommand(input)
 	}
 	if len(input.Suite) > 255 || !testName.MatchString(input.Suite) || len(input.Tests) == 0 || len(input.Tests) > 200 {
 		return errors.New("invalid authority test contract")

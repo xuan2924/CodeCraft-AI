@@ -15,6 +15,11 @@ import (
 // Recover resumes observation or retries cleanup, never creation or start. The
 // owner is the service lifetime, not the requesting browser or RPC lifetime.
 func (r *Runner) Recover(owner context.Context, id string, cleanup func(context.Context, Result) error) error {
+	return r.RecoverMonitored(owner, id, nil, cleanup)
+}
+
+// RecoverMonitored restores mutable-copy budget checks while observing an existing command.
+func (r *Runner) RecoverMonitored(owner context.Context, id string, monitor InputMonitor, cleanup func(context.Context, Result) error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -27,6 +32,9 @@ func (r *Runner) Recover(owner context.Context, id string, cleanup func(context.
 	if err != nil {
 		return err
 	}
+	if record.Input.Purpose == "COMMAND" && monitor == nil {
+		return errors.New("development commands require a workspace monitor")
+	}
 	if record.Quiescent && record.Cleanup == "SUCCEEDED" && (record.Input.TaskID == "" || record.CopyCleanup == "SUCCEEDED") {
 		if record.StreamID == "" {
 			return r.persist(record)
@@ -36,7 +44,7 @@ func (r *Runner) Recover(owner context.Context, id string, cleanup func(context.
 	r.running = true
 	r.done = make(chan struct{})
 	go func() {
-		result, err := r.recoverExecution(owner, record)
+		result, err := r.recoverExecution(owner, record, monitor)
 		if result.Quiescent && result.FinishedAt != nil && cleanup != nil && result.CopyCleanup != "SUCCEEDED" {
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(owner), 15*time.Second)
 			durable, readErr := r.Query(ctx, id)
@@ -60,7 +68,12 @@ func (r *Runner) Recover(owner context.Context, id string, cleanup func(context.
 	return nil
 }
 
-func (r *Runner) recoverExecution(ctx context.Context, record Result) (Result, error) {
+func (r *Runner) recoverExecution(ctx context.Context, record Result, monitor InputMonitor) (Result, error) {
+	if record.Quiescent && record.Cleanup == "SUCCEEDED" && record.FinishedAt != nil {
+		// Only copy finalization remains. In particular, a preparation-time
+		// expiry has no container ID and must not become ambiguous Create.
+		return record, nil
+	}
 	call, cancel := context.WithTimeout(ctx, 5*time.Second)
 	id := record.ContainerID
 	if id == "" {
@@ -127,7 +140,9 @@ func (r *Runner) recoverExecution(ctx context.Context, record Result) (Result, e
 		if record.Intent != "" {
 			state, reason = record.Intent, "recovered_intent"
 		} else if record.ExitCode != nil {
-			if record.Reason == "compilation_failed" && validCompilationReport(record.CompilationReport) {
+			if record.Input.Purpose == "COMMAND" {
+				state, reason = "EXITED", "command_exit"
+			} else if record.Reason == "compilation_failed" && validCompilationReport(record.CompilationReport) {
 				state, reason = "FAILED", "compilation_failed"
 			} else if grade, e := classifyReport(record.Report, record.Input, *record.ExitCode); e == nil {
 				state, reason = grade, "authority_report"
@@ -170,5 +185,5 @@ func (r *Runner) recoverExecution(ctx context.Context, record Result) (Result, e
 			return <-drained
 		}
 	}
-	return r.observeExecution(ctx, record, logs, join)
+	return r.observeExecution(ctx, record, logs, join, monitor)
 }

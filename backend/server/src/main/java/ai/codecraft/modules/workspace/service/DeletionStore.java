@@ -121,6 +121,7 @@ public class DeletionStore {
         deletions.clearStreams(id);
         deletions.clearFinalTasks(id);
         deletions.eraseTestBodies(id);
+        deletions.eraseCommandBodies(id);
         deletions.eraseTransitionCredentials(id);
         deletions.clearControl(id);
         deletions.clearExercise(id);
@@ -131,6 +132,7 @@ public class DeletionStore {
         deletions.expireMutationReceipts(before);
         deletions.expireTestStops(before);
         deletions.expireTestReceipts(before);
+        deletions.expireCommandReceipts(before);
         deletions.expireFinalizationReceipts(before);
         deletions.expireTransitionReceipts(before);
         deletions.expireReceipts(before);

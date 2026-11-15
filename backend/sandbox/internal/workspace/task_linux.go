@@ -275,7 +275,11 @@ func (s *Service) ReconcileTask(ctx context.Context, request *rpc.QueryTaskReque
 	if err = s.executor.AlignRecoveredVersion(ctx, request.ExecutionInstanceId, request.ObservedStateVersion); err != nil {
 		return nil, storageError(err)
 	}
-	if err = s.executor.Recover(s.worker, request.ExecutionInstanceId, s.releaseTestCopy); err != nil {
+	var monitor execution.InputMonitor
+	if snapshot.Target == "bash" {
+		monitor = s.commandBudget
+	}
+	if err = s.executor.RecoverMonitored(s.worker, request.ExecutionInstanceId, monitor, s.releaseTestCopy); err != nil {
 		return nil, storageError(err)
 	}
 	return snapshot, nil
@@ -364,6 +368,9 @@ func taskSnapshot(result execution.Result) *rpc.TestTaskSnapshot {
 }
 
 func (s *Service) releaseTestCopy(ctx context.Context, result execution.Result) error {
+	if result.Input.Purpose == "COMMAND" {
+		return s.completeCommand(ctx, result)
+	}
 	if !result.Quiescent || result.FinishedAt == nil {
 		return fmt.Errorf("cannot release active input")
 	}

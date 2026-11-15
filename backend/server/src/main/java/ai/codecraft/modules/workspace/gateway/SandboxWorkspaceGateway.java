@@ -4,6 +4,10 @@ import ai.codecraft.modules.workspace.config.WorkspaceProperties;
 import ai.codecraft.modules.workspace.model.entity.ProblemVersionEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
 import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
+import ai.codecraft.modules.workspace.model.entity.CommandTaskEntity;
+import ai.codecraft.workspace.v1.CommandSnapshot;
+import ai.codecraft.workspace.v1.CommandChanges;
+import ai.codecraft.workspace.v1.StartCommandRequest;
 import ai.codecraft.modules.workspace.model.entity.TestStopEntity;
 import ai.codecraft.modules.workspace.model.entity.FinalTaskAuthorityEntity;
 import ai.codecraft.workspace.v1.FinalVerificationAuthority;
@@ -100,6 +104,39 @@ public class SandboxWorkspaceGateway {
             .setAfterExecutionId(after).setHostEpoch(epoch).setLimit(100).build());
         if (!page.getHostEpoch().matches("[A-Z2-7]{26}") || page.getEntriesCount() > 100) throw new IllegalStateException("Invalid execution inventory");
         return page;
+    }
+
+    public CommandSnapshot startCommand(CommandTaskEntity task) {
+        return client().startCommand(StartCommandRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+            .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId())
+            .setExpectedRevision(task.revision()).setGateEpoch(task.gateEpoch()).setNotAfterUnixMillis(task.notAfter().toEpochMilli())
+            .setHostEpoch(task.hostEpoch()).setCommand(task.commandText()).setDirectory(task.workingDirectory()).build());
+    }
+
+    public CommandSnapshot command(CommandTaskEntity task) {
+        try { return client().queryCommand(commandIdentity(task)); }
+        catch (StatusRuntimeException error) {
+            if (error.getStatus().getCode() == Status.Code.NOT_FOUND) return null;
+            throw error;
+        }
+    }
+
+    public void reconcileCommand(CommandTaskEntity task) { client().reconcileTask(commandIdentity(task)); }
+
+    public StopTaskResponse stopCommand(CommandTaskEntity task) { return client().stopSystemTask(commandIdentity(task)); }
+
+    public CommandChanges commandChanges(CommandTaskEntity task) {
+        // Both the original and final managed trees can be 10 MiB; other RPCs
+        // retain their existing small inbound limit.
+        return client().withMaxInboundMessageSize(24 * 1024 * 1024).readCommandChanges(commandIdentity(task));
+    }
+
+    public TestEvidencePruningReceipt pruneCommand(CommandTaskEntity task) { return client().pruneCommandEvidence(commandIdentity(task)); }
+
+    private static QueryTaskRequest commandIdentity(CommandTaskEntity task) {
+        return QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+            .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId())
+            .setObservedStateVersion(task.stateVersion()).build();
     }
 
     public TestTaskSnapshot startTest(TestTaskEntity task) { return startTest(task, null); }

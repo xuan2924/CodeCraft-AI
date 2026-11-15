@@ -23,6 +23,8 @@ public interface DeletionRepository {
     void expireTestStops(Instant before);
     @Delete("DELETE FROM workspace_test_task WHERE exercise_id IN (" + EXPIRED_EXERCISES + ")")
     void expireTestReceipts(Instant before);
+    @Delete("DELETE FROM workspace_command WHERE exercise_id IN (" + EXPIRED_EXERCISES + ")")
+    void expireCommandReceipts(Instant before);
     @Delete("DELETE FROM workspace_finalization WHERE exercise_id IN (" + EXPIRED_EXERCISES + ")")
     void expireFinalizationReceipts(Instant before);
     @Delete("DELETE FROM workspace_transition WHERE exercise_id IN (" + EXPIRED_EXERCISES + ")")
@@ -50,7 +52,7 @@ public interface DeletionRepository {
     List<String> workspaceInstances(String id);
     @Select("SELECT count(*) FROM workspace_operation WHERE exercise_id = #{id}::uuid AND state IN ('PENDING', 'PENDING_RECONCILIATION')")
     int unresolved(String id);
-    @Select("SELECT quiescent, snapshot->>'cleanup' AS cleanup, snapshot->>'copyCleanup' AS copy_cleanup FROM workspace_test_task WHERE exercise_id = #{id}::uuid")
+    @Select("SELECT quiescent, snapshot->>'cleanup' AS cleanup, snapshot->>'copyCleanup' AS copy_cleanup FROM workspace_test_task WHERE exercise_id = #{id}::uuid UNION ALL SELECT quiescent, snapshot->>'cleanup', snapshot->>'copyCleanup' FROM workspace_command WHERE exercise_id = #{id}::uuid AND NOT pruned")
     List<ExecutionCleanupDTO> cleanupStates(String id);
     @Delete("DELETE FROM workspace_mutation m USING workspace_operation o, workspace_deletion d WHERE m.operation_id = o.id AND o.exercise_id = d.exercise_id AND d.completed_at <= #{before} AND d.state = 'SUCCEEDED' AND o.state NOT IN ('PENDING', 'PENDING_RECONCILIATION')")
     void expireMutationReceipts(Instant before);
@@ -66,6 +68,8 @@ public interface DeletionRepository {
     void clearStreams(String id);
     @Update("UPDATE workspace_test_task SET snapshot = jsonb_set(snapshot, '{logs}', '[]') WHERE exercise_id = #{id}::uuid")
     void eraseTestBodies(String id);
+    @Update("UPDATE workspace_command SET command_text='[removed]',working_directory='.',session_hash=repeat('0',64),snapshot=NULL,pruned=true WHERE exercise_id=#{id}::uuid")
+    void eraseCommandBodies(String id);
     @Delete("DELETE FROM workspace_final_task WHERE task_id IN (SELECT id FROM workspace_test_task WHERE exercise_id = #{id}::uuid)")
     void clearFinalTasks(String id);
     @Update("UPDATE workspace_transition SET target_hash = NULL, phase = 'SUCCEEDED' WHERE exercise_id = #{id}::uuid")

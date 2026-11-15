@@ -31,11 +31,14 @@ while :; do sleep 1; done`
 // not a browser/RPC context. Every Docker side effect follows durable registration.
 // Replays return the original record; unresolved work never starts a second run.
 func (r *Runner) Run(ctx context.Context, input Input) (Result, error) {
+	if input.Purpose == "COMMAND" {
+		return Result{}, errors.New("development commands require a workspace monitor")
+	}
 	record, fresh, err := r.register(ctx, input, nil)
 	if err != nil || !fresh {
 		return record, err
 	}
-	result, runErr := r.execute(ctx, record)
+	result, runErr := r.execute(ctx, record, nil)
 	r.finished(ctx, result)
 	return result, runErr
 }
@@ -44,12 +47,20 @@ func (r *Runner) Run(ctx context.Context, input Input) (Result, error) {
 // lifetime (never the RPC lifetime) and a bounded cleanup callback for the input.
 // Completion stays owned by this runner; Wait must precede Close.
 func (r *Runner) Start(owner context.Context, input Input, prepare func() error, cleanup func(context.Context, Result) error) (Result, error) {
+	return r.StartMonitored(owner, input, prepare, nil, cleanup)
+}
+
+// StartMonitored retains Start's ownership and adds bounded observation of mutable inputs.
+func (r *Runner) StartMonitored(owner context.Context, input Input, prepare func() error, monitor InputMonitor, cleanup func(context.Context, Result) error) (Result, error) {
+	if input.Purpose == "COMMAND" && monitor == nil {
+		return Result{}, errors.New("development commands require a workspace monitor")
+	}
 	record, fresh, err := r.register(owner, input, prepare)
 	if err != nil || !fresh {
 		return record, err
 	}
 	go func() {
-		result, runErr := r.execute(owner, record)
+		result, runErr := r.execute(owner, record, monitor)
 		if result.Quiescent && cleanup != nil {
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(owner), 15*time.Second)
 			// Operational errors can coexist with proven quiescence. Only durable
@@ -83,6 +94,10 @@ func (r *Runner) register(ctx context.Context, input Input, prepare func() error
 		return Result{}, false, ErrConflict
 	}
 	input.Tests = append([]string(nil), input.Tests...)
+	if input.Command != nil {
+		command := *input.Command
+		input.Command = &command
+	}
 	r.mu.Lock()
 	if cancellation, err := r.cancellation(input.ExecutionID); err == nil {
 		r.mu.Unlock()
@@ -168,7 +183,7 @@ func (r *Runner) finished(ctx context.Context, result Result) {
 	close(r.done)
 }
 
-func (r *Runner) execute(ctx context.Context, record Result) (Result, error) {
+func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonitor) (Result, error) {
 	input := record.Input
 	if record.State == "INTERRUPTED" && record.Quiescent {
 		return record, nil
@@ -270,13 +285,13 @@ func (r *Runner) execute(ctx context.Context, record Result) (Result, error) {
 		_ = join()
 		return r.finish(ctx, record, "INTERRUPTED", "running_state_persistence_failed", logs, err)
 	}
-	return r.observeExecution(ctx, record, logs, join)
+	return r.observeExecution(ctx, record, logs, join, monitor)
 }
 
-func (r *Runner) observeExecution(ctx context.Context, record Result, logs *tailLog, join func() error) (Result, error) {
+func (r *Runner) observeExecution(ctx context.Context, record Result, logs *tailLog, join func() error, monitor InputMonitor) (Result, error) {
 	// Restart never grants a fresh runtime budget.
 	runtime, cancelRuntime := context.WithDeadline(ctx, record.StartedAt.Add(time.Duration(record.Input.Limits.TimeoutSeconds)*time.Second))
-	state, reason := r.observe(runtime, &record, logs)
+	state, reason := r.observe(runtime, &record, logs, monitor)
 	if runtime.Err() != nil {
 		state, reason = "TIMED_OUT", "platform_deadline"
 	}
@@ -285,8 +300,8 @@ func (r *Runner) observeExecution(ctx context.Context, record Result, logs *tail
 	}
 	cancelRuntime()
 	// Evidence is durable BEFORE killing the holding shell/unmounting tmpfs.
-	if state == "TIMED_OUT" {
-		record.Intent = "TIMED_OUT"
+	if state == "TIMED_OUT" || state == "STOPPED" {
+		record.Intent = state
 	}
 	record.Reason = reason // Durable timeout/interruption intent precedes termination.
 	record.Logs, record.DroppedBytes = logs.snapshot()
@@ -314,10 +329,20 @@ func (r *Runner) containerConfig(input Input) (*container.Config, *container.Hos
 		Tmpfs:         map[string]string{"/work": fmt.Sprintf("rw,nosuid,nodev,noexec,size=%dm,uid=10001,gid=10001", limits.WorkMiB), "/tmp": fmt.Sprintf("rw,nosuid,nodev,noexec,size=%dm,uid=10001,gid=10001", limits.TmpMiB)},
 		Mounts:        []mount.Mount{{Type: mount.TypeVolume, Source: r.volume, Target: "/input", ReadOnly: true, VolumeOptions: &mount.VolumeOptions{NoCopy: true, Subpath: r.inputPrefix + input.Subpath}}},
 		LogConfig:     container.LogConfig{Type: "local", Config: map[string]string{"max-size": strconv.Itoa(limits.LogBytes), "max-file": "1", "compress": "false"}}}
+	if input.Purpose == "COMMAND" && input.Command != nil {
+		config.Entrypoint, config.Cmd = []string{"/bin/bash"}, []string{"--noprofile", "--norc", "-c", developmentCommand}
+		config.NetworkDisabled, host.NetworkMode = false, "bridge"
+		config.Env = []string{"HOME=/cache/home", "MAVEN_OPTS=-Xmx256m -XX:ActiveProcessorCount=1 -Djava.io.tmpdir=/tmp -Dmaven.repo.local=/cache/maven",
+			"npm_config_cache=/cache/npm", "GOCACHE=/cache/go-build", "GOMODCACHE=/cache/go-mod",
+			"CODECRAFT_COMMAND=" + input.Command.Text, "CODECRAFT_DIRECTORY=" + input.Command.Directory}
+		host.Mounts[0].Target, host.Mounts[0].ReadOnly = "/project", false
+		cache := fmt.Sprintf("rw,nosuid,nodev,size=%dm,uid=10001,gid=10001", limits.WorkMiB)
+		host.Tmpfs["/cache"] = cache // Project build directories must remain removable (e.g. mvn clean).
+	}
 	return config, host
 }
 
-func (r *Runner) observe(ctx context.Context, record *Result, logs *tailLog) (string, string) {
+func (r *Runner) observe(ctx context.Context, record *Result, logs *tailLog, monitor InputMonitor) (string, string) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -334,6 +359,17 @@ func (r *Runner) observe(ctx context.Context, record *Result, logs *tailLog) (st
 		if intent != "" {
 			return intent, "user_stop"
 		}
+		if monitor != nil {
+			if err := monitor(ctx, record.Input); err != nil {
+				if errors.Is(err, ErrCommandAuthorityEnded) {
+					return "STOPPED", "command_authority_ended"
+				}
+				if errors.Is(err, ErrCommandOutputLimit) {
+					return "ENVIRONMENT_ERROR", "command_storage_limit"
+				}
+				return "INTERRUPTED", "command_storage_unavailable"
+			}
+		}
 		record.Logs, record.DroppedBytes = logs.snapshot()
 		if err := r.persist(*record); err != nil {
 			return "INTERRUPTED", "log_checkpoint_failed"
@@ -345,6 +381,9 @@ func (r *Runner) observe(ctx context.Context, record *Result, logs *tailLog) (st
 				return "ENVIRONMENT_ERROR", "invalid_controlled_exit"
 			}
 			record.ExitCode = &exit
+			if record.Input.Purpose == "COMMAND" {
+				return "EXITED", "command_exit"
+			}
 			if exit == 1 {
 				compilation, readErr := r.readFile(ctx, record.ContainerID, "/work/compilation-result", compilationReportLimit)
 				if readErr == nil && validCompilationReport(compilation) {

@@ -8,6 +8,7 @@ import { ApiError } from '../api/request';
 import * as api from './api';
 import WorkspaceLogout from './WorkspaceLogout.vue';
 import WorkspaceTests from './WorkspaceTests.vue';
+import WorkspaceCommands from './WorkspaceCommands.vue';
 import WorkspaceStorage from './WorkspaceStorage.vue';
 import ExerciseModelPicker from '../modelaccess/ExerciseModelPicker.vue';
 import CopilotPanel from '../copilot/CopilotConversations.vue';
@@ -62,6 +63,7 @@ watch(expired, (value) => { if (value) { endPrompt.value = false; void active.re
 const logoutBusy = ref(false);
 const testView = ref<{ start: (revision: string) => void; inspect: (taskId: string) => void }>();
 const testBusy = ref(true);
+const commandBusy = ref(true);
 const editorGeneration = ref(0);
 async function saveForLogout() {
   if (!writable.value || pending.value || unresolved.value) return false;
@@ -71,6 +73,12 @@ async function saveForLogout() {
 async function prepareCopilot() {
   if (!writable.value || !credential.value || pending.value || unresolved.value || answeringClosed.value || ending.value || logoutBusy.value) return false;
   return editorView.value ? editorView.value.saveForLogout() : false;
+}
+async function prepareCommand() {
+  const before = `${owner.value}/${exercise.value?.exerciseId}`;
+  if (!await prepareCopilot() || before !== `${owner.value}/${exercise.value?.exerciseId}`) return null;
+  await refreshWorkspace();
+  return before === `${owner.value}/${exercise.value?.exerciseId}` ? exercise.value?.revision ?? null : null;
 }
 function restartEditor() { editorGeneration.value++; credential.value = ''; }
 watch(() => account.data.value, (value) => {
@@ -84,7 +92,7 @@ const controlState = useQuery({ queryKey: ['workspace', owner, 'control', comput
 watch(() => controlState.data.value?.generation, (value) => {
   if (value && credential.value && value !== credentialGeneration.value) credential.value = '';
 });
-watch(() => exercise.value?.workspaceInstanceId, () => { selected.value = ''; credential.value = ''; testBusy.value = true; });
+watch(() => exercise.value?.workspaceInstanceId, () => { selected.value = ''; credential.value = ''; testBusy.value = true; commandBusy.value = true; });
 const source = useQuery({ queryKey: ['workspace', owner, 'file', computed(() => exercise.value?.workspaceInstanceId), selected, computed(() => exercise.value?.revision)],
   queryFn: ({ signal }) => {
     if (!exercise.value) throw new Error('Workspace is not available');
@@ -500,6 +508,18 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             @changed="refreshWorkspace"
             @unauthorized="credential = ''; account.refetch()"
           />
+          <WorkspaceCommands
+            v-if="['ACTIVE', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
+            :key="owner + exercise.workspaceInstanceId"
+            :owner="owner"
+            :exercise="exercise"
+            :credential="credential"
+            :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || testBusy"
+            :prepare="prepareCommand"
+            @locked="commandBusy = $event"
+            @changed="refreshWorkspace"
+            @unauthorized="credential = ''; account.refetch()"
+          />
           <WorkspaceStorage
             :key="owner + exercise.exerciseId"
             :owner="owner"
@@ -579,14 +599,14 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               ref="editorView"
               :locked="logoutBusy || ending"
               :answering-closed="answeringClosed"
-              :test-busy="testBusy || !problem?.executionAvailable"
+              :test-busy="testBusy || commandBusy || !problem?.executionAvailable"
               :owner="owner"
               :exercise="exercise"
               :file="source.data.value"
               :selected="selected"
               :credential="writable ? credential : ''"
               @saved="refreshWorkspace"
-              @run-test="testView?.start($event)"
+              @run-test="!commandBusy && testView?.start($event)"
               @select="selected = $event"
               @stale-control="credential = ''"
             />

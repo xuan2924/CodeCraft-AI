@@ -116,7 +116,10 @@ export function message(error: unknown): string {
     if (error.code === 'STALE_CONTROL' || error.code === 'CONTROL_HELD') return '当前页面没有操作权，请显式接管；草稿不会自动清除。';
     if (error.code === 'EXERCISE_EXPIRED') return '作答已到期，本地内容不会自动提交。';
     if (error.code === 'TEST_TARGET_UNAVAILABLE') return '这个固定题目版本尚未配备正式执行配置，不会替换已有工作区版本，请联系维护者。';
-    if (error.code === 'TEST_SLOT_BUSY') return '已有测试占用执行名额，不会排队。请查询原任务，确认结束后再运行。';
+    if (error.code === 'TEST_SLOT_BUSY' || error.code === 'COMMAND_SLOT_BUSY') return '已有命令或测试占用执行名额，不会排队。请查询原执行，确认结束后再运行。';
+    if (error.code === 'COMMAND_UNAVAILABLE') return '这个题目版本尚未配备开发命令执行配置。';
+    if (error.code === 'COMMAND_HISTORY_PRUNED') return '这条命令的输出记录已清理，不能重新读取；不会因此重放命令。';
+    if (error.code === 'COMMAND_OUTPUT_UNAVAILABLE') return '候选文件无法完整读取或不符合受管理文本文件规则；文件同步没有被宣称成功，请保留原执行身份。';
     if (error.code === 'STORAGE_BUDGET_EXCEEDED') return '单场数据容量不足，新增操作未受理，草稿已保留；仍可恢复停止、保留草稿结束或删除已结束演练。';
     if (error.code === 'STORAGE_METER_UNAVAILABLE') return '暂时无法核对数据容量，不会按零占用受理；草稿已保留。';
     if (error.code === 'REQUEST_TOO_LARGE') return '请求内容过大，本次未受理；请减少本批次改动，草稿已保留。';

@@ -4,7 +4,7 @@ import type { Terminal } from '@xterm/xterm';
 import { useThemeVars } from 'naive-ui';
 import '@xterm/xterm/css/xterm.css';
 
-const props = defineProps<{ logs: { channel: string; text: string }[] }>();
+const props = withDefaults(defineProps<{ logs: { channel: string; text: string }[]; label?: string }>(), { label: '测试' });
 const themeVars = useThemeVars();
 const terminalTheme = computed(() => ({ background: themeVars.value.baseColor,
   foreground: themeVars.value.textColorBase, selectionBackground: themeVars.value.primaryColorHover }));
@@ -70,10 +70,10 @@ onScopeDispose(() => { disposed = true; globalThis.clearTimeout(timer); resize?.
   <div class="readonly-log">
     <p v-if="clipped" role="status">显示缓冲已截断，仅渲染末尾 64K 字符；终端最多保留 2000 行，结果不受影响。</p>
     <p v-if="unavailable" role="status">终端显示不可用，下面仍可查看只读文本。</p>
-    <div ref="host" class="terminal-host" aria-label="只读测试终端，无输入功能" />
+    <div ref="host" class="terminal-host" :aria-label="`只读${label}终端，无输入功能`" />
     <details :open="unavailable">
       <summary>查看日志文本（可复制，stdout / stderr 分别标记）</summary>
-      <pre class="test-output" tabindex="0" aria-label="只读测试日志文本">{{ text }}</pre>
+      <pre class="test-output" tabindex="0" :aria-label="`只读${label}日志文本`">{{ text }}</pre>
     </details>
   </div>
 </template>

@@ -16,8 +16,10 @@ public interface TestTaskRepository {
     String SUMMARY_COLUMNS = "id::text, execution_instance_id::text, exercise_id::text, workspace_instance_id::text, revision, gate_epoch, not_after, target, state, dispatched, quiescent, jsonb_set(snapshot, '{logs}', '[]')::text AS snapshot, host_epoch, go_state_version AS state_version";
     @Select("SELECT id FROM workspace_execution_admission WHERE id = 1 FOR UPDATE")
     int lockAdmission();
-    @Select("SELECT count(*) FROM workspace_test_task WHERE NOT quiescent")
+    @Select("SELECT (SELECT count(*) FROM workspace_test_task WHERE NOT quiescent) + (SELECT count(*) FROM workspace_command WHERE NOT pruned AND (NOT quiescent OR synchronization='PENDING' OR snapshot->>'cleanup' IS DISTINCT FROM 'SUCCEEDED' OR snapshot->>'copyCleanup' IS DISTINCT FROM 'SUCCEEDED'))")
     int occupied();
+    @Select("SELECT EXISTS (SELECT 1 FROM workspace_command WHERE exercise_id=#{exercise}::uuid AND id=#{task}::uuid AND workspace_instance_id=#{workspace}::uuid AND execution_instance_id=#{execution}::uuid)")
+    boolean ownsCommand(@Param("exercise") String exercise, @Param("task") String task, @Param("workspace") String workspace, @Param("execution") String execution);
     @Insert("INSERT INTO workspace_test_task(id, execution_instance_id, exercise_id, workspace_instance_id, revision, gate_epoch, not_after, target) VALUES (#{id}::uuid, #{executionInstanceId}::uuid, #{exerciseId}::uuid, #{workspaceInstanceId}::uuid, #{revision}, #{gateEpoch}, #{notAfter}, #{target})")
     void insert(TestTaskEntity task);
     @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE id = #{id}::uuid")

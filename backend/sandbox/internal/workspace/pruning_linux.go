@@ -16,6 +16,16 @@ import (
 // PruneTestEvidence is used only for Java's durably selected ordinary-history
 // eviction. Go independently verifies quiescence, complete identity and purpose.
 func (s *Service) PruneTestEvidence(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.TestEvidencePruningReceipt, error) {
+	return s.pruneExecutionEvidence(ctx, request, false)
+}
+
+// PruneCommandEvidence preserves unresolved candidate changes; only synchronized
+// or unchanged commands can enter ordinary history eviction.
+func (s *Service) PruneCommandEvidence(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.TestEvidencePruningReceipt, error) {
+	return s.pruneExecutionEvidence(ctx, request, true)
+}
+
+func (s *Service) pruneExecutionEvidence(ctx context.Context, request *rpc.QueryTaskRequest, command bool) (*rpc.TestEvidencePruningReceipt, error) {
 	release, err := s.enter(ctx)
 	if err != nil {
 		return nil, err
@@ -32,11 +42,24 @@ func (s *Service) PruneTestEvidence(ctx context.Context, request *rpc.QueryTaskR
 		return nil, err
 	}
 	defer syscall.Close(fd)
+	if retained, readErr := s.executor.Query(ctx, request.ExecutionInstanceId); readErr == nil {
+		if (retained.Input.Purpose == "COMMAND") != command {
+			return nil, status.Error(codes.FailedPrecondition, "execution purpose does not match pruning intent")
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return nil, storageError(readErr)
+	}
+	name := "copy-" + request.ExecutionInstanceId
+	if command {
+		name = "command-" + request.ExecutionInstanceId
+		if err = commandPrunable(fd, request); err != nil {
+			return nil, err
+		}
+	}
 	identity := execution.TaskIdentity{ExerciseID: request.ExerciseId, TaskID: request.TaskId, ExecutionID: request.ExecutionInstanceId, WorkspaceID: request.WorkspaceInstanceId}
 	if err = s.executor.PruneExecution(ctx, identity); err != nil {
 		return nil, storageError(err)
 	}
-	name := "copy-" + request.ExecutionInstanceId
 	copyFD, err := directory(fd, name, true)
 	if err != nil {
 		return nil, storageError(err)

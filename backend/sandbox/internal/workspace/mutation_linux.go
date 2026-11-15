@@ -28,6 +28,10 @@ func (s *Service) ApplyBatch(ctx context.Context, request *rpc.ApplyBatchRequest
 		return nil, err
 	}
 	defer release()
+	return s.applyBatchLocked(ctx, request)
+}
+
+func (s *Service) applyBatchLocked(ctx context.Context, request *rpc.ApplyBatchRequest) (*rpc.MutationReceipt, error) {
 	fingerprint, err := mutationFingerprint(request)
 	if err != nil {
 		return nil, err

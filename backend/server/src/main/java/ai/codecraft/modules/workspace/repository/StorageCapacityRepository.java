@@ -51,6 +51,7 @@ public interface StorageCapacityRepository {
           UNION ALL SELECT sum(pg_column_size(t)) FROM workspace_transition t WHERE exercise_id = #{id}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM workspace_mutation t JOIN workspace_operation o ON o.id = t.operation_id WHERE o.exercise_id = #{id}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM workspace_test_task t WHERE exercise_id = #{id}::uuid
+          UNION ALL SELECT sum(pg_column_size(t)) FROM workspace_command t WHERE exercise_id = #{id}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM workspace_test_stop t JOIN workspace_test_task x ON x.id = t.task_id WHERE x.exercise_id = #{id}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM workspace_task_stream t JOIN workspace_test_task x ON x.id = t.task_id WHERE x.exercise_id = #{id}::uuid
           UNION ALL SELECT sum(pg_column_size(t)) FROM workspace_task_event t JOIN workspace_test_task x ON x.id = t.task_id WHERE x.exercise_id = #{id}::uuid

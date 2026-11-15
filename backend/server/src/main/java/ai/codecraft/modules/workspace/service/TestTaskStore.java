@@ -291,6 +291,11 @@ public class TestTaskStore {
     public List<TestTaskEntity> pending() { return tasks.pending(); }
 
     @Transactional(readOnly = true)
+    public boolean ownsCommand(String exercise, String task, String workspace, String execution) {
+        return tasks.ownsCommand(exercise, task, workspace, execution);
+    }
+
+    @Transactional(readOnly = true)
     public List<TestTaskEntity> inventoryTasks(List<String> executionIds) {
         if (executionIds.size() > 100) throw new IllegalArgumentException("Inventory page too large");
         return executionIds.isEmpty() ? List.of() : tasks.executions(executionIds);

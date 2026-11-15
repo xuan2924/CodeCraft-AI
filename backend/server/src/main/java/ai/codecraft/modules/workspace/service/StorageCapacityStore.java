@@ -29,6 +29,7 @@ public class StorageCapacityStore {
     public static final long MIB = 1024L * 1024;
     public static final long PREPARATION_GROWTH = 32 * MIB;
     public static final long ORDINARY_TEST_GROWTH = 96 * MIB;
+    public static final long COMMAND_GROWTH = 192 * MIB;
     public static final long FINAL_TEST_GROWTH = 56 * MIB;
     public static final long CONTROL_GROWTH = 64 * 1024;
     public static final long MUTATION_OVERHEAD = 16 * MIB;
@@ -92,7 +93,12 @@ public class StorageCapacityStore {
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void registerExecution(TestTaskEntity task) {
-        if (capacity.execution(new StorageExecutionEntity(task.exerciseId(), task.id(), task.executionInstanceId(), task.workspaceInstanceId())) != 1) {
+        registerExecution(new StorageExecutionEntity(task.exerciseId(), task.id(), task.executionInstanceId(), task.workspaceInstanceId()));
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void registerExecution(StorageExecutionEntity execution) {
+        if (capacity.execution(execution) != 1) {
             throw new IllegalStateException("Execution identity reused");
         }
     }
