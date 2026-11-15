@@ -71,6 +71,33 @@ func TestCommandCopyRecoveryDoesNotReopenConfirmedContainerCleanup(t *testing.T)
 	}
 }
 
+func TestCommandStopReasonFollowsFirstDurableIntent(t *testing.T) {
+	for _, first := range []string{"command_authority_ended", "user_stop"} {
+		t.Run(first, func(t *testing.T) {
+			now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			runner := &Runner{root: t.TempDir(), now: func() time.Time { return now }, tasks: map[string]string{}}
+			input := commandInput()
+			input.NotAfter = now.Add(-time.Second)
+			record := Result{Input: input, State: "RUNNING", Intent: "STOPPED", Reason: first, StartedAt: now.Add(-time.Minute), Cleanup: "PENDING", CopyCleanup: "PENDING"}
+			if err := runner.persist(record); err != nil {
+				t.Fatal(err)
+			}
+			record.FinishedAt, record.Quiescent, record.Cleanup = &now, true, "SUCCEEDED"
+			record.Reason = "user_stop"
+			if first == "user_stop" {
+				record.Reason = "command_authority_ended"
+			}
+			if err := runner.persist(record); err != nil {
+				t.Fatal(err)
+			}
+			result, err := runner.Query(context.Background(), input.ExecutionID)
+			if err != nil || result.State != "STOPPED" || result.Reason != first {
+				t.Fatalf("first intent reason changed: %v %+v", err, result)
+			}
+		})
+	}
+}
+
 func TestCommandNonzeroExitIsDurableWithoutAnAuthorityGrade(t *testing.T) {
 	runner := &Runner{root: t.TempDir(), now: time.Now, tasks: map[string]string{}}
 	input := commandInput()

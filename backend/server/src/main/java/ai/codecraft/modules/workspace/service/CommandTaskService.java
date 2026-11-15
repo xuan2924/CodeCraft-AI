@@ -62,8 +62,8 @@ public class CommandTaskService {
             store.read(session, exercise, id);
             var code = error.getStatus().getCode();
             if (Set.of(Status.Code.FAILED_PRECONDITION, Status.Code.INVALID_ARGUMENT, Status.Code.RESOURCE_EXHAUSTED,
-                Status.Code.DATA_LOSS, Status.Code.NOT_FOUND).contains(code)) throw new BusinessException(WorkspaceErrorCode.COMMAND_OUTPUT_UNAVAILABLE);
-            throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE);
+                Status.Code.DATA_LOSS, Status.Code.NOT_FOUND).contains(code)) throw new BusinessException(WorkspaceErrorCode.COMMAND_OUTPUT_UNAVAILABLE, error);
+            throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE, error);
         }
         store.read(session, exercise, id); // Private delivery is reauthorized after external I/O.
         if (!result.getWorkspaceInstanceId().equals(task.workspaceInstanceId()) || !result.getExecutionInstanceId().equals(task.executionInstanceId())

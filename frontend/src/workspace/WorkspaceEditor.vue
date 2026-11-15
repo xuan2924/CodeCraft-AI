@@ -4,14 +4,17 @@ import { onBeforeRouteLeave } from 'vue-router';
 import { NButton, useThemeVars } from 'naive-ui';
 import { ApiError } from '../api/request';
 import * as api from './api';
-import { buffer, committed, dirty, observe, useLatestBaseline, type Buffer } from './editorBuffer';
+import { buffer, committed, dirty as contentDirty, observe, useLatestBaseline, type Buffer } from './editorBuffer';
 import { listDrafts, putDraft, readDraftEpoch, removeDraft, type Draft } from './drafts';
 import CodeEditor from './CodeEditor.vue';
+import ClosedDrafts from './ClosedDrafts.vue';
 
 const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean; testBusy?: boolean; answeringClosed?: boolean }>();
 const emit = defineEmits<{ saved: []; select: [path: string]; 'stale-control': []; 'run-test': [revision: string] }>();
 const theme = useThemeVars();
 const buffers = reactive(new Map<string, Buffer>());
+const deleted = reactive(new Map<string, string>());
+function dirty(value: Buffer): boolean { return contentDirty(value) || deleted.has(value.path); }
 const current = computed(() => buffers.get(props.selected));
 const edited = computed(() => [...buffers.values()].some(dirty));
 const canWrite = computed(() => !props.answeringClosed && !!props.credential && props.exercise.state === 'ACTIVE' &&
@@ -49,9 +52,22 @@ let finishLeave: ((value: boolean) => void) | undefined;
 
 watch(() => props.file, (file) => {
   if (!file || file.workspaceInstanceId !== props.exercise.workspaceInstanceId) return;
+  if (props.exercise.revision !== null && !props.exercise.paths.includes(file.path) && BigInt(file.revision) <= BigInt(props.exercise.revision)) return;
+  const deletion = deleted.get(file.path);
+  if (deletion && BigInt(file.revision) <= BigInt(deletion)) return;
+  deleted.delete(file.path);
   const existing = buffers.get(file.path);
   if (existing) observe(existing, file);
   else buffers.set(file.path, buffer(file));
+}, { immediate: true });
+watch(() => [props.exercise.revision, props.exercise.paths] as const, ([revision, paths]) => {
+  if (revision === null) return;
+  for (const value of buffers.values()) {
+    if (paths.includes(value.path) || BigInt(revision) <= BigInt(value.remote?.revision ?? value.revision)
+      || BigInt(revision) <= BigInt(deleted.get(value.path) ?? '-1')) continue;
+    if (dirty(value)) { deleted.set(value.path, revision); value.remote = null; }
+    else { buffers.delete(value.path); deleted.delete(value.path); if (props.selected === value.path) emit('select', ''); }
+  }
 }, { immediate: true });
 watch(() => props.selected, async (path) => {
   const generation = ++loadGeneration;
@@ -119,6 +135,11 @@ async function discard(value: Buffer) {
   catch { backup.value = '草稿清理失败，刷新时可能仍看到旧备份。'; return; }
   if (disposed) return;
   if (value.content !== text) { error.value = '丢弃期间产生了新输入，请重新确认。'; return; }
+  if (deleted.has(value.path)) {
+    buffers.delete(value.path); deleted.delete(value.path);
+    if (props.selected === value.path) emit('select', '');
+    return;
+  }
   value.content = value.remote?.content ?? value.baseContent;
   useLatestBaseline(value);
 }
@@ -167,7 +188,7 @@ async function submit(pending: Pending, polling = false): Promise<boolean> {
 async function saveBuffers(values: Buffer[]): Promise<boolean> {
   if (!canWrite.value || busy.value || unresolved.value) return false;
   if (!values.length) return true;
-  if (values.some((value) => value.remote || value.revision !== values[0]!.revision)) {
+  if (values.some((value) => deleted.has(value.path) || value.remote || value.revision !== values[0]!.revision)) {
     error.value = '请先比较冲突并为这些文件确认同一最新基线。'; return false;
   }
   const changes: api.FileChange[] = values.map((value) => ({ path: value.path, kind: 'UPDATE', content: value.content }));
@@ -241,7 +262,10 @@ async function discardAll(): Promise<boolean> {
   if ([...buffers.values()].some((value) => value.content !== confirmed.get(value.path))) {
     error.value = '丢弃期间产生了新输入，请重新确认。'; return false;
   }
-  for (const value of buffers.values()) { value.content = value.remote?.content ?? value.baseContent; useLatestBaseline(value); }
+  for (const value of buffers.values()) {
+    if (deleted.has(value.path)) { buffers.delete(value.path); deleted.delete(value.path); }
+    else { value.content = value.remote?.content ?? value.baseContent; useLatestBaseline(value); }
+  }
   return true;
 }
 async function leave(choice: 'save' | 'discard' | 'cancel') {
@@ -341,6 +365,27 @@ onScopeDispose(() => {
         恢复此草稿
       </NButton>
     </div>
+    <details>
+      <summary>查看本场本地草稿备份（含已删除文件）</summary>
+      <ClosedDrafts
+        :owner="owner"
+        :exercise-id="exercise"
+        active
+      />
+    </details>
+    <NButton
+      v-for="path in deleted.keys()"
+      :key="path"
+      @click="emit('select', path)"
+    >
+      已删除文件的草稿：{{ path }}
+    </NButton>
+    <p
+      v-if="current && deleted.has(current.path)"
+      role="alert"
+    >
+      正式文件已在修订 {{ deleted.get(current.path) }} 删除；本地草稿已保留，不能直接覆盖保存。请复制草稿后显式新建文件，或丢弃草稿。
+    </p>
     <div :class="{ 'conflict-columns': !!current?.remote }">
       <div>
         <h3 v-if="current?.remote">

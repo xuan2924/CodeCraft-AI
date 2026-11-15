@@ -22,6 +22,40 @@ function render(owner = 'owner') {
   view = mount(WorkspaceEditor, { props: { owner, exercise, file, selected: file.path, credential: 'credential' } });
   return view;
 }
+it('removes a clean buffer when a newer workspace revision deletes its file', async () => {
+  const page = render(); await flushPromises();
+  await page.setProps({ exercise: { ...exercise, revision: '1', paths: [] }, file: undefined });
+  expect(page.get('textarea').element.value).toBe('');
+  expect(page.get('textarea').attributes('readonly')).toBeDefined();
+  expect(page.emitted('select')).toContainEqual(['']);
+  expect(api.save).not.toHaveBeenCalled();
+});
+
+it('retains a deleted-file draft with an explicit conflict and rejects stale file responses', async () => {
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('draft during Bash');
+  await page.setProps({ exercise: { ...exercise, revision: '1', paths: [] }, file: undefined });
+  expect(page.text()).toContain('正式文件已在修订 1 删除');
+  expect(page.get('textarea').element.value).toBe('draft during Bash');
+  await page.setProps({ file: { ...file } });
+  expect(page.text()).toContain('正式文件已在修订 1 删除');
+  await page.findAll('button').find(button => button.text() === '保存文件')!.trigger('click');
+  await flushPromises();
+  expect(api.save).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(350);
+  expect(drafts.putDraft).toHaveBeenCalledWith(expect.objectContaining({ content: 'draft during Bash' }), 0);
+});
+
+it('makes deleted-file backups readable after reloading an active workspace without recreating files', async () => {
+  vi.mocked(drafts.listAccountDrafts).mockResolvedValueOnce([{ owner: 'owner', exercise: 'exercise', id: 'old-page',
+    path: file.path, content: 'deleted file backup', baseContent: 'base', revision: '0', updatedAt: 1 }]);
+  view = mount(WorkspaceEditor, { props: { owner: 'owner', exercise: { ...exercise, revision: '1', paths: [] }, selected: '', credential: 'credential' } });
+  await flushPromises();
+  expect(view.get('[aria-label="本场本地草稿备份"]').text()).toContain('deleted file backup');
+  expect(api.save).not.toHaveBeenCalled();
+  expect(drafts.removeDraft).not.toHaveBeenCalled();
+});
+
 it('keeps the editable draft and backup after unified storage admission is denied', async () => {
   vi.mocked(api.save).mockRejectedValueOnce(new ApiError(429, 'STORAGE_BUDGET_EXCEEDED'));
   const page = render(); await flushPromises();
@@ -168,7 +202,7 @@ it('retains each file buffer and draft while switching files', async () => {
   const page = render(); await flushPromises();
   await page.get('textarea').setValue('first file draft');
   const second = { ...file, path: 'src/main/java/Second.java', content: 'second baseline' };
-  await page.setProps({ selected: second.path, file: second });
+  await page.setProps({ selected: second.path, file: second, exercise: { ...exercise, paths: [file.path, second.path] } });
   await flushPromises();
   await page.get('textarea').setValue('second file draft');
   await vi.advanceTimersByTimeAsync(350);

@@ -340,18 +340,24 @@ func (r *Runner) persistOrdered(result Result) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	intentReason := result.Reason
 	if err == nil {
 		result.CounterUncertain = previous.CounterUncertain
 		if previous.Intent != "" {
 			result.Intent = previous.Intent
+			intentReason = previous.Reason
 		}
 	}
 	if result.Intent != "" {
+		// The first durable intent owns its reason, including authority expiry.
+		result.Reason = map[string]string{"STOPPED": "user_stop", "TIMED_OUT": "platform_deadline"}[result.Intent]
+		if result.Intent == "STOPPED" && intentReason == "command_authority_ended" {
+			result.Reason = intentReason
+		}
 		if result.FinishedAt == nil {
 			result.State = "STOPPING"
 		} else if result.Quiescent {
 			result.State = result.Intent
-			result.Reason = map[string]string{"STOPPED": "user_stop", "TIMED_OUT": "platform_deadline"}[result.Intent]
 			result.Report, result.CompilationReport, result.ExitCode = nil, nil, nil
 		}
 	}

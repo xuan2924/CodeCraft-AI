@@ -55,6 +55,14 @@ class CommandTaskServiceTest {
         verify(coordinator, never()).pruneForAdmission(any());
     }
 
+    @Test void translatedSandboxFailureKeepsItsTechnicalCause() {
+        var task = task();
+        var failure = io.grpc.Status.UNAVAILABLE.withDescription("fixture transport unavailable").asRuntimeException();
+        when(store.read("session", "exercise", "task")).thenReturn(task);
+        when(sandbox.commandChanges(task)).thenThrow(failure);
+        assertThatThrownBy(() -> service.changes("session", "exercise", "task")).isInstanceOf(BusinessException.class).hasCause(failure);
+    }
+
     @Test void sourceDeliveryReauthorizesAfterSandboxRead() {
         var task = task();
         when(store.read("session", "exercise", "task")).thenReturn(task).thenThrow(new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND));

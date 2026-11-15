@@ -142,6 +142,8 @@ func (s *Service) queryCommandLocked(ctx context.Context, request *rpc.QueryTask
 	return result, nil
 }
 
+// QueryCommand reads an exact owned execution and its synchronization receipt;
+// it never starts, stops, or publishes files. A missing registered copy is data loss.
 func (s *Service) QueryCommand(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.CommandSnapshot, error) {
 	release, err := s.enter(ctx)
 	if err != nil {
@@ -160,6 +162,8 @@ func (s *Service) QueryCommand(ctx context.Context, request *rpc.QueryTaskReques
 	return commandSnapshot(fd, result)
 }
 
+// SynchronizeCommand reconciles only a proven-quiescent command using its
+// original gate, deadline, and baseline. Repeats reuse the durable mutation receipt.
 func (s *Service) SynchronizeCommand(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.CommandSnapshot, error) {
 	release, err := s.enter(ctx)
 	if err != nil {
@@ -178,6 +182,8 @@ func (s *Service) SynchronizeCommand(ctx context.Context, request *rpc.QueryTask
 		SynchronizationReason: record.Reason, Mutation: record.Mutation}, nil
 }
 
+// ReadCommandChanges reads the retained baseline/final text diff without writing.
+// Active processes and candidates without a valid captured file tree are unavailable.
 func (s *Service) ReadCommandChanges(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.CommandChanges, error) {
 	release, err := s.enter(ctx)
 	if err != nil {

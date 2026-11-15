@@ -97,7 +97,7 @@ const source = useQuery({ queryKey: ['workspace', owner, 'file', computed(() => 
   queryFn: ({ signal }) => {
     if (!exercise.value) throw new Error('Workspace is not available');
     return api.file(exercise.value, selected.value, signal);
-  }, enabled: computed(() => allowed.value && !!exercise.value && exercise.value.revision !== null && !!selected.value), retry: false, gcTime: 0 });
+  }, enabled: computed(() => allowed.value && !!exercise.value && exercise.value.revision !== null && !!selected.value && exercise.value.paths.includes(selected.value)), retry: false, gcTime: 0 });
 const canRecover = computed(() => allowed.value && !account.isError.value && !active.isError.value);
 const writable = computed(() => canRecover.value && !controlState.isError.value);
 const pending = ref(false);

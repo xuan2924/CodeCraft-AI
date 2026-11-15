@@ -3,7 +3,7 @@ import { onScopeDispose, ref } from 'vue';
 import { NButton } from 'naive-ui';
 import { listAccountDrafts, type Draft } from './drafts';
 
-const props = defineProps<{ owner: string; exerciseId: string }>();
+const props = defineProps<{ owner: string; exerciseId: string; active?: boolean }>();
 const drafts = ref<Draft[]>([]);
 const loading = ref(false);
 const failed = ref(false);
@@ -23,9 +23,9 @@ onScopeDispose(() => { disposed = true; });
 </script>
 
 <template>
-  <section aria-label="结束后的本地草稿">
+  <section :aria-label="active ? '本场本地草稿备份' : '结束后的本地草稿'">
     <h2>本地草稿（只读，可选择复制）</h2>
-    <p>仅此浏览器的未保存备份，不属于最终冻结代码，不会自动提交。</p>
+    <p>{{ active ? '仅此浏览器的未保存备份，不是正式代码；可选择复制，不会自动提交。' : '仅此浏览器的未保存备份，不属于最终冻结代码，不会自动提交。' }}</p>
     <p v-if="loading" role="status">正在读取本地备份…</p>
     <p v-else-if="failed" role="alert">无法读取本地草稿，请重试；不会因此删除备份。</p>
     <p v-else-if="!drafts.length">没有找到本场本地备份。</p>
