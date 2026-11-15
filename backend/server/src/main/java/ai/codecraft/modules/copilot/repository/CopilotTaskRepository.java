@@ -30,7 +30,7 @@ public interface CopilotTaskRepository {
     CopilotTaskEntity find(String id);
     @Select("SELECT " + TASK + " FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND request_key=#{key}")
     CopilotTaskEntity receipt(String exercise, String key);
-    @Select("SELECT " + TASK + " FROM copilot_task WHERE conversation_id=#{conversation}::uuid ORDER BY created_at DESC,id DESC LIMIT 1")
+    @Select("SELECT " + TASK + " FROM copilot_task WHERE conversation_id=#{conversation}::uuid ORDER BY admission_sequence DESC LIMIT 1")
     CopilotTaskEntity latest(String conversation);
     @Select("SELECT EXISTS(SELECT 1 FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','STOPPING'))")
     boolean active(String exercise);

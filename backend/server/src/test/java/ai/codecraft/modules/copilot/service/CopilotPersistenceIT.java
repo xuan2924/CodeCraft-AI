@@ -63,6 +63,10 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import ai.codecraft.modules.copilot.repository.CopilotRetentionRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
+import ai.codecraft.modules.copilot.repository.CopilotFollowupRepository;
+import ai.codecraft.modules.copilot.model.dto.CopilotFollowupRequest;
+import ai.codecraft.modules.copilot.model.entity.CopilotFollowupEntity;
+import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
 import ai.codecraft.modules.copilot.repository.CopilotConversationRepository;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
@@ -274,6 +278,8 @@ class CopilotPersistenceIT {
     private CopilotApprovalModeService approvalModes;
     private CopilotAutoApproval automatic;
     private CopilotSteerService steers;
+    private CopilotFollowupStore followups;
+    private CopilotFollowupService followupService;
 
     @BeforeAll
     void migrate() throws Exception {
@@ -290,7 +296,7 @@ class CopilotPersistenceIT {
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
             ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
-            CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
+            CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotFollowupRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
@@ -303,7 +309,7 @@ class CopilotPersistenceIT {
 
     @BeforeEach
     void seed() throws Exception {
-        jdbc.execute("TRUNCATE copilot_command,workspace_command,copilot_skill_snapshot,personal_skill_command,personal_skill,personal_skill_version,copilot_context,copilot_compaction_call,copilot_compaction,copilot_steer,copilot_approval_change,copilot_approval_mode,copilot_test_run,copilot_proposal,copilot_tool,copilot_message,copilot_turn,copilot_task,workspace_task_event,workspace_task_stream,workspace_test_stop,workspace_test_task,workspace_mutation,workspace_transition,workspace_operation");
+        jdbc.execute("TRUNCATE copilot_followup,copilot_followup_resume,copilot_command,workspace_command,copilot_skill_snapshot,personal_skill_command,personal_skill,personal_skill_version,copilot_context,copilot_compaction_call,copilot_compaction,copilot_steer,copilot_approval_change,copilot_approval_mode,copilot_test_run,copilot_proposal,copilot_tool,copilot_message,copilot_turn,copilot_task,workspace_task_event,workspace_task_stream,workspace_test_stop,workspace_test_task,workspace_mutation,workspace_transition,workspace_operation");
         clock.now = "1".equals(System.getenv("COPILOT_LIVE_DEEPSEEK")) ? Instant.now() : Instant.parse("2026-01-01T00:00:00Z");
         String owner = UUID.randomUUID().toString(); exercise = UUID.randomUUID().toString();
         String instance = UUID.randomUUID().toString(); String preparation = UUID.randomUUID().toString();
@@ -393,6 +399,9 @@ class CopilotPersistenceIT {
         sandbox = mock(SandboxWorkspaceGateway.class);
         when(sandbox.measureStorage(any())).thenAnswer(call -> measurement);
         capacity = new StorageCapacityService(capacityStore, sandbox, mock(WorkspaceMaintenanceCoordinator.class));
+        var followupRepository = sql.getMapper(CopilotFollowupRepository.class);
+        followups = proxy(new CopilotFollowupStore(followupRepository, repository, tasks, conversations, identity, coordination, operations, clock), CopilotFollowupStore.class);
+        followupService = new CopilotFollowupService(followups, capacity, followupRepository, clock);
         approvalModes = new CopilotApprovalModeService(proxy(new CopilotApprovalModeStore(sql.getMapper(CopilotApprovalModeRepository.class),
             identity, secrets, lifecycle, coordination, operations, clock), CopilotApprovalModeStore.class), capacity);
         files = mock(ExerciseService.class);
@@ -1423,6 +1432,126 @@ class CopilotPersistenceIT {
         verify(driver, times(1)).call(any(), any(), any(), anyInt(), any(), any(), any());
     }
 
+    private static void assertCode(Runnable action, String code) {
+        assertThatThrownBy(action::run).isInstanceOf(BusinessException.class).hasMessage(code);
+    }
+
+    @Test
+    void followupsRemainFifoIndependentAndIdempotentAcrossDispatcherReentry() throws Exception {
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("done")).build(), 100));
+        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var firstInput = new CopilotFollowupRequest("first independent task", true);
+        var first = followupService.enqueue(SESSION, exercise, exercise, CONTROL, "first", firstInput);
+        var second = followupService.enqueue(SESSION, exercise, exercise, CONTROL, "second", new CopilotFollowupRequest("second independent task", true));
+        assertThat(followupService.enqueue(SESSION, exercise, exercise, CONTROL, "first", firstInput).id()).isEqualTo(first.id());
+        assertCode(() -> followupService.enqueue(SESSION, exercise, exercise, CONTROL, "first", new CopilotFollowupRequest("different", true)), "COPILOT_IDEMPOTENCY_CONFLICT");
+        followupService.dispatch(first.id()); assertThat(followups.ready(first.id())).isNull();
+        for (String state : List.of("PAUSED", "WAITING_APPROVAL", "WAITING_WRITE", "WAITING_TEST", "WAITING_COMMAND", "STOPPING")) {
+            jdbc.update("UPDATE copilot_task SET state=? WHERE id=?::uuid", state, anchor.id());
+            assertThat(followups.ready(first.id())).isNull();
+        }
+        jdbc.update("UPDATE copilot_task SET state='QUEUED' WHERE id=?::uuid", anchor.id());
+        runner.run(anchor.id(), UUID.randomUUID().toString());
+        followupService.dispatch(second.id()); assertThat(repository.latest(exercise).id()).isEqualTo(anchor.id());
+        followupService.dispatch(first.id()); followupService.dispatch(first.id());
+        var started = repository.latest(exercise);
+        assertThat(started.id()).isNotEqualTo(anchor.id()); assertThat(started.conversationId()).isEqualTo(exercise);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_task WHERE exercise_id=?::uuid", Integer.class, exercise)).isEqualTo(2);
+        assertCode(() -> followups.cancel(SESSION, exercise, exercise, first.id()), "COPILOT_FOLLOWUP_STARTED");
+        runner.run(started.id(), UUID.randomUUID().toString()); followupService.dispatch(second.id());
+        assertThat(followupService.recent(SESSION, exercise, exercise)).extracting(item -> item.state()).containsExactly("DISPATCHED", "DISPATCHED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_task WHERE exercise_id=?::uuid", Integer.class, exercise)).isEqualTo(3);
+        runner.run(repository.latest(exercise).id(), UUID.randomUUID().toString());
+        var fresh = tasks.accept(SESSION, exercise, CONTROL, "fresh-anchor", "new independent goal", true, measurement);
+        var later = followups.accept(SESSION, exercise, exercise, CONTROL, "later", new CopilotFollowupRequest("after fresh anchor", true), measurement);
+        jdbc.update("UPDATE copilot_task SET state='FAILED',completed_at=? WHERE id=?::uuid", java.sql.Timestamp.from(clock.instant()), fresh.id());
+        followupService.dispatch(later.id());
+        assertThat(followups.recent(SESSION, exercise, exercise).getLast().state()).isEqualTo("PAUSED");
+    }
+
+    @Test
+    void failedFollowupPausesLaterWorkUntilExplicitIdempotentReauthorization() {
+        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var first = followups.accept(SESSION, exercise, exercise, CONTROL, "first", new CopilotFollowupRequest("first", true), measurement);
+        var second = followups.accept(SESSION, exercise, exercise, CONTROL, "second", new CopilotFollowupRequest("second", true), measurement);
+        assertCode(() -> followupService.resume(SESSION, exercise, exercise, CONTROL, "early-resume", true), "COPILOT_FOLLOWUP_NOT_ACTIVE");
+        jdbc.update("UPDATE copilot_task SET state='STOPPED',completed_at=? WHERE id=?::uuid", java.sql.Timestamp.from(clock.instant()), anchor.id());
+        followupService.dispatch(first.id()); followupService.dispatch(second.id());
+        assertThat(followups.recent(SESSION, exercise, exercise)).extracting(item -> item.state()).containsExactly("PAUSED", "WAITING");
+        var oldGeneration = sql.getMapper(CopilotFollowupRepository.class).find(first.id()).generation();
+        followupService.resume(SESSION, exercise, exercise, CONTROL, "resume", true);
+        followups.pause(first.id(), oldGeneration, "LATE_OLD_FAILURE");
+        followupService.dispatch(first.id());
+        var started = repository.latest(exercise);
+        jdbc.update("UPDATE copilot_task SET state='FAILED',completed_at=? WHERE id=?::uuid", java.sql.Timestamp.from(clock.instant()), started.id());
+        followupService.dispatch(second.id());
+        assertThat(followups.recent(SESSION, exercise, exercise).getLast().state()).isEqualTo("PAUSED");
+        followupService.resume(SESSION, exercise, exercise, CONTROL, "resume", true);
+        assertThat(followups.recent(SESSION, exercise, exercise).getLast().state()).isEqualTo("PAUSED");
+        followups.cancel(SESSION, exercise, exercise, second.id()); followups.cancel(SESSION, exercise, exercise, second.id());
+        followupService.dispatch(second.id());
+        assertThat(repository.latest(exercise).id()).isEqualTo(started.id());
+        assertThat(followups.recent(SESSION, exercise, exercise).getLast().state()).isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void followupAuthorizationDeadlineCancellationAndDeletionStayInsideOriginalOwnership() {
+        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var first = followups.accept(SESSION, exercise, exercise, CONTROL, "first", new CopilotFollowupRequest("first", true), measurement);
+        var other = conversations.create(SESSION, exercise, CONTROL, "other", measurement);
+        assertCode(() -> followups.cancel(SESSION, exercise, other.id(), first.id()), "COPILOT_NOT_FOUND");
+        jdbc.update("UPDATE copilot_task SET state='SUCCEEDED',completed_at=? WHERE id=?::uuid", java.sql.Timestamp.from(clock.instant()), anchor.id());
+        when(identity.authorizeMutation(SESSION)).thenThrow(new BusinessException(IdentityErrorCode.UNAUTHENTICATED));
+        followupService.dispatch(first.id());
+        assertThat(sql.getMapper(CopilotFollowupRepository.class).find(first.id()).state()).isEqualTo("PAUSED");
+        clock.now = clock.instant().plusSeconds(1801);
+        assertThat(followupService.pending()).contains(first.id()); followupService.dispatch(first.id());
+        assertThat(sql.getMapper(CopilotFollowupRepository.class).find(first.id()).state()).isEqualTo("CANCELLED");
+        new TransactionTemplate(transactions).executeWithoutResult(status -> data.erase(exercise));
+        assertThat(sql.getMapper(CopilotFollowupRepository.class).find(first.id())).isNull();
+    }
+
+    @Test
+    void followupDiscoverySkipsThirtyTwoBlockedHeadsButStillFindsReadyAndExpiredWork() {
+        for (int index = 0; index < 32; index++) seedBlockedFollowup(false);
+        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var ready = followups.accept(SESSION, exercise, exercise, CONTROL, "ready", new CopilotFollowupRequest("ready", true), measurement);
+        jdbc.update("UPDATE copilot_task SET state='SUCCEEDED',completed_at=? WHERE id=?::uuid", java.sql.Timestamp.from(clock.instant()), anchor.id());
+        String expired = seedBlockedFollowup(true);
+        assertThat(followupService.pending()).containsExactly(ready.id(), expired);
+        followupService.dispatch(ready.id()); followupService.dispatch(expired);
+        assertThat(sql.getMapper(CopilotFollowupRepository.class).find(ready.id()).state()).isEqualTo("DISPATCHED");
+        assertThat(sql.getMapper(CopilotFollowupRepository.class).find(expired).state()).isEqualTo("CANCELLED");
+    }
+
+    private String seedBlockedFollowup(boolean expired) {
+        String other = UUID.randomUUID().toString(), owner = UUID.randomUUID().toString(), instance = UUID.randomUUID().toString(), preparation = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO identity_user(id,username,password_hash,role,password_change_required) VALUES(?::uuid,?,'fixture','USER',false)", owner, "q_" + owner.substring(0, 20));
+        var exercises = sql.getMapper(ExerciseRepository.class);
+        exercises.insert(new ExerciseEntity(other, owner, UUID.randomUUID().toString(), instance, preparation, "PREPARING", null, "[]", 1, clock.instant(), null, null, null, null, null));
+        exercises.prepared(other, instance, preparation, 1, "[]");
+        exercises.start(other, clock.instant().minusSeconds(60), clock.instant().plusSeconds(expired ? -1 : 1800));
+        String task = UUID.randomUUID().toString(), id = UUID.randomUUID().toString();
+        repository.insert(new CopilotTaskEntity(task, other, owner, SESSION, "fixture", "fixture", "WAITING_APPROVAL", null, false, null, null, clock.instant(), null, other));
+        sql.getMapper(CopilotFollowupRepository.class).insert(new CopilotFollowupEntity(id, 0, other, other, owner, SESSION, IdentitySecrets.digest(CONTROL), "fixture", "pending", task, null, "WAITING", null, null, clock.instant(), null, 0, 0));
+        if (expired) jdbc.update("UPDATE copilot_followup SET state='PAUSED' WHERE id=?::uuid", id);
+        return id;
+    }
+
+    @Test
+    void followupsKeepOldPendingItemsVisibleAndEnforceBoundedAdmission() {
+        tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var oldest = followups.accept(SESSION, exercise, exercise, CONTROL, "oldest", new CopilotFollowupRequest("oldest", true), measurement);
+        for (int index = 0; index < 105; index++) {
+            var item = followups.accept(SESSION, exercise, exercise, CONTROL, "cancel-" + index, new CopilotFollowupRequest("cancelled", true), measurement);
+            followups.cancel(SESSION, exercise, exercise, item.id());
+        }
+        assertThat(followups.recent(SESSION, exercise, exercise)).hasSize(101).first().extracting(item -> item.id()).isEqualTo(oldest.id());
+        for (int index = 0; index < 31; index++) followups.accept(SESSION, exercise, exercise, CONTROL, "pending-" + index, new CopilotFollowupRequest("pending", true), measurement);
+        assertCode(() -> followups.accept(SESSION, exercise, exercise, CONTROL, "overflow", new CopilotFollowupRequest("overflow", true), measurement), "COPILOT_FOLLOWUP_LIMIT");
+        assertThat(followups.recent(SESSION, exercise, exercise)).filteredOn(item -> item.state().equals("WAITING")).hasSize(32);
+    }
+
     @Test
     void newConversationHasStableIdentityAndDoesNotMoveExistingTask() {
         var initial = conversations.list(SESSION, exercise);
@@ -1942,7 +2071,7 @@ class CopilotPersistenceIT {
         var workspace = new ProposalWorkspace(); workspace.loseApplyResponse = true;
         var task = beginProposal(workspace, true);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
-        try (var coordinator = new CopilotCoordinator(repository, execution, runner, limits, clock, proposals, testTools, automatic, sql.getMapper(CopilotCompactionRepository.class), summaryExecution, summaryRunner, commandTools)) {
+        try (var coordinator = new CopilotCoordinator(repository, execution, runner, limits, clock, proposals, testTools, automatic, sql.getMapper(CopilotCompactionRepository.class), summaryExecution, summaryRunner, commandTools, mock(CopilotFollowupService.class))) {
             coordinator.dispatch();
             await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_WRITE"));
         }

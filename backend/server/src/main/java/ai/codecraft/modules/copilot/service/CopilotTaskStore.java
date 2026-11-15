@@ -74,11 +74,23 @@ public class CopilotTaskStore {
             selected == null ? List.of() : selected, measurement, conversations.resolve(session, exercise, conversation));
     }
 
+    @Transactional
+    public CopilotTaskResponse acceptFollowup(String session, String exercise, String controlHash, String key, String text,
+        StorageMeasurement measurement, String conversation) {
+        return acceptWithControlHash(session, exercise, controlHash, key, text, true, List.of(), measurement,
+            conversations.resolve(session, exercise, conversation));
+    }
+
     private CopilotTaskResponse acceptInternal(String session, String exercise, String credential, String key, String text,
+        boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement, String conversation) {
+        return acceptWithControlHash(session, exercise, IdentitySecrets.digest(credential), key, text, feeAcknowledged, selected, measurement, conversation);
+    }
+
+    private CopilotTaskResponse acceptWithControlHash(String session, String exercise, String controlHash, String key, String text,
         boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement, String conversation) {
         var grant = identity.authorizeMutation(session);
         exercises.find(session, exercise);
-        control.checkControl(exercise, IdentitySecrets.digest(credential));
+        control.checkControl(exercise, controlHash);
         validateKey(key);
         if (text == null || text.isBlank() || text.getBytes(StandardCharsets.UTF_8).length > 4096 || !feeAcknowledged) {
             throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);

@@ -11,6 +11,7 @@ import CopilotTests from './CopilotTests.vue';
 import CopilotCommands from './CopilotCommands.vue';
 import CopilotApprovalMode from './CopilotApprovalMode.vue';
 import CopilotSteers from './CopilotSteers.vue';
+import CopilotFollowups from './CopilotFollowups.vue';
 import CopilotContext from './CopilotContext.vue';
 import CopilotUsage from './CopilotUsage.vue';
 import CopilotSkills from './CopilotSkills.vue';
@@ -319,6 +320,16 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     >
       保存草稿并发送
     </NButton>
+    <CopilotFollowups
+      :owner="owner"
+      :exercise-id="exerciseId"
+      :conversation-id="conversationId ?? exerciseId"
+      :credential="credential"
+      :disabled="disabled"
+      :running="running"
+      @unauthorized="emit('unauthorized')"
+      @changed="latest.refetch()"
+    />
     <CopilotUsage
       :conversation-id="conversationId"
       :owner="owner"

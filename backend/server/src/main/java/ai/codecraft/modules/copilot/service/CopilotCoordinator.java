@@ -28,6 +28,7 @@ public class CopilotCoordinator implements AutoCloseable {
     private final CopilotProposalStore proposals;
     private final CopilotTestTools tests;
     private final CopilotCommandService commands;
+    private final CopilotFollowupService followups;
     private final CopilotAutoApproval automatic;
     private final CopilotCompactionRepository contexts;
     private final CopilotCompactionExecution summaries;
@@ -38,8 +39,8 @@ public class CopilotCoordinator implements AutoCloseable {
     private final ConcurrentMap<String, WorkerThread> threads = new ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    public CopilotCoordinator(CopilotTaskRepository tasks, CopilotExecutionStore store, CopilotRunner runner, CopilotProperties limits, Clock clock, CopilotProposalStore proposals, CopilotTestTools tests, CopilotAutoApproval automatic, CopilotCompactionRepository contexts, CopilotCompactionExecution summaries, CopilotCompactionRunner summaryRunner, CopilotCommandService commands) {
-        this.commands = commands;
+    public CopilotCoordinator(CopilotTaskRepository tasks, CopilotExecutionStore store, CopilotRunner runner, CopilotProperties limits, Clock clock, CopilotProposalStore proposals, CopilotTestTools tests, CopilotAutoApproval automatic, CopilotCompactionRepository contexts, CopilotCompactionExecution summaries, CopilotCompactionRunner summaryRunner, CopilotCommandService commands, CopilotFollowupService followups) {
+        this.commands = commands; this.followups = followups;
         this.tasks = tasks; this.store = store; this.runner = runner; this.clock = clock; this.proposals = proposals; this.tests = tests; this.automatic = automatic;
         this.contexts = contexts; this.summaries = summaries; this.summaryRunner = summaryRunner;
         workers = new ThreadPoolExecutor(limits.workers(), limits.workers(), 0, TimeUnit.SECONDS, new SynchronousQueue<>(),
@@ -65,6 +66,9 @@ public class CopilotCoordinator implements AutoCloseable {
             }
             for (String id : tasks.queued()) {
                 if (!submit(id, () -> runner.run(id, UUID.randomUUID().toString()))) break;
+            }
+            for (String id : followups.pending()) {
+                if (!submit("followup:" + id, () -> followups.dispatch(id))) break;
             }
         } catch (RuntimeException failure) { LOG.warn("Copilot discovery unavailable ({})", failure.getClass().getSimpleName()); }
     }

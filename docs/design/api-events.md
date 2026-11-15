@@ -177,6 +177,14 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - `RECEIVED` 尚未纳入请求，`APPLIED` 已纳入持久请求上下文且带原 `turnId`，`NOT_APPLIED` 表示结束前未派发并带原因。后两者有完成时间；已纳入请求不等于供应商收到或成功回复。停止/到期不补发，已绑定写入/测试先按原 ID 收敛。
 - `COPILOT_STEER_NOT_ACTIVE`（409）表示新指令不被当前任务受理，`COPILOT_STEER_LIMIT`（429）表示待处理队列已满。先接受的 steer 使旧待审批提案 `INVALIDATED/STEER_SUPERSEDED`，已批准原写入不由 steer 撤销。
 
+### Copilot follow-up 队列
+
+- `GET /api/exercises/{exercise}/copilot/conversations/{conversation}/followups`：私有读取，返回按接收序排列的最近 100 项及全部未派发项（总计最多 132）。字段 `id,sequence,exerciseId,conversationId,text,state,reason,taskId,createdAt,completedAt`；序号十进制字符串，状态 `WAITING/PAUSED/DISPATCHED/CANCELLED`。
+- 同路径 `POST`：`{text,feeAcknowledged:true}`，要求 CSRF、`Idempotency-Key`、`X-Operation-Credential`，201 返回原条目；重查不重新读取模型配置或重复排队。`COPILOT_FOLLOWUP_NOT_ACTIVE` 表示当前无可追加任务；`COPILOT_FOLLOWUP_LIMIT` 表示 32 项上限。
+- `POST .../followups/{id}/cancel`：私有授权及 CSRF，单调取消未派发项；重复返回原取消状态。已派发返回 `COPILOT_FOLLOWUP_STARTED`，须停止已创建任务。
+- `POST .../followups/resume`：`{feeAcknowledged:true}`，要求当前操作权、CSRF 和固定幂等键；只恢复暂停队首及后续项。返回 `{conversationId,requestKey}`；重复旧恢复键不解除随后发生的新暂停。
+- 队列回执不含授权哈希/凭证。会话/演练边界由服务端核对；正文 4 KiB UTF-8，原意图冲突返回 `COPILOT_IDEMPOTENCY_CONFLICT`。浏览器刷新只查询，实际派发由既有后台 worker 执行。
+
 ### Copilot 上下文与压缩
 
 - `GET /api/exercises/{exercise}/copilot/context`：私有、no-store，返回 `exerciseId, version, summaryId, throughSequence, summary, requests`；摘要为非权威文本，`requests` 为最近 20 条、按数字接收序号倒序。读取不准备上下文、不调用模型、不恢复任务。
