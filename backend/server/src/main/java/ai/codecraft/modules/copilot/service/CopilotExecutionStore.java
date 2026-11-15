@@ -151,6 +151,7 @@ public class CopilotExecutionStore {
         var request = prepared.plan().projection().request();
         tasks.turn(turn);
         tasks.configuration(turn.id(), prepared.configurationPayload());
+        tasks.recordPrice(turn.id(), evidence.price(target, turn.createdAt()));
         tasks.historyMode(turn.id(), converted);
         contexts.dispatchContext(turn.id(), prepared.plan().projection().estimatedTokens(), prepared.plan().projection().encodedBytes(),
             ticket.version(), ticket.summaryId(), ticket.throughSequence(), tasks.lastSequence(task.exerciseId()), ticket.textHistoryThroughSequence());
@@ -186,6 +187,7 @@ public class CopilotExecutionStore {
         if (tasks.response(turnId, tools ? "TOOLS" : "SUCCEEDED", message, input, output, total, input == null || output == null, evidence.usage(usage), clock.instant()) != 1) {
             throw new IllegalStateException("Model response lost its dispatch marker");
         }
+        tasks.accounting(turnId, evidence.receipt(evidence.facts(usage), tasks.priceSnapshot(turnId)));
         // Keep the batch's emergency pairing credit until every tool has a durable result.
         if (!tools) operations.settle(task.exerciseId(), turnId, true);
         tasks.renew(id, worker, clock.instant().plus(limits.workerLease()));

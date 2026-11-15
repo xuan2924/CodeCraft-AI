@@ -2,6 +2,7 @@ package ai.codecraft.modules.copilot.repository;
 
 import ai.codecraft.modules.copilot.model.entity.CopilotMessageEntity;
 import ai.codecraft.modules.copilot.model.dto.CopilotPartialResponse;
+import ai.codecraft.modules.modelaccess.model.dto.ModelUsageReceiptDTO;
 import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotTurnEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotToolEntity;
@@ -17,6 +18,13 @@ public interface CopilotTaskRepository {
     String TASK = "id::text,exercise_id::text,user_id::text,session_hash,request_key,fingerprint,state,reason,stop_requested,worker_id::text,worker_not_after,created_at,completed_at";
     String TURN = "id::text,task_id::text,exercise_id::text,ordinal,state,connection_id::text,model_configuration_id::text,connection_configuration_version,model_configuration_version,protocol,model_id,context_window,assistant_message_id::text,tool_position,created_at,not_after,completed_at,error_code";
     String MESSAGE = "sequence,id::text,task_id::text,exercise_id::text,kind,payload,created_at";
+
+    @Update("UPDATE copilot_turn SET price_snapshot=#{snapshot} WHERE id=#{id}::uuid AND state='DISPATCHED'")
+    void recordPrice(String id, String snapshot);
+    @Select("SELECT price_snapshot FROM copilot_turn WHERE id=#{id}::uuid")
+    String priceSnapshot(String id);
+    @Update("UPDATE copilot_turn SET usage_facts=#{receipt.factsPayload}::jsonb,estimated_cost=#{receipt.amount},cost_currency=#{receipt.currency},price_reason=#{receipt.priceReason} WHERE id=#{id}::uuid")
+    void accounting(String id, ModelUsageReceiptDTO receipt);
 
     @Select("SELECT " + TASK + " FROM copilot_task WHERE id=#{id}::uuid")
     CopilotTaskEntity find(String id);

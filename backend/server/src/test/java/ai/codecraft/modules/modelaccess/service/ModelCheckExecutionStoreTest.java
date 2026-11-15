@@ -38,7 +38,8 @@ class ModelCheckExecutionStoreTest {
     private final Clock clock = mock(Clock.class);
     private final ModelCheckExecutionStore store = new ModelCheckExecutionStore(checks, identity, invocations,
         new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
-        new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), clock);
+        new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), clock,
+        mock(ModelUsageAccounting.class));
 
     @BeforeEach
     void setup() {

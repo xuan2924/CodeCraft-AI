@@ -65,6 +65,7 @@ class ModelCheckRunnerTest {
             return new ModelCheckDispatchDTO("request-" + ordinal, "check", ordinal, Instant.parse("2030-01-01T00:00:00Z"), 65536, target);
         });
         when(store.complete(anyString(), anyString(), anyInt(), any())).thenReturn(true);
+        when(store.recordUsage(anyString(), anyString(), any())).thenReturn(true);
     }
 
     @Test

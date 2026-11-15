@@ -9,6 +9,7 @@ import ai.codecraft.modules.modelaccess.model.entity.ModelCheckRequestEntity;
 import ai.codecraft.modules.modelaccess.repository.ModelCheckRepository;
 import ai.codecraft.modules.modelaccess.model.exception.ModelAccessErrorCode;
 import java.time.Clock;
+import dev.langchain4j.model.output.TokenUsage;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,10 +23,11 @@ public class ModelCheckExecutionStore {
     private final ModelCallProperties calls;
     private final ModelCheckProperties properties;
     private final Clock clock;
+    private final ModelUsageAccounting accounting;
 
     public ModelCheckExecutionStore(ModelCheckRepository checks, IdentityTransactionService identity, ModelInvocationService invocations,
-        ModelCallProperties calls, ModelCheckProperties properties, Clock clock) {
-        this.checks = checks; this.identity = identity; this.invocations = invocations; this.calls = calls; this.properties = properties; this.clock = clock;
+        ModelCallProperties calls, ModelCheckProperties properties, Clock clock, ModelUsageAccounting accounting) {
+        this.checks = checks; this.identity = identity; this.invocations = invocations; this.calls = calls; this.properties = properties; this.clock = clock; this.accounting = accounting;
     }
 
     /** Internal worker hint only; begin rechecks the immutable reuse plan under the owner lock. */
@@ -83,8 +85,24 @@ public class ModelCheckExecutionStore {
         }
         var request = new ModelCheckRequestEntity(UUID.randomUUID().toString(), checkId, ordinal, workerId, "DISPATCHED", now, deadline, 0);
         checks.insertRequest(request);
+        checks.accountingSnapshot(request.id(), accounting.price(invocation, now), accounting.configuration(invocation));
         checks.transition(checkId, "RUNNING", null);
         return new ModelCheckDispatchDTO(request.id(), checkId, ordinal, deadline, remaining, invocation);
+    }
+
+    /** Numeric evidence for an already dispatched call; does not authorize a check result or another paid request. */
+    @Transactional
+    public boolean recordUsage(String requestId, String workerId, TokenUsage usage) {
+        var initial = checks.request(requestId);
+        if (initial == null) return false;
+        var check = checks.find(initial.checkId());
+        if (check == null) return false;
+        identity.lockResourceOwner(check.userId());
+        check = checks.find(initial.checkId());
+        var request = checks.request(requestId);
+        if (check == null || request == null || !"RUNNING".equals(check.status()) || !"DISPATCHED".equals(request.status())
+            || !request.workerId().equals(workerId)) return false;
+        return checks.accounting(requestId, accounting.raw(usage), accounting.receipt(usage, checks.priceSnapshot(requestId))) == 1;
     }
 
     /** Recovery never resends a request: expired/legacy authority and abandoned request deadlines become terminal. */

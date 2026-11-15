@@ -11,6 +11,7 @@ import CopilotTests from './CopilotTests.vue';
 import CopilotApprovalMode from './CopilotApprovalMode.vue';
 import CopilotSteers from './CopilotSteers.vue';
 import CopilotContext from './CopilotContext.vue';
+import CopilotUsage from './CopilotUsage.vue';
 
 const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string] }>();
@@ -268,6 +269,11 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     >
       保存草稿并发送
     </NButton>
+    <CopilotUsage
+      :owner="owner"
+      :exercise-id="exerciseId"
+      @unauthorized="emit('unauthorized')"
+    />
     <CopilotContext
       :owner="owner"
       :exercise-id="exerciseId"

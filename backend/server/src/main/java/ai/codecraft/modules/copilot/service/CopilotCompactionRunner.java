@@ -111,7 +111,7 @@ public class CopilotCompactionRunner {
         Long output = usage == null ? null : count(usage.outputTokenCount());
         Long total = usage == null ? null : count(usage.totalTokenCount());
         return new CopilotCompactionReceiptDTO(raw, summary, reason, input, output, total,
-            input == null || output == null || total == null, evidence.usage(usage));
+            input == null || output == null || total == null, evidence.usage(usage), evidence.facts(usage));
     }
 
     private Long count(Integer value) { return value == null || value < 0 ? null : value.longValue(); }

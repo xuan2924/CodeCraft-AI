@@ -18,6 +18,11 @@ import static org.mockito.Mockito.when;
 
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.copilot.config.CopilotProperties;
+import ai.codecraft.modules.copilot.repository.CopilotUsageRepository;
+import ai.codecraft.modules.modelaccess.service.ModelUsageAccounting;
+import ai.codecraft.modules.modelaccess.service.ModelUsageNormalizer;
+import ai.codecraft.modules.modelaccess.service.ModelPriceCatalog;
+import ai.codecraft.modules.modelaccess.service.ModelCostCalculator;
 import ai.codecraft.modules.copilot.config.CopilotContextProperties;
 import ai.codecraft.modules.copilot.repository.CopilotCompactionRepository;
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionRequest;
@@ -223,6 +228,7 @@ class CopilotPersistenceIT {
     private TestTaskStore childExecutions;
     private TestTaskCoordinator testCoordinator;
     private CopilotTestLifecycle childLifecycle;
+    private CopilotUsageService usage;
     private CopilotTestStore testRuns;
     private CopilotTestTools testTools;
     private WorkspaceMaintenanceStore maintenance;
@@ -245,7 +251,7 @@ class CopilotPersistenceIT {
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
             ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
-            CopilotTaskRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class,
+            CopilotTaskRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
@@ -319,12 +325,13 @@ class CopilotPersistenceIT {
         var lifecycle = proxy(new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock, secrets, coordination,
             new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, selection), ExerciseTransactionService.class);
         var operations = proxy(new WorkspaceAiOperationService(identity, exercises, writes, capacityStore, clock), WorkspaceAiOperationService.class);
+        usage = proxy(new CopilotUsageService(sql.getMapper(CopilotUsageRepository.class), sql.getMapper(CopilotCompactionRepository.class), identity, lifecycle), CopilotUsageService.class);
         repository = sql.getMapper(CopilotTaskRepository.class);
         tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class)), CopilotTaskStore.class);
         var contextRepository = sql.getMapper(CopilotCompactionRepository.class);
         compactions = proxy(new CopilotCompactionStore(contextRepository, repository, identity, secrets, lifecycle, coordination, operations, clock), CopilotCompactionStore.class);
-        summaryExecution = proxy(new CopilotCompactionExecution(contextRepository, repository, sql.getMapper(CopilotSteerRepository.class), identity, coordination, operations, selection, limits, clock), CopilotCompactionExecution.class);
-        var callEvidence = new CopilotCallEvidence();
+        var callEvidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
+        summaryExecution = proxy(new CopilotCompactionExecution(contextRepository, repository, sql.getMapper(CopilotSteerRepository.class), identity, coordination, operations, selection, limits, clock, callEvidence), CopilotCompactionExecution.class);
         var contextLimits = new CopilotContextProperties(80, 4, 8192, 4096, 8192, 512, 2048);
         execution = proxy(new CopilotExecutionStore(repository, identity, coordination, selection, operations, limits, clock, contextRepository,
             sql.getMapper(CopilotProposalRepository.class), secrets, childLifecycle, sql.getMapper(CopilotSteerRepository.class), callEvidence), CopilotExecutionStore.class);
@@ -365,6 +372,35 @@ class CopilotPersistenceIT {
         var evidenceTools = new CopilotEvidenceTools(evidenceStore, json);
         executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools);
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts);
+    }
+
+    @Test
+    void usageReadsDoNotRecountCallsAndPublishedSummaryWaitsForNewReportedContext() throws Exception {
+        retainedSummaryHistory();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder()
+            .aiMessage(AiMessage.from("Actual usage")).tokenUsage(new TokenUsage(100, 20, 120)).build(), 100));
+        var task = tasks.accept(SESSION, exercise, CONTROL, "usage-goal", "Continue", true, measurement);
+        runner.run(task.id(), UUID.randomUUID().toString());
+        var before = usage.current(SESSION, exercise);
+        assertThat(before.context().state()).isEqualTo("REPORTED");
+        assertThat(before.context().inputTokens()).isEqualTo("100");
+        assertThat(before.totals()).singleElement().satisfies(total -> {
+            assertThat(total.calls()).isEqualTo("7"); assertThat(total.inputTokens()).isEqualTo("100");
+            assertThat(total.totalTokens()).isEqualTo("120"); assertThat(total.pricedCalls()).isEqualTo("0");
+        });
+        assertThat(usage.current(SESSION, exercise)).isEqualTo(before);
+        String worker = UUID.randomUUID().toString(); var job = compactions.accept(SESSION, exercise, CONTROL, "usage-summary", new CopilotCompactionRequest(true), measurement);
+        summaryExecution.claim(job.id(), worker, null);
+        var prepared = contextPreparation.prepare(summaryExecution.ticket(job.id(), worker));
+        var candidate = prepared.plan().compaction();
+        var dispatch = summaryExecution.begin(job.id(), worker, prepared, candidate, json.writeValueAsString(candidate.sourceIds()), measurement);
+        summaryExecution.complete(job.id(), worker, dispatch.call().id(), summaryReceipt(dispatch));
+        var after = usage.current(SESSION, exercise);
+        assertThat(after.context().state()).isEqualTo("WAITING_UPDATE");
+        assertThat(after.context().inputTokens()).isNull();
+        assertThat(after.totals()).filteredOn(total -> "SUMMARY".equals(total.purpose())).singleElement()
+            .satisfies(total -> assertThat(total.totalTokens()).isEqualTo("20"));
+        assertThat(after.costs()).isEmpty();
     }
 
     @Test
@@ -468,7 +504,7 @@ class CopilotPersistenceIT {
         retainedSummaryHistory(35);
         var repository = sql.getMapper(CopilotCompactionRepository.class);
         var small = new CopilotContextProperties(80, 4, 8192, 4096, 8192, 32, 2048);
-        var requests = new CopilotRequestFactory(); var evidence = new CopilotCallEvidence();
+        var requests = new CopilotRequestFactory(); var evidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
         var planner = new CopilotContextPlanner(requests, small, json, limits);
         var preparation = proxy(new CopilotContextPreparation(repository, sql.getMapper(CopilotSteerRepository.class), planner, evidence, small, limits), CopilotContextPreparation.class);
         var summaryWorker = new CopilotCompactionRunner(summaryExecution, preparation, planner, new CopilotSummaryCodec(json), evidence,
@@ -624,7 +660,7 @@ class CopilotPersistenceIT {
         String summary = json.writeValueAsString(Map.of("goal", "Past work", "decisions", List.of(), "changes", List.of(),
             "state", "historical", "evidence", List.of(source)));
         return new CopilotCompactionReceiptDTO(ChatMessageSerializer.messageToJson(AiMessage.from(summary)), summary, null,
-            12L, 8L, 20L, false, "{\"input\":12,\"output\":8,\"total\":20}");
+            12L, 8L, 20L, false, "{\"input\":12,\"output\":8,\"total\":20}", new ModelUsageNormalizer().normalize(new TokenUsage(12, 8, 20)));
     }
 
     @Test
@@ -1165,6 +1201,15 @@ class CopilotPersistenceIT {
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo(completes ? "SUCCEEDED" : "FAILED");
         assertThat(tasks.delivery(SESSION, task.id()).partial().text()).isEqualTo(completes ? "" : "Unconfirmed reply, not tool arguments");
         assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(completes ? 2 : 1);
+        var accounting = usage.current(SESSION, exercise);
+        assertThat(accounting.totals()).singleElement().satisfies(total -> {
+            assertThat(total.calls()).isEqualTo("1");
+            assertThat(total.completeCalls()).isEqualTo("0");
+            assertThat(total.pricedCalls()).isEqualTo("0");
+            assertThat(total.inputTokens()).isEqualTo(completes ? "100" : null);
+        });
+        assertThat(accounting.costs()).isEmpty();
+        assertThat(usage.current(SESSION, exercise)).isEqualTo(accounting);
         String usage = jdbc.queryForObject("SELECT usage_payload FROM copilot_turn WHERE task_id=?::uuid", String.class, task.id());
         if (completes) assertThat(json.readTree(usage).get("inputTokenCount").asInt()).isEqualTo(100);
         else assertThat(usage).isNull();

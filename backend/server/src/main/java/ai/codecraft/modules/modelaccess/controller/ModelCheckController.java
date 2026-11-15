@@ -3,6 +3,7 @@ package ai.codecraft.modules.modelaccess.controller;
 import ai.codecraft.common.model.ApiResponse;
 import ai.codecraft.modules.identity.security.IdentityHttp;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckResponse;
+import ai.codecraft.modules.modelaccess.model.dto.ModelCheckUsageResponse;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckStartRequest;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckStatusResponse;
 import ai.codecraft.modules.modelaccess.service.ModelCheckService;
@@ -27,6 +28,11 @@ public class ModelCheckController {
         @RequestHeader(value = "Idempotency-Key", required = false) String key, HttpServletRequest request) {
         var result = checks.start(IdentityHttp.sessionHash(request), model.toString(), key, input.feeAcknowledged());
         return ResponseEntity.accepted().location(URI.create("/api/model-checks/" + result.id())).body(ApiResponse.success(result));
+    }
+
+    @GetMapping("/api/model-checks/{id}/usage")
+    public ApiResponse<ModelCheckUsageResponse> usage(@PathVariable UUID id, HttpServletRequest request) {
+        return ApiResponse.success(checks.usage(IdentityHttp.sessionHash(request), id.toString()));
     }
 
     @GetMapping("/api/model-checks/{id}")

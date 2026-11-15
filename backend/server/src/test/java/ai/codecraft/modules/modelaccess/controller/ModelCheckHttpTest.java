@@ -33,6 +33,7 @@ import ai.codecraft.modules.identity.security.IdentitySecurity;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckResponse;
+import ai.codecraft.modules.modelaccess.model.dto.ModelCheckUsageResponse;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckStatusResponse;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckItemResponse;
 import ai.codecraft.modules.modelaccess.model.exception.ModelAccessErrorCode;
@@ -145,6 +146,20 @@ class ModelCheckHttpTest {
         mvc.perform(start().header(IdentityHttp.CSRF_HEADER, "fixture-csrf").header("X-Codecraft-Owner", "owner")
             .content("{\"feeAcknowledged\":true}")).andExpect(status().isAccepted());
         verify(checks).start(HASH, MODEL, "request", true);
+    }
+
+    @Test
+    void usageReadIsPrivateOwnerBoundAndNeverStartsPaidWork() throws Exception {
+        String path = "/api/model-checks/" + CHECK + "/usage";
+        mvc.perform(get(path).servletPath(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN))
+            .header("X-Codecraft-Owner", "previous-owner")).andExpect(status().isUnauthorized());
+        verify(checks, never()).usage(any(), anyString());
+        when(checks.usage(HASH, CHECK)).thenReturn(new ModelCheckUsageResponse(CHECK, List.of(), List.of()));
+        mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header("X-Codecraft-Owner", "owner"))
+            .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+            .andExpect(jsonPath("$.data.checkId").value(CHECK)).andExpect(jsonPath("$.data.costs").isEmpty());
+        verify(checks, never()).start(any(), anyString(), any(), anyBoolean());
     }
 
     @Test

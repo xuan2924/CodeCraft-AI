@@ -5,6 +5,7 @@ import ai.codecraft.modules.modelaccess.config.ModelCheckProperties;
 import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCheckResponse;
+import ai.codecraft.modules.modelaccess.model.dto.ModelCheckUsageResponse;
 import ai.codecraft.modules.modelaccess.model.entity.ModelCheckEntity;
 import ai.codecraft.modules.modelaccess.model.entity.ModelCheckAuthorityEntity;
 import ai.codecraft.modules.modelaccess.model.entity.ModelCheckReuseEntity;
@@ -59,6 +60,15 @@ public class ModelCheckService {
             || checks.reusable(grant.userId(), reference, 3, since) == null) {
             throw new BusinessException(ModelAccessErrorCode.MODEL_CHECK_REQUIRED);
         }
+    }
+
+    @Transactional
+    public ModelCheckUsageResponse usage(String session, String id) {
+        var grant = identity.authorizePrivateDelivery(session);
+        if (!"USER".equals(grant.role())) throw new BusinessException(IdentityErrorCode.FORBIDDEN);
+        var check = checks.find(id);
+        if (check == null || !check.userId().equals(grant.userId())) throw new BusinessException(ModelAccessErrorCode.MODEL_CHECK_NOT_FOUND);
+        return new ModelCheckUsageResponse(id, checks.usageTotals(id), checks.usageCosts(id));
     }
 
     @Transactional

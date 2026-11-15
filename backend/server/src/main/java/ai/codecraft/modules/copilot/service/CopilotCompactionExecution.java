@@ -38,12 +38,13 @@ public class CopilotCompactionExecution {
     private final ExerciseModelService models;
     private final CopilotProperties limits;
     private final Clock clock;
+    private final CopilotCallEvidence evidence;
 
     public CopilotCompactionExecution(CopilotCompactionRepository contexts, CopilotTaskRepository tasks, CopilotSteerRepository steers,
         IdentityTransactionService identity, WorkspaceCoordinationStore workspace, WorkspaceAiOperationService operations,
-        ExerciseModelService models, CopilotProperties limits, Clock clock) {
+        ExerciseModelService models, CopilotProperties limits, Clock clock, CopilotCallEvidence evidence) {
         this.contexts = contexts; this.tasks = tasks; this.steers = steers; this.identity = identity; this.workspace = workspace;
-        this.operations = operations; this.models = models; this.limits = limits; this.clock = clock;
+        this.operations = operations; this.models = models; this.limits = limits; this.clock = clock; this.evidence = evidence;
     }
 
     @Transactional
@@ -110,6 +111,7 @@ public class CopilotCompactionExecution {
             throw new IllegalStateException("Summary worker lost its dispatch slot");
         }
         contexts.call(call);
+        contexts.recordPrice(call.id(), evidence.price(target, call.createdAt()));
         if (job.workerTaskId() != null) tasks.renew(job.workerTaskId(), worker, lease);
         return new CopilotCompactionDispatchDTO(call, target, candidate.request());
     }
@@ -131,6 +133,7 @@ public class CopilotCompactionExecution {
         if (call == null || !callId.equals(call.id()) || !"DISPATCHED".equals(call.state())) return false;
         boolean valid = receipt.summaryPayload() != null && receipt.failureCode() == null;
         if (contexts.result(callId, valid ? "SUCCEEDED" : "FAILED", receipt, clock.instant()) != 1) return false;
+        contexts.accounting(callId, evidence.receipt(receipt.usageFacts(), contexts.priceSnapshot(callId)));
         operations.settle(job.exerciseId(), callId, valid);
         String cancelled = cancellation(job);
         if (cancelled != null) { finish(job, "CANCELLED", null, cancelled); return false; }

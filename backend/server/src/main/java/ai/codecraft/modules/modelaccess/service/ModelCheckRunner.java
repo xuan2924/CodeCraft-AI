@@ -65,6 +65,7 @@ public class ModelCheckRunner {
                 var result = driver.call(dispatch.invocation(), request.build(), limits(dispatch, ordinal),
                     Math.min(dispatch.remainingDecodedBytes(), calls.maxDecodedBytes()), dispatch.notAfter());
                 decodedBytes = result.decodedBytes();
+                if (!store.recordUsage(dispatch.requestId(), worker, result.response().tokenUsage())) return;
                 var response = result.response().aiMessage();
                 if (ordinal == 1) exactText(response, basicMarker);
                 if (ordinal == 3) exactText(response, receipt);

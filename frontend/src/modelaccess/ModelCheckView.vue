@@ -6,6 +6,7 @@ import { ApiError } from '../api/request';
 import * as api from './api';
 import { errorMessage, identityFailure } from './errors';
 import { useModelCommand } from './useModelCommand';
+import ModelCheckUsage from './ModelCheckUsage.vue';
 const props = defineProps<{ owner: string; model: api.Model; connectionVersion: string }>();
 const emit = defineEmits<{ unauthorized: [] }>();
 const scope = computed(() => `${props.owner}/${props.model.id}/${props.model.configurationVersion}/${props.connectionVersion}`);
@@ -85,6 +86,12 @@ function start() {
           </dd>
         </template>
       </dl>
+      <ModelCheckUsage
+        :key="`${scope}/${result.data.value.check.id}`"
+        :owner="owner"
+        :check-id="result.data.value.check.id"
+        @unauthorized="emit('unauthorized')"
+      />
     </template>
     <p v-else>
       暂无保留的检查记录。历史记录可能已清理，保存配置不代表供应商兼容性已验证。

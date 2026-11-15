@@ -5,6 +5,8 @@ import ai.codecraft.modules.copilot.model.dto.CopilotCompactionRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotCompactionResponse;
 import ai.codecraft.modules.copilot.model.dto.CopilotContextResponse;
 import ai.codecraft.modules.copilot.service.CopilotCompactionService;
+import ai.codecraft.modules.copilot.service.CopilotUsageService;
+import ai.codecraft.modules.copilot.model.dto.CopilotUsageResponse;
 import ai.codecraft.modules.identity.security.IdentityHttp;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.UUID;
@@ -20,7 +22,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class CopilotContextController {
     private final CopilotCompactionService compactions;
-    public CopilotContextController(CopilotCompactionService compactions) { this.compactions = compactions; }
+    private final CopilotUsageService usage;
+    public CopilotContextController(CopilotCompactionService compactions, CopilotUsageService usage) { this.compactions = compactions; this.usage = usage; }
+    @GetMapping("/api/exercises/{exercise}/copilot/usage")
+    public ApiResponse<CopilotUsageResponse> usage(@PathVariable UUID exercise, HttpServletRequest request) {
+        return ApiResponse.success(usage.current(IdentityHttp.sessionHash(request), exercise.toString()));
+    }
     @GetMapping("/api/exercises/{exercise}/copilot/context")
     public ApiResponse<CopilotContextResponse> current(@PathVariable UUID exercise, HttpServletRequest request) {
         return ApiResponse.success(compactions.current(IdentityHttp.sessionHash(request), exercise.toString()));

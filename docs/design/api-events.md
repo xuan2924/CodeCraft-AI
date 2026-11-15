@@ -148,6 +148,12 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - 请求记录为 `id, sequence, exerciseId, trigger, state, reason, attempts, stopRequested, sourceVersion, throughSequence, createdAt, completedAt`；序号/版本为十进制字符串，未派发来源字段可为 null。`trigger` 为 MANUAL/AUTO，状态为 WAITING/RUNNING/APPLIED/FAILED/INTERRUPTED/CANCELLED/NOT_NEEDED。`attempts` 只表示持久派发登记数（0–2），不保证供应商收到；NOT_NEEDED 表示当前无需继续压缩，不抹去此前已发生的调用。
 - 前端区分受理未知、等待安全点、取消待收敛及 `MODEL_RESULT_UNKNOWN`，不自动重发收费请求。账号/演练切换取消本地观察与迟到回调；换控制凭证不丢失原压缩请求的未知回执。运行或受理未知期间不能另起新目标。
 
+### 用量与估算费用读取
+
+- `GET /api/exercises/{exercise}/copilot/usage`：本人演练读取，返回 `exerciseId, context, totals, costs`。`context.state` 为 UNKNOWN / REPORTED / WAITING_UPDATE，含最近 CHAT 的 `turnId, modelId, contextWindow, windowSource, inputTokens, dispatchedAt`；无证据字段为 null，窗口来源为 USER_CONFIGURATION，压缩后等待更新时 inputTokens 为 null。
+- `GET /api/model-checks/{id}/usage`：本人检查读取，返回 `checkId, totals, costs`，只统计本组实际派发，复用检查不再次计数。两接口沿用登录、owner 条件头及 no-store 边界，不触发模型请求。
+- `totals` 按 purpose（CHAT / SUMMARY 或 CHECK）返回 `calls, completeCalls, inputTokens, ordinaryInputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, totalTokens, pricedCalls`。数值均十进制字符串，用量字段允许 null；部分字段的已知累计不是完整统计。`costs` 按 purpose/currency 返回 `amount, pricedCalls`，金额为十进制字符串；仅已知费用小计，不将未知或缺失数据当零。
+
 ### Copilot 关联测试
 
 - `GET /api/copilot-tasks/{taskId}/tests`：返回最近 20 条绑定元数据（父任务、工具、原测试 ID、保存修订、`base`、`WAITING`/`RESOLVED`、确定终态与时间）。只读、归属校验、no-store，不触发执行或回填；完整记录沿用 `/api/exercises/{exerciseId}/tasks/{testTaskId}`。

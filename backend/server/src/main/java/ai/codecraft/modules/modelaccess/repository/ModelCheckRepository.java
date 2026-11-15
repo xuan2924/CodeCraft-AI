@@ -8,6 +8,9 @@ import ai.codecraft.modules.modelaccess.model.entity.ModelCheckResultEntity;
 import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationReferenceDTO;
 import org.apache.ibatis.annotations.Update;
 import java.time.Instant;
+import ai.codecraft.modules.modelaccess.model.dto.ModelUsageReceiptDTO;
+import ai.codecraft.modules.modelaccess.model.dto.ModelUsageTotalsResponse;
+import ai.codecraft.modules.modelaccess.model.dto.ModelCostSubtotalResponse;
 import java.util.List;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Delete;
@@ -17,6 +20,30 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface ModelCheckRepository {
+    @Select("""
+        SELECT 'CHECK'::text AS purpose,count(*)::text AS calls,count(*) FILTER(WHERE usage_facts->>'complete'='true')::text AS complete_calls,
+          sum((usage_facts->>'inputTokens')::numeric)::text AS input_tokens,
+          sum((usage_facts->>'ordinaryInputTokens')::numeric)::text AS ordinary_input_tokens,
+          sum((usage_facts->>'cacheReadTokens')::numeric)::text AS cache_read_tokens,
+          sum((usage_facts->>'cacheWriteTokens')::numeric)::text AS cache_write_tokens,
+          sum((usage_facts->>'outputTokens')::numeric)::text AS output_tokens,
+          sum((usage_facts->>'totalTokens')::numeric)::text AS total_tokens,count(estimated_cost)::text AS priced_calls
+        FROM personal_model_check_request WHERE check_id=#{check}::uuid
+        """)
+    List<ModelUsageTotalsResponse> usageTotals(String check);
+    @Select("""
+        SELECT 'CHECK'::text AS purpose,cost_currency AS currency,sum(estimated_cost)::text AS amount,count(*)::text AS priced_calls
+        FROM personal_model_check_request WHERE check_id=#{check}::uuid AND estimated_cost IS NOT NULL
+        GROUP BY cost_currency ORDER BY cost_currency
+        """)
+    List<ModelCostSubtotalResponse> usageCosts(String check);
+
+    @Update("UPDATE personal_model_check_request SET price_snapshot=#{price},configuration_payload=#{configuration} WHERE id=#{id}::uuid AND status='DISPATCHED'")
+    void accountingSnapshot(String id, String price, String configuration);
+    @Select("SELECT price_snapshot FROM personal_model_check_request WHERE id=#{id}::uuid")
+    String priceSnapshot(String id);
+    @Update("UPDATE personal_model_check_request SET usage_payload=#{raw},usage_facts=#{receipt.factsPayload}::jsonb,estimated_cost=#{receipt.amount},cost_currency=#{receipt.currency},price_reason=#{receipt.priceReason} WHERE id=#{id}::uuid AND usage_facts IS NULL")
+    int accounting(String id, String raw, ModelUsageReceiptDTO receipt);
     @Select("SELECT c.id::text FROM personal_model_check c WHERE c.completed_at<=#{cutoff} AND c.status NOT IN ('QUEUED','RUNNING') AND NOT EXISTS (SELECT 1 FROM personal_model_check_reuse u JOIN personal_model_check_request r ON r.id=u.basic_request_id OR r.id=u.tool_request_id WHERE r.check_id=c.id AND u.check_id<>c.id) ORDER BY c.completed_at,c.id LIMIT 100")
     List<String> retentionCandidates(Instant cutoff);
 

@@ -63,6 +63,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Clock;
+import dev.langchain4j.model.openai.OpenAiTokenUsage;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Base64;
@@ -170,10 +171,37 @@ class ModelConnectionPersistenceIT {
             mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), exerciseModels), ExerciseTransactionService.class);
         dispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
             new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
-            new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), clock), ModelCheckExecutionStore.class);
+            new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), clock,
+            new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator())), ModelCheckExecutionStore.class);
         expiredDispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
             new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
-            new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), Clock.offset(clock, Duration.ofSeconds(120))), ModelCheckExecutionStore.class);
+            new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), Clock.offset(clock, Duration.ofSeconds(120)),
+            new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator())), ModelCheckExecutionStore.class);
+    }
+
+    @Test
+    void failedCheckKeepsReportedUsageOnceWithoutPricingItFromTodaysCatalog() {
+        var connection = service.create("session", "usage-connection", input);
+        var model = models.create("session", connection.id(), "usage-model", model("Fixture", "deepseek-flash", null));
+        var check = checks.start("session", model.id(), "usage-check", true);
+        String worker = UUID.randomUUID().toString(); var call = dispatches.begin(check.id(), 1, worker);
+        var reported = OpenAiTokenUsage.builder().inputTokenCount(1000).outputTokenCount(50).totalTokenCount(1050)
+            .inputTokensDetails(OpenAiTokenUsage.InputTokensDetails.builder().cachedTokens(600).cacheWriteTokens(100).build()).build();
+        assertThat(dispatches.recordUsage(call.requestId(), UUID.randomUUID().toString(), reported)).isFalse();
+        assertThat(dispatches.recordUsage(call.requestId(), worker, reported)).isTrue();
+        assertThat(dispatches.recordUsage(call.requestId(), worker, reported)).isFalse();
+        assertThat(dispatches.complete(call.requestId(), worker, 100, ModelAccessErrorCode.MODEL_INVALID_RESPONSE)).isFalse();
+        var view = checks.usage("session", check.id());
+        assertThat(view.totals()).singleElement().satisfies(total -> {
+            assertThat(total.calls()).isEqualTo("1"); assertThat(total.completeCalls()).isEqualTo("1");
+            assertThat(total.inputTokens()).isEqualTo("1000"); assertThat(total.ordinaryInputTokens()).isEqualTo("300");
+            assertThat(total.totalTokens()).isEqualTo("1050"); assertThat(total.pricedCalls()).isEqualTo("0");
+        });
+        assertThat(view.costs()).isEmpty();
+        assertThat(checks.usage("session", check.id())).isEqualTo(view);
+        assertThat(jdbc.queryForObject("SELECT configuration_payload FROM personal_model_check_request WHERE id=?::uuid", String.class, call.requestId()))
+            .contains(connection.id(), model.id()).doesNotContain("fixture-not-a-real-model-key");
+        assertThatThrownBy(() -> checks.usage("session", UUID.randomUUID().toString())).isInstanceOf(BusinessException.class);
     }
 
     @Test
@@ -316,6 +344,14 @@ class ModelConnectionPersistenceIT {
             var admitted = checks.start("session", model.id(), "live-admit", true);
             runner.run(admitted.id());
             var complete = checks.latest("session", model.id());
+            var samples = jdbc.queryForList("SELECT ordinal,usage_payload,usage_facts,estimated_cost,cost_currency,price_reason FROM personal_model_check_request WHERE check_id=?::uuid ORDER BY ordinal", admitted.id());
+            System.out.println("DeepSeek check usage sample (numeric evidence only): " + samples);
+            assertThat(samples).hasSizeLessThanOrEqualTo(3);
+            assertThat(checks.usage("session", admitted.id()).totals()).singleElement().satisfies(total -> {
+                assertThat(total.calls()).isEqualTo("3");
+                assertThat(total.inputTokens()).isNotNull();
+                assertThat(total.outputTokens()).isNotNull();
+            });
             assertThat(complete.basic().valid()).as("basic check code: %s", complete.basic().errorCode()).isTrue();
             assertThat(complete.tool().valid()).as("tool check code: %s", complete.tool().errorCode()).isTrue();
             assertThat(sql.getMapper(ModelCheckRepository.class).results(admitted.id())).hasSize(3);

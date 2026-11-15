@@ -7,6 +7,7 @@ import ai.codecraft.modules.copilot.model.entity.CopilotCompactionEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotContextEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotMessageEntity;
 import java.time.Instant;
+import ai.codecraft.modules.modelaccess.model.dto.ModelUsageReceiptDTO;
 import java.util.List;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -15,6 +16,12 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface CopilotCompactionRepository {
+    @Update("UPDATE copilot_compaction_call SET price_snapshot=#{snapshot} WHERE id=#{id}::uuid AND state='DISPATCHED'")
+    void recordPrice(String id, String snapshot);
+    @Select("SELECT price_snapshot FROM copilot_compaction_call WHERE id=#{id}::uuid")
+    String priceSnapshot(String id);
+    @Update("UPDATE copilot_compaction_call SET usage_facts=#{receipt.factsPayload}::jsonb,estimated_cost=#{receipt.amount},cost_currency=#{receipt.currency},price_reason=#{receipt.priceReason} WHERE id=#{id}::uuid")
+    void accounting(String id, ModelUsageReceiptDTO receipt);
     String JOB = "id::text,sequence,exercise_id::text,user_id::text,session_hash,actor_auth_version,anchor_task_id::text,bound_task_id::text,request_key,fingerprint,trigger_kind,state,stop_requested,source_version,source_summary_id::text,through_sequence,source_ids_payload,summary_payload,failure_code,attempt_count,worker_id::text,worker_task_id::text,worker_not_after,created_at,completed_at";
     String CALL = "id::text,compaction_id::text,exercise_id::text,ordinal,state,connection_id::text,model_configuration_id::text,connection_configuration_version,model_configuration_version,protocol,model_id,context_window,output_limit,source_version,source_summary_id::text,through_sequence,source_ids_payload,estimated_input_tokens,configuration_payload,response_payload,input_tokens,output_tokens,total_tokens,usage_incomplete,usage_payload,error_code,created_at,not_after,completed_at";
 
