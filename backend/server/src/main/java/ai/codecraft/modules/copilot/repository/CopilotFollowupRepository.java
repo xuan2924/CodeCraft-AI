@@ -30,8 +30,8 @@ public interface CopilotFollowupRepository {
         WHERE (q.state IN ('WAITING','PAUSED') AND (e.state<>'ACTIVE' OR e.deadline_at<=#{now}))
         OR (q.state='WAITING'
           AND NOT EXISTS(SELECT 1 FROM copilot_followup p WHERE p.conversation_id=q.conversation_id AND p.sequence<q.sequence AND p.state IN ('WAITING','PAUSED'))
-          AND NOT EXISTS(SELECT 1 FROM copilot_task t WHERE t.exercise_id=q.exercise_id AND t.lane='MAIN' AND t.state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','STOPPING'))
-          AND NOT EXISTS(SELECT 1 FROM copilot_compaction c WHERE c.exercise_id=q.exercise_id AND c.state IN ('WAITING','RUNNING') AND NOT EXISTS(SELECT 1 FROM copilot_btw b WHERE b.conversation_id=c.conversation_id)))
+          AND NOT EXISTS(SELECT 1 FROM copilot_task t WHERE t.exercise_id=q.exercise_id AND t.lane='MAIN' AND t.state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','WAITING_CHILD','STOPPING'))
+          AND NOT EXISTS(SELECT 1 FROM copilot_compaction c WHERE c.exercise_id=q.exercise_id AND c.state IN ('WAITING','RUNNING') AND NOT EXISTS(SELECT 1 FROM copilot_btw b WHERE b.conversation_id=c.conversation_id) AND NOT EXISTS(SELECT 1 FROM copilot_delegation d WHERE d.conversation_id=c.conversation_id)))
         ORDER BY q.sequence LIMIT 32
         """)
     List<String> candidates(Instant now);

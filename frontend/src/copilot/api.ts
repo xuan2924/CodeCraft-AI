@@ -1,7 +1,7 @@
 import { ApiError, events, object, ownerHeaders, post, request } from '../api/request';
 import type { ReferenceSelection } from './referenceApi';
 
-const states = ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND', 'STOPPING', 'STOPPED', 'SUCCEEDED', 'FAILED', 'INTERRUPTED'] as const;
+const states = ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND', 'WAITING_CHILD', 'STOPPING', 'STOPPED', 'SUCCEEDED', 'FAILED', 'INTERRUPTED'] as const;
 export interface Task { conversationId?: string; id: string; exerciseId: string; state: typeof states[number]; reason: string | null; stopRequested: boolean; createdAt: string; completedAt: string | null }
 export interface Snapshot { task: Task; lastSequence: string; textHistory: boolean; partial: { turnId: string | null; sequence: string; text: string; truncated: boolean; thinking?: string; thinkingTruncated?: boolean } }
 export interface Message { sequence: string; id: string; taskId: string; kind: 'USER' | 'ASSISTANT' | 'TOOL'; text: string; thinking?: string }
@@ -63,7 +63,7 @@ export async function forkConversation(owner: string, exercise: string, source: 
   if (result.initial || result.forkSource !== source || result.forkMessage !== message) return invalid();
   return result;
 }
-export function active(task: Task | null | undefined) { return !!task && ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND', 'STOPPING'].includes(task.state); }
+export function active(task: Task | null | undefined) { return !!task && ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND', 'WAITING_CHILD', 'STOPPING'].includes(task.state); }
 export async function latest(owner: string, exercise: string, signal: AbortSignal, conversation?: string): Promise<Snapshot | null> {
   const value = await request(`/api/exercises/${path(exercise)}/copilot/tasks/latest${conversation ? `?conversation=${path(conversation)}` : ''}`, signal, { headers: ownerHeaders(owner) });
   return value === null ? null : snapshot(value, exercise, conversation ?? exercise);

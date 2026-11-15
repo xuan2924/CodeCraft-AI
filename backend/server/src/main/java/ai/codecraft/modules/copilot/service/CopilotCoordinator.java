@@ -29,6 +29,7 @@ public class CopilotCoordinator implements AutoCloseable {
     private final CopilotTestTools tests;
     private final CopilotCommandService commands;
     private final CopilotFollowupService followups;
+    private final CopilotDelegationService delegations;
     private final CopilotAutoApproval automatic;
     private final CopilotCompactionRepository contexts;
     private final CopilotCompactionExecution summaries;
@@ -39,8 +40,8 @@ public class CopilotCoordinator implements AutoCloseable {
     private final ConcurrentMap<String, WorkerThread> threads = new ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    public CopilotCoordinator(CopilotTaskRepository tasks, CopilotExecutionStore store, CopilotRunner runner, CopilotProperties limits, Clock clock, CopilotProposalStore proposals, CopilotTestTools tests, CopilotAutoApproval automatic, CopilotCompactionRepository contexts, CopilotCompactionExecution summaries, CopilotCompactionRunner summaryRunner, CopilotCommandService commands, CopilotFollowupService followups) {
-        this.commands = commands; this.followups = followups;
+    public CopilotCoordinator(CopilotTaskRepository tasks, CopilotExecutionStore store, CopilotRunner runner, CopilotProperties limits, Clock clock, CopilotProposalStore proposals, CopilotTestTools tests, CopilotAutoApproval automatic, CopilotCompactionRepository contexts, CopilotCompactionExecution summaries, CopilotCompactionRunner summaryRunner, CopilotCommandService commands, CopilotFollowupService followups, CopilotDelegationService delegations) {
+        this.commands = commands; this.followups = followups; this.delegations = delegations;
         this.tasks = tasks; this.store = store; this.runner = runner; this.clock = clock; this.proposals = proposals; this.tests = tests; this.automatic = automatic;
         this.contexts = contexts; this.summaries = summaries; this.summaryRunner = summaryRunner;
         workers = new ThreadPoolExecutor(limits.workers(), limits.workers(), 0, TimeUnit.SECONDS, new SynchronousQueue<>(),
@@ -87,7 +88,7 @@ public class CopilotCoordinator implements AutoCloseable {
                 if (thread != null) thread.interrupt();
                 store.recover(id);
             }
-            for (String id : tasks.idle()) { proposals.recoverTask(id); tests.recoverTask(id); commands.recoverTask(id); store.recover(id); }
+            for (String id : tasks.idle()) { proposals.recoverTask(id); tests.recoverTask(id); commands.recoverTask(id); delegations.recover(id); store.recover(id); }
         } catch (RuntimeException failure) { LOG.warn("Copilot recovery unavailable ({})", failure.getClass().getSimpleName()); }
     }
 

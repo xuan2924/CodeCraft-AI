@@ -15,6 +15,8 @@ const messages: Record<string, string> = {
   COPILOT_PROPOSAL_NOT_FOUND: '提案不存在或不可访问。',
   COPILOT_PROPOSAL_DECIDED: '提案已有决定，请核对原提案状态，不会重复应用。',
   APPROVAL_REQUIRED: '提案等待你核对整批 Diff 并批准或拒绝。',
+  CHILD_RUNNING: '等待子任务确定结束并交回结果；父任务的方向调整将在交接后纳入，不会立即改变子目标。',
+  COPILOT_DELEGATION_LIMIT: '此父任务已达到 8 次委派上限；没有创建新的子任务。',
   TEST_RUNNING: '等待关联测试的确定结果；你仍可编辑和保存，结果仅对应测试标明的版本。',
   AUTHORIZATION_ENDED: '原任务登录授权已失效，不会继续应用修改或请求模型。',
   WRITE_RECONCILIATION: '审批已保存，等待权威写入回执；不会重复应用。',

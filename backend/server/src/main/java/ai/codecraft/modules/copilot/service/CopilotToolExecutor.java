@@ -21,12 +21,16 @@ public class CopilotToolExecutor {
     private final CopilotCommandService commands;
     private final CopilotWebTools web;
     private final CopilotReferenceService references;
-    public CopilotToolExecutor(CopilotReadTools reads, CopilotProposalPreparation preparation, CopilotProposalStore proposals, ObjectMapper json, CopilotTestTools tests, CopilotEvidenceTools evidence, CopilotSkillTools skills, CopilotCommandService commands, CopilotWebTools web, CopilotReferenceService references) {
-        this.commands = commands; this.web = web; this.references = references;
+    private final CopilotDelegationService delegations;
+    public CopilotToolExecutor(CopilotReadTools reads, CopilotProposalPreparation preparation, CopilotProposalStore proposals, ObjectMapper json, CopilotTestTools tests, CopilotEvidenceTools evidence, CopilotSkillTools skills, CopilotCommandService commands, CopilotWebTools web, CopilotReferenceService references, CopilotDelegationService delegations) {
+        this.commands = commands; this.web = web; this.references = references; this.delegations = delegations;
         this.reads = reads; this.preparation = preparation; this.proposals = proposals; this.json = json; this.tests = tests; this.evidence = evidence; this.skills = skills;
     }
     public CopilotToolExecutionDTO execute(CopilotTaskEntity task, String worker, CopilotToolEntity tool) throws JsonProcessingException, InterruptedException {
-        if (!CopilotToolPolicy.allows(task.lane(), tool.name())) return new CopilotToolExecutionDTO(false, "{\"code\":\"BTW_READ_ONLY\",\"notice\":\"This side conversation cannot execute or modify workspace state.\"}");
+        if (!CopilotToolPolicy.allows(task.lane(), tool.name())) return new CopilotToolExecutionDTO(false,
+            json.writeValueAsString(Map.of("code", "BTW".equals(task.lane()) ? "BTW_READ_ONLY" : "DELEGATION_NOT_ALLOWED",
+                "notice", "This task lane does not allow the requested tool; no child or workspace operation was created.")));
+        if ("delegate_task".equals(tool.name())) return delegations.execute(task, worker, tool);
         if ("web_search".equals(tool.name()) || "web_read".equals(tool.name())) return new CopilotToolExecutionDTO(false, web.execute(task.sessionHash(), task.exerciseId(), tool.name(), tool.arguments()));
         if ("read_source".equals(tool.name())) return new CopilotToolExecutionDTO(false, references.execute(task.sessionHash(), task.exerciseId(), tool.arguments()));
         if ("load_skill".equals(tool.name())) return new CopilotToolExecutionDTO(false, skills.execute(task.id(), worker, tool.arguments()));

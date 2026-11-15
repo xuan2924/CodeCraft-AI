@@ -177,6 +177,13 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - `RECEIVED` 尚未纳入请求，`APPLIED` 已纳入持久请求上下文且带原 `turnId`，`NOT_APPLIED` 表示结束前未派发并带原因。后两者有完成时间；已纳入请求不等于供应商收到或成功回复。停止/到期不补发，已绑定写入/测试先按原 ID 收敛。
 - `COPILOT_STEER_NOT_ACTIVE`（409）表示新指令不被当前任务受理，`COPILOT_STEER_LIMIT`（429）表示待处理队列已满。先接受的 steer 使旧待审批提案 `INVALIDATED/STEER_SUPERSEDED`，已批准原写入不由 steer 撤销。
 
+### 子任务委派
+
+- 模型工具 `delegate_task`：`{goal,context?}`，分别最多 4096/8192 UTF-8 字节。仅 MAIN 允许；运行时对 CHILD 返回 `DELEGATION_NOT_ALLOWED`，BTW 仍返回 `BTW_READ_ONLY`。不提供绕过主任务的公共子任务创建端点。
+- `GET /api/copilot-tasks/{parent}/delegations`：私有只读，核对父任务所有权；最多 8 条 `{toolId,parentTaskId,conversationId,goal,state,child,resultPayload,createdAt,completedAt}`，`child` 为原 Task DTO，`state` 为 WAITING/RESOLVED。WAITING 可以包含已终态但尚未交接的子任务，不冒充父任务完成。原任务状态增加 `WAITING_CHILD`，属于活动状态。
+- 子任务消息/最新状态/SSE、提案审批、Bash 审批、测试记录、停止、上下文和用量复用原 task/conversation ID 接口；普通 start/follow-up 拒绝该会话。读取/重连不启动子任务。原父工具的关联、父等待、子身份原子提交，交接结果与原工具消息也原子提交。
+- 第九次委派返回 `COPILOT_DELEGATION_LIMIT` 工具回执，不创建子任务；参数拒绝标明 `childCreated:false`。收到不确定模型结果不自动重发；父停止等待子及其所属命令/文件同步收敛。结构化交接保留终态、原因、来源 ID 和截断信息，失败/停止不会撤销已提交写入。
+
 ### BTW 旁支
 
 - `GET /api/exercises/{exercise}/copilot/conversations/{parent}/btw`：私有读取主会话所属旁支，未创建返回 null；否则 `{exerciseId,parentConversationId,conversationId,createdAt}`。GET/打开页面不会创建或重发任务。

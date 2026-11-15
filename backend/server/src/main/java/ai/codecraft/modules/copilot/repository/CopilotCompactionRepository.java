@@ -36,11 +36,11 @@ public interface CopilotCompactionRepository {
     CopilotCompactionEntity find(String id);
     @Select("SELECT " + JOB + " FROM copilot_compaction WHERE exercise_id=#{exercise}::uuid AND request_key=#{key}")
     CopilotCompactionEntity receipt(String exercise, String key);
-    @Select("SELECT " + JOB + " FROM copilot_compaction c WHERE exercise_id=#{exercise}::uuid AND state IN ('WAITING','RUNNING') AND NOT EXISTS(SELECT 1 FROM copilot_btw b WHERE b.conversation_id=c.conversation_id)")
+    @Select("SELECT " + JOB + " FROM copilot_compaction c WHERE exercise_id=#{exercise}::uuid AND state IN ('WAITING','RUNNING') AND NOT EXISTS(SELECT 1 FROM copilot_btw b WHERE b.conversation_id=c.conversation_id) AND NOT EXISTS(SELECT 1 FROM copilot_delegation d WHERE d.conversation_id=c.conversation_id)")
     CopilotCompactionEntity pending(String exercise);
     @Select("SELECT " + JOB + " FROM copilot_compaction WHERE conversation_id=#{conversation}::uuid AND state IN ('WAITING','RUNNING')")
     CopilotCompactionEntity pendingConversation(String conversation);
-    @Select("SELECT EXISTS(SELECT 1 FROM copilot_compaction c WHERE exercise_id=#{exercise}::uuid AND state IN ('WAITING','RUNNING') AND NOT EXISTS(SELECT 1 FROM copilot_btw b WHERE b.conversation_id=c.conversation_id))")
+    @Select("SELECT EXISTS(SELECT 1 FROM copilot_compaction c WHERE exercise_id=#{exercise}::uuid AND state IN ('WAITING','RUNNING') AND NOT EXISTS(SELECT 1 FROM copilot_btw b WHERE b.conversation_id=c.conversation_id) AND NOT EXISTS(SELECT 1 FROM copilot_delegation d WHERE d.conversation_id=c.conversation_id))")
     boolean active(String exercise);
     @Select("SELECT EXISTS(SELECT 1 FROM copilot_compaction WHERE conversation_id=#{conversation}::uuid AND state IN ('WAITING','RUNNING'))")
     boolean activeInConversation(String conversation);
@@ -66,7 +66,7 @@ public interface CopilotCompactionRepository {
     @Select("SELECT id::text FROM copilot_compaction WHERE state IN ('WAITING','RUNNING') ORDER BY last_checked_at,sequence LIMIT 100")
     List<String> discover();
 
-    @Select("SELECT c.id::text FROM copilot_compaction c WHERE c.state='WAITING' AND NOT c.stop_requested AND NOT EXISTS(SELECT 1 FROM copilot_task t WHERE t.conversation_id=c.conversation_id AND t.state IN ('QUEUED','RUNNING','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','STOPPING')) ORDER BY c.last_checked_at,c.sequence LIMIT 100")
+    @Select("SELECT c.id::text FROM copilot_compaction c WHERE c.state='WAITING' AND NOT c.stop_requested AND NOT EXISTS(SELECT 1 FROM copilot_task t WHERE t.conversation_id=c.conversation_id AND t.state IN ('QUEUED','RUNNING','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','WAITING_CHILD','STOPPING')) ORDER BY c.last_checked_at,c.sequence LIMIT 100")
     List<String> runnableStandalone();
 
     @Select("SELECT EXISTS(SELECT 1 FROM copilot_compaction WHERE worker_task_id=#{task}::uuid AND state='INTERRUPTED' AND failure_code='MODEL_RESULT_UNKNOWN')")

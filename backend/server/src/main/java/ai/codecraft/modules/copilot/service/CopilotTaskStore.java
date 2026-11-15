@@ -30,6 +30,7 @@ import java.time.Clock;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 @Service
 public class CopilotTaskStore {
@@ -49,11 +50,12 @@ public class CopilotTaskStore {
     private final SkillSnapshots skills;
     private final CopilotConversationStore conversations;
     private final CopilotReferences references;
+    private final CopilotDelegationLifecycle delegations;
 
     public CopilotTaskStore(CopilotTaskRepository tasks, IdentityTransactionService identity,
         ExerciseTransactionService exercises, WorkspaceCoordinationStore control, ExerciseModelService models,
-        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCompactionRepository contexts, SkillSnapshots skills, CopilotConversationStore conversations, CopilotCommandLifecycle commands, CopilotReferences references) {
-        this.conversations = conversations; this.commands = commands; this.references = references;
+        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCompactionRepository contexts, SkillSnapshots skills, CopilotConversationStore conversations, CopilotCommandLifecycle commands, CopilotReferences references, CopilotDelegationLifecycle delegations) {
+        this.conversations = conversations; this.commands = commands; this.references = references; this.delegations = delegations;
         this.tasks = tasks; this.identity = identity; this.exercises = exercises;
         this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals; this.tests = tests; this.steers = steers; this.contexts = contexts; this.skills = skills;
     }
@@ -123,12 +125,20 @@ public class CopilotTaskStore {
             resolved, List.of(), new CopilotReferencesPreparedDTO(List.of(), ""), "BTW", projection);
     }
 
+    /** Admission is called only inside the owner-locked, authorized original tool transaction. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public CopilotTaskResponse acceptDelegated(CopilotTaskEntity parent, String tool, String conversation, String goal,
+        String projection, StorageMeasurement measurement) {
+        return acceptWithReferences(parent.sessionHash(), parent.exerciseId(), null, "delegation:" + tool, goal, true, List.of(),
+            measurement, conversation, List.of(), new CopilotReferencesPreparedDTO(List.of(), ""), "CHILD", projection);
+    }
+
     private CopilotTaskResponse acceptWithReferences(String session, String exercise, String controlHash, String key, String text,
         boolean feeAcknowledged, List<String> selected, StorageMeasurement measurement, String conversation,
         List<CopilotReferenceSelectionDTO> selections, CopilotReferencesPreparedDTO prepared, String lane, String projection) {
         var grant = identity.authorizeMutation(session);
         exercises.find(session, exercise);
-        control.checkControl(exercise, controlHash);
+        if (!"CHILD".equals(lane)) control.checkControl(exercise, controlHash);
         validateStart(key, text, feeAcknowledged, selected);
         String fingerprint = references.requestFingerprint(text, selections);
         var previous = tasks.receipt(exercise, key);
@@ -136,7 +146,7 @@ public class CopilotTaskStore {
             checkReplay(previous, conversation, fingerprint, grant.userId(), selected);
             return describe(previous);
         }
-        if (tasks.activeLane(exercise, lane) || ("BTW".equals(lane) ? contexts.activeInConversation(conversation) : contexts.active(exercise))) throw new BusinessException(CopilotErrorCode.COPILOT_BUSY);
+        if (tasks.activeLane(exercise, lane) || ("MAIN".equals(lane) ? contexts.active(exercise) : contexts.activeInConversation(conversation))) throw new BusinessException(CopilotErrorCode.COPILOT_BUSY);
         models.resolveForCall(session, exercise);
         references.validateAdmission(session, exercise, prepared);
         String id = UUID.randomUUID().toString();
@@ -221,6 +231,7 @@ public class CopilotTaskStore {
         tasks.stop(task.id(), clock.instant());
         tests.stop(task.id());
         commands.stop(task.id());
+        delegations.stop(task.id());
         var pending = proposals.pending(task.id());
         if (pending != null && "APPLYING".equals(pending.state())) {
             var outcome = operations.mutationOutcome(task.exerciseId(), pending.operationId());

@@ -57,10 +57,12 @@ public class CopilotConversationStore {
 
     public boolean isBtw(String conversation) { return conversations.isBtw(conversation); }
 
+    private boolean isInternal(String conversation) { return conversations.isBtw(conversation) || conversations.isDelegated(conversation); }
+
     @Transactional
     public String resolveMain(String session, String exercise, String conversation) {
         String resolved = resolve(session, exercise, conversation);
-        if (conversations.isBtw(resolved)) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+        if (isInternal(resolved)) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
         return resolved;
     }
 
@@ -70,7 +72,7 @@ public class CopilotConversationStore {
         exercises.find(session, exercise);
         validateKey(key);
         var receipt = conversations.receipt(exercise, key);
-        if (receipt != null && (receipt.forkSource() != null || conversations.isBtw(receipt.id()))) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
+        if (receipt != null && (receipt.forkSource() != null || isInternal(receipt.id()))) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
         return receipt;
     }
 
@@ -82,7 +84,7 @@ public class CopilotConversationStore {
         validateKey(key);
         var previous = conversations.receipt(exercise, key);
         if (previous != null) {
-            if (previous.forkSource() != null || conversations.isBtw(previous.id())) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
+            if (previous.forkSource() != null || isInternal(previous.id())) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
             return previous;
         }
         if (conversations.count(exercise) >= MAX_CONVERSATIONS) throw new BusinessException(CopilotErrorCode.COPILOT_CONVERSATION_LIMIT);

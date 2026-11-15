@@ -23,6 +23,7 @@ public class CopilotExerciseData implements ExerciseDataContributor {
         repository.deleteSteers(exerciseId);
         repository.deleteFollowups(exerciseId);
         repository.deleteFollowupResumes(exerciseId);
+        repository.deleteDelegations(exerciseId);
         repository.deleteCommands(exerciseId);
         repository.deleteTests(exerciseId);
         repository.deleteProposals(exerciseId);

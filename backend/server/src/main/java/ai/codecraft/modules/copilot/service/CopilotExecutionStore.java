@@ -57,11 +57,12 @@ public class CopilotExecutionStore {
     private final CopilotCommandLifecycle commands;
     private final CopilotSteerRepository steers;
     private final SkillSnapshots skills;
+    private final CopilotDelegationLifecycle delegations;
 
     public CopilotExecutionStore(CopilotTaskRepository tasks, IdentityTransactionService identity,
         WorkspaceCoordinationStore workspace, ExerciseModelService models, WorkspaceAiOperationService operations,
-        CopilotProperties limits, Clock clock, CopilotCompactionRepository contexts, CopilotProposalRepository proposals, IdentitySecrets secrets, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCallEvidence evidence, SkillSnapshots skills, CopilotCommandLifecycle commands) {
-        this.commands = commands;
+        CopilotProperties limits, Clock clock, CopilotCompactionRepository contexts, CopilotProposalRepository proposals, IdentitySecrets secrets, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCallEvidence evidence, SkillSnapshots skills, CopilotCommandLifecycle commands, CopilotDelegationLifecycle delegations) {
+        this.commands = commands; this.delegations = delegations;
         this.tasks = tasks; this.identity = identity; this.workspace = workspace; this.models = models;
         this.operations = operations; this.limits = limits; this.clock = clock; this.contexts = contexts; this.proposals = proposals; this.secrets = secrets; this.tests = tests; this.steers = steers; this.evidence = evidence; this.skills = skills;
     }
@@ -81,7 +82,7 @@ public class CopilotExecutionStore {
         return task != null && supersedeOldBatch(task);
     }
 
-    private boolean unsettledEffects(String task) { return proposals.applying(task) || tests.waiting(task) || commands.waiting(task); }
+    private boolean unsettledEffects(String task) { return proposals.applying(task) || tests.waiting(task) || commands.waiting(task) || delegations.waiting(task); }
 
     private boolean supersedeOldBatch(CopilotTaskEntity task) {
         if (task.stopRequested() || !steers.unstaged(task.id()) || unsettledEffects(task.id())) return false;
@@ -233,6 +234,7 @@ public class CopilotExecutionStore {
             case "propose_changes" -> "COPILOT_PROPOSAL";
             case "run_tests" -> "COPILOT_TEST";
             case "bash" -> "COPILOT_COMMAND";
+            case "delegate_task" -> "COPILOT_DELEGATION";
             default -> "COPILOT_READ";
         };
         operations.reserve(task.sessionHash(), task.exerciseId(), operation, kind, measurement,
@@ -255,6 +257,11 @@ public class CopilotExecutionStore {
     @Transactional
     public void parkProposal(String id, String worker, String toolId) {
         parkTool(id, worker, toolId, "WAITING_APPROVAL", "APPROVAL_REQUIRED", true);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void parkChild(String id, String worker, String toolId) {
+        parkTool(id, worker, toolId, "WAITING_CHILD", "CHILD_RUNNING", false);
     }
 
     @Transactional
@@ -312,7 +319,7 @@ public class CopilotExecutionStore {
         var task = tasks.find(id);
         var tool = tasks.toolById(toolId);
         var turn = tasks.latestTurn(id);
-        if (task.workerId() != null || proposals.pending(id) != null || tests.waiting(id) || commands.pending(id) || tool == null || turn == null || !id.equals(tool.taskId())
+        if (task.workerId() != null || proposals.pending(id) != null || tests.waiting(id) || commands.pending(id) || delegations.waiting(id) || tool == null || turn == null || !id.equals(tool.taskId())
             || !turn.id().equals(tool.turnId()) || turn.toolPosition() != tool.position() || !"TOOLS".equals(turn.state())) {
             throw new IllegalStateException("Waiting tool no longer matches its pending batch");
         }
@@ -435,7 +442,7 @@ public class CopilotExecutionStore {
     }
 
     private void recoverIdle(CopilotTaskEntity task) {
-        if (!Set.of("QUEUED", "PAUSED", "WAITING_APPROVAL", "WAITING_WRITE", "WAITING_TEST", "WAITING_COMMAND", "STOPPING").contains(task.state())) return;
+        if (!Set.of("QUEUED", "PAUSED", "WAITING_APPROVAL", "WAITING_WRITE", "WAITING_TEST", "WAITING_COMMAND", "WAITING_CHILD", "STOPPING").contains(task.state())) return;
         var exercise = workspace.exercise(task.exerciseId());
         boolean ended = exercise == null || !"ACTIVE".equals(exercise.state()) || exercise.deadlineAt() == null || !clock.instant().isBefore(exercise.deadlineAt());
         if (!task.stopRequested() && !ended) return;
@@ -449,6 +456,7 @@ public class CopilotExecutionStore {
             if ("PENDING".equals(outcome.state()) || "PENDING_RECONCILIATION".equals(outcome.state())) workspace.reconcile(task.exerciseId());
             return;
         }
+        if (delegations.waiting(task.id())) { delegations.stop(task.id()); return; }
         if (tests.waiting(task.id())) { tests.stop(task.id()); return; }
         if (commands.waiting(task.id())) { commands.stop(task.id()); return; }
         String reason = task.reason() == null ? "USER_STOP" : task.reason();

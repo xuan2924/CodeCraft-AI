@@ -66,6 +66,7 @@ import ai.codecraft.modules.copilot.repository.CopilotRetentionRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
 import ai.codecraft.modules.copilot.repository.CopilotFollowupRepository;
 import ai.codecraft.modules.copilot.repository.CopilotBtwRepository;
+import ai.codecraft.modules.copilot.repository.CopilotDelegationRepository;
 import ai.codecraft.modules.copilot.model.dto.CopilotBtwRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotFollowupRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotReferenceSelectionDTO;
@@ -273,6 +274,7 @@ class CopilotPersistenceIT {
     private CopilotWebTools webTools;
     private CopilotReferences references;
     private CopilotBtwStore btwStore;
+    private CopilotDelegationService delegations;
     private CopilotBtwService btw;
     private TestTaskStore childExecutions;
     private CommandTaskStore childCommands;
@@ -307,7 +309,7 @@ class CopilotPersistenceIT {
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
             ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
-            CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotFollowupRepository.class, CopilotBtwRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
+            CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotFollowupRepository.class, CopilotBtwRepository.class, CopilotDelegationRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
@@ -396,14 +398,15 @@ class CopilotPersistenceIT {
         skillContext = new CopilotSkillContext(skillSnapshots, repository, json, limits);
         files = mock(ExerciseService.class);
         references = new CopilotReferences(files, mock(TestTaskService.class), mock(CommandTaskService.class), coordination, secrets, json);
-        tasks = proxy(new CopilotTaskStore(repository, identity, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class), skillSnapshots, conversations, commandLifecycle, references), CopilotTaskStore.class);
+        var delegationLifecycle = proxy(new CopilotDelegationLifecycle(sql.getMapper(CopilotDelegationRepository.class), repository, clock), CopilotDelegationLifecycle.class);
+        tasks = proxy(new CopilotTaskStore(repository, identity, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class), skillSnapshots, conversations, commandLifecycle, references, delegationLifecycle), CopilotTaskStore.class);
         var contextRepository = sql.getMapper(CopilotCompactionRepository.class);
         compactions = proxy(new CopilotCompactionStore(contextRepository, repository, identity, secrets, lifecycle, coordination, operations, clock, conversations), CopilotCompactionStore.class);
         var callEvidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
         summaryExecution = proxy(new CopilotCompactionExecution(contextRepository, repository, sql.getMapper(CopilotSteerRepository.class), identity, coordination, operations, selection, limits, clock, callEvidence), CopilotCompactionExecution.class);
         var contextLimits = new CopilotContextProperties(80, 4, 8192, 4096, 8192, 512, 2048);
         execution = proxy(new CopilotExecutionStore(repository, identity, coordination, selection, operations, limits, clock, contextRepository,
-            sql.getMapper(CopilotProposalRepository.class), secrets, childLifecycle, sql.getMapper(CopilotSteerRepository.class), callEvidence, skillSnapshots, commandLifecycle), CopilotExecutionStore.class);
+            sql.getMapper(CopilotProposalRepository.class), secrets, childLifecycle, sql.getMapper(CopilotSteerRepository.class), callEvidence, skillSnapshots, commandLifecycle, delegationLifecycle), CopilotExecutionStore.class);
         var requestFactory = new CopilotRequestFactory();
         var planner = new CopilotContextPlanner(requestFactory, contextLimits, json, limits);
         contextPreparation = proxy(new CopilotContextPreparation(contextRepository, sql.getMapper(CopilotSteerRepository.class),
@@ -418,6 +421,8 @@ class CopilotPersistenceIT {
         btwStore = proxy(new CopilotBtwStore(sql.getMapper(CopilotBtwRepository.class), sql.getMapper(CopilotConversationRepository.class), conversations,
             repository, tasks, identity, secrets, operations, clock), CopilotBtwStore.class);
         btw = new CopilotBtwService(btwStore, capacity, json);
+        delegations = new CopilotDelegationService(proxy(new CopilotDelegationStore(sql.getMapper(CopilotDelegationRepository.class), repository,
+            sql.getMapper(CopilotConversationRepository.class), tasks, execution, delegationLifecycle, identity, coordination, operations, json, clock), CopilotDelegationStore.class), capacity, json);
         approvalModes = new CopilotApprovalModeService(proxy(new CopilotApprovalModeStore(sql.getMapper(CopilotApprovalModeRepository.class),
             identity, secrets, lifecycle, coordination, operations, clock), CopilotApprovalModeStore.class), capacity);
         when(files.find(SESSION, exercise)).thenReturn(new ExerciseResponse(exercise, "problem", instance, preparation, "ACTIVE", "1", "1", List.of("src/Main.java"), clock.instant(), clock.instant().plusSeconds(1800), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
@@ -449,10 +454,10 @@ class CopilotPersistenceIT {
             identity, secrets, lifecycle, coordination, json, clock), CopilotCommandStore.class);
         commandTools = new CopilotCommandService(commandStore, sql.getMapper(CopilotCommandRepository.class), childCommands,
             mock(CommandTaskCoordinator.class), capacity, new CopilotCommandResultFormatter(), json);
-        evidenceStore = proxy(new CopilotEvidenceStore(repository, contextRepository, identity, coordination, clock, skillSnapshots), CopilotEvidenceStore.class);
+        evidenceStore = proxy(new CopilotEvidenceStore(repository, contextRepository, identity, coordination, clock, skillSnapshots, sql.getMapper(CopilotDelegationRepository.class)), CopilotEvidenceStore.class);
         var evidenceTools = new CopilotEvidenceTools(evidenceStore, json);
         webTools = mock(CopilotWebTools.class);
-        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(evidenceStore, json), commandTools, webTools, new CopilotReferenceService(references, conversations, json));
+        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(evidenceStore, json), commandTools, webTools, new CopilotReferenceService(references, conversations, json), delegations);
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts);
     }
 
@@ -1480,6 +1485,235 @@ class CopilotPersistenceIT {
     }
 
     @Test
+    void delegationRunsARealChildAndHandsOffExactlyOnceBeforeParentContinues() throws Exception {
+        var parent = tasks.accept(SESSION, exercise, CONTROL, "delegate-parent", "Parent goal", true, measurement);
+        repository.message(new CopilotMessageEntity(0, UUID.randomUUID().toString(), parent.id(), exercise, "ASSISTANT",
+            ChatMessageSerializer.messageToJson(AiMessage.builder().text("Unrelated main chat").thinking("private-parent-thinking").build()), clock.instant()));
+        var parentTurns = new AtomicInteger(); var childTurns = new AtomicInteger();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
+            ChatRequest request = call.getArgument(1);
+            boolean child = request.messages().stream().anyMatch(message -> message instanceof UserMessage user && user.singleText().startsWith("Child goal"));
+            String payload = ChatMessageSerializer.messagesToJson(request.messages());
+            if (child) {
+                assertThat(request.parameters().toolSpecifications()).extracting(tool -> tool.name()).contains("bash", "propose_changes", "run_tests").doesNotContain("delegate_task");
+                assertThat(payload).contains("Parent goal", "Relevant pointers").doesNotContain("Unrelated main chat", "private-parent-thinking");
+                if (childTurns.getAndIncrement() == 0) return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(
+                    ToolExecutionRequest.builder().id("forbidden-recursion").name("delegate_task").arguments("{\"goal\":\"Grandchild\"}").build()))).build(), 100);
+                assertThat(payload).contains("DELEGATION_NOT_ALLOWED");
+                return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.builder().text("Child verified outcome").thinking("private-child-thinking").build()).build(), 100);
+            }
+            if (parentTurns.getAndIncrement() == 0) return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(
+                ToolExecutionRequest.builder().id("delegate-once").name("delegate_task").arguments("{\"goal\":\"Child goal\",\"context\":\"Relevant pointers\"}").build()))).build(), 100);
+            assertThat(payload).contains("Child verified outcome", "childTaskId").doesNotContain("private-child-thinking");
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Parent continued after handoff")).build(), 100);
+        });
+        runner.run(parent.id(), UUID.randomUUID().toString());
+        var parked = repository.find(parent.id());
+        assertThat(parked.state()).isEqualTo("WAITING_CHILD"); assertThat(parked.workerId()).isNull();
+        assertThat(repository.active(exercise)).isTrue();
+        var binding = sql.getMapper(CopilotDelegationRepository.class).pending(parent.id());
+        var child = repository.find(binding.childTaskId());
+        assertThat(child.lane()).isEqualTo("CHILD"); assertThat(child.userId()).isEqualTo(parked.userId());
+        assertThat(child.sessionHash()).isEqualTo(parked.sessionHash());
+        assertCode(() -> tasks.acceptInConversation(SESSION, exercise, CONTROL, "upgrade-child", "Escape", true, List.of(), measurement, child.conversationId()), "COPILOT_INVALID_REQUEST");
+        assertThat(conversations.list(SESSION, exercise)).noneMatch(row -> child.conversationId().equals(row.id()));
+        runner.run(parent.id(), UUID.randomUUID().toString());
+        assertThat(parentTurns.get()).isEqualTo(1);
+        runner.run(child.id(), UUID.randomUUID().toString());
+        assertThat(repository.find(child.id()).state()).isEqualTo("SUCCEEDED");
+        delegations.recover(parent.id()); delegations.recover(parent.id());
+        assertThat(repository.find(parent.id()).state()).isEqualTo("QUEUED");
+        assertThat(repository.context(exercise).stream().filter(message -> "TOOL".equals(message.kind()))).hasSize(1);
+        String worker = UUID.randomUUID().toString(); assertThat(execution.claim(parent.id(), worker)).isNotNull();
+        var source = sql.getMapper(CopilotDelegationRepository.class).lastMessage(child.id(), "ASSISTANT");
+        assertThat(evidenceStore.read(parent.id(), worker, source.id()).payload()).contains("Child verified outcome");
+        new TransactionTemplate(transactions).executeWithoutResult(status -> repository.park(parent.id(), worker, "QUEUED", null));
+        runner.run(parent.id(), UUID.randomUUID().toString());
+        assertThat(repository.find(parent.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(parentTurns.get()).isEqualTo(2); assertThat(childTurns.get()).isEqualTo(2);
+        assertThat(sql.getMapper(CopilotDelegationRepository.class).count(parent.id())).isEqualTo(1);
+        assertThat(delegations.list(SESSION, parent.id()).getFirst().resultPayload()).contains("SUCCEEDED").doesNotContain("private-child-thinking");
+        assertThat(usage.currentInConversation(SESSION, exercise, exercise).totals()).anyMatch(total -> "4".equals(total.calls()));
+    }
+
+    @Test
+    void parentStopWaitsForDelegatedBashCancellationProofAndDoesNotReplayIt() throws Exception {
+        var parent = beginDelegation();
+        var child = delegations.list(SESSION, parent.id()).getFirst().child();
+        var request = ToolExecutionRequest.builder().id("child-bash").name("bash")
+            .arguments("{\"expected_revision\":\"1\",\"command\":\"echo hello\",\"directory\":\".\"}").build();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(request))).build(), 100));
+        runner.run(child.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, child.id()).state()).isEqualTo("WAITING_APPROVAL");
+        var command = commandTools.recent(SESSION, child.id(), 0).commands().getFirst();
+        var approved = commandTools.decide(SESSION, command.id(), CONTROL, "approve-child-command", new CopilotProposalDecisionRequest("APPROVE", null));
+        var executionChild = childCommands.find(approved.commandTaskId());
+        assertThat(data.changeContext(exercise, executionChild.id()).conversationId()).isEqualTo(exercise);
+        assertThat(data.changeContext(exercise, executionChild.id()).taskId()).isEqualTo(child.id());
+        var coordinator = new CommandTaskCoordinator(childCommands, sandbox);
+        when(sandbox.inventory(anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
+        when(sandbox.startCommand(any())).thenThrow(Status.UNAVAILABLE.asRuntimeException());
+        assertThatThrownBy(() -> coordinator.observe(executionChild)).isInstanceOf(StatusRuntimeException.class);
+        tasks.stop(SESSION, parent.id(), "stop-delegating-parent");
+        commandTools.recoverTask(child.id()); execution.recover(child.id());
+        when(sandbox.stopCommand(any())).thenReturn(StopTaskResponse.getDefaultInstance());
+        assertThatThrownBy(() -> coordinator.observe(childCommands.find(executionChild.id()))).isInstanceOf(IllegalStateException.class);
+        delegations.recover(parent.id()); execution.recover(parent.id());
+        assertThat(tasks.find(SESSION, parent.id()).state()).isEqualTo("STOPPING");
+        assertThat(data.quiescent(exercise)).isFalse();
+        assertThat(data.protectedCommandRecords(exercise)).contains(executionChild.id());
+        when(sandbox.stopCommand(any())).thenReturn(StopTaskResponse.newBuilder().setHostEpoch("A".repeat(26)).setCancelledBeforeRegistration(true).build());
+        coordinator.observe(childCommands.find(executionChild.id()));
+        commandTools.recoverTask(child.id()); execution.recover(child.id());
+        delegations.recover(parent.id()); execution.recover(parent.id()); delegations.recover(parent.id());
+        assertThat(tasks.find(SESSION, child.id()).state()).isEqualTo("STOPPED");
+        assertThat(tasks.find(SESSION, parent.id()).state()).isEqualTo("STOPPED");
+        assertThat(delegations.list(SESSION, parent.id()).getFirst().resultPayload()).contains("STOPPED");
+        assertThat(data.quiescent(exercise)).isTrue();
+        verify(sandbox, times(1)).startCommand(any()); verify(driver, times(2)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void delegationRecoversUnknownChildWithoutNewDispatchAndExpiryErasesItsRecords() throws Exception {
+        var parent = beginDelegation();
+        var child = delegations.list(SESSION, parent.id()).getFirst().child();
+        String worker = UUID.randomUUID().toString(); assertThat(execution.claim(child.id(), worker)).isNotNull();
+        assertThat(execution.beginModel(child.id(), worker, contexts.beforeModel(child.id(), worker), measurement)).isNotNull();
+        clock.now = clock.instant().plusSeconds(130); execution.recover(child.id());
+        delegations.recover(parent.id()); delegations.recover(parent.id());
+        assertThat(tasks.find(SESSION, child.id()).reason()).isEqualTo("MODEL_RESULT_UNKNOWN");
+        assertThat(delegations.list(SESSION, parent.id()).getFirst().resultPayload()).contains("MODEL_RESULT_UNKNOWN", "INTERRUPTED");
+        assertThat(tasks.find(SESSION, parent.id()).state()).isEqualTo("QUEUED");
+        runner.run(child.id(), UUID.randomUUID().toString());
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+        clock.now = clock.instant().plusSeconds(1801); execution.recover(parent.id());
+        assertThat(data.quiescent(exercise)).isTrue();
+        new TransactionTemplate(transactions).executeWithoutResult(status -> data.erase(exercise));
+        assertThat(sql.getMapper(CopilotDelegationRepository.class).count(parent.id())).isZero();
+        assertThat(repository.find(child.id())).isNull();
+    }
+
+    @Test
+    void delegatedAutoProposalKeepsTheSharedRevisionFence() throws Exception {
+        var parent = beginDelegation(); var child = delegations.list(SESSION, parent.id()).getFirst().child();
+        approvalModes.change(SESSION, exercise, CONTROL, "delegated-auto", new CopilotApprovalModeRequest("AUTO", "0"));
+        var workspace = new ProposalWorkspace();
+        var proposal = workspace.proposal();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(proposal))).build(), 100),
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Revision conflict; no child edit was applied.")).build(), 100));
+        runner.run(child.id(), UUID.randomUUID().toString());
+        var pending = proposals.list(SESSION, child.id(), 0).items().getFirst();
+        assertThat(pending.mode()).isEqualTo("AUTO");
+        sql.getMapper(WorkspaceWriteRepository.class).observed(exercise, 2, "[\"" + ProposalWorkspace.PATH + "\"]");
+        automatic.apply(child.id());
+        var rejected = proposals.summary(SESSION, pending.id());
+        assertThat(rejected.state()).isEqualTo("INVALIDATED"); assertThat(rejected.failureCode()).isEqualTo("REVISION_CONFLICT");
+        assertThat(workspace.applies.get()).isZero();
+        runner.run(child.id(), UUID.randomUUID().toString()); delegations.recover(parent.id());
+        assertThat(delegations.list(SESSION, parent.id()).getFirst().resultPayload()).contains("Revision conflict", "observedRevision\":\"2");
+        assertThat(tasks.find(SESSION, parent.id()).state()).isEqualTo("QUEUED");
+    }
+
+    @Test
+    void revokedParentAuthorityStopsItsQueuedChildWithoutCallingTheModel() throws Exception {
+        var parent = beginDelegation(); var child = delegations.list(SESSION, parent.id()).getFirst().child();
+        invalidateOriginalAuthorizationUsingRealProxy();
+        delegations.recover(parent.id()); execution.recover(parent.id());
+        assertThat(repository.find(child.id()).state()).isEqualTo("STOPPED");
+        assertThat(repository.find(parent.id()).state()).isEqualTo("INTERRUPTED");
+        assertThat(repository.find(parent.id()).reason()).isEqualTo("AUTHORIZATION_ENDED");
+        assertThat(sql.getMapper(CopilotDelegationRepository.class).list(parent.id()).getFirst().state()).isEqualTo("RESOLVED");
+        assertThatThrownBy(() -> delegations.list(SESSION, parent.id())).hasMessage("UNAUTHENTICATED");
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void delegationHasAHardPerParentBoundEvenWhenEveryChildIsExplicitlyStopped() throws Exception {
+        var parent = beginDelegation();
+        for (int index = 0; index < 8; index++) {
+            if (index > 0) runner.run(parent.id(), UUID.randomUUID().toString());
+            var binding = sql.getMapper(CopilotDelegationRepository.class).pending(parent.id());
+            assertThat(binding).isNotNull();
+            tasks.stop(SESSION, binding.childTaskId(), "stop-bounded-child-" + index);
+            delegations.recover(parent.id());
+        }
+        var request = ToolExecutionRequest.builder().id("ninth-child").name("delegate_task").arguments("{\"goal\":\"Child goal\"}").build();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(request))).build(), 100),
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Delegation limit understood.")).build(), 100));
+        runner.run(parent.id(), UUID.randomUUID().toString());
+        assertThat(sql.getMapper(CopilotDelegationRepository.class).count(parent.id())).isEqualTo(8);
+        assertThat(delegations.list(SESSION, parent.id())).hasSize(8).allSatisfy(row -> assertThat(row.child().state()).isEqualTo("STOPPED"));
+        assertThat(repository.context(exercise)).anyMatch(message -> message.payload().contains("COPILOT_DELEGATION_LIMIT"));
+        assertThat(repository.find(parent.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(repository.activeLane(exercise, "CHILD")).isFalse();
+    }
+
+    @Test
+    void exerciseExpiryStopsBothDelegationLanesWithoutStartingTheQueuedChild() throws Exception {
+        var parent = beginDelegation(); var child = delegations.list(SESSION, parent.id()).getFirst().child();
+        clock.now = clock.instant().plusSeconds(1801);
+        delegations.recover(parent.id()); execution.recover(parent.id());
+        assertThat(repository.find(child.id()).state()).isEqualTo("STOPPED");
+        assertThat(repository.find(parent.id()).state()).isEqualTo("INTERRUPTED");
+        assertThat(repository.find(parent.id()).reason()).isEqualTo("EXERCISE_ENDED");
+        assertThat(data.quiescent(exercise)).isTrue();
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void delegatedEvidenceIsExplicitAndCannotReadAnUnrelatedSideConversation() throws Exception {
+        var parent = beginDelegation(); var child = delegations.list(SESSION, parent.id()).getFirst().child();
+        var side = btw.start(SESSION, exercise, exercise, CONTROL, "private-side", new CopilotBtwRequest("Private side history", true));
+        var privateMessage = repository.context(side.conversationId()).getFirst();
+        var childMessage = repository.context(child.conversationId()).getFirst();
+        String worker = UUID.randomUUID().toString(); assertThat(execution.claim(child.id(), worker)).isNotNull();
+        assertCode(() -> evidenceStore.read(child.id(), worker, privateMessage.id()), "COPILOT_EVIDENCE_NOT_FOUND");
+        assertCode(() -> evidenceStore.read(child.id(), worker, repository.context(exercise).getFirst().id()), "COPILOT_EVIDENCE_NOT_FOUND");
+        tasks.stop(SESSION, child.id(), "stop-private-child"); execution.finish(child.id(), worker, "STOPPED", "USER_STOP");
+        delegations.recover(parent.id()); tasks.stop(SESSION, parent.id(), "stop-parent-after-handoff");
+        var binding = sql.getMapper(CopilotDelegationRepository.class).list(parent.id()).getFirst();
+        var boundary = conversations.prepareFork(SESSION, exercise, exercise, binding.resultMessageId());
+        var fork = conversations.fork(SESSION, exercise, CONTROL, "fork-delegation-result", boundary, measurement);
+        var next = tasks.acceptInConversation(SESSION, exercise, CONTROL, "read-inherited-delegation", "Read original child evidence", true, List.of(), measurement, fork.id());
+        String nextWorker = UUID.randomUUID().toString(); assertThat(execution.claim(next.id(), nextWorker)).isNotNull();
+        assertThat(evidenceStore.read(next.id(), nextWorker, childMessage.id()).payload()).contains("Child goal");
+        assertCode(() -> evidenceStore.read(next.id(), nextWorker, privateMessage.id()), "COPILOT_EVIDENCE_NOT_FOUND");
+    }
+
+    @Test
+    void runnerAdmitsFullyEscapedBoundaryDelegationFieldsButBoundsTheirEnvelope() throws Exception {
+        String goal = "\u0001".repeat(4095) + "G"; String context = "\u0002".repeat(8192);
+        String arguments = json.writeValueAsString(Map.of("goal", goal, "context", context));
+        assertThat(arguments.length()).isGreaterThan(12 * 1024).isLessThan(CopilotDelegationService.MAX_ARGUMENT_BYTES);
+        var request = ToolExecutionRequest.builder().id("bounded-delegation").name("delegate_task").arguments(arguments).build();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(request))).build(), 100));
+        var parent = tasks.accept(SESSION, exercise, CONTROL, "bounded-envelope", "Delegate bounded context", true, measurement);
+        runner.run(parent.id(), UUID.randomUUID().toString());
+        assertThat(repository.find(parent.id()).state()).isEqualTo("WAITING_CHILD");
+        var child = delegations.list(SESSION, parent.id()).getFirst().child();
+        var retained = (UserMessage) ChatMessageDeserializer.messageFromJson(repository.context(child.conversationId()).getFirst().payload());
+        assertThat(retained.singleText()).startsWith(goal).contains(json.writeValueAsString(context));
+        tasks.stop(SESSION, child.id(), "stop-boundary-child"); delegations.recover(parent.id());
+        var oversized = ToolExecutionRequest.builder().id("oversized-delegation").name("delegate_task")
+            .arguments(" ".repeat(CopilotDelegationService.MAX_ARGUMENT_BYTES + 1)).build();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(oversized))).build(), 100));
+        runner.run(parent.id(), UUID.randomUUID().toString());
+        assertThat(repository.find(parent.id()).reason()).isEqualTo("MODEL_INVALID_RESPONSE");
+        assertThat(sql.getMapper(CopilotDelegationRepository.class).count(parent.id())).isEqualTo(1);
+    }
+
+    private CopilotTaskResponse beginDelegation() throws Exception {
+        var request = ToolExecutionRequest.builder().id("delegate-first").name("delegate_task").arguments("{\"goal\":\"Child goal\"}").build();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(request))).build(), 100));
+        var parent = tasks.accept(SESSION, exercise, CONTROL, "delegate-start", "Parent goal", true, measurement);
+        runner.run(parent.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, parent.id()).state()).isEqualTo("WAITING_CHILD");
+        return parent;
+    }
+
+    @Test
     void btwCompletesWhileTheMainModelRequestIsStillInFlight() throws Exception {
         var main = tasks.accept(SESSION, exercise, CONTROL, "concurrent-main", "Main goal", true, measurement);
         var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
@@ -2215,7 +2449,7 @@ class CopilotPersistenceIT {
         var workspace = new ProposalWorkspace(); workspace.loseApplyResponse = true;
         var task = beginProposal(workspace, true);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
-        try (var coordinator = new CopilotCoordinator(repository, execution, runner, limits, clock, proposals, testTools, automatic, sql.getMapper(CopilotCompactionRepository.class), summaryExecution, summaryRunner, commandTools, mock(CopilotFollowupService.class))) {
+        try (var coordinator = new CopilotCoordinator(repository, execution, runner, limits, clock, proposals, testTools, automatic, sql.getMapper(CopilotCompactionRepository.class), summaryExecution, summaryRunner, commandTools, mock(CopilotFollowupService.class), delegations)) {
             coordinator.dispatch();
             await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_WRITE"));
         }

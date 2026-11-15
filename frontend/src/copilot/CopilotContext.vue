@@ -53,8 +53,8 @@ function cancel() {
     <h3>上下文与摘要</h3>
     <p>接近模型窗口时先缩短可重读结果，再尝试摘要。原始消息、工具回执与代码不会删除；摘要只用于后续输入，不是审批或测试结论。</p>
     <p>手动请求在完整批次后执行；审批、写入或测试先收敛。摘要可能收费，格式不合格最多修复一次。失败保留原上下文；无法安全继续时暂停任务。</p>
-    <label :for="`context-fee-${exerciseId}`"><input
-      :id="`context-fee-${exerciseId}`"
+    <label :for="`context-fee-${conversationId ?? exerciseId}`"><input
+      :id="`context-fee-${conversationId ?? exerciseId}`"
       v-model="fee"
       type="checkbox"
       :disabled="busy || disabled || !credential"

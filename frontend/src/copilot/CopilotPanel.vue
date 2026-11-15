@@ -13,6 +13,7 @@ import CopilotApprovalMode from './CopilotApprovalMode.vue';
 import CopilotSteers from './CopilotSteers.vue';
 import CopilotFollowups from './CopilotFollowups.vue';
 import CopilotBtw from './CopilotBtw.vue';
+import CopilotDelegations from './CopilotDelegations.vue';
 import CopilotContext from './CopilotContext.vue';
 import CopilotUsage from './CopilotUsage.vue';
 import CopilotSkills from './CopilotSkills.vue';
@@ -22,7 +23,7 @@ import CopilotProjectInstructions from './CopilotProjectInstructions.vue';
 import CopilotWebResult from './CopilotWebResult.vue';
 import CopilotMessageBody from './CopilotMessageBody.vue';
 
-const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string; paths?: string[]; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
+const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string; delegated?: boolean; paths?: string[]; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string]; fork: [messageId: string] }>();
 const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.conversationId ?? props.exerciseId}/${props.credential}`);
@@ -53,7 +54,7 @@ const handoff = useCommand<api.Steer>(() => `${scope.value}/${task.value?.id}`, 
   handoffNotice.value = receipt.state === 'NOT_APPLIED' ? '旁支带回未生效，未另起任务。' : '旁支结论已作为 steer 接收；是否生效以主线方向调整记录为准。';
   void client.invalidateQueries({ queryKey: ['copilot-steers', props.owner, props.exerciseId, receipt.taskId] });
 }, commandPolicy, () => emit('unauthorized'));
-const canSteer = computed(() => !!task.value && ['QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND'].includes(task.value.state));
+const canSteer = computed(() => !!task.value && ['QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND', 'WAITING_CHILD'].includes(task.value.state));
 function bringBack(conclusion: string) {
   if (props.disabled || saving.value || start.pending.value || start.uncertain.value || handoff.pending.value || handoff.uncertain.value) return;
   if (new globalThis.TextEncoder().encode(conclusion).length > 4096) { handoffNotice.value = '带回内容过长，请缩短预览片段。'; return; }
@@ -67,7 +68,7 @@ function bringBack(conclusion: string) {
     text.value = draft; fee.value = false; handoffNotice.value = '已填入主请求草稿，尚未发送；请预览并确认费用。';
   }
 }
-const canSend = computed(() => !props.disabled && !!props.credential && !running.value && !contextBusy.value && !latest.isPending.value && !latest.isError.value
+const canSend = computed(() => !props.delegated && !props.disabled && !!props.credential && !running.value && !contextBusy.value && !latest.isPending.value && !latest.isError.value
   && !start.pending.value && !start.uncertain.value && !saving.value && fee.value && !!text.value.trim());
 async function send() {
   if (!canSend.value) return;
@@ -114,17 +115,21 @@ watch([() => props.owner, () => props.exerciseId, () => task.value?.id, running]
   connect();
   cleanup(() => { disposed = true; controller.abort(); close(); if (timer !== undefined) globalThis.clearTimeout(timer); });
 }, { immediate: true });
-const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待派发', RUNNING: '正在执行', PAUSED: '已暂停，等待处理', WAITING_APPROVAL: '等待审批', WAITING_WRITE: '等待写入回执', WAITING_TEST: '等待测试确定结果', WAITING_COMMAND: '等待命令及文件同步结果', STOPPING: '正在停止，等待当前操作收敛', STOPPED: '已停止', SUCCEEDED: '已完成', FAILED: '失败', INTERRUPTED: '已中断，不会自动重发' };
+const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待派发', RUNNING: '正在执行', PAUSED: '已暂停，等待处理', WAITING_APPROVAL: '等待审批', WAITING_WRITE: '等待写入回执', WAITING_TEST: '等待测试确定结果', WAITING_COMMAND: '等待命令及文件同步结果', WAITING_CHILD: '等待真实子任务交接，父 worker 已释放', STOPPING: '正在停止，等待当前操作收敛', STOPPED: '已停止', SUCCEEDED: '已完成', FAILED: '失败', INTERRUPTED: '已中断，不会自动重发' };
 </script>
 <template>
   <section
     class="copilot-panel"
-    aria-label="Copilot 对话"
+    :aria-label="delegated ? '委派子任务对话' : 'Copilot 对话'"
   >
-    <h2>Copilot · 读取、修改提案与测试</h2>
+    <h2>{{ delegated ? '子任务 Copilot' : 'Copilot' }} · 读取、修改提案与测试</h2>
+    <p v-if="delegated">
+      子任务不能再次委派；这里的审批、方向调整及停止针对当前子任务，本场审批模式仍共享。没有另起主任务或自动保存草稿的入口。
+    </p>
     <p>模型读取服务端已保存代码，可提出整批修改，默认须经你审批后写入；可对指定保存版本运行基础测试，结果不代表后续版本或未保存草稿。</p>
-    <p>请求可能收费，多轮任务及自动摘要可能持续调用模型。关闭页面不停止后台任务；停止后已发出的请求仍可能收费。</p>
+    <p>请求可能收费，多轮任务、委派子任务及自动摘要可能持续调用你的模型。关闭页面不停止后台任务；停止后已发出的请求仍可能收费。</p>
     <CopilotApprovalMode
+      v-if="!delegated"
       :owner="owner"
       :exercise-id="exerciseId"
       :credential="credential"
@@ -166,7 +171,7 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       :disabled="stop.pending.value"
       @click="stop.uncertain.value ? stop.retry() : stopTask()"
     >
-      {{ stop.uncertain.value ? '核对原停止请求' : '停止 Copilot 任务' }}
+      {{ stop.uncertain.value ? '核对原停止请求' : delegated ? '停止此子任务并交回结果' : '停止 Copilot 任务' }}
     </NButton>
     <p
       v-if="stop.error.value"
@@ -175,7 +180,7 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       {{ stop.error.value }}
     </p>
     <p v-if="task?.state === 'PAUSED'">
-      请处理模型配置或容量问题；可先停止当前任务，再显式发起新请求。不会自动回退或重发。
+      {{ delegated ? '子任务已暂停。处理配置或容量问题后，可停止子任务并把停止结果交回父任务；不会自动重发。' : '请处理模型配置或容量问题；可先停止当前任务，再显式发起新请求。不会自动回退或重发。' }}
     </p>
     <CopilotSteers
       v-if="task"
@@ -239,6 +244,7 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       >
         <h3>{{ ({ USER: '你', ASSISTANT: 'Copilot', TOOL: '工具回执' })[message.kind] }}</h3>
         <NButton
+          v-if="!delegated"
           :disabled="disabled || !credential"
           @click="emit('fork', message.id)"
         >
@@ -286,6 +292,29 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     <NButton @click="latest.refetch(); history.refetch()">
       重新读取
     </NButton>
+    <CopilotDelegations
+      v-if="task && !delegated"
+      :owner="owner"
+      :exercise-id="exerciseId"
+      :parent-task-id="task.id"
+      @unauthorized="emit('unauthorized')"
+    >
+      <template #default="childScope">
+        <CopilotPanel
+          :key="childScope.conversationId"
+          :owner="owner"
+          :exercise-id="exerciseId"
+          :conversation-id="childScope.conversationId"
+          delegated
+          :credential="credential"
+          :disabled="disabled"
+          :prepare="prepare"
+          @unauthorized="emit('unauthorized')"
+          @changed="emit('changed')"
+          @inspect-test="emit('inspect-test', $event)"
+        />
+      </template>
+    </CopilotDelegations>
     <CopilotProjectInstructions
       :owner="owner"
       :exercise-id="exerciseId"
@@ -293,107 +322,109 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       :running="running"
       @unauthorized="emit('unauthorized')"
     />
-    <CopilotSkills
-      v-model="selectedSkills"
-      :owner="owner"
-      :task-id="task?.id ?? null"
-      :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
-      @unauthorized="emit('unauthorized')"
-    />
-    <label :for="`copilot-text-${exerciseId}`">给 Copilot 的请求</label>
-    <textarea
-      :id="`copilot-text-${exerciseId}`"
-      v-model="text"
-      rows="4"
-      :disabled="saving || start.pending.value || start.uncertain.value"
-    />
-    <label :for="`copilot-fee-${exerciseId}`"><input
-      :id="`copilot-fee-${exerciseId}`"
-      v-model="fee"
-      type="checkbox"
-      :disabled="saving || start.pending.value || start.uncertain.value"
-    >我确认模型请求可能收费</label>
-    <CopilotReferences
-      v-model="references"
-      :owner="owner"
-      :exercise-id="exerciseId"
-      :conversation-id="conversationId ?? exerciseId"
-      :paths="paths"
-      :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
-      @unauthorized="emit('unauthorized')"
-    />
-    <p>发送前将尝试保存当前页全部草稿；如需继续编辑，请不要发送。保存冲突或期间产生新编辑时不会启动请求。</p>
-    <p
-      v-if="saveError"
-      role="alert"
-    >
-      {{ saveError }}
-    </p>
-    <p
-      v-if="start.error.value"
-      role="alert"
-    >
-      {{ start.error.value }}
-    </p>
-    <p v-if="start.uncertain.value">
-      受理结果未知，仅可核对原请求；不会换键重复派发。
-    </p>
-    <NButton
-      v-if="start.uncertain.value"
-      :disabled="start.pending.value || disabled || !credential"
-      @click="start.retry"
-    >
-      核对原 Copilot 请求
-    </NButton>
-    <NButton
-      v-else
-      :disabled="!canSend"
-      :loading="saving || start.pending.value"
-      @click="send"
-    >
-      保存草稿并发送
-    </NButton>
-    <CopilotFollowups
-      :owner="owner"
-      :exercise-id="exerciseId"
-      :conversation-id="conversationId ?? exerciseId"
-      :credential="credential"
-      :disabled="disabled"
-      :running="running"
-      @unauthorized="emit('unauthorized')"
-      @changed="latest.refetch()"
-    />
-    <CopilotBtw
-      :owner="owner"
-      :exercise-id="exerciseId"
-      :parent-conversation-id="conversationId ?? exerciseId"
-      :credential="credential"
-      :main-running="running"
-      :disabled="disabled || saving || start.pending.value || start.uncertain.value"
-      :handoff-disabled="handoff.pending.value || handoff.uncertain.value || (running && !canSteer)"
-      @unauthorized="emit('unauthorized')"
-      @bringback="bringBack"
-    />
-    <p
-      v-if="handoffNotice"
-      role="status"
-    >
-      {{ handoffNotice }}
-    </p>
-    <p
-      v-if="handoff.error.value"
-      role="alert"
-    >
-      {{ handoff.error.value }}
-    </p>
-    <button
-      v-if="handoff.uncertain.value"
-      type="button"
-      :disabled="handoff.pending.value"
-      @click="handoff.retry()"
-    >
-      核对原旁支带回 steer（不换键）
-    </button>
+    <template v-if="!delegated">
+      <CopilotSkills
+        v-model="selectedSkills"
+        :owner="owner"
+        :task-id="task?.id ?? null"
+        :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
+        @unauthorized="emit('unauthorized')"
+      />
+      <label :for="`copilot-text-${exerciseId}`">给 Copilot 的请求</label>
+      <textarea
+        :id="`copilot-text-${exerciseId}`"
+        v-model="text"
+        rows="4"
+        :disabled="saving || start.pending.value || start.uncertain.value"
+      />
+      <label :for="`copilot-fee-${exerciseId}`"><input
+        :id="`copilot-fee-${exerciseId}`"
+        v-model="fee"
+        type="checkbox"
+        :disabled="saving || start.pending.value || start.uncertain.value"
+      >我确认模型请求可能收费</label>
+      <CopilotReferences
+        v-model="references"
+        :owner="owner"
+        :exercise-id="exerciseId"
+        :conversation-id="conversationId ?? exerciseId"
+        :paths="paths"
+        :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
+        @unauthorized="emit('unauthorized')"
+      />
+      <p>发送前将尝试保存当前页全部草稿；如需继续编辑，请不要发送。保存冲突或期间产生新编辑时不会启动请求。</p>
+      <p
+        v-if="saveError"
+        role="alert"
+      >
+        {{ saveError }}
+      </p>
+      <p
+        v-if="start.error.value"
+        role="alert"
+      >
+        {{ start.error.value }}
+      </p>
+      <p v-if="start.uncertain.value">
+        受理结果未知，仅可核对原请求；不会换键重复派发。
+      </p>
+      <NButton
+        v-if="start.uncertain.value"
+        :disabled="start.pending.value || disabled || !credential"
+        @click="start.retry"
+      >
+        核对原 Copilot 请求
+      </NButton>
+      <NButton
+        v-else
+        :disabled="!canSend"
+        :loading="saving || start.pending.value"
+        @click="send"
+      >
+        保存草稿并发送
+      </NButton>
+      <CopilotFollowups
+        :owner="owner"
+        :exercise-id="exerciseId"
+        :conversation-id="conversationId ?? exerciseId"
+        :credential="credential"
+        :disabled="disabled"
+        :running="running"
+        @unauthorized="emit('unauthorized')"
+        @changed="latest.refetch()"
+      />
+      <CopilotBtw
+        :owner="owner"
+        :exercise-id="exerciseId"
+        :parent-conversation-id="conversationId ?? exerciseId"
+        :credential="credential"
+        :main-running="running"
+        :disabled="disabled || saving || start.pending.value || start.uncertain.value"
+        :handoff-disabled="handoff.pending.value || handoff.uncertain.value || (running && !canSteer)"
+        @unauthorized="emit('unauthorized')"
+        @bringback="bringBack"
+      />
+      <p
+        v-if="handoffNotice"
+        role="status"
+      >
+        {{ handoffNotice }}
+      </p>
+      <p
+        v-if="handoff.error.value"
+        role="alert"
+      >
+        {{ handoff.error.value }}
+      </p>
+      <button
+        v-if="handoff.uncertain.value"
+        type="button"
+        :disabled="handoff.pending.value"
+        @click="handoff.retry()"
+      >
+        核对原旁支带回 steer（不换键）
+      </button>
+    </template>
     <CopilotUsage
       :conversation-id="conversationId"
       :owner="owner"

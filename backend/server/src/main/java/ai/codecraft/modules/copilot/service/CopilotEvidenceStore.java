@@ -6,6 +6,7 @@ import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.copilot.repository.CopilotCompactionRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
+import ai.codecraft.modules.copilot.repository.CopilotDelegationRepository;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.skills.model.dto.SkillSnapshotSourceDTO;
 import ai.codecraft.modules.skills.service.SkillSnapshots;
@@ -22,10 +23,11 @@ public class CopilotEvidenceStore {
     private final WorkspaceCoordinationStore workspace;
     private final Clock clock;
     private final SkillSnapshots skills;
+    private final CopilotDelegationRepository delegations;
 
     public CopilotEvidenceStore(CopilotTaskRepository tasks, CopilotCompactionRepository contexts,
-        IdentityTransactionService identity, WorkspaceCoordinationStore workspace, Clock clock, SkillSnapshots skills) {
-        this.tasks = tasks; this.contexts = contexts; this.identity = identity; this.workspace = workspace; this.clock = clock; this.skills = skills;
+        IdentityTransactionService identity, WorkspaceCoordinationStore workspace, Clock clock, SkillSnapshots skills, CopilotDelegationRepository delegations) {
+        this.tasks = tasks; this.contexts = contexts; this.identity = identity; this.workspace = workspace; this.clock = clock; this.skills = skills; this.delegations = delegations;
     }
 
     /** Authorization takes an owner row lock; large payload decoding remains outside this transaction. */
@@ -34,7 +36,7 @@ public class CopilotEvidenceStore {
         var task = authorize(taskId, worker);
         var message = tasks.messageById(id);
         var origin = message == null ? null : tasks.find(message.taskId());
-        if (message != null && origin != null && task.exerciseId().equals(message.exerciseId()) && (task.conversationId().equals(origin.conversationId()) || tasks.hasMessage(task.conversationId(), id))) {
+        if (message != null && origin != null && task.exerciseId().equals(message.exerciseId()) && (task.conversationId().equals(origin.conversationId()) || tasks.hasMessage(task.conversationId(), id) || delegations.evidenceVisible(task.conversationId(), origin.id()))) {
             return new CopilotEvidenceDTO(id, message.kind(), message.sequence(), message.payload(), null, null);
         }
         var summary = contexts.find(id);

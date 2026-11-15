@@ -12,16 +12,18 @@ import org.apache.ibatis.annotations.Select;
 public interface CopilotConversationRepository {
     String COLUMNS = "id::text,exercise_id::text,id=exercise_id AS initial,created_at,fork_source::text,fork_message::text";
 
-    @Select("SELECT " + COLUMNS + " FROM copilot_conversation WHERE exercise_id=#{exercise}::uuid AND NOT EXISTS(SELECT 1 FROM copilot_btw b WHERE b.conversation_id=copilot_conversation.id) ORDER BY (id=exercise_id) DESC,created_at,id LIMIT 100")
+    @Select("SELECT " + COLUMNS + " FROM copilot_conversation WHERE exercise_id=#{exercise}::uuid AND NOT EXISTS(SELECT 1 FROM copilot_btw b WHERE b.conversation_id=copilot_conversation.id) AND NOT EXISTS(SELECT 1 FROM copilot_delegation d WHERE d.conversation_id=copilot_conversation.id) ORDER BY (id=exercise_id) DESC,created_at,id LIMIT 100")
     List<CopilotConversationResponse> list(String exercise);
     @Select("SELECT " + COLUMNS + " FROM copilot_conversation WHERE exercise_id=#{exercise}::uuid AND request_key=#{key}")
     CopilotConversationResponse receipt(String exercise, String key);
     @Select("SELECT " + COLUMNS + " FROM copilot_conversation WHERE exercise_id=#{exercise}::uuid AND id=#{id}::uuid")
     CopilotConversationResponse find(String exercise, String id);
-    @Select("SELECT count(*) FROM copilot_conversation WHERE exercise_id=#{exercise}::uuid AND NOT EXISTS(SELECT 1 FROM copilot_btw b WHERE b.conversation_id=copilot_conversation.id)")
+    @Select("SELECT count(*) FROM copilot_conversation WHERE exercise_id=#{exercise}::uuid AND NOT EXISTS(SELECT 1 FROM copilot_btw b WHERE b.conversation_id=copilot_conversation.id) AND NOT EXISTS(SELECT 1 FROM copilot_delegation d WHERE d.conversation_id=copilot_conversation.id)")
     int count(String exercise);
     @Select("SELECT EXISTS(SELECT 1 FROM copilot_btw WHERE conversation_id=#{conversation}::uuid)")
     boolean isBtw(String conversation);
+    @Select("SELECT EXISTS(SELECT 1 FROM copilot_delegation WHERE conversation_id=#{conversation}::uuid)")
+    boolean isDelegated(String conversation);
     @Insert("INSERT INTO copilot_conversation(id,exercise_id,request_key,created_at) VALUES(#{exercise}::uuid,#{exercise}::uuid,'initial',#{now}) ON CONFLICT(id) DO NOTHING")
     void ensureInitial(String exercise, Instant now);
     @Insert("INSERT INTO copilot_conversation(id,exercise_id,request_key,created_at) VALUES(#{id}::uuid,#{exercise}::uuid,#{key},#{now})")

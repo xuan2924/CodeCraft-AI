@@ -145,6 +145,7 @@ public class CopilotRunner {
             int argumentLimit = switch (call.name()) {
                 case "propose_changes" -> CopilotProposalPreparation.MAX_ARGUMENT_BYTES;
                 case "bash" -> CopilotCommandService.MAX_ARGUMENT_BYTES;
+                case "delegate_task" -> CopilotDelegationService.MAX_ARGUMENT_BYTES;
                 default -> 4096;
             };
             if (call.arguments().getBytes(StandardCharsets.UTF_8).length > argumentLimit) invalidResponse();
