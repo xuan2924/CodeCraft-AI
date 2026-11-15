@@ -12,6 +12,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -114,6 +115,7 @@ import ai.codecraft.modules.workspace.repository.ExerciseRepository;
 import ai.codecraft.modules.workspace.repository.StorageCapacityRepository;
 import ai.codecraft.modules.workspace.repository.WorkspaceWriteRepository;
 import ai.codecraft.modules.workspace.service.ExerciseDataService;
+import ai.codecraft.modules.workspace.service.DeletionStore;
 import ai.codecraft.modules.workspace.service.ExerciseModelService;
 import ai.codecraft.modules.workspace.service.ExerciseService;
 import ai.codecraft.modules.workspace.service.ExerciseTransactionService;
@@ -1410,6 +1412,66 @@ class CopilotPersistenceIT {
         clock.now = clock.instant().plusSeconds(3601);
         assertThatThrownBy(() -> tasks.accept(SESSION, exercise, CONTROL, "expired", "Inspect", true, measurement)).hasMessage("INVALID_STATE");
         verify(driver, never()).call(any(), any(), any(), anyInt(), any(), any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void allAiEvidenceUsesTheExistingManualOrThirtyDayDeletionBoundary(boolean expiry) throws Exception {
+        String owner = identity.authorization(SESSION).userId();
+        var keep = personalSkills.save(SESSION, null, "retain-keep", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", "---\nname: keep\ndescription: Keep original\n---\nPersonal retained guidance"))));
+        personalSkills.change(SESSION, keep.id(), "retain-enable-keep", keep.version(), true, false);
+        var remove = personalSkills.save(SESSION, null, "retain-remove", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", "---\nname: remove\ndescription: Snapshot only\n---\nSnapshot retained guidance"))));
+        var enabled = personalSkills.change(SESSION, remove.id(), "retain-enable-remove", remove.version(), true, false);
+        String summaryWorker = UUID.randomUUID().toString(); var summary = dispatchedSummary(summaryWorker);
+        summaryExecution.complete(summary.call().compactionId(), summaryWorker, summary.call().id(), summaryReceipt(summary));
+        clearInvocations(driver);
+        var workspace = new ProposalWorkspace(); var task = beginProposal(workspace, true);
+        personalSkills.change(SESSION, remove.id(), "retain-delete-original", enabled.version(), false, true);
+        assertThat(skillSnapshots.list(owner, task.id())).hasSize(2);
+        var personalBefore = connections.connections(SESSION, null);
+        String connection = sql.getMapper(ModelConfigurationRepository.class).find(alternateModelId).connectionId();
+        var credentialBefore = sql.getMapper(ModelConnectionRepository.class).find(connection).credential();
+        var endedAt = clock.instant(); var retainUntil = endedAt.plus(Duration.ofDays(30));
+        // Fixture represents an ended exercise with an outstanding AI batch; no physical cleanup is assumed.
+        jdbc.update("UPDATE workspace_exercise SET state='ENDED',ended_at=?,retain_until=? WHERE id=?::uuid", Timestamp.from(endedAt), Timestamp.from(retainUntil), exercise);
+        var retention = new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60);
+        var deletion = proxy(new DeletionStore(sql.getMapper(DeletionRepository.class), sql.getMapper(ExerciseRepository.class), identity, clock, retention, data), DeletionStore.class);
+        if (expiry) {
+            clock.now = retainUntil.minusSeconds(1); deletion.expire(exercise);
+            assertThat(sql.getMapper(ExerciseRepository.class).deleted(exercise)).isFalse();
+            assertThat(tasks.messages(SESSION, exercise, -1)).isNotEmpty();
+            clock.now = retainUntil; deletion.expire(exercise);
+        } else deletion.request(SESSION, exercise, "retain-delete");
+        assertThatThrownBy(() -> tasks.find(SESSION, task.id())).hasMessage("EXERCISE_DELETED");
+        var foreign = new SessionAuthorizationDTO(UUID.randomUUID().toString(), "USER", false, 1, clock.instant().plusSeconds(3600));
+        when(identity.authorization("retention-foreign")).thenReturn(foreign);
+        assertThatThrownBy(() -> deletion.status("retention-foreign", exercise)).hasMessage("RESOURCE_NOT_FOUND");
+        long retained = data.retainedBytes(exercise); assertThat(retained).isPositive();
+        assertThat(deletion.reconciled(exercise)).isFalse();
+        String claim = UUID.randomUUID().toString(); assertThat(deletion.claim(exercise, claim)).isTrue();
+        assertThatThrownBy(() -> deletion.complete(exercise, claim)).isInstanceOf(IllegalStateException.class);
+        assertThat(data.retainedBytes(exercise)).isEqualTo(retained);
+        deletion.failed(sql.getMapper(DeletionRepository.class).find(exercise), claim, "AI_RECOVERY_PENDING");
+        clock.now = clock.now.plus(Duration.ofHours(24));
+        assertThat(deletion.status(SESSION, exercise).interventionRequired()).isTrue();
+        assertThatThrownBy(() -> tasks.messages(SESSION, exercise, -1)).hasMessage("EXERCISE_DELETED");
+        execution.recover(task.id());
+        assertThat(workspace.applies.get()).isZero();
+        assertThat(data.quiescent(exercise)).isTrue();
+        var restarted = proxy(new DeletionStore(sql.getMapper(DeletionRepository.class), sql.getMapper(ExerciseRepository.class), identity, clock, retention, data), DeletionStore.class);
+        assertThat(restarted.reconciled(exercise)).isTrue();
+        String retry = UUID.randomUUID().toString(); assertThat(restarted.claim(exercise, retry)).isTrue();
+        restarted.complete(exercise, retry);
+        assertThat(data.retainedBytes(exercise)).isZero();
+        assertThat(skillSnapshots.list(owner, task.id())).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM personal_skill_version WHERE id=?::uuid", Integer.class, remove.contentVersion())).isZero();
+        assertThat(personalSkills.list(SESSION)).singleElement().satisfies(skill -> assertThat(skill.id()).isEqualTo(keep.id()));
+        assertThat(connections.connections(SESSION, null)).isEqualTo(personalBefore);
+        assertThat(sql.getMapper(ModelConnectionRepository.class).find(connection).credential().equals(credentialBefore)).isTrue();
+        assertThat(restarted.status(SESSION, exercise).state()).isEqualTo("SUCCEEDED");
+        clock.now = clock.now.plus(Duration.ofDays(7)); restarted.expireReceipts();
+        assertThatThrownBy(() -> restarted.status(SESSION, exercise)).hasMessage("RESOURCE_NOT_FOUND");
+        assertThat(sql.getMapper(ExerciseRepository.class).deleted(exercise)).isTrue();
     }
 
     @Test

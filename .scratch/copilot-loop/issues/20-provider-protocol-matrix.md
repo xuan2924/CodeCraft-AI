@@ -40,4 +40,4 @@
 
 定向结果：`%TEMP%/provider-matrix-directed.log` 通过原生三协议、工厂能力拒绝、driver/transport、上下文规划、usage，以及 PG 三协议停止/steer；`deepseek-alternate-protocols-live.log`、`deepseek-alternate-checks-live.log` 为真实证据。协议夹具曾因单 credit 尚被关闭中的 transport 持有而得到 RUNTIME_BUSY，已将夹具固定 credit 设为其固定调用次数 2/3；不改生产并发控制、不加等待或重试。
 
-**未完成/阻塞：** 没有 OpenAI、GLM、Kimi 或真正 Anthropic 凭证，不能补造这些供应商的通过记录；OpenAI phase SDK 缺口尚在。此票不能标为完整供应商支持，第二阶段也不能据此宣称全完成。先继续 #21/#22 的无依赖部分，最后集中交接缺口与处置选项。
+**未完成/阻塞：** 没有 OpenAI、GLM、Kimi 或真正 Anthropic 凭证，不能补造这些供应商的通过记录；OpenAI phase SDK 缺口尚在。此票不能标为完整供应商支持，第二阶段也不能据此宣称全完成。先继续 #21/#22 的无依赖部分，最后集中交接缺口与处置选项。提交 `d3be51c` 的独立 Standards / Spec 审查均无新增问题，明确确认这些是已披露交付缺口而非已完成证据。

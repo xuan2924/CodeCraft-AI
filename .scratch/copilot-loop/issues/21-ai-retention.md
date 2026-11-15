@@ -26,3 +26,13 @@
 ## Comments
 
 本票收口删除联动和跨类型计量。调用前预留、原始记录持久化和引用完整性须由 P2-08 起逐票实现，不能最后补。
+
+### 交付与验证（2026-11-15）
+
+核对既有 `ExerciseDataService` 及 Copilot/Skill contributor：所有 AI 业务行、usage/价格快照、摘要、提案、steer、测试绑定和 Skill 引用均纳入统一容量；erase 先检查全部 contributor 静默，再在既有删除事务中清理，不新增清理通道或 AI 配额。个人连接/密文 Key 与原件不在演练删除集合。
+
+新增真实 PG `allAiEvidenceUsesTheExistingManualOrThirtyDayDeletionBoundary`（手动/到期两例）：建保留历史、已发布摘要、待审批提案、两份 Skill 快照；删除其中一份个人原件后，快照继续存在。30 天前不自动删除，边界受理即禁止任务/消息读取；跨用户查询拒绝。未收敛批次使整个清理事务回滚，原保留字节不降；失败 24 小时出现人工提示且访问不恢复。后台恢复补齐原批次后，重建删除服务清理，AI 计量归零、最后引用版本回收，个人原件和加密 Key 完全保留；完成进度 7 天消失而安全删除标识仍在。仅在既有公开服务/事务边界验证，不冒充实际进程强杀或磁盘实填。
+
+共享版本同/跨演练计量与最后引用回收、满额原子拒绝沿用 #17/#18 的真实 PG 回归；未知写入/模型、摘要及测试证据保护沿用完整 Copilot 集成集。文件与磁盘不足处理复用第一阶段 #16 的实现/证据，不为了本票重跑跨进程故障矩阵。
+
+实际验证：`DeletionStoreTest,DeletionRetryBudgetTest,TestTaskStopRetentionTest,CopilotContextPlannerTest,CopilotSkillToolsTest,SkillPackageReadTest` 通过；完整 `CopilotPersistenceIT,SkillPersistenceIT,WorkspaceRetentionPersistenceIT` 合计 **106 通过、7 个显式收费测试跳过、0 失败**。其中 Copilot 102 个报告项（含 7 skip），147.415 秒；Skill 1、Workspace retention 10。首次整套命令超出 180 秒，未记通过；按合理整套时限重跑通过，未改业务逻辑绕过。日志 `%TEMP%/ai-retention-integration.log`、`ai-retention-full.log`、`ai-retention-full-repeat.log`。本票无新增生产代码，统一收口前完成双轴审查。
