@@ -16,6 +16,7 @@ import dev.langchain4j.model.anthropic.AnthropicStreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiResponsesStreamingChatModel;
 import java.nio.charset.StandardCharsets;
+import java.net.URI;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
@@ -38,12 +39,18 @@ public class ModelSdkClientFactory {
             throw new BusinessException(ModelAccessErrorCode.MODEL_INVALID_REQUEST);
         }
         var selected = target.model();
-        if (target.connection().preset() == ModelProviderPreset.GLM && selected.thinkingMode() == ModelThinkingMode.OFF
-            && Set.of("glm-5.3", "glm-5.3-flash").contains(selected.modelId().toLowerCase(Locale.ROOT))) {
-            throw new BusinessException(ModelAccessErrorCode.MODEL_PROTOCOL_UNSUPPORTED);
-        }
         validator.configuration(new ModelConfigurationRequest(selected.name(), selected.modelId(), selected.contextWindow(), selected.maxOutputTokens(),
             selected.thinkingMode(), selected.reasoningEffort(), selected.thinkingBudgetTokens(), selected.temperature(), null), target.connection().protocol());
+        String modelId = selected.modelId().toLowerCase(Locale.ROOT);
+        boolean requiresThinking = switch (target.connection().preset()) {
+            case GLM -> Set.of("glm-5.3", "glm-5.3-flash").contains(modelId);
+            case KIMI -> Set.of("kimi-k3", "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed", "kimi-k2.7-code", "kimi-k2.7-code-highspeed").contains(modelId);
+            default -> false;
+        };
+        if (requiresThinking && selected.thinkingMode() == ModelThinkingMode.OFF
+            || target.connection().preset() == ModelProviderPreset.OPENAI && unsupportedOpenAiHistory(target.connection().protocol(), modelId)) {
+            throw new BusinessException(ModelAccessErrorCode.MODEL_PROTOCOL_UNSUPPORTED);
+        }
         if (limits.thinkingBudgetTokens() != null && (target.connection().protocol() != ModelProtocol.ANTHROPIC || selected.thinkingMode() != ModelThinkingMode.ON
             || limits.thinkingBudgetTokens() > (selected.thinkingBudgetTokens() == null ? 1024 : selected.thinkingBudgetTokens()))) {
             throw new BusinessException(ModelAccessErrorCode.MODEL_INVALID_REQUEST);
@@ -56,6 +63,14 @@ public class ModelSdkClientFactory {
             case OPENAI_RESPONSES -> responses(target, limits, baseUrl, http);
             case ANTHROPIC -> anthropic(target, limits, baseUrl, http);
         };
+    }
+
+    private boolean unsupportedOpenAiHistory(ModelProtocol protocol, String modelId) {
+        // 1.23.0 drops Responses assistant phase. Do not silently flatten these documented phase-aware families.
+        if (protocol == ModelProtocol.OPENAI_RESPONSES) return List.of("gpt-5.4", "gpt-5.5", "gpt-5.6", "gpt-6", "gpt-6.1").stream()
+            .anyMatch(family -> modelId.equals(family) || modelId.startsWith(family + "-"));
+        // These models explicitly require Responses for function calling.
+        return protocol == ModelProtocol.OPENAI_CHAT && Set.of("gpt-6-astra", "gpt-6.1-sol").contains(modelId);
     }
 
     private StreamingChatModel anthropic(ModelInvocationDTO target, ModelInvocationLimitsDTO limits, String baseUrl, JdkHttpClientBuilder http) {
@@ -76,7 +91,10 @@ public class ModelSdkClientFactory {
         var model = target.model();
         boolean thinking = model.thinkingMode() == ModelThinkingMode.ON;
         if (thinking && target.connection().preset() == ModelProviderPreset.DEEPSEEK) throw new BusinessException(ModelAccessErrorCode.MODEL_PROTOCOL_UNSUPPORTED);
-        var builder = OpenAiResponsesStreamingChatModel.builder().baseUrl(baseUrl).apiKey(target.credential()).modelName(model.modelId())
+        // This SDK appends "/responses" literally, unlike the other protocol clients.
+        // Normalize only a trailing path separator; never rewrite a query string.
+        String endpoint = URI.create(baseUrl).getRawQuery() == null ? baseUrl.replaceFirst("/+$", "") : baseUrl;
+        var builder = OpenAiResponsesStreamingChatModel.builder().baseUrl(endpoint).apiKey(target.credential()).modelName(model.modelId())
             .maxOutputTokens(limits.outputTokens()).temperature(model.temperature()).httpClientBuilder(http).store(false)
             .logRequests(false).logResponses(false);
         if (thinking) builder.reasoningEffort(model.reasoningEffort() == null ? "medium" : model.reasoningEffort())

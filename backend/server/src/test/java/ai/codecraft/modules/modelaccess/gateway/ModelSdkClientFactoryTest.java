@@ -24,6 +24,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /** SDK publishing boundary only: no subscription, network or provider compatibility claim. */
 class ModelSdkClientFactoryTest {
@@ -116,10 +117,20 @@ class ModelSdkClientFactoryTest {
         }
     }
 
-    @Test
-    void knownForcedThinkingModelCannotBeDispatchedAsNonThinking() {
+    @ParameterizedTest
+    @CsvSource({"GLM,glm-5.3", "GLM,glm-5.3-flash", "KIMI,kimi-k3", "KIMI,kimi-k3.1-pro", "KIMI,kimi-k3.1-pro-highspeed", "KIMI,kimi-k2.7-code", "KIMI,kimi-k2.7-code-highspeed"})
+    void knownForcedThinkingModelCannotBeDispatchedAsNonThinking(ModelProviderPreset preset, String model) {
         try (var transport = new BoundedModelHttpClientBuilder(8192, 1024)) {
-            var failure = assertThrows(BusinessException.class, () -> factory.create(target(ModelProtocol.OPENAI_CHAT, ModelProviderPreset.GLM, ModelThinkingMode.OFF, "glm-5.3"), new ModelInvocationLimitsDTO(128, null), transport));
+            var failure = assertThrows(BusinessException.class, () -> factory.create(target(ModelProtocol.OPENAI_CHAT, preset, ModelThinkingMode.OFF, model), new ModelInvocationLimitsDTO(128, null), transport));
+            assertEquals("MODEL_PROTOCOL_UNSUPPORTED", failure.code());
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"OPENAI_RESPONSES,gpt-5.4", "OPENAI_RESPONSES,gpt-5.5", "OPENAI_RESPONSES,gpt-6-astra", "OPENAI_RESPONSES,gpt-6.1-sol", "OPENAI_CHAT,gpt-6-astra", "OPENAI_CHAT,gpt-6.1-sol"})
+    void knownOpenAiNativePhaseOrToolGapsAreNotSilentlyFlattened(ModelProtocol protocol, String model) {
+        try (var transport = new BoundedModelHttpClientBuilder(8192, 1024)) {
+            var failure = assertThrows(BusinessException.class, () -> factory.create(target(protocol, ModelProviderPreset.OPENAI, ModelThinkingMode.ON, model), new ModelInvocationLimitsDTO(2048, null), transport));
             assertEquals("MODEL_PROTOCOL_UNSUPPORTED", failure.code());
         }
     }

@@ -26,3 +26,18 @@
 ## Comments
 
 本票不依赖 P2-19，可在共同前置完成后并行推进；DeepSeek 思考专门控制场景仍须 P2-19 独立验收。真实调用不默认进入每次 CI 回归。
+
+### 当前交付、核验与明确阻塞（2026-11-15）
+
+集中矩阵见 [供应商与协议证据](../../../docs/research/model-provider-matrix.md)，逐项区分官方文档、原生 SDK 夹具和真实供应商。四家预设/自定义仍由用户显式填写实际身份与窗口，标 USER_PROVIDED；不将动态文档或名义窗口自动写回配置，不新增臆造价格。
+
+- 新增真实 SDK 的 Responses / Anthropic 双工具流式往返，验证 encrypted reasoning、thinking signature、redacted thinking、回填 ID、无服务端历史以及原生 usage/cache。三协议控制夹具验证停止/steer/worker 重建保留 opaque 字段；压缩测试确认 retained 字段保留但不塞入摘要指令。
+- Responses 末尾斜杠造成双斜杠错误路径已红测复现并修复。只规范化无 query 的末尾路径分隔符，不改用户查询串、不探测其他地址。
+- 重新读取当前 Kimi/GLM 官方资料：Kimi K3/K3.1 Pro/Highspeed、K2.7 Code/Highspeed 强制思考，扩展明确 OFF 拒绝；不沿用旧 K2.5 兼容性推断。原有 GLM-5.3/Flash 拒绝保持。
+- 当前 OpenAI 指南说明 Responses assistant `phase` 对工具流程连续性重要；正式 1.23.0 缺少往返映射，Maven 最新也仍为 1.23.0。已知受影响 GPT-5.4/5.5/5.6、GPT-6/6.1 Responses 组合明确拒绝；官方不支持工具的 GPT-6 Astra / GPT-6.1 Sol Chat 也拒绝。**保留 SDK 支持缺口，未自研协议、未切 SDK、未将目标降级为完成。** 继续条件是原生 SDK 补齐并验证，或另行确认另一正式 SDK 路线。
+- DeepSeek `deepseek-flash` Responses OFF、Anthropic OFF 均完成正式 Loop 审批续接，各 4 次真实请求；个人基础/工具检查各 3 次，复用零次。两协议新增通过请求共 14 次，硬上限为每条 Loop 8、每组检查 3，全部显式 opt-in。实际 Key 不输出。Go 仍是确定性夹具，不称全进程 E2E。
+- 真实 Anthropic SDK inputTokenCount 不含 cache read/create；UI/费用使用原有 `usage_facts` 规范化口径，不把原始日志计数误当占用。未核验协议/地址仍价格未知。
+
+定向结果：`%TEMP%/provider-matrix-directed.log` 通过原生三协议、工厂能力拒绝、driver/transport、上下文规划、usage，以及 PG 三协议停止/steer；`deepseek-alternate-protocols-live.log`、`deepseek-alternate-checks-live.log` 为真实证据。协议夹具曾因单 credit 尚被关闭中的 transport 持有而得到 RUNTIME_BUSY，已将夹具固定 credit 设为其固定调用次数 2/3；不改生产并发控制、不加等待或重试。
+
+**未完成/阻塞：** 没有 OpenAI、GLM、Kimi 或真正 Anthropic 凭证，不能补造这些供应商的通过记录；OpenAI phase SDK 缺口尚在。此票不能标为完整供应商支持，第二阶段也不能据此宣称全完成。先继续 #21/#22 的无依赖部分，最后集中交接缺口与处置选项。

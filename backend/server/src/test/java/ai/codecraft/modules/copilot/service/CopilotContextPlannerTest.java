@@ -22,6 +22,7 @@ import java.time.Instant;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -43,6 +44,18 @@ class CopilotContextPlannerTest {
         assertThat(result.id()).isEqualTo(call.id()); assertThat(result.toolName()).isEqualTo("view_file");
         assertThat(result.text()).contains("CONTEXT_EVIDENCE_TRUNCATED", rows.get(2).id(), "read_evidence");
         assertThat(ChatMessageSerializer.messageToJson(result).getBytes(StandardCharsets.UTF_8).length).isLessThanOrEqualTo(8192);
+    }
+
+    @Test void keepsNativeOpaqueAttributesInRetainedContextButNotInSummaryInstructions() {
+        var attributes = Map.<String, Object>of("thinking_signature", "signed-fixture", "redacted_thinking", List.of("redacted-fixture"), "encrypted_reasoning", "encrypted-fixture");
+        var rows = new ArrayList<>(history());
+        rows.set(1, row(2, AiMessage.builder().thinking("opaque-thinking-preserved").attributes(attributes).toolExecutionRequests(List.of(call)).build()));
+        var plan = planner.plan(target(100000, ModelThinkingMode.ON), input(rows, false));
+        var assistant = (AiMessage) plan.projection().request().messages().get(2);
+        assertThat(assistant.attributes()).containsAllEntriesOf(attributes);
+        assertThat(plan.compaction()).isNotNull();
+        assertThat(ChatMessageSerializer.messagesToJson(plan.compaction().request().messages()))
+            .doesNotContain("signed-fixture", "redacted-fixture", "encrypted-fixture", "opaque-thinking-preserved");
     }
 
     @Test void selectsOnlyCompleteOldUnitsReservesOutputAndKeepsRecentOriginal() {

@@ -81,6 +81,8 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.mybatis.spring.SqlSessionFactoryBean;
@@ -334,18 +336,29 @@ class ModelConnectionPersistenceIT {
     @Test
     @EnabledIfEnvironmentVariable(named = "MODEL_ACCESS_LIVE_DEEPSEEK", matches = "1")
     void realDeepSeekBasicAndSideEffectFreeToolChecksPassAndReuseTheirOriginalResults() {
+        realChecks(ModelProtocol.OPENAI_CHAT);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"OPENAI_RESPONSES", "ANTHROPIC"})
+    @EnabledIfEnvironmentVariable(named = "MODEL_ACCESS_LIVE_DEEPSEEK", matches = "1")
+    void realDeepSeekAlternateProtocolChecksPassAndReuse(String protocol) {
+        realChecks(ModelProtocol.valueOf(protocol));
+    }
+
+    private void realChecks(ModelProtocol protocol) {
         String key = System.getenv("DeepSeek");
         assertThat(key != null && !key.isBlank()).as("DeepSeek credential must be supplied through the environment").isTrue();
-        var connection = service.create("session", "live-connection", new ModelConnectionRequest("Live fixture", "https://api.deepseek.com", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, key, null));
+        var connection = service.create("session", "live-connection", new ModelConnectionRequest("Live fixture", protocol == ModelProtocol.ANTHROPIC ? "https://api.deepseek.com/anthropic/v1" : "https://api.deepseek.com", protocol, ModelProviderPreset.DEEPSEEK, key, null));
         var model = models.create("session", connection.id(), "live-model", new ModelConfigurationRequest("Live fixture", "deepseek-flash", 100000, 4096, ModelThinkingMode.OFF, null, null, null, null));
-        var limits = new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 1, 8388608, 65536, 262144);
+        var limits = new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 3, 8388608, 65536, 262144);
         try (var driver = new ModelCallDriver(new ModelSdkClientFactory(new ModelConnectionValidator(), limits), limits, clock)) {
             var runner = new ModelCheckRunner(dispatches, driver, new ModelCheckPrompts(), new ModelProbeProperties(128, 256, 2048), limits, new ObjectMapper());
             var admitted = checks.start("session", model.id(), "live-admit", true);
             runner.run(admitted.id());
             var complete = checks.latest("session", model.id());
             var samples = jdbc.queryForList("SELECT ordinal,usage_payload,usage_facts,estimated_cost,cost_currency,price_reason FROM personal_model_check_request WHERE check_id=?::uuid ORDER BY ordinal", admitted.id());
-            System.out.println("DeepSeek check usage sample (numeric evidence only): " + samples);
+            System.out.println("DeepSeek " + protocol + " check usage sample (numeric evidence only): " + samples);
             assertThat(samples).hasSizeLessThanOrEqualTo(3);
             assertThat(checks.usage("session", admitted.id()).totals()).singleElement().satisfies(total -> {
                 assertThat(total.calls()).isEqualTo("3");

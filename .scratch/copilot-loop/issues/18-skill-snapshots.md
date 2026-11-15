@@ -47,4 +47,4 @@ P2-21 收口演练删除与版本回收；本票必须先保证快照完整性�
 
 对 `e267977...367d073` 运行独立 Standards / Spec 审查。Standards 发现 P1：工具准入之后，`execution.current` 仅验证 worker 租约，未重新验证会话/演练期限；Spec 发现 P1：压缩收益/可容纳判断没有计入不可压缩的 Skill 指导，可能发起无法恢复继续能力的收费摘要。均先补红测复现，再修复：`load_skill` 复用 `CopilotEvidenceStore` 的所有者锁+新鲜 USER 授权+worker/任务/演练状态检查，读取后再在事务外解码；上下文实际请求与 `retainedCanFit` 共用相同 Skill 指导构建，超窗时 `safe=false,compaction=null`。
 
-同时保留 JSON 异常原因链并只向外返回安全码。UTF-8 边界的少量重复为启发式建议，当前保留各工具独立限额与响应协议，不为几行边界检查新增公共载体。Spec 确认显式加载的固定主文档全范围、任务/版本引用与派发时间满足记录契约，无须再复制正文账本。定向 `CopilotContextPlannerTest,CopilotSkillToolsTest,CopilotEvidenceToolsTest` 及真实 PG 撤销/到期、按需旧版本、显式/steer 路径通过（`%TEMP%/skill-read-authority-red.log`、`skill-compaction-red.log`、`skill-review18-green.log`）。
+同时保留 JSON 异常原因链并只向外返回安全码。UTF-8 边界的少量重复为启发式建议，当前保留各工具独立限额与响应协议，不为几行边界检查新增公共载体。Spec 确认显式加载的固定主文档全范围、任务/版本引用与派发时间满足记录契约，无须再复制正文账本。定向 `CopilotContextPlannerTest,CopilotSkillToolsTest,CopilotEvidenceToolsTest` 及真实 PG 撤销/到期、按需旧版本、显式/steer 路径通过（`%TEMP%/skill-read-authority-red.log`、`skill-compaction-red.log`、`skill-review18-green.log`）。修复提交 `87fdc18` 后，后续独立 Standards / Spec 审查分别确认 P1/P2 授权/原因链及 P1 压缩估算问题已解决。

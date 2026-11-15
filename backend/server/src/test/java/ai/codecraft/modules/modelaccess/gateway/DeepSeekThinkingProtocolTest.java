@@ -62,7 +62,7 @@ class DeepSeekThinkingProtocolTest {
         server.start();
         var validator = mock(ModelConnectionValidator.class);
         when(validator.baseUri(anyString())).thenReturn(URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/"));
-        var properties = new ModelCallProperties(Duration.ofSeconds(5), Duration.ofSeconds(2), 1, 65536, 4096, 32768);
+        var properties = new ModelCallProperties(Duration.ofSeconds(5), Duration.ofSeconds(2), 3, 65536, 4096, 32768);
         var connection = new ModelConnectionResponse("connection", "Fixture", "https://fixture.invalid", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, "1", "1", true, false);
         var model = new ModelConfigurationResponse("model", "connection", "Fixture", "deepseek-flash", 100000, 4096, ModelThinkingMode.ON, "low", null, null, "1", "1", "USER_PROVIDED", false);
         var target = new ModelInvocationDTO(connection, model, "fixture-only-not-a-secret");

@@ -181,6 +181,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.SqlSessionTemplate;
@@ -919,10 +920,10 @@ class CopilotPersistenceIT {
     }
 
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void steerInvalidatesOldApprovalAndPairsUnstartedToolsBeforeReplanning(boolean thinking) throws Exception {
+    @CsvSource({"OPENAI_CHAT,false", "OPENAI_CHAT,true", "OPENAI_RESPONSES,true", "ANTHROPIC,true"})
+    void steerInvalidatesOldApprovalAndPairsUnstartedToolsBeforeReplanning(ModelProtocol protocol, boolean thinking) throws Exception {
         var workspace = new ProposalWorkspace();
-        var task = beginProposal(workspace, true, thinking);
+        var task = beginProposal(workspace, true, thinking, protocol);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
         steers.accept(SESSION, task.id(), CONTROL, "steer", new CopilotSteerRequest("Do not edit; explain the current code"));
         assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("INVALIDATED");
@@ -937,7 +938,10 @@ class CopilotPersistenceIT {
             assertThat(results.get(1).text()).contains("NOT_EXECUTED", "STEER_SUPERSEDED");
             assertThat(results.get(2).text()).contains("NOT_EXECUTED", "STEER_SUPERSEDED");
             if (thinking) assertThat(request.messages().stream().filter(AiMessage.class::isInstance).map(AiMessage.class::cast).toList())
-                .singleElement().satisfies(message -> assertThat(message.thinking()).isEqualTo("opaque-fixture-thinking"));
+                .singleElement().satisfies(message -> {
+                    assertThat(message.thinking()).isEqualTo("opaque-fixture-thinking");
+                    assertThat(message.attributes()).containsAllEntriesOf(protocolAttributes(protocol));
+                });
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Explanation only")).build(), 100);
         });
         new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts).run(task.id(), UUID.randomUUID().toString());
@@ -1946,10 +1950,10 @@ class CopilotPersistenceIT {
     }
 
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void stopBeforeApprovalCancelsTheProposalAndPreservesCompletedReads(boolean thinking) throws Exception {
+    @CsvSource({"OPENAI_CHAT,false", "OPENAI_CHAT,true", "OPENAI_RESPONSES,true", "ANTHROPIC,true"})
+    void stopBeforeApprovalCancelsTheProposalAndPreservesCompletedReads(ModelProtocol protocol, boolean thinking) throws Exception {
         var workspace = new ProposalWorkspace();
-        var task = beginProposal(workspace, true, thinking);
+        var task = beginProposal(workspace, true, thinking, protocol);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
         tasks.stop(SESSION, task.id(), "stop");
         assertThat(proposals.decide(SESSION, proposal, CONTROL, "late-approve", new CopilotProposalDecisionRequest("APPROVE", null), measurement).state()).isEqualTo("CANCELLED");
@@ -1958,8 +1962,11 @@ class CopilotPersistenceIT {
         assertThat(workspace.applies.get()).isZero();
         verify(files, times(2)).read(SESSION, exercise, ProposalWorkspace.PATH);
         assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(5);
-        if (thinking) assertThat(((AiMessage) ChatMessageDeserializer.messageFromJson(tasks.messages(SESSION, exercise, -1).get(1).payload())).thinking())
-            .isEqualTo("opaque-fixture-thinking");
+        if (thinking) {
+            var retained = (AiMessage) ChatMessageDeserializer.messageFromJson(tasks.messages(SESSION, exercise, -1).get(1).payload());
+            assertThat(retained.thinking()).isEqualTo("opaque-fixture-thinking");
+            assertThat(retained.attributes()).containsAllEntriesOf(protocolAttributes(protocol));
+        }
         new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts).run(task.id(), UUID.randomUUID().toString());
         verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
     }
@@ -1994,11 +2001,24 @@ class CopilotPersistenceIT {
         realProposalRoundTrip(ModelThinkingMode.ON, decision);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"OPENAI_RESPONSES", "ANTHROPIC"})
+    @EnabledIfEnvironmentVariable(named = "COPILOT_LIVE_DEEPSEEK", matches = "1")
+    void realDeepSeekAlternateProtocolsResumeAnApprovedPersistedBatch(String protocol) throws Exception {
+        String selected = System.getenv("COPILOT_LIVE_PROTOCOL");
+        assumeTrue(selected == null || selected.equals(protocol));
+        realProposalRoundTrip(ModelThinkingMode.OFF, "APPROVE", ModelProtocol.valueOf(protocol));
+    }
+
     private void realProposalRoundTrip(ModelThinkingMode mode, String decision) throws Exception {
+        realProposalRoundTrip(mode, decision, ModelProtocol.OPENAI_CHAT);
+    }
+
+    private void realProposalRoundTrip(ModelThinkingMode mode, String decision, ModelProtocol protocol) throws Exception {
         var workspace = new ProposalWorkspace();
         String key = System.getenv("DeepSeek");
         assertThat(key != null && !key.isBlank()).as("DeepSeek credential must be supplied through the environment").isTrue();
-        var connection = connections.create(SESSION, "live-connection", new ModelConnectionRequest("Live proposal fixture", "https://api.deepseek.com", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, key, null));
+        var connection = connections.create(SESSION, "live-connection", new ModelConnectionRequest("Live proposal fixture", protocol == ModelProtocol.ANTHROPIC ? "https://api.deepseek.com/anthropic/v1" : "https://api.deepseek.com", protocol, ModelProviderPreset.DEEPSEEK, key, null));
         var count = new AtomicInteger();
         var nativeAssistants = new ArrayList<String>();
         try (var live = new ModelCallDriver(new ModelSdkClientFactory(new ModelConnectionValidator(), calls), calls, clock)) {
@@ -2036,7 +2056,7 @@ class CopilotPersistenceIT {
             if (mode == ModelThinkingMode.ON) assertThat(thinkingLengths).anyMatch(length -> length > 0);
             var samples = jdbc.queryForList("SELECT input_tokens,output_tokens,total_tokens,usage_payload FROM copilot_turn WHERE task_id=?::uuid ORDER BY ordinal", task.id());
             for (var sample : samples) assertThat(sample.get("usage_payload")).isNotNull();
-            System.out.println("DeepSeek live proposal mode=" + mode + " decision=" + decision + " requests=" + count.get()
+            System.out.println("DeepSeek live proposal protocol=" + protocol + " mode=" + mode + " decision=" + decision + " requests=" + count.get()
                 + " (Go is a deterministic fixture; no credentials or request bodies): " + samples);
         } finally { connections.delete(SESSION, connection.id(), "live-cleanup", connection.version()); }
     }
@@ -2244,20 +2264,20 @@ class CopilotPersistenceIT {
     }
 
     private CopilotTaskResponse beginProposal(ProposalWorkspace workspace, boolean trailingRead) throws Exception {
-        return beginProposal(workspace, trailingRead, false);
+        return beginProposal(workspace, trailingRead, false, ModelProtocol.OPENAI_CHAT);
     }
 
-    private CopilotTaskResponse beginProposal(ProposalWorkspace workspace, boolean trailingRead, boolean thinking) throws Exception {
+    private CopilotTaskResponse beginProposal(ProposalWorkspace workspace, boolean trailingRead, boolean thinking, ModelProtocol protocol) throws Exception {
         if (thinking) {
-            var connection = connections.create(SESSION, "thinking-connection", new ModelConnectionRequest("Thinking fixture", "https://example.test", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, "fixture-not-real", null));
-            var model = models.create(SESSION, connection.id(), "thinking-model", new ModelConfigurationRequest("Thinking fixture", "deepseek-flash", 100000, 4096, ModelThinkingMode.ON, "low", null, null, null));
+            var connection = connections.create(SESSION, "thinking-connection", new ModelConnectionRequest("Thinking fixture", "https://example.test", protocol, ModelProviderPreset.CUSTOM, "fixture-not-real", null));
+            var model = models.create(SESSION, connection.id(), "thinking-model", new ModelConfigurationRequest("Thinking fixture", "fixture", 100000, 4096, ModelThinkingMode.ON, protocol == ModelProtocol.ANTHROPIC ? null : "low", protocol == ModelProtocol.ANTHROPIC ? 1024 : null, null, null));
             selection.select(SESSION, exercise, CONTROL, "thinking-select", new ModelInvocationReferenceDTO(connection.id(), model.id(), 1, 1));
         }
         var proposal = workspace.proposal();
         var read = ToolExecutionRequest.builder().id("after-proposal").name("view_file").arguments("{\"path\":\"" + ProposalWorkspace.PATH + "\"}").build();
         var prefix = ToolExecutionRequest.builder().id("before-proposal").name("view_file").arguments(read.arguments()).build();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
-            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.builder().thinking(thinking ? "opaque-fixture-thinking" : null)
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.builder().thinking(thinking ? "opaque-fixture-thinking" : null).attributes(thinking ? protocolAttributes(protocol) : Map.of())
                 .toolExecutionRequests(trailingRead ? List.of(prefix, proposal, read) : List.of(prefix, proposal)).build()).build(), 100),
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Finished.")).build(), 100));
         var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Propose an edit", true, measurement);
@@ -2265,6 +2285,14 @@ class CopilotPersistenceIT {
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_APPROVAL");
         verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
         return task;
+    }
+
+    private Map<String, Object> protocolAttributes(ModelProtocol protocol) {
+        return switch (protocol) {
+            case OPENAI_CHAT -> Map.of();
+            case OPENAI_RESPONSES -> Map.of("encrypted_reasoning", "fixture-encrypted");
+            case ANTHROPIC -> Map.of("thinking_signature", "fixture-signature", "redacted_thinking", List.of("fixture-redacted"));
+        };
     }
 
     private final class ProposalWorkspace {

@@ -150,6 +150,14 @@ P2-03 根据已授权技术决策明确不自动跟随任何重定向：配置 J
 - 共享界面按 CHAT / SUMMARY / CHECK 分列累计 Token、已知金额小计及费用未知调用数；币种不混加，十进制字符串保留精度。缺失缓存细分不推测为零。上下文占用只取最近 CHAT 返回的输入，与累计数分开；摘要发布后无新返回显示等待更新，窗口标记用户配置来源。
 - 用量轮询、刷新与重连仅 GET，不提交收费请求；账号、演练或检查切换撤销旧读取并隔离缓存。无记录不代表历史账单为零。
 
+## 当前协议支持边界
+
+[供应商与协议矩阵](../research/model-provider-matrix.md)记录核验日期、SDK/模型身份、实际场景、通过/失败/未验证。已取得 DeepSeek Chat OFF/ON 及 Responses/Anthropic OFF 的分项证据，不代表 OpenAI、GLM、Kimi 或真正 Anthropic 已实测。
+
+- 已知强制思考的 GLM-5.3/Flash、Kimi K3/K3.1 Pro/Highspeed、K2.7 Code/Highspeed 禁止静默 OFF→ON，调用前明确拒绝。
+- DeepSeek Responses ON 的明文 reasoning 与当前 SDK 回填不匹配，仍明确拒绝。
+- LangChain4j 1.23.0 尚不保留 OpenAI Responses assistant phase；已知 phase-aware GPT-5.4/5.5/5.6、GPT-6/6.1 家族在该协议下明确拒绝，不丢字段凑通用消息。GPT-6 Astra / GPT-6.1 Sol 的 Chat 工具能力由官方明确不支持。对应 SDK 支持与凭证验证仍是缺口，不将此限制冒充阶段目标完成。
+
 ## 待决与实现验证
 
 - 核实 LangChain4j 对三种协议的版本支持、流式工具参数、推理字段、消息回填和 usage 暴露；不足时提出适配方案，不自行宣称 API 已存在或变更选型。
