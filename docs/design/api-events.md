@@ -181,6 +181,15 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - 写入结果未知先对账，不盲目重放副作用。
 - 测试先查询 Go 状态；可确认则接续跟踪或读取结果，否则明确标记中断。
 
+## 个人 Skill 文本管理
+
+- `/api/skills`：GET 返回本人原件元数据列表（含停用），POST 新建；`/api/skills/{id}` PUT 原子替换完整包，DELETE 删除原件引用。
+- `/api/skills/{id}/package`：GET 导出当前原文 JSON 包；`/api/skills/{id}/enabled` PUT 切换启停，查询参数 `enabled`。
+- 写操作必需 `Idempotency-Key`；更新/启停/删除必需查询参数 `expectedVersion`（十进制字符串）。同用户请求身份不可复用于另一操作/内容；重放仅返回原回执，不重新占用额度。版本冲突不覆盖原件。
+- 包请求严格采用 `formatVersion:1` / `files:[{path,content}]`，重复 JSON 字段、未知字段、无效 YAML、路径或 UTF-8 均拒绝；仅新建/替换包路由的请求体上限为 2 MiB。导入传输保留原始 JSON，不能先解析覆盖重复字段再上传。
+- 默认新建/导入停用。名称/描述从 `SKILL.md` 唯一提取，返回不可变 `contentVersion` UUID 和修改版本 `version`；其他字段为 `id,name,description,enabled,deleted,contentBytes`。编辑后的导出包含当前表单内容，页面注明未保存状态。
+- 所有接口需要普通 USER 新鲜授权，私有读取也使用归属锁；管理员不能读取用户原件。`X-Codecraft-Owner`、CSRF、no-store 和账号切换规则沿用通用入口。失败码 `SKILL_INVALID_PACKAGE`、`SKILL_LIMIT_EXCEEDED`、`SKILL_NOT_FOUND`、`SKILL_VERSION_CONFLICT`、`SKILL_NAME_CONFLICT`、`SKILL_IDEMPOTENCY_CONFLICT`、`SKILL_STORAGE_UNAVAILABLE`。
+
 ## 待决与实现验证
 
 - 任务 07/08 已落实安全库、输入/限流边界及数据库会话/重置事务；跨服务撤销已有工作区接入，SSE 见 #14 实施记录。账号停用和管理员凭证遗失恢复流程仍待决，详见[身份验证记录](../validation/identity-02.md)。

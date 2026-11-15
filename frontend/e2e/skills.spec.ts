@@ -1,0 +1,32 @@
+import { test, expect } from '@playwright/test';
+
+test('@smoke private Skill import is atomic and saved text can be enabled, edited and deleted', async ({ page, context, request, baseURL }) => {
+  const url = process.env.BROWSER_FIXTURE_URL;
+  const key = process.env.BROWSER_FIXTURE_KEY;
+  if (!url || !key || !baseURL) throw new Error('Use test-tracer.mjs --workspace --smoke --skills-browser');
+  const seed = await request.post(`${url}/identity`, { headers: { Authorization: `Bearer ${key}` } });
+  expect(seed.status()).toBe(201);
+  const identity: { token: string } = await seed.json();
+  await context.addCookies([{ name: 'codecraft_session', value: identity.token, url: baseURL, httpOnly: true, sameSite: 'Lax' }]);
+  await page.goto('/skills');
+  await expect(page.getByText('尚无 Skill。', { exact: false })).toBeVisible();
+  await page.getByText('导入 JSON 文本包', { exact: true }).click();
+  const main = '---\nname: review-java\ndescription: Verify Java changes\n---\nRead references/rules.md before editing.';
+  await page.getByLabel('粘贴完整 JSON（至多 2 MiB）').fill(JSON.stringify({ formatVersion: 1, files: [{ path: 'SKILL.md', content: main }, { path: 'references/../attack.md', content: 'bad' }] }));
+  await page.getByRole('button', { name: '原子导入新 Skill' }).click();
+  await expect(page.getByRole('alert')).toContainText('文本包格式无效');
+  await expect(page.getByText('尚无 Skill。', { exact: false })).toBeVisible();
+  await page.getByLabel('粘贴完整 JSON（至多 2 MiB）').fill(JSON.stringify({ formatVersion: 1, files: [{ path: 'SKILL.md', content: main }, { path: 'references/rules.md', content: 'Keep tests deterministic.' }] }));
+  await page.getByRole('button', { name: '原子导入新 Skill' }).click();
+  await expect(page.getByRole('button', { name: '编辑 review-java' })).toBeVisible();
+  await page.getByRole('button', { name: '启用 review-java', exact: true }).click();
+  await expect(page.getByRole('button', { name: '停用 review-java', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '编辑 review-java' }).click();
+  await expect(page.getByLabel('SKILL.md 原文', { exact: true })).toHaveValue(main);
+  await page.getByLabel('references/rules.md 原文', { exact: true }).fill('Updated guidance.');
+  await page.getByRole('button', { name: '保存整个文本包' }).click();
+  await expect(page.getByText(/版本 3，/)).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '删除 review-java' }).click();
+  await expect(page.getByText('尚无 Skill。', { exact: false })).toBeVisible();
+});

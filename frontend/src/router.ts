@@ -8,4 +8,5 @@ export const router = createRouter({ history: createWebHistory(), routes: [
   { path: '/account', name: 'account', component: AccountPage },
   { path: '/workspace', name: 'workspace', component: WorkspacePage },
   { path: '/models', name: 'models', component: () => import('./modelaccess/ModelSettingsPage.vue') },
+  { path: '/skills', name: 'skills', component: () => import('./skills/SkillPage.vue') },
 ] });

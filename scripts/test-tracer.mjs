@@ -17,6 +17,8 @@ import { browserFixtures } from './test-support/browser-fixtures.mjs';
 const smoke = process.argv.includes('--smoke');
 const identityMode = process.argv.includes('--identity');
 const workspaceMode = process.argv.includes('--workspace');
+const skillsBrowser = process.argv.includes('--skills-browser');
+if (skillsBrowser && (!workspaceMode || !smoke || identityMode)) throw new Error('--skills-browser requires --workspace --smoke without --identity');
 if (smoke && !identityMode && !workspaceMode) throw new Error('--smoke requires --identity and/or --workspace');
 if (smoke && process.argv.includes('--boundary-only')) throw new Error('--smoke cannot run boundary suites');
 const boundaryOnly = process.argv.includes('--boundary-only');
@@ -297,7 +299,7 @@ try {
       webEnv);
     await waitFor(webUrl, 200, webProcess);
     await browser('AVAILABLE', 'AVAILABLE', 'AVAILABLE', [
-      ...(identityMode ? ['identity.spec.ts'] : []), ...(workspaceMode ? ['workspace.spec.ts'] : []),
+      ...(identityMode ? ['identity.spec.ts'] : []), ...(workspaceMode ? [skillsBrowser ? 'skills.spec.ts' : 'workspace.spec.ts'] : []),
     ]);
   } else if (!boundaryOnly) {
   const initialSandbox = inspectSandbox();

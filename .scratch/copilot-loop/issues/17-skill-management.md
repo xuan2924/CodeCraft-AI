@@ -26,3 +26,16 @@
 ## Comments
 
 50 个只是数量上限，不代表每个可同时用满 256 KiB。快照加载由 P2-18 完成，个人原件管理可与运行控制分支并行。
+
+### 实施决定（2026-11-15）
+
+用户要求连续完成 #17–22、自行决定并记录，不等待逐项确认。沿用 #05 已确认文本包契约，不扩展格式或执行能力。测试边界按票内既定验收采用：包提交校验（真实 YAML 安全解析与字节限额）、公开管理 API（真实数据库授权/并发/版本/原子性）、组件与最小浏览器交互；任务快照加载在 #18 接入后验证。不为每个内部函数建立测试接口。复用 Spring Boot 已引入的 SnakeYAML，显式声明直接依赖以表明用途；不自行实现 YAML。整体审查基点固定为本轮起点 `dd30472`，按用户要求执行 Standards/Spec 双轴独立审查。
+
+新增/导入默认停用，避免未审阅的指导自动进入下一任务；用户显式启用后生效。管理页沿用现有主题与账号页面结构，以原文编辑为唯一元数据源，不增加第二份名称/描述表单状态。导入通过共享请求层原样发送 JSON，以保证重复字段在服务端被拒绝。内容解析/编码在用户锁外，事务内保存不可变版本、归属原件和元数据幂等回执；删除/更新只回收没有任何原件或任务快照引用的版本。快照表在 V36 同步建立，避免 #18 加载接线前设计出不安全的删除接口。
+
+### 当前实现与定向证据
+
+- 管理 REST、严格 SnakeYAML SafeConstructor、路径/UTF-8/字节/文件数保护、用户锁下配额和版本控制已接入。`/skills` 页面支持原文编辑、参考文件、原子 JSON 导入、当前编辑内容导出、启停和删除；账号导航可达。管理页不启动任何模型请求。
+- 定向 Java `SkillPackageParserTest,SkillHttpTest` 及 PostgreSQL `SkillPersistenceIT` 通过。覆盖 64KiB/256KiB/32 文件边界、非法编码/重复元数据/别名/路径、重复 JSON 字段、2MiB 路由限额、CSRF/owner、管理员/跨用户、幂等/旧版本冲突、并发数量拒绝、实际 50 个含停用与 5MiB 总额度。
+- 前端组件/API 定向测试、vue-tsc 与修改文件 Lint 通过。真实 Java/PostgreSQL/浏览器 `node scripts/test-tracer.mjs --workspace --smoke --skills-browser` 通过导入失败整包拒绝→导入→启用→编辑→删除。该选择仅验证 Skill 管理，不冒充 workspace smoke 修复；无付费调用。
+- 首轮浏览器发现 smoke 选择器要求 `@smoke`，未执行测试；补标签并重新构建 Java 包和 Web 后运行通过。日志 `%TEMP%/skill-final-directed.log`、`skill-ui-green.log`、`skill-ui-typecheck.log`、`skill-ui-lint.log`、`skill-browser.log`；浏览器证据在对应 `.runtime/cc-tracer-*/browser-1`。正式任务快照引用/删除/清理跨功能证据在 #18/#21 接线后补齐，尚未宣布阶段或本票审查收口。

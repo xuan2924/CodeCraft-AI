@@ -66,6 +66,10 @@ async function submitPassword() {
         v-if="identity?.role === 'USER' && !identity.passwordChangeRequired"
         :to="{ name: 'models' }"
       >个人模型连接</RouterLink>
+      <RouterLink
+        v-if="identity?.role === 'USER' && !identity.passwordChangeRequired"
+        :to="{ name: 'skills' }"
+      >个人 Skill</RouterLink>
     </header>
     <section
       aria-label="账号操作"
