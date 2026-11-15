@@ -2,6 +2,7 @@ package ai.codecraft.modules.copilot.service;
 
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.copilot.model.dto.CopilotConversationResponse;
+import ai.codecraft.modules.copilot.model.dto.CopilotForkPreparedDTO;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.copilot.repository.CopilotConversationRepository;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
@@ -59,7 +60,9 @@ public class CopilotConversationStore {
         identity.authorizePrivateDelivery(session);
         exercises.find(session, exercise);
         validateKey(key);
-        return conversations.receipt(exercise, key);
+        var receipt = conversations.receipt(exercise, key);
+        if (receipt != null && receipt.forkSource() != null) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
+        return receipt;
     }
 
     @Transactional
@@ -69,7 +72,10 @@ public class CopilotConversationStore {
         workspace.checkControl(exercise, IdentitySecrets.digest(credential));
         validateKey(key);
         var previous = conversations.receipt(exercise, key);
-        if (previous != null) return previous;
+        if (previous != null) {
+            if (previous.forkSource() != null) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
+            return previous;
+        }
         if (conversations.count(exercise) >= MAX_CONVERSATIONS) throw new BusinessException(CopilotErrorCode.COPILOT_CONVERSATION_LIMIT);
         String id = UUID.randomUUID().toString();
         operations.reserve(session, exercise, id, "COPILOT_CONVERSATION", measurement, CREATION_CREDIT);
@@ -77,6 +83,63 @@ public class CopilotConversationStore {
         conversations.insert(id, exercise, key, clock.instant());
         operations.settle(exercise, id, true);
         return conversations.find(exercise, id);
+    }
+
+    @Transactional
+    public CopilotConversationResponse replayFork(String session, String exercise, String key, String source, String message) {
+        identity.authorizePrivateDelivery(session);
+        exercises.find(session, exercise);
+        validateKey(key);
+        return forkReceipt(exercise, key, source, message);
+    }
+
+    @Transactional
+    public CopilotForkPreparedDTO prepareFork(String session, String exercise, String source, String message) {
+        identity.authorizePrivateDelivery(session);
+        exercises.find(session, exercise);
+        requireSource(exercise, source);
+        var boundary = conversations.boundary(source, message);
+        if (boundary == null || !exercise.equals(boundary.exerciseId())) throw new BusinessException(CopilotErrorCode.COPILOT_FORK_BOUNDARY);
+        int count = conversations.forkCount(source, boundary.sequence());
+        if (count > 2000 || conversations.forkBytes(source, boundary.sequence()) > 16L * 1024 * 1024) throw new BusinessException(CopilotErrorCode.COPILOT_FORK_LIMIT);
+        var messages = conversations.forkMessages(source, boundary.sequence());
+        if (messages.size() != count || messages.isEmpty() || !messages.getLast().id().equals(message)) throw new BusinessException(CopilotErrorCode.COPILOT_FORK_BOUNDARY);
+        return new CopilotForkPreparedDTO(source, message, boundary.sequence(), messages);
+    }
+
+    @Transactional
+    public CopilotConversationResponse fork(String session, String exercise, String credential, String key, CopilotForkPreparedDTO prepared, StorageMeasurement measurement) {
+        identity.authorizeMutation(session);
+        var owner = exercises.find(session, exercise);
+        validateKey(key);
+        var previous = forkReceipt(exercise, key, prepared.sourceConversationId(), prepared.throughMessageId());
+        if (previous != null) return previous;
+        workspace.checkControl(exercise, IdentitySecrets.digest(credential));
+        requireSource(exercise, prepared.sourceConversationId());
+        var boundary = conversations.boundary(prepared.sourceConversationId(), prepared.throughMessageId());
+        if (boundary == null || boundary.sequence() != prepared.throughSequence()
+            || conversations.forkCount(prepared.sourceConversationId(), prepared.throughSequence()) != prepared.messages().size()) {
+            throw new BusinessException(CopilotErrorCode.COPILOT_FORK_BOUNDARY);
+        }
+        if (conversations.count(exercise) >= MAX_CONVERSATIONS) throw new BusinessException(CopilotErrorCode.COPILOT_CONVERSATION_LIMIT);
+        String id = UUID.randomUUID().toString();
+        operations.reserve(session, exercise, id, "COPILOT_CONVERSATION", measurement, CREATION_CREDIT + 512L * prepared.messages().size());
+        conversations.ensureInitial(exercise, owner.createdAt());
+        conversations.insertFork(id, exercise, key, clock.instant(), prepared.sourceConversationId(), prepared.throughMessageId());
+        if (conversations.inherit(id, exercise, prepared.sourceConversationId(), prepared.throughSequence()) != prepared.messages().size()) {
+            throw new IllegalStateException("Fork source changed during admission");
+        }
+        operations.settle(exercise, id, true);
+        return conversations.find(exercise, id);
+    }
+
+    private void requireSource(String exercise, String source) {
+        if (!exercise.equals(source) && conversations.find(exercise, source) == null) throw new BusinessException(CopilotErrorCode.COPILOT_CONVERSATION_NOT_FOUND);
+    }
+    private CopilotConversationResponse forkReceipt(String exercise, String key, String source, String message) {
+        var receipt = conversations.receipt(exercise, key);
+        if (receipt != null && (!source.equals(receipt.forkSource()) || !message.equals(receipt.forkMessage()))) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
+        return receipt;
     }
 
     private void validateKey(String key) {

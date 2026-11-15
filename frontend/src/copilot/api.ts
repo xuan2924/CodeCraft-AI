@@ -34,12 +34,14 @@ function snapshot(value: unknown, exercise: string, conversation?: string): Snap
       thinking: thinkingText(partial.thinking, 8192), thinkingTruncated: partial.thinkingTruncated ?? false } };
 }
 function path(id: string) { return encodeURIComponent(uuid(id)); }
-export interface Conversation { id: string; exerciseId: string; initial: boolean; createdAt: string }
+export interface Conversation { id: string; exerciseId: string; initial: boolean; createdAt: string; forkSource?: string; forkMessage?: string }
 function conversation(value: unknown, exercise: string): Conversation {
   if (!object(value) || value.exerciseId !== exercise || typeof value.initial !== 'boolean') return invalid();
   const id = uuid(value.id);
   if (value.initial !== (id === exercise)) return invalid();
-  return { id, exerciseId: exercise, initial: value.initial, createdAt: date(value.createdAt) };
+  if ((value.forkSource == null) !== (value.forkMessage == null) || (value.initial && value.forkSource != null)) return invalid();
+  return { id, exerciseId: exercise, initial: value.initial, createdAt: date(value.createdAt),
+    ...(value.forkSource == null ? {} : { forkSource: uuid(value.forkSource), forkMessage: uuid(value.forkMessage) }) };
 }
 export async function conversations(owner: string, exercise: string, signal: AbortSignal): Promise<Conversation[]> {
   const value = await request(`/api/exercises/${path(exercise)}/copilot/conversations`, signal, { headers: ownerHeaders(owner) });
@@ -50,7 +52,13 @@ export async function conversations(owner: string, exercise: string, signal: Abo
 }
 export async function newConversation(owner: string, exercise: string, credential: string, key: string, signal: AbortSignal): Promise<Conversation> {
   const result = conversation(await post(`/api/exercises/${path(exercise)}/copilot/conversations`, {}, signal, key, credential, owner), exercise);
-  if (result.initial) return invalid();
+  if (result.initial || result.forkSource) return invalid();
+  return result;
+}
+export async function forkConversation(owner: string, exercise: string, source: string, message: string, credential: string, key: string, signal: AbortSignal): Promise<Conversation> {
+  const result = conversation(await post(`/api/exercises/${path(exercise)}/copilot/conversations/fork`,
+    { sourceConversationId: uuid(source), throughMessageId: uuid(message) }, signal, key, credential, owner), exercise);
+  if (result.initial || result.forkSource !== source || result.forkMessage !== message) return invalid();
   return result;
 }
 export function active(task: Task | null | undefined) { return !!task && ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND', 'STOPPING'].includes(task.state); }

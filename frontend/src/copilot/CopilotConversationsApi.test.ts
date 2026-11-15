@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { post, request } from '../api/request';
-import { conversations, latest, messages, newConversation, start } from './api';
+import { conversations, forkConversation, latest, messages, newConversation, start } from './api';
 vi.mock('../api/request', async original => ({ ...await original<typeof import('../api/request')>(), request: vi.fn(), post: vi.fn() }));
 const exercise = '10000000-0000-0000-0000-000000000001';
 const conversation = '10000000-0000-0000-0000-000000000002';
@@ -15,6 +15,14 @@ it('validates list ownership, bounded identities and the unique initial conversa
     vi.mocked(request).mockResolvedValue(entries);
     await expect(conversations('owner', exercise, signal)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
   }
+});
+it('binds fork receipts to the original source and inclusive boundary', async () => {
+  const branch = { ...initial, id: conversation, initial: false, forkSource: exercise, forkMessage: conversation };
+  vi.mocked(post).mockResolvedValue(branch);
+  await expect(forkConversation('owner', exercise, exercise, conversation, 'control', 'original-key', signal)).resolves.toEqual(branch);
+  expect(post).toHaveBeenLastCalledWith(`/api/exercises/${exercise}/copilot/conversations/fork`, { sourceConversationId: exercise, throughMessageId: conversation }, signal, 'original-key', 'control', 'owner');
+  vi.mocked(post).mockResolvedValue({ ...branch, forkMessage: exercise });
+  await expect(forkConversation('owner', exercise, exercise, conversation, 'control', 'original-key', signal)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
 });
 it('binds creation and starts to the intended exercise and conversation', async () => {
   vi.mocked(post).mockResolvedValue({ ...initial, id: conversation, initial: false });

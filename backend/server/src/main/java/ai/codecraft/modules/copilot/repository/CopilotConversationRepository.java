@@ -1,6 +1,7 @@
 package ai.codecraft.modules.copilot.repository;
 
 import ai.codecraft.modules.copilot.model.dto.CopilotConversationResponse;
+import ai.codecraft.modules.copilot.model.entity.CopilotMessageEntity;
 import java.time.Instant;
 import java.util.List;
 import org.apache.ibatis.annotations.Insert;
@@ -9,7 +10,7 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface CopilotConversationRepository {
-    String COLUMNS = "id::text,exercise_id::text,id=exercise_id AS initial,created_at";
+    String COLUMNS = "id::text,exercise_id::text,id=exercise_id AS initial,created_at,fork_source::text,fork_message::text";
 
     @Select("SELECT " + COLUMNS + " FROM copilot_conversation WHERE exercise_id=#{exercise}::uuid ORDER BY (id=exercise_id) DESC,created_at,id LIMIT 100")
     List<CopilotConversationResponse> list(String exercise);
@@ -23,4 +24,16 @@ public interface CopilotConversationRepository {
     void ensureInitial(String exercise, Instant now);
     @Insert("INSERT INTO copilot_conversation(id,exercise_id,request_key,created_at) VALUES(#{id}::uuid,#{exercise}::uuid,#{key},#{now})")
     void insert(String id, String exercise, String key, Instant now);
+    @Insert("INSERT INTO copilot_conversation(id,exercise_id,request_key,created_at,fork_source,fork_message) VALUES(#{id}::uuid,#{exercise}::uuid,#{key},#{now},#{source}::uuid,#{message}::uuid)")
+    void insertFork(String id, String exercise, String key, Instant now, String source, String message);
+    @Select("SELECT " + CopilotTaskRepository.MESSAGE + " FROM copilot_conversation_message WHERE conversation_id=#{source}::uuid AND id=#{message}::uuid")
+    CopilotMessageEntity boundary(String source, String message);
+    @Select("SELECT count(*) FROM copilot_conversation_message WHERE conversation_id=#{source}::uuid AND sequence<=#{through}")
+    int forkCount(String source, long through);
+    @Select("SELECT coalesce(sum(octet_length(payload)),0)::bigint FROM copilot_conversation_message WHERE conversation_id=#{source}::uuid AND sequence<=#{through}")
+    long forkBytes(String source, long through);
+    @Select("WITH candidates AS (SELECT " + CopilotTaskRepository.MESSAGE + " FROM copilot_conversation_message WHERE conversation_id=#{source}::uuid AND sequence<=#{through} ORDER BY sequence LIMIT 2001), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence) AS bytes FROM candidates) SELECT " + CopilotTaskRepository.MESSAGE + " FROM budgeted WHERE bytes<=16777216 ORDER BY sequence")
+    List<CopilotMessageEntity> forkMessages(String source, long through);
+    @Insert("INSERT INTO copilot_fork_message(conversation_id,exercise_id,message_id) SELECT #{id}::uuid,#{exercise}::uuid,id FROM copilot_conversation_message WHERE conversation_id=#{source}::uuid AND sequence<=#{through}")
+    int inherit(String id, String exercise, String source, long through);
 }

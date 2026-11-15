@@ -92,11 +92,13 @@ public interface CopilotTaskRepository {
     void batchProgress(String turn, String signature);
     @Select("SELECT " + MESSAGE + " FROM copilot_message WHERE id=#{id}::uuid")
     CopilotMessageEntity messageById(String id);
-    @Select("WITH candidates AS (SELECT " + MESSAGE + " FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid) AND sequence>#{after} ORDER BY sequence LIMIT 100), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence) AS bytes FROM candidates) SELECT " + MESSAGE + " FROM budgeted WHERE bytes<=524288 ORDER BY sequence")
+    @Select("SELECT EXISTS(SELECT 1 FROM copilot_conversation_message WHERE conversation_id=#{conversation}::uuid AND id=#{id}::uuid)")
+    boolean hasMessage(String conversation, String id);
+    @Select("WITH candidates AS (SELECT " + MESSAGE + " FROM copilot_conversation_message WHERE conversation_id=#{conversation}::uuid AND sequence>#{after} ORDER BY sequence LIMIT 100), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence) AS bytes FROM candidates) SELECT " + MESSAGE + " FROM budgeted WHERE bytes<=524288 ORDER BY sequence")
     List<CopilotMessageEntity> page(String conversation, long after);
-    @Select("WITH candidates AS (SELECT " + MESSAGE + " FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid) ORDER BY sequence DESC LIMIT 100), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence DESC) AS bytes FROM candidates) SELECT " + MESSAGE + " FROM budgeted WHERE bytes<=524288 ORDER BY sequence")
+    @Select("WITH candidates AS (SELECT " + MESSAGE + " FROM copilot_conversation_message WHERE conversation_id=#{conversation}::uuid ORDER BY sequence DESC LIMIT 100), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence DESC) AS bytes FROM candidates) SELECT " + MESSAGE + " FROM budgeted WHERE bytes<=524288 ORDER BY sequence")
     List<CopilotMessageEntity> recent(String conversation);
-    @Select("SELECT coalesce(max(sequence),0) FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid)")
+    @Select("SELECT coalesce(max(sequence),0) FROM copilot_conversation_message WHERE conversation_id=#{conversation}::uuid")
     long lastSequence(String conversation);
     @Select("SELECT coalesce(max(sequence),0) FROM copilot_message WHERE task_id=#{task}::uuid AND kind='USER'")
     long goalSequence(String task);
@@ -106,9 +108,9 @@ public interface CopilotTaskRepository {
     int partialText(String turn, String text, String thinking);
     @Select("SELECT coalesce((SELECT text_history FROM copilot_turn WHERE task_id=#{task}::uuid ORDER BY ordinal DESC LIMIT 1),false)")
     boolean textHistory(String task);
-    @Select("SELECT coalesce(sum(octet_length(payload)),0)::bigint FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid)")
+    @Select("SELECT coalesce(sum(octet_length(payload)),0)::bigint FROM copilot_conversation_message WHERE conversation_id=#{conversation}::uuid")
     long contextBytes(String conversation);
-    @Select("SELECT " + MESSAGE + " FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid) ORDER BY sequence")
+    @Select("SELECT " + MESSAGE + " FROM copilot_conversation_message WHERE conversation_id=#{conversation}::uuid ORDER BY sequence")
     List<CopilotMessageEntity> context(String conversation);
 
     @Insert("INSERT INTO copilot_tool(id,turn_id,task_id,exercise_id,position,call_id,name,arguments,state,created_at) VALUES(#{id}::uuid,#{turnId}::uuid,#{taskId}::uuid,#{exerciseId}::uuid,#{position},#{callId},#{name},#{arguments},'RUNNING',#{createdAt})")
@@ -122,7 +124,7 @@ public interface CopilotTaskRepository {
     @Update("UPDATE copilot_tool SET state=#{state},result_message_id=#{message}::uuid,completed_at=#{now} WHERE id=#{id}::uuid AND state IN ('RUNNING','WAITING_APPROVAL','APPLYING','WAITING_TEST','WAITING_COMMAND')")
     int completeTool(String id, String state, String message, Instant now);
 
-    @Select("SELECT EXISTS(SELECT 1 FROM copilot_turn WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid) AND (connection_id<>#{connection}::uuid OR model_configuration_id<>#{model}::uuid OR connection_configuration_version<>#{connectionVersion} OR model_configuration_version<>#{modelVersion}))")
+    @Select("SELECT EXISTS(SELECT 1 FROM copilot_turn WHERE assistant_message_id IN (SELECT id FROM copilot_conversation_message WHERE conversation_id=#{conversation}::uuid) AND (connection_id<>#{connection}::uuid OR model_configuration_id<>#{model}::uuid OR connection_configuration_version<>#{connectionVersion} OR model_configuration_version<>#{modelVersion}))")
     boolean foreignHistory(String conversation, String connection, String model, long connectionVersion, long modelVersion);
     @Update("UPDATE copilot_turn SET text_history=#{converted} WHERE id=#{id}::uuid")
     void historyMode(String id, boolean converted);

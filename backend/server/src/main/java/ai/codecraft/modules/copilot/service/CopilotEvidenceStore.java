@@ -34,7 +34,7 @@ public class CopilotEvidenceStore {
         var task = authorize(taskId, worker);
         var message = tasks.messageById(id);
         var origin = message == null ? null : tasks.find(message.taskId());
-        if (message != null && origin != null && task.exerciseId().equals(message.exerciseId()) && task.conversationId().equals(origin.conversationId())) {
+        if (message != null && origin != null && task.exerciseId().equals(message.exerciseId()) && (task.conversationId().equals(origin.conversationId()) || tasks.hasMessage(task.conversationId(), id))) {
             return new CopilotEvidenceDTO(id, message.kind(), message.sequence(), message.payload(), null, null);
         }
         var summary = contexts.find(id);

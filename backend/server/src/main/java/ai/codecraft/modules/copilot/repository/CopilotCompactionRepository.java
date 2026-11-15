@@ -94,7 +94,7 @@ public interface CopilotCompactionRepository {
     @Select("SELECT EXISTS(SELECT 1 FROM copilot_compaction_call k JOIN copilot_compaction c ON c.id=k.compaction_id WHERE c.conversation_id=#{conversation}::uuid AND k.source_version=#{version} AND k.through_sequence>=#{through} AND c.state IN ('FAILED','INTERRUPTED'))")
     boolean failedSource(String conversation, long version, long through);
 
-    @Select("WITH candidates AS (SELECT " + CopilotTaskRepository.MESSAGE + " FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid) AND sequence>#{after} AND sequence<=#{through} ORDER BY sequence LIMIT #{limit}), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence) AS bytes FROM candidates) SELECT " + CopilotTaskRepository.MESSAGE + " FROM budgeted WHERE bytes<=#{maximumBytes} ORDER BY sequence")
+    @Select("WITH candidates AS (SELECT " + CopilotTaskRepository.MESSAGE + " FROM copilot_conversation_message WHERE conversation_id=#{conversation}::uuid AND sequence>#{after} AND sequence<=#{through} ORDER BY sequence LIMIT #{limit}), budgeted AS (SELECT *,sum(octet_length(payload)) OVER (ORDER BY sequence) AS bytes FROM candidates) SELECT " + CopilotTaskRepository.MESSAGE + " FROM budgeted WHERE bytes<=#{maximumBytes} ORDER BY sequence")
     List<CopilotMessageEntity> source(String conversation, long after, long through, int limit, long maximumBytes);
     @Select("SELECT " + CopilotTaskRepository.MESSAGE + " FROM copilot_message WHERE task_id=#{task}::uuid AND kind='USER' AND sequence IN ((SELECT min(sequence) FROM copilot_message WHERE task_id=#{task}::uuid AND kind='USER'),(SELECT max(sequence) FROM copilot_message WHERE task_id=#{task}::uuid AND kind='USER')) ORDER BY sequence")
     List<CopilotMessageEntity> goals(String task);
@@ -102,13 +102,13 @@ public interface CopilotCompactionRepository {
     String anchorTask(String conversation);
     @Select("""
         WITH foreign_origins AS (
-          SELECT a.sequence FROM copilot_turn t JOIN copilot_message a ON a.id=t.assistant_message_id
-          WHERE t.task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid) AND a.sequence>#{after}
+          SELECT a.sequence FROM copilot_turn t JOIN copilot_conversation_message a ON a.id=t.assistant_message_id
+          WHERE a.conversation_id=#{conversation}::uuid AND a.sequence>#{after}
             AND (t.connection_id<>#{connection}::uuid OR t.model_configuration_id<>#{model}::uuid
               OR t.connection_configuration_version<>#{connectionVersion} OR t.model_configuration_version<>#{modelVersion})
         ), ordered_messages AS (
           SELECT sequence,kind,max(sequence) FILTER (WHERE kind<>'TOOL') OVER (ORDER BY sequence) AS origin_sequence
-          FROM copilot_message WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid) AND sequence>#{after}
+          FROM copilot_conversation_message WHERE conversation_id=#{conversation}::uuid AND sequence>#{after}
         )
         SELECT coalesce(max(m.sequence),0) FROM ordered_messages m JOIN foreign_origins f ON f.sequence=m.origin_sequence
         WHERE m.kind IN ('ASSISTANT','TOOL')

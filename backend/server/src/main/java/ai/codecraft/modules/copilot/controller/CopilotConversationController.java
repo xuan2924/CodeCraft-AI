@@ -2,6 +2,8 @@ package ai.codecraft.modules.copilot.controller;
 
 import ai.codecraft.common.model.ApiResponse;
 import ai.codecraft.modules.copilot.model.dto.CopilotConversationResponse;
+import ai.codecraft.modules.copilot.model.dto.CopilotForkRequest;
+import org.springframework.web.bind.annotation.RequestBody;
 import ai.codecraft.modules.copilot.service.CopilotConversationService;
 import ai.codecraft.modules.identity.security.IdentityHttp;
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,6 +24,13 @@ public class CopilotConversationController {
     @GetMapping("/api/exercises/{exercise}/copilot/conversations")
     public ApiResponse<List<CopilotConversationResponse>> list(@PathVariable UUID exercise, HttpServletRequest request) {
         return ApiResponse.success(conversations.list(IdentityHttp.sessionHash(request), exercise.toString()));
+    }
+    @PostMapping("/api/exercises/{exercise}/copilot/conversations/fork")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<CopilotConversationResponse> fork(@PathVariable UUID exercise, @RequestBody CopilotForkRequest input,
+        @RequestHeader(value = "Idempotency-Key", required = false) String key,
+        @RequestHeader(value = "X-Operation-Credential", required = false) String credential, HttpServletRequest request) {
+        return ApiResponse.success(conversations.fork(IdentityHttp.sessionHash(request), exercise.toString(), credential, key, input));
     }
     @PostMapping("/api/exercises/{exercise}/copilot/conversations")
     @ResponseStatus(HttpStatus.CREATED)

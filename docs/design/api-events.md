@@ -139,6 +139,7 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 ### 项目内对话身份
 
 - `GET /api/exercises/{id}/copilot/conversations`：本人、no-store，返回至多 100 个 `{id, exerciseId, initial, createdAt}`。初始对话 ID 为演练 ID；New 使用独立 UUID，与登录 session 无关。
+- `POST /api/exercises/{id}/copilot/conversations/fork`：`{sourceConversationId,throughMessageId}`，包含选定消息为继承边界，要求 CSRF、幂等键及当前操作凭证，返回 201 会话。会话列表/回执增加可空 `forkSource,forkMessage`。未完成工具配对或来源不可用返回 `COPILOT_FORK_BOUNDARY`，超过 2,000 消息/16 MiB 返回 `COPILOT_FORK_LIMIT`；同键不同来源、边界或 New/Fork 类型返回幂等冲突。读取分支消息使用与模型上下文相同的固定成员，不返回父会话后续消息。
 - 同路径 `POST`：要求当前操作凭证、CSRF 与幂等键，返回 `201` 及不可变创建回执。创建不启动模型、停止已有任务、复制容器或改变代码。未知结果仅原键核对；达到含初始对话在内的 100 个上限返回 `429 COPILOT_CONVERSATION_LIMIT`。记录随演练计量、保留和删除。
 - 任务启动及手动压缩请求可携带 `conversationId`；`tasks/latest`、`messages`、`context`、`usage` 的 GET 可带 `?conversation=<UUID>`。省略时明确访问初始对话，不根据其他标签页最近选择猜测；无归属返回 `404 COPILOT_CONVERSATION_NOT_FOUND`。
 - 任务响应（含 SSE 快照）提供 `conversationId`。历史消息、模型上下文、证据读取、摘要版本及当前上下文用量按对话隔离；用量总额仍按演练累计。模型选择、审批模式和工作区继续按演练共享。

@@ -37,6 +37,8 @@ import ai.codecraft.modules.modelaccess.service.ModelPriceCatalog;
 import ai.codecraft.modules.modelaccess.service.ModelCostCalculator;
 import ai.codecraft.modules.copilot.config.CopilotContextProperties;
 import ai.codecraft.modules.copilot.model.dto.CopilotContextPreparedDTO;
+import ai.codecraft.modules.copilot.model.dto.CopilotForkRequest;
+import ai.codecraft.modules.copilot.model.entity.CopilotMessageEntity;
 import ai.codecraft.modules.copilot.repository.CopilotCompactionRepository;
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotApprovalModeRequest;
@@ -1465,12 +1467,54 @@ class CopilotPersistenceIT {
     }
 
     @Test
+    void forkInheritsNativePairsWithoutTasksAndKeepsBranchContextIndependent() throws Exception {
+        var original = tasks.accept(SESSION, exercise, CONTROL, "fork-original", "ORIGINAL_GOAL", true, measurement);
+        var call = ToolExecutionRequest.builder().id("old-call").name("bash").arguments("{}").build();
+        String assistant = UUID.randomUUID().toString();
+        String result = UUID.randomUUID().toString();
+        repository.message(new CopilotMessageEntity(0, assistant, original.id(), exercise, "ASSISTANT",
+            ChatMessageSerializer.messageToJson(AiMessage.builder().toolExecutionRequests(List.of(call)).thinking("retained-thinking").build()), clock.instant()));
+        var service = new CopilotConversationService(conversations, capacity, new CopilotForkBoundary());
+        assertThatThrownBy(() -> service.fork(SESSION, exercise, CONTROL, "invalid-fork", new CopilotForkRequest(UUID.fromString(exercise), UUID.fromString(assistant))))
+            .isInstanceOf(BusinessException.class).hasMessage("COPILOT_FORK_BOUNDARY");
+        repository.message(new CopilotMessageEntity(0, result, original.id(), exercise, "TOOL", ChatMessageSerializer.messageToJson(ToolExecutionResultMessage.from(call, "OLD_COMMAND_RESULT")), clock.instant()));
+        var input = new CopilotForkRequest(UUID.fromString(exercise), UUID.fromString(result));
+        var branch = service.fork(SESSION, exercise, CONTROL, "valid-fork", input);
+        assertThat(branch.forkSource()).isEqualTo(exercise); assertThat(branch.forkMessage()).isEqualTo(result);
+        assertThat(service.fork(SESSION, exercise, "expired-control", "valid-fork", input)).isEqualTo(branch);
+        assertThatThrownBy(() -> service.create(SESSION, exercise, CONTROL, "valid-fork")).isInstanceOf(BusinessException.class).hasMessage("COPILOT_IDEMPOTENCY_CONFLICT");
+        assertThat(tasks.latestInConversation(SESSION, exercise, branch.id())).isNull();
+        assertThat(repository.context(branch.id())).hasSize(3);
+        assertThat(repository.find(original.id()).state()).isEqualTo("QUEUED");
+        assertThat(sql.getMapper(ExerciseRepository.class).find(exercise).revision()).isEqualTo(1);
+        verify(driver, never()).call(any(), any(), any(), anyInt(), any(), any());
+        String later = UUID.randomUUID().toString();
+        repository.message(new CopilotMessageEntity(0, later, original.id(), exercise, "ASSISTANT", ChatMessageSerializer.messageToJson(AiMessage.from("PARENT_LATER")), clock.instant()));
+        assertThat(repository.context(branch.id())).hasSize(3);
+        tasks.stop(SESSION, original.id(), "stop-for-fork");
+        var child = tasks.acceptInConversation(SESSION, exercise, CONTROL, "fork-child", "CHILD_GOAL", true, List.of(), measurement, branch.id());
+        String worker = UUID.randomUUID().toString(); execution.claim(child.id(), worker);
+        var prepared = contexts.beforeModel(child.id(), worker);
+        String messages = ChatMessageSerializer.messagesToJson(prepared.plan().projection().request().messages());
+        assertThat(messages).contains("ORIGINAL_GOAL", "OLD_COMMAND_RESULT", "retained-thinking", "CHILD_GOAL").doesNotContain("PARENT_LATER");
+        assertThat(evidenceStore.read(child.id(), worker, result).payload()).contains("OLD_COMMAND_RESULT");
+        assertThatThrownBy(() -> evidenceStore.read(child.id(), worker, later)).isInstanceOf(BusinessException.class).hasMessage("COPILOT_EVIDENCE_NOT_FOUND");
+        assertThat(repository.context(exercise)).hasSize(4);
+        var nested = service.fork(SESSION, exercise, CONTROL, "nested-fork", new CopilotForkRequest(UUID.fromString(branch.id()), UUID.fromString(result)));
+        assertThat(repository.context(nested.id())).hasSize(3);
+        tasks.stop(SESSION, child.id(), "stop-child"); execution.finish(child.id(), worker, "STOPPED", "USER_STOP");
+        new TransactionTemplate(transactions).executeWithoutResult(status -> data.erase(exercise));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_fork_message WHERE exercise_id=?::uuid", Integer.class, exercise)).isZero();
+        assertThat(repository.context(branch.id())).isEmpty();
+    }
+
+    @Test
     void conversationLimitAndEndedExerciseRejectNewWritesButKeepHistoryReadable() {
         var first = conversations.create(SESSION, exercise, CONTROL, "retained-conversation", measurement);
         jdbc.update("INSERT INTO copilot_conversation(id,exercise_id,request_key,created_at) SELECT gen_random_uuid(),?::uuid,'seed-' || n,now() FROM generate_series(1,98) n", exercise);
         assertThat(conversations.list(SESSION, exercise)).hasSize(100);
         assertThat(conversations.create(SESSION, exercise, CONTROL, "retained-conversation", measurement)).isEqualTo(first);
-        assertThat(new CopilotConversationService(conversations, capacity).create(SESSION, exercise, "expired-control", "retained-conversation"))
+        assertThat(new CopilotConversationService(conversations, capacity, new CopilotForkBoundary()).create(SESSION, exercise, "expired-control", "retained-conversation"))
             .isEqualTo(first);
         assertThatThrownBy(() -> conversations.create(SESSION, exercise, CONTROL, "one-too-many", measurement))
             .isInstanceOfSatisfying(BusinessException.class, failure -> assertThat(failure.errorCode()).isEqualTo(CopilotErrorCode.COPILOT_CONVERSATION_LIMIT));

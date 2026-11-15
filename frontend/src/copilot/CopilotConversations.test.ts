@@ -5,7 +5,7 @@ import CopilotConversations from './CopilotConversations.vue';
 import CopilotContext from './CopilotContext.vue';
 import * as api from './api';
 
-vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), conversations: vi.fn(), newConversation: vi.fn(), latest: vi.fn(), messages: vi.fn(), start: vi.fn(), stop: vi.fn(), watchTask: vi.fn(), tests: vi.fn(), approvalMode: vi.fn(), steers: vi.fn(), context: vi.fn(), compact: vi.fn() }));
+vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), conversations: vi.fn(), newConversation: vi.fn(), forkConversation: vi.fn(), latest: vi.fn(), messages: vi.fn(), start: vi.fn(), stop: vi.fn(), watchTask: vi.fn(), tests: vi.fn(), approvalMode: vi.fn(), steers: vi.fn(), context: vi.fn(), compact: vi.fn() }));
 const exercise = '10000000-0000-0000-0000-000000000001';
 const second = '10000000-0000-0000-0000-000000000002';
 const initial: api.Conversation = { id: exercise, exerciseId: exercise, initial: true, createdAt: '2026-01-01T00:00:00Z' };
@@ -34,6 +34,26 @@ beforeEach(() => {
   vi.mocked(api.watchTask).mockReturnValue(vi.fn());
 });
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); clients.splice(0).forEach(client => client.clear()); vi.useRealTimers(); });
+
+it('forks an explicitly selected message with original intent on retry, without saving or running tools', async () => {
+  const message = '10000000-0000-0000-0000-000000000003';
+  const branch = { ...created, forkSource: exercise, forkMessage: message };
+  vi.mocked(api.messages).mockResolvedValue({ messages: [{ id: message, taskId: message, sequence: '1', kind: 'USER', text: 'fork goal' }], nextCursor: null });
+  vi.mocked(api.forkConversation).mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce(branch);
+  vi.mocked(api.conversations).mockResolvedValue([initial, branch]);
+  const wrapper = panel(); await flushPromises();
+  await button(wrapper, 'Fork 到此消息').trigger('click'); await flushPromises();
+  expect(wrapper.text()).toContain('当前代码不变');
+  await button(wrapper, '确认创建对话分支').trigger('click'); await flushPromises();
+  await wrapper.setProps({ credential: 'rotated-control' });
+  await button(wrapper, '使用原请求键核对新建结果').trigger('click'); await flushPromises();
+  const calls = vi.mocked(api.forkConversation).mock.calls;
+  expect(calls).toHaveLength(2); expect(calls[1]!.slice(0, 4)).toEqual(calls[0]!.slice(0, 4));
+  expect(calls[1]![5]).toBe(calls[0]![5]); expect(calls[1]![4]).toBe('rotated-control');
+  expect(wrapper.get('select').element.value).toBe(second);
+  expect(wrapper.text()).toContain('对话历史来自过去，文件是当前版本');
+  expect(wrapper.props('prepare')).not.toHaveBeenCalled(); expect(api.start).not.toHaveBeenCalled(); expect(api.stop).not.toHaveBeenCalled();
+});
 
 it('creates an empty conversation without sending a model request, stopping a task or preparing files', async () => {
   const wrapper = panel(); await flushPromises();

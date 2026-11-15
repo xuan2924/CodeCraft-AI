@@ -18,7 +18,7 @@ import CopilotProjectInstructions from './CopilotProjectInstructions.vue';
 import CopilotMessageBody from './CopilotMessageBody.vue';
 
 const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
-const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string] }>();
+const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string]; fork: [messageId: string] }>();
 const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.conversationId ?? props.exerciseId}/${props.credential}`);
 const text = ref('');
@@ -212,6 +212,12 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
         :key="message.id"
       >
         <h3>{{ ({ USER: '你', ASSISTANT: 'Copilot', TOOL: '工具回执' })[message.kind] }}</h3>
+        <NButton
+          :disabled="disabled || !credential"
+          @click="emit('fork', message.id)"
+        >
+          Fork 到此消息
+        </NButton>
         <CopilotMessageBody
           :text="message.text"
           :thinking="message.thinking"
