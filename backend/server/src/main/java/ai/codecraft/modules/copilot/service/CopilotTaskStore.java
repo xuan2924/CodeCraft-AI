@@ -89,7 +89,7 @@ public class CopilotTaskStore {
         models.resolveForCall(session, exercise);
         String id = UUID.randomUUID().toString();
         operations.reserve(session, exercise, id, "COPILOT_START", measurement, Math.addExact(START_CREDIT, skills.additionalBytes(grant.userId(), exercise)));
-        var task = new CopilotTaskEntity(id, exercise, grant.userId(), session, key, fingerprint, "QUEUED", null, false, null, null, clock.instant(), null);
+        var task = new CopilotTaskEntity(id, exercise, grant.userId(), session, key, fingerprint, "QUEUED", null, false, null, null, clock.instant(), null, exercise);
         tasks.insert(task);
         skills.pin(grant.userId(), id, exercise, selected);
         tasks.message(new CopilotMessageEntity(0, UUID.randomUUID().toString(), id, exercise, "USER",

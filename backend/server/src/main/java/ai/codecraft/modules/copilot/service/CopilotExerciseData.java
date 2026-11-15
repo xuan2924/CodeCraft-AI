@@ -24,6 +24,7 @@ public class CopilotExerciseData implements ExerciseDataContributor {
         repository.deleteMessages(exerciseId);
         repository.deleteTurns(exerciseId);
         repository.deleteTasks(exerciseId);
+        repository.deleteConversations(exerciseId);
         repository.deleteApprovalChanges(exerciseId);
         repository.deleteApprovalMode(exerciseId);
     }

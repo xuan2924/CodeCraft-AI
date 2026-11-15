@@ -60,6 +60,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import ai.codecraft.modules.copilot.repository.CopilotRetentionRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
+import ai.codecraft.modules.copilot.repository.CopilotConversationRepository;
 import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTestRepository;
 import ai.codecraft.modules.workspace.repository.TestTaskRepository;
@@ -250,6 +251,7 @@ class CopilotPersistenceIT {
     private CopilotTestStore testRuns;
     private CopilotTestTools testTools;
     private WorkspaceMaintenanceStore maintenance;
+    private CopilotConversationStore conversations;
     private CopilotApprovalModeService approvalModes;
     private CopilotAutoApproval automatic;
     private CopilotSteerService steers;
@@ -269,7 +271,7 @@ class CopilotPersistenceIT {
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
             ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
-            CopilotTaskRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
+            CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
@@ -343,6 +345,8 @@ class CopilotPersistenceIT {
         var lifecycle = proxy(new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock, secrets, coordination,
             new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, selection), ExerciseTransactionService.class);
         var operations = proxy(new WorkspaceAiOperationService(identity, exercises, writes, capacityStore, clock), WorkspaceAiOperationService.class);
+        conversations = proxy(new CopilotConversationStore(sql.getMapper(CopilotConversationRepository.class), identity,
+            lifecycle, coordination, operations, clock), CopilotConversationStore.class);
         usage = proxy(new CopilotUsageService(sql.getMapper(CopilotUsageRepository.class), sql.getMapper(CopilotCompactionRepository.class), identity, lifecycle), CopilotUsageService.class);
         repository = sql.getMapper(CopilotTaskRepository.class);
         var skillLimits = new SkillProperties(50, 262144, 65536, 5242880, 32, 256, 4);
@@ -1362,6 +1366,18 @@ class CopilotPersistenceIT {
         String configuration = jdbc.queryForObject("SELECT configuration_payload FROM copilot_turn WHERE task_id=?::uuid", String.class, task.id());
         assertThat(configuration).contains("OPENAI_CHAT", "https://example.test").doesNotContain("fixture-not-real", "apiKey");
         verify(driver, times(1)).call(any(), any(), any(), anyInt(), any(), any(), any());
+    }
+
+    @Test
+    void newConversationHasStableIdentityAndDoesNotMoveExistingTask() {
+        var initial = conversations.list(SESSION, exercise);
+        assertThat(initial).singleElement().satisfies(item -> assertThat(item.id()).isEqualTo(exercise));
+        var task = tasks.accept(SESSION, exercise, CONTROL, "initial-request", "Keep working", true, measurement);
+        var created = conversations.create(SESSION, exercise, CONTROL, "new-conversation", measurement);
+        assertThat(created.id()).isNotEqualTo(exercise);
+        assertThat(conversations.create(SESSION, exercise, CONTROL, "new-conversation", measurement)).isEqualTo(created);
+        assertThat(conversations.list(SESSION, exercise)).hasSize(2);
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("QUEUED");
     }
 
     @Test

@@ -15,7 +15,7 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface CopilotTaskRepository {
-    String TASK = "id::text,exercise_id::text,user_id::text,session_hash,request_key,fingerprint,state,reason,stop_requested,worker_id::text,worker_not_after,created_at,completed_at";
+    String TASK = "id::text,exercise_id::text,user_id::text,session_hash,request_key,fingerprint,state,reason,stop_requested,worker_id::text,worker_not_after,created_at,completed_at,conversation_id::text";
     String TURN = "id::text,task_id::text,exercise_id::text,ordinal,state,connection_id::text,model_configuration_id::text,connection_configuration_version,model_configuration_version,protocol,model_id,context_window,assistant_message_id::text,tool_position,created_at,not_after,completed_at,error_code";
     String MESSAGE = "sequence,id::text,task_id::text,exercise_id::text,kind,payload,created_at";
 
@@ -37,8 +37,8 @@ public interface CopilotTaskRepository {
     @Select("SELECT " + TASK + " FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','STOPPING')")
     CopilotTaskEntity activeTask(String exercise);
     @Insert("""
-        INSERT INTO copilot_task(id,exercise_id,user_id,session_hash,request_key,fingerprint,state,created_at)
-        VALUES(#{id}::uuid,#{exerciseId}::uuid,#{userId}::uuid,#{sessionHash},#{requestKey},#{fingerprint},'QUEUED',#{createdAt})
+        INSERT INTO copilot_task(id,exercise_id,user_id,session_hash,request_key,fingerprint,state,created_at,conversation_id)
+        VALUES(#{id}::uuid,#{exerciseId}::uuid,#{userId}::uuid,#{sessionHash},#{requestKey},#{fingerprint},'QUEUED',#{createdAt},#{conversationId}::uuid)
         """)
     void insert(CopilotTaskEntity task);
     @Update("UPDATE copilot_task SET no_progress_count=CASE WHEN last_progress_signature=#{signature} THEN no_progress_count+1 ELSE 0 END,last_progress_signature=#{signature} WHERE id=#{id}::uuid")
