@@ -135,6 +135,13 @@ public interface CopilotTaskRepository {
           #{connectionConfigurationVersion},#{modelConfigurationVersion},#{protocol},#{modelId},#{contextWindow},#{createdAt},#{notAfter})
         """)
     void turn(CopilotTurnEntity turn);
+    @Select("SELECT tool.arguments FROM copilot_tool tool JOIN copilot_turn turn ON turn.id=tool.turn_id WHERE tool.task_id=#{task}::uuid AND tool.name='view_file' AND tool.state='SUCCEEDED' ORDER BY turn.ordinal DESC,tool.position DESC LIMIT 32")
+    List<String> instructionPaths(String task);
+    @Update("UPDATE copilot_turn SET project_instructions=#{payload} WHERE id=#{turn}::uuid")
+    void recordProjectInstructions(String turn, String payload);
+    @Select("SELECT project_instructions FROM copilot_turn WHERE task_id=#{task}::uuid ORDER BY ordinal DESC LIMIT 1")
+    String projectInstructions(String task);
+
     @Update("UPDATE copilot_turn SET configuration_payload=#{payload} WHERE id=#{turn}::uuid")
     void configuration(String turn, String payload);
     @Update("UPDATE copilot_turn SET state=#{state},partial_text='',partial_thinking='',partial_sequence=partial_sequence+1,assistant_message_id=#{message}::uuid,input_tokens=#{input},output_tokens=#{output},total_tokens=#{total},usage_incomplete=#{incomplete},usage_payload=#{usagePayload},completed_at=#{now} WHERE id=#{id}::uuid AND state='DISPATCHED'")

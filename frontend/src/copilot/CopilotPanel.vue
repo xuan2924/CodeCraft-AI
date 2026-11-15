@@ -14,6 +14,7 @@ import CopilotSteers from './CopilotSteers.vue';
 import CopilotContext from './CopilotContext.vue';
 import CopilotUsage from './CopilotUsage.vue';
 import CopilotSkills from './CopilotSkills.vue';
+import CopilotProjectInstructions from './CopilotProjectInstructions.vue';
 import CopilotMessageBody from './CopilotMessageBody.vue';
 
 const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
@@ -247,6 +248,13 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     <NButton @click="latest.refetch(); history.refetch()">
       重新读取
     </NButton>
+    <CopilotProjectInstructions
+      :owner="owner"
+      :exercise-id="exerciseId"
+      :task-id="task?.id ?? null"
+      :running="running"
+      @unauthorized="emit('unauthorized')"
+    />
     <CopilotSkills
       v-model="selectedSkills"
       :owner="owner"

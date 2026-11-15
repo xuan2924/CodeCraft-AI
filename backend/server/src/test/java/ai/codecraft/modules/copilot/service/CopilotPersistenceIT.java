@@ -36,6 +36,7 @@ import ai.codecraft.modules.modelaccess.service.ModelUsageNormalizer;
 import ai.codecraft.modules.modelaccess.service.ModelPriceCatalog;
 import ai.codecraft.modules.modelaccess.service.ModelCostCalculator;
 import ai.codecraft.modules.copilot.config.CopilotContextProperties;
+import ai.codecraft.modules.copilot.model.dto.CopilotContextPreparedDTO;
 import ai.codecraft.modules.copilot.repository.CopilotCompactionRepository;
 import ai.codecraft.modules.copilot.model.dto.CopilotProposalDecisionRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotApprovalModeRequest;
@@ -384,7 +385,7 @@ class CopilotPersistenceIT {
         var requestFactory = new CopilotRequestFactory();
         var planner = new CopilotContextPlanner(requestFactory, contextLimits, json, limits);
         contextPreparation = proxy(new CopilotContextPreparation(contextRepository, sql.getMapper(CopilotSteerRepository.class),
-            planner, callEvidence, contextLimits, limits, skillContext), CopilotContextPreparation.class);
+            planner, callEvidence, contextLimits, limits, skillContext, mock(CopilotProjectInstructions.class)), CopilotContextPreparation.class);
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 1, 0);
         sandbox = mock(SandboxWorkspaceGateway.class);
         when(sandbox.measureStorage(any())).thenAnswer(call -> measurement);
@@ -671,7 +672,7 @@ class CopilotPersistenceIT {
         var small = new CopilotContextProperties(80, 4, 8192, 4096, 8192, 32, 2048);
         var requests = new CopilotRequestFactory(); var evidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
         var planner = new CopilotContextPlanner(requests, small, json, limits);
-        var preparation = proxy(new CopilotContextPreparation(repository, sql.getMapper(CopilotSteerRepository.class), planner, evidence, small, limits, skillContext), CopilotContextPreparation.class);
+        var preparation = proxy(new CopilotContextPreparation(repository, sql.getMapper(CopilotSteerRepository.class), planner, evidence, small, limits, skillContext, mock(CopilotProjectInstructions.class)), CopilotContextPreparation.class);
         var summaryWorker = new CopilotCompactionRunner(summaryExecution, preparation, planner, new CopilotSummaryCodec(json), evidence,
             requests, capacity, driver, limits, calls, json);
         var context = new CopilotContextService(execution, preparation, repository, compactions, summaryWorker, capacity);
@@ -915,6 +916,31 @@ class CopilotPersistenceIT {
         assertThat(jdbc.queryForObject("SELECT estimated_input_tokens FROM copilot_turn WHERE id=?::uuid", Long.class, dispatched.turn().id())).isPositive();
         assertThat(jdbc.queryForObject("SELECT input_tokens FROM copilot_turn WHERE id=?::uuid", Long.class, dispatched.turn().id())).isNull();
         clock.now = clock.now.plusSeconds(130); execution.recover(task.id());
+    }
+
+    @Test
+    void projectInstructionSnapshotPublishesOnlyWithMatchingObservedRevisionAndRemainsPrivate() throws Exception {
+        var task = tasks.accept(SESSION, exercise, CONTROL, "project-start", "Inspect", true, measurement);
+        String worker = UUID.randomUUID().toString(); execution.claim(task.id(), worker);
+        var prepared = contexts.beforeModel(task.id(), worker);
+        String payload = "{\"exerciseId\":\"" + exercise + "\",\"revision\":\"1\",\"sources\":[],\"scopeTruncated\":false}";
+        var stale = new CopilotContextPreparedDTO(prepared.ticket(), prepared.input(), prepared.plan(), prepared.adjustments(), prepared.configurationPayload(), "2", payload);
+        assertThat(execution.beginModel(task.id(), worker, stale, measurement)).isNull();
+        assertThat(repository.latestTurn(task.id())).isNull();
+        var current = new CopilotContextPreparedDTO(prepared.ticket(), prepared.input(), prepared.plan(), prepared.adjustments(), prepared.configurationPayload(), "1", payload);
+        var dispatched = execution.beginModel(task.id(), worker, current, measurement);
+        assertThat(dispatched).isNotNull();
+        assertThat(tasks.projectInstructions(SESSION, task.id())).isEqualTo(payload);
+        // Tied timestamps and reverse UUID order must not drop the most recently executed path.
+        for (int position = 0; position < 33; position++) {
+            jdbc.update("INSERT INTO copilot_tool(id,turn_id,task_id,exercise_id,position,call_id,name,arguments,state,created_at) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?,?,'view_file',?,'SUCCEEDED',?)",
+                String.format("00000000-0000-0000-0000-%012d", 33 - position), dispatched.turn().id(), task.id(), exercise,
+                position, "read-" + position, "{\"path\":\"src/" + position + "/Main.java\"}", Timestamp.from(clock.instant()));
+        }
+        assertThat(repository.instructionPaths(task.id())).hasSize(32).first().isEqualTo("{\"path\":\"src/32/Main.java\"}");
+        assertThat(repository.instructionPaths(task.id())).doesNotContain("{\"path\":\"src/0/Main.java\"}");
+        when(identity.authorizePrivateDelivery(SESSION)).thenThrow(new IdentityFailure(IdentityErrorCode.UNAUTHENTICATED));
+        assertThatThrownBy(() -> tasks.projectInstructions(SESSION, task.id())).isInstanceOf(IdentityFailure.class);
     }
 
     @Test

@@ -128,6 +128,12 @@ public class CopilotTaskStore {
     }
 
     @Transactional
+    public String projectInstructions(String session, String id) {
+        authorize(session, id);
+        return tasks.projectInstructions(id);
+    }
+
+    @Transactional
     public CopilotDeliveryDTO delivery(String session, String id) {
         var task = authorize(session, id);
         var partial = tasks.partial(id);

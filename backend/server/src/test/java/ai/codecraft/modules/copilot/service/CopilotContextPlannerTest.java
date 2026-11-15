@@ -32,6 +32,16 @@ class CopilotContextPlannerTest {
         new CopilotProperties(2, 262144, 1048576, 16, 3, Duration.ofSeconds(130)));
     private final ToolExecutionRequest call = ToolExecutionRequest.builder().id("read-1").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
 
+    @Test void projectGuidancePrecedesSkillsAndTaskWithoutBecomingSystemAuthority() {
+        var source = new CopilotContextInputDTO(null, null, 0, List.of(row(1, UserMessage.from("task"))), List.of(), List.of(), false, 0,
+            List.of(ChatMessageSerializer.messageToJson(UserMessage.from("skill"))),
+            List.of(ChatMessageSerializer.messageToJson(UserMessage.from("project rules"))));
+        var plan = planner.plan(target(100000, ModelThinkingMode.OFF), source);
+        assertThat(plan.safe()).isTrue();
+        assertThat(plan.projection().request().messages().subList(1, 4)).containsExactly(
+            UserMessage.from("project rules"), UserMessage.from("skill"), UserMessage.from("task"));
+    }
+
     @Test void projectsRereadableTextWithoutChangingStoredPayloadThinkingOrCallIdentity() {
         var rows = history(); String original = rows.get(2).payload();
         var plan = planner.plan(target(100000, ModelThinkingMode.OFF), input(rows, false));

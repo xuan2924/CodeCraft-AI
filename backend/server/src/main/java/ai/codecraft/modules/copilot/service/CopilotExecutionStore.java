@@ -138,6 +138,7 @@ public class CopilotExecutionStore {
         if (!target.connection().equals(ticket.target().connection()) || !target.model().equals(ticket.target().model())) return null;
         if (!prepared.plan().safe() || prepared.plan().projection().encodedBytes() > limits.contextBytes()) throw new BusinessException(CopilotErrorCode.COPILOT_CONTEXT_REQUIRED);
         var exercise = workspace.exercise(task.exerciseId());
+        if (prepared.projectRevision() != null && !prepared.projectRevision().equals(String.valueOf(exercise.revision()))) return null;
         Instant notAfter = clock.instant().plus(Duration.ofSeconds(120));
         if (exercise.deadlineAt().isBefore(notAfter)) notAfter = exercise.deadlineAt();
         if (grant.expiresAt().isBefore(notAfter)) notAfter = grant.expiresAt();
@@ -158,6 +159,7 @@ public class CopilotExecutionStore {
         tasks.turn(turn);
         skills.markExplicitLoaded(task.userId(), task.id(), turn.createdAt());
         tasks.configuration(turn.id(), prepared.configurationPayload());
+        tasks.recordProjectInstructions(turn.id(), prepared.projectPayload());
         tasks.recordPrice(turn.id(), evidence.price(target, turn.createdAt()));
         tasks.historyMode(turn.id(), converted);
         contexts.dispatchContext(turn.id(), prepared.plan().projection().estimatedTokens(), prepared.plan().projection().encodedBytes(),

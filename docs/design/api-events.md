@@ -217,6 +217,11 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - 写入结果未知先对账，不盲目重放副作用。
 - 测试先查询 Go 状态；可确认则接续跟踪或读取结果，否则明确标记中断。
 
+## 项目指令快照读取
+
+- `GET /api/copilot-tasks/{task}/project-instructions` 返回最近一次已派发请求的 `{exerciseId,revision,sources,scopeTruncated}`，未派发或旧请求无快照时返回 null；每项为 `{path,scope,status,content}`，状态 `LOADED/MISSING/LIMIT_EXCEEDED/READ_FAILED`，只有 LOADED 携带正文。最多 32 来源及 32 KiB 正文。
+- 沿既有任务私有交付授权、owner 条件头和 no-store，不加载当前文件、不改变任务或调用模型。任务切换后的迟到结果不能写入新查询作用域。
+
 ## 任务 Skill 快照读取
 
 - Copilot 启动请求增加可选 `skillIds` UUID 数组，表示显式加载哪些启用 Skill 的主文档；既有无该字段请求仍有效。任务始终固定全部启用版本，重放校验原文及显式选择集合。

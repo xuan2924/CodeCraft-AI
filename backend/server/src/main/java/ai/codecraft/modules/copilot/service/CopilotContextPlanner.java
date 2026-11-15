@@ -68,7 +68,7 @@ public class CopilotContextPlanner {
         }
         var units = completeUnits(items, source.hasMore());
         // Stable task guidance precedes history; never insert a synthetic new user turn after a tool result.
-        var history = skillGuidance(source);
+        var history = guidance(source);
         if (source.summaryText() != null) history.add(summaryMessage(source.summaryId(), source.throughSequence(), source.summaryText()));
         var pinned = new HashSet<String>();
         for (var goal : source.goals()) {
@@ -187,7 +187,7 @@ public class CopilotContextPlanner {
 
     private boolean retainedCanFit(ModelInvocationDTO target, CopilotContextInputDTO source,
         List<List<CopilotContextItemDTO>> units, int eligible) {
-        var retained = skillGuidance(source);
+        var retained = guidance(source);
         var ids = new HashSet<String>();
         for (int index = eligible; index < units.size(); index++) for (var item : units.get(index)) ids.add(item.source().id());
         for (var goal : source.goals()) if (ids.add(goal.id())) retained.add(ChatMessageDeserializer.messageFromJson(goal.payload()));
@@ -197,11 +197,13 @@ public class CopilotContextPlanner {
         return requests.estimate(requests.draft(retained)) + 512L + target.model().maxOutputTokens() < window(target);
     }
 
-    private ArrayList<ChatMessage> skillGuidance(CopilotContextInputDTO source) {
+    private ArrayList<ChatMessage> guidance(CopilotContextInputDTO source) {
         var result = new ArrayList<ChatMessage>();
-        for (String payload : source.skillPayloads()) {
+        var payloads = new ArrayList<>(source.projectPayloads());
+        payloads.addAll(source.skillPayloads());
+        for (String payload : payloads) {
             var guidance = ChatMessageDeserializer.messageFromJson(payload);
-            if (!(guidance instanceof UserMessage)) throw new IllegalStateException("Skill guidance is not untrusted user content");
+            if (!(guidance instanceof UserMessage)) throw new IllegalStateException("Guidance is not untrusted user content");
             result.add(guidance);
         }
         return result;
