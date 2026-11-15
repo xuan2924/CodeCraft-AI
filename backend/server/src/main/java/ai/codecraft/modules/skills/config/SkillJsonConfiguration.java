@@ -22,8 +22,10 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class SkillJsonConfiguration implements WebMvcConfigurer {
     public static final int MAX_REQUEST_BYTES = 2 * 1024 * 1024;
     private final ObjectMapper json;
-    public SkillJsonConfiguration(@Qualifier("applicationJson") ObjectMapper primary) {
-        json = primary.copy().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+    public SkillJsonConfiguration(@Qualifier("skillJson") ObjectMapper json) { this.json = json; }
+    @Bean("skillJson")
+    static ObjectMapper skillJson(@Qualifier("applicationJson") ObjectMapper primary) {
+        var json = primary.copy().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         json.coercionConfigFor(LogicalType.Integer).setCoercion(CoercionInputShape.Float, CoercionAction.Fail)
             .setCoercion(CoercionInputShape.String, CoercionAction.Fail);
@@ -31,6 +33,7 @@ public class SkillJsonConfiguration implements WebMvcConfigurer {
             .setCoercion(CoercionInputShape.Float, CoercionAction.Fail).setCoercion(CoercionInputShape.Boolean, CoercionAction.Fail);
         json.getFactory().setStreamReadConstraints(StreamReadConstraints.builder().maxStringLength(MAX_REQUEST_BYTES)
             .maxDocumentLength(MAX_REQUEST_BYTES).maxNestingDepth(8).build());
+        return json;
     }
     @Bean
     static RequestBodyPolicy skillRequestBodies() {

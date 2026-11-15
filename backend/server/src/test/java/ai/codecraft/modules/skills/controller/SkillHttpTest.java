@@ -35,6 +35,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.mock.web.MockServletContext;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -91,7 +92,7 @@ class SkillHttpTest {
         @Bean IdentityTransactionService identity() { return mock(IdentityTransactionService.class); }
         @Bean IdentitySecrets secrets() { return mock(IdentitySecrets.class); }
         @Bean IdentitySettings settings() { return new IdentitySettings("https://app.example.test", "00".repeat(32), "", ""); }
-        @Bean("applicationJson") ObjectMapper json() { return new ObjectMapper().findAndRegisterModules(); }
+        @Bean("applicationJson") @Primary ObjectMapper json() { return new ObjectMapper().findAndRegisterModules(); }
         @Bean RequestBodyAdmission bodies(List<RequestBodyPolicy> policies) { return new RequestBodyAdmission(policies); }
     }
 }

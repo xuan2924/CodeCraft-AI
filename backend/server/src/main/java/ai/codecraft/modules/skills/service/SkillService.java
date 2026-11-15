@@ -15,7 +15,7 @@ public class SkillService {
     private final SkillPackageParser parser;
     private final SkillStore store;
     private final ObjectMapper json;
-    public SkillService(SkillPackageParser parser, SkillStore store, @Qualifier("applicationJson") ObjectMapper json) {
+    public SkillService(SkillPackageParser parser, SkillStore store, @Qualifier("skillJson") ObjectMapper json) {
         this.parser = parser; this.store = store; this.json = json;
     }
     public SkillResponse save(String session, String id, String key, String expectedVersion, SkillPackageRequest request) {

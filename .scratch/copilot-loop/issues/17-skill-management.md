@@ -45,3 +45,5 @@
 对 `dd30472...a6cab3b` 运行独立 Standards / Spec 审查。Standards：1 项规范测试缺口（重复提交/迟到响应/卸载），1 项重复账号门禁代码的启发式建议；Spec：1 项格式版本标量隐式转换缺陷，1 项被任务引用版本的删除测试缺口。已补 deferred-promise 组件测试（含失败保留草稿），补真实数据库引用保留断言；先复现 HTTP 红测，再在 Skill 专用 mapper 禁用浮点/字符串转整数及数值/布尔转文本，确保 `formatVersion:1.9`、`"1"`、非字符串文件内容整次拒绝。定向 Java/PG、6 项 Skill 前端测试、类型和 Lint 复验通过，日志 `%TEMP%/skill-review-green.log`、`skill-review-ui.log`、`skill-review-typecheck.log`、`skill-review-lint.log`。
 
 门禁 composable 抽取属于启发式维护建议，不是授权缺陷：本轮保持与既有模型设置页相同的账号/过期/取消行为，已为新功能补行为测试，不将无需求的跨页面重构混入本票。功能项与审查已覆盖；按本轮连续实施约定，完整受影响套件在第二阶段最终收口统一执行，#18/#21 补真实任务引用链路而非替代已通过的 #17 管理行为。
+
+#18 接线时发现 #17 的补充缺陷：原件 GET 解码错误使用通用 4KiB 字符串上限 mapper，导致合法大包保存后不能重新打开。新增 Spring 配置装配的公开读取红测复现 6KiB 主文档，再让管理读写复用独立 `skillJson` Bean；HTTP 入口仍限 2MiB，不放宽其他模块。`SkillPackageReadTest,SkillHttpTest,SkillPackageParserTest` 复验通过（`%TEMP%/skill-retained-json-red.log` / `skill-retained-json-green.log`）。
