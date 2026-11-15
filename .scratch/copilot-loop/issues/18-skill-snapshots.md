@@ -1,7 +1,8 @@
 # P2-18：Skill 快照与按需加载
 
 **Type:** implementation
-**Status:** needs-info
+**Status:** ready-for-agent
+**Acceptance:** accepted（L1 / Dev Done；验收清单、实际测试与审查已完成）
 **Blocked by:** P2-04 上下文与 AI 数据容量契约；P2-08 只读 Copilot 任务；P2-17 个人 Skill 管理
 **Spec:** [第二阶段规格](../spec.md)
 

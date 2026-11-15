@@ -69,9 +69,11 @@ node scripts/dev.mjs web
 
 ## 个人模型设置（第二阶段入口）
 
-普通用户完成强制改密后，可从账号页进入 `/models` 管理连接及其多个模型。保存不会验证供应商；检查须单独确认费用，可能发起最多三次真实请求。当前不自动修改演练选模，完整第二阶段尚未交付；本地 fixture 不代表真实供应商兼容性通过。
+普通用户完成强制改密后，可从账号页进入 `/models` 管理连接及其多个模型。保存不会验证供应商；检查须单独确认费用，可能发起最多三次真实请求。个人配置不自动修改演练选模。第二阶段已按用户调整后的范围验收：DeepSeek Chat OFF/ON、Responses OFF、Anthropic Messages OFF，以及自定义连接契约；OpenAI、GLM、Kimi 三家不在本阶段接入目标内，既有配置入口不代表支持承诺。未验证/不支持组合仍保留原标识，见 [支持矩阵](docs/research/model-provider-matrix.md) 和 [阶段验收](.scratch/copilot-loop/issues/22-stage-acceptance.md)。本地 fixture 不代表真实供应商兼容性通过。
 
 演练显式选择并检查精确模型版本后才能开始计时。Copilot 已支持读取、Diff 整批 ASK/AUTO 审批与受控测试；运行中可用 steer 调整当前任务方向。页面区分已接收、已纳入请求和未生效：当前请求/工具先收敛，旧剩余项不再执行，不回滚已应用代码、不跳过未知写入/测试对账、不自动另起任务。后续模型请求仍可能收费。
+
+`/skills` 管理个人文本 Skill、启停及不可变版本；新任务固定快照，历史任务不受原件编辑/删除影响。`/workspace` 提供阶段性工程练习、用量/费用及上下文压缩，不包含面试官、挑战或 AI 报告；演练 AI 记录沿统一预算与 30 天保留/删除策略处理，个人连接与 Skill 原件独立。
 
 使用前由维护者在未跟踪 `.env` 中增加 `MODEL_CREDENTIAL_ACTIVE_KEY_ID` 和 `MODEL_CREDENTIAL_KEYS`。后者是逗号分隔的 `ID:Base64` 密钥环，每个 Base64 值解码后必须恰为 32 字节，active ID 必须存在；由安全随机工具/密钥管理器直接写入，不粘贴到聊天或命令参数。它们是加密用户 Key 的部署密钥，不是供应商 Key；丢失后不能解密现有凭证。启动脚本与 Compose 仅向 Java 传递，不进入前端、Go 或镜像构建产物。未配置时保存凭证明确失败，不回退环境供应商 Key。
 
@@ -201,8 +203,10 @@ node scripts/test-tracer.mjs --workspace --boundary-only --copilot-recovery
 # 凭证仅传给可信 Java 测试容器，不传给 Go/题目容器；独立库/卷在 finally 清理
 node scripts/test-tracer.mjs --workspace --boundary-only --copilot-tests
 # 显式收费：真实浏览器选择/检查/计时→读取→Diff 批准→写入→Docker 测试→回复与重连观察
-# deepseek-flash / thinking OFF；含检查最多 12 次模型调用，不进入默认 quick/smoke/CI
-node scripts/test-tracer.mjs --workspace --copilot-browser
+# deepseek-flash；每次含检查最多 12 次模型调用，不进入默认 quick/smoke/CI
+# 默认 OFF；ON 显式使用 low，两个命令各自单独收费，不需要每次都运行
+node scripts/test-tracer.mjs --workspace --copilot-browser --copilot-thinking=OFF
+node scripts/test-tracer.mjs --workspace --copilot-browser --copilot-thinking=ON
 ```
 
 单独验证上下文压缩后的真实 DeepSeek 工具续用（**显式收费，最多 4 次 SDK 调用**）：先提供环境变量 `DEEPSEEK` 或 `DeepSeek`，并设置 `COPILOT_IT_JDBC_URL` 指向可创建/删除临时数据库的隔离 PostgreSQL（测试用户/密码均为 `fixture`，勿指向生产库）。该场景使用持久历史及文件读取夹具，不启动 Go，也不代替上面的浏览器/执行链路验证；默认测试不会运行它。
@@ -224,6 +228,8 @@ Java 集成测试使用已有 `~/.m2/repository` 的只读挂载，以离线 Mav
 `--copilot-recovery` 不读取或传递供应商 Key，SDK 只允许 `sdk-fixture.invalid` 的受控发布者，拒绝真实供应商；普通 USER 会话由测试库预置，其余模型配置/检查、计时、审批、steer、接管和注销走正式服务。覆盖待审批恢复、文件回执入库前后 JVM 强杀、模型半截流不重发、AUTO 撤销栅栏，以及 Java/Go 重启后按原执行身份停止 Docker 测试。只在确认旧 JVM 退出后定向老化内部 worker lease，不改变会话/演练或 Go 截止时间。该夹具不证明真实供应商兼容性，也不进入默认 CI。
 
 `--copilot-browser` 还需已安装的 Playwright Chromium；入口先重新打包 Java、构建前端，再运行一个显式收费场景。只有临时 Java 容器额外挂载两个测试类：受属性约束的 BeanPostProcessor 安装真实驱动的 12 次硬上限，受鉴权的测试路由委托正式连接 Service 创建个人配置。若驱动没有实际安装限额器，夹具拒绝启动。供应商 Key 仅通过环境传入该可信 Java 容器，不写临时环境文件，不传给浏览器驱动、Go 或题目容器；正常应用镜像没有这些测试类/路由。浏览器禁用自动 trace/录像/故障截图，只保留不含凭证的业务画面；结束时扫描并移除含明文供应商 Key 的制品（发现即失败）。输出模型身份、结构化结果与用量，不估算价格。场景先以逐次审批增加注释、运行测试，再在第二浏览器通过 AUTO 自动增加另一条注释；核对第一浏览器未保存草稿不被覆盖、切回 ASK 的审计和只读重载。两次修改均故意保留题目初始错误，以真实 FAILED/Surefire 证据验证续答，而不是把聊天文字当作测试通过。供应商或 Docker 不可用时该入口失败，不能报闭环通过。
+
+普通 `--workspace --smoke` 使用测试进程专用的固定 synthetic 模型检查夹具，仍经正式配置/检查/选模 API 满足计时前置条件，不读取供应商 Key、不回退真实网络；夹具不进入应用镜像。它不代替上面的真实付费链路。
 
 `--smoke` 仅运行管理员登录/改密/邀请/退出、草稿刷新恢复、保存运行及结果恢复三条黄金路径；镜像构建、题目发布校验和服务就绪属于前置准备，不把准备时间伪报为浏览器交互耗时。
 

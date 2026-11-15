@@ -1,7 +1,8 @@
 # P2-19：DeepSeek 思考模式完整适配
 
 **Type:** implementation
-**Status:** needs-info
+**Status:** ready-for-agent
+**Acceptance:** accepted（L1 / Dev Done；验收清单、实际测试与审查已完成）
 **Blocked by:** P2-01 模型 SDK 与协议兼容性；P2-14 恢复与竞争场景验收；P2-15 自动与手动上下文压缩
 **Spec:** [第二阶段规格](../spec.md)
 

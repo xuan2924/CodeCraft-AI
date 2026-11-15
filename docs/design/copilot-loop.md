@@ -1,6 +1,6 @@
 # Copilot 工具循环：首期有效设计
 
-状态：读取、修改提案、整批 ASK/AUTO 审批、受控测试与 steer 已接入 Java、持久化及 Web 页面；自动/手动上下文压缩及原证据读取已接入。P2-11/12 已通过真实 DeepSeek 非思考 + Linux Java/Go + Docker + 浏览器的读取→Diff→审批→测试失败续答，以及 AUTO 无手动批准应用与切回 ASK；受控测试另已验证稳定版本结果及父任务联动停止。steer 使用可控 SDK 流、真实 PostgreSQL 和组件竞态验证。协议矩阵尚未完成，不将可控模型测试、服务实例重建或一次性 PoC 视为真实供应商或进程强杀验证。
+状态：读取、修改提案、整批 ASK/AUTO 审批、受控测试与 steer 已接入 Java、持久化及 Web 页面；自动/手动上下文压缩及原证据读取已接入。P2-11/12 已通过真实 DeepSeek 非思考 + Linux Java/Go + Docker + 浏览器的读取→Diff→审批→测试失败续答，以及 AUTO 无手动批准应用与切回 ASK；受控测试另已验证稳定版本结果及父任务联动停止。steer 使用可控 SDK 流、真实 PostgreSQL 和组件竞态验证。DeepSeek Chat ON 真实浏览器链路及三协议声明组合已完成验证；用户取消 OpenAI、GLM、Kimi 三家目标后，矩阵按 [已验证范围](../research/model-provider-matrix.md) 收口。Skill、用量与保留删除亦已验收，阶段证据见 P2-22；不将可控模型测试、服务实例重建或一次性 PoC 视为真实供应商或进程强杀验证。
 
 ## 选择与范围
 

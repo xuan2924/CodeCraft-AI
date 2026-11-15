@@ -1,7 +1,8 @@
 # P2-21：AI 数据保留与删除联动
 
 **Type:** implementation
-**Status:** needs-info
+**Status:** ready-for-agent
+**Acceptance:** accepted（L1 / Dev Done；验收清单、实际测试与审查已完成）
 **Blocked by:** P2-04 上下文与 AI 数据容量契约；P2-09 修改提案、Diff 与审批；P2-16 上下文占用、用量与费用；P2-18 Skill 快照与按需加载
 **Spec:** [第二阶段规格](../spec.md)
 

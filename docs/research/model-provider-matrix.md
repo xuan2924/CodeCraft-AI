@@ -2,7 +2,7 @@
 
 核验日期：2026-11-15。正式 SDK：LangChain4j **1.23.0**（core / open-ai / anthropic / JDK HTTP）。应用自管 Loop、单次订阅、无隐式协议/模式回退；统一入口是 `ModelCallDriver` / `ModelSdkClientFactory`，不是业务模块各自创建客户端。
 
-**协议存在、SDK 夹具通过、真实供应商通过是三种不同证据。** 本页不宣布四家供应商完整支持，不代表第二阶段全部完成。只有 DeepSeek 凭证可用；其他供应商没有实测身份、用量或费用。
+**协议存在、SDK 夹具通过、真实供应商通过是三种不同证据。** 用户已明确取消 OpenAI、GLM、Kimi 三家供应商的第二阶段目标；三协议保留，以 DeepSeek Chat OFF/ON、Responses OFF、Anthropic Messages OFF 和自定义连接契约验收。该范围已有完整证据，阶段验收见 P2-22。本页不宣布四家供应商完整支持：只有 DeepSeek 有真实验证，其他供应商没有实测身份、用量或费用。既有配置入口不等于兼容承诺；DeepSeek Messages ON 未验证、Responses ON 不支持，仍不列入支持组合。
 
 ## 实际支持证据
 
@@ -34,7 +34,7 @@ DeepSeek 实测使用窗口 **100000（用户配置值，不是实测最大窗�
 
 1. Responses 1.23.0 直接拼接 `baseUrl + "/responses"`。末尾 `/` 可形成错误路径，HTTP 夹具红测已复现；工厂只规范化无 query URL 的末尾路径分隔符，不重写查询串、不探测其他地址。
 2. 已核实强制思考的 GLM-5.3/Flash、Kimi K3/K3.1 Pro/Highspeed、K2.7 Code/Highspeed 不允许配置 OFF 后悄悄使用供应商默认 ON；工厂明确拒绝。K3 ON 不发送不受支持的 `thinking` 参数。
-3. **OpenAI Responses assistant `phase` 是 SDK 缺口。** 当前官方指南要求工具型流程原样回传 phase，丢失会导致把前言当最终回答。1.23.0 的 `OpenAiResponsesClient` 没有 phase 映射，且把 reasoning 提取为单个 encrypted item，不能声称完整任意 output-item 往返。当前 Maven latest/release 仍为 1.23.0。对已知 phase-aware 的 GPT-5.4/5.5/5.6、GPT-6/6.1 家族 Responses 组合明确拒绝；GPT-6 Astra / GPT-6.1 Sol 的 Chat 工具调用也由官方明确不支持，直接拒绝。**这不是缩减验收目标后的完成声明。** 对应支持仍阻塞，需要原生 SDK 补齐/发布并验证；若要改用另一正式 SDK，须另行确认技术路线，不在此自研供应商 wire 或静默换协议。
+3. **OpenAI Responses assistant `phase` 是 SDK 缺口。** 当前官方指南要求工具型流程原样回传 phase，丢失会导致把前言当最终回答。1.23.0 的 `OpenAiResponsesClient` 没有 phase 映射，且把 reasoning 提取为单个 encrypted item，不能声称完整任意 output-item 往返。当前 Maven latest/release 仍为 1.23.0。对已知 phase-aware 的 GPT-5.4/5.5/5.6、GPT-6/6.1 家族 Responses 组合明确拒绝；GPT-6 Astra / GPT-6.1 Sol 的 Chat 工具调用也由官方明确不支持，直接拒绝。**对应组合仍不支持；用户取消 OpenAI 供应商目标后，不再是第二阶段阻塞项。** 将来若重新要求支持，需要原生 SDK 补齐/发布并验证；若要改用另一正式 SDK，须另行确认技术路线，不在此自研供应商 wire 或静默换协议。
 
 ## 当前官方目录与来源边界
 
@@ -53,4 +53,4 @@ SDK 版本与不可变源码：[Maven metadata](https://repo.maven.apache.org/ma
 - `%TEMP%/native-protocol-roundtrip.log` 为尾斜杠红测，`native-protocol-roundtrip-green.log` 为修复后通过；`native-protocol-controls-green.log` 包含原生 SDK/控制回归。
 - `%TEMP%/deepseek-alternate-protocols-live.log`：Responses OFF / Anthropic OFF 各 4 次真实请求；`deepseek-alternate-checks-live.log`：各 3 次真实请求并验证复用零次。以上新增共 **14 次**，与 P2-19 的 14 次通过请求分开。
 - Anthropic 日志中的原生 `inputTokenCount` 不含 cache read/create；应用 `usage_facts` 将它们合并为实际输入占用。不能把日志原始总数当统一 UI 总数，也不能二次相加。未核验协议/地址的价格仍未知。
-- 支持声明的剩余阻塞：OpenAI/GLM/Kimi（以及真正 Anthropic 服务）的凭证与具体模型闭环；OpenAI phase 原生 SDK 缺口。现有统一协议实现和 DeepSeek 三格式证据可以交付，但 **P2-20/阶段供应商完整目标不能标为完成**。后续应先确认正式 SDK 缺口处置及可用的目标供应商身份，再做对应最小付费验收，不重跑已通过矩阵、不默认新增重型故障矩阵。
+- 用户调整后的阶段范围已满足：OpenAI/GLM/Kimi 不再接入或补验，其缺凭证与 OpenAI phase 缺口不再形成阶段欠账；真正 Anthropic 服务也不在本阶段供应商承诺内，Messages 协议由 DeepSeek 兼容端的真实证据覆盖。未验证项仍保持未验证，不能把范围排除当作实测通过。将来重新接入这些供应商时，另行确认模型/凭证及 SDK 缺口处置；不重跑已通过矩阵、不默认新增重型故障矩阵。

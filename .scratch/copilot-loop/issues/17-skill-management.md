@@ -1,7 +1,8 @@
 # P2-17：个人 Skill 管理
 
 **Type:** implementation
-**Status:** needs-info
+**Status:** ready-for-agent
+**Acceptance:** accepted（L1 / Dev Done；验收清单、实际测试与审查已完成）
 **Blocked by:** P2-05 用户 Skill 包契约
 **Spec:** [第二阶段规格](../spec.md)
 
