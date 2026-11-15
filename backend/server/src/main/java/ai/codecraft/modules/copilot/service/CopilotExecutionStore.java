@@ -3,7 +3,11 @@ package ai.codecraft.modules.copilot.service;
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.copilot.config.CopilotProperties;
 import ai.codecraft.modules.copilot.model.dto.CopilotModelDispatchDTO;
+import ai.codecraft.modules.copilot.model.dto.CopilotContextTicketDTO;
+import ai.codecraft.modules.copilot.model.dto.CopilotContextPreparedDTO;
+import ai.codecraft.modules.copilot.repository.CopilotCompactionRepository;
 import ai.codecraft.modules.copilot.model.entity.CopilotMessageEntity;
+import ai.codecraft.modules.copilot.model.entity.CopilotSteerEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotTurnEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotToolEntity;
@@ -24,16 +28,10 @@ import ai.codecraft.modules.workspace.service.ExerciseModelService;
 import ai.codecraft.modules.workspace.service.WorkspaceAiOperationService;
 import ai.codecraft.modules.workspace.service.WorkspaceCoordinationStore;
 import dev.langchain4j.model.output.TokenUsage;
-import com.fasterxml.jackson.annotation.JsonAutoDetect;
-import com.fasterxml.jackson.annotation.PropertyAccessor;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
-import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,8 +40,7 @@ import org.springframework.transaction.annotation.Propagation;
 /** Durable dispatch markers are committed before any model/network IO. */
 @Service
 public class CopilotExecutionStore {
-    private final ObjectMapper evidenceJson = JsonMapper.builder().visibility(PropertyAccessor.ALL, JsonAutoDetect.Visibility.NONE)
-        .visibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY).build();
+    private final CopilotCallEvidence evidence;
     private static final long MODEL_CREDIT = 2 * 1024 * 1024;
     private final CopilotTaskRepository tasks;
     private final IdentityTransactionService identity;
@@ -52,7 +49,7 @@ public class CopilotExecutionStore {
     private final WorkspaceAiOperationService operations;
     private final CopilotProperties limits;
     private final Clock clock;
-    private final CopilotRequestFactory requests;
+    private final CopilotCompactionRepository contexts;
     private final CopilotProposalRepository proposals;
     private final IdentitySecrets secrets;
     private final CopilotTestLifecycle tests;
@@ -60,9 +57,9 @@ public class CopilotExecutionStore {
 
     public CopilotExecutionStore(CopilotTaskRepository tasks, IdentityTransactionService identity,
         WorkspaceCoordinationStore workspace, ExerciseModelService models, WorkspaceAiOperationService operations,
-        CopilotProperties limits, Clock clock, CopilotRequestFactory requests, CopilotProposalRepository proposals, IdentitySecrets secrets, CopilotTestLifecycle tests, CopilotSteerRepository steers) {
+        CopilotProperties limits, Clock clock, CopilotCompactionRepository contexts, CopilotProposalRepository proposals, IdentitySecrets secrets, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCallEvidence evidence) {
         this.tasks = tasks; this.identity = identity; this.workspace = workspace; this.models = models;
-        this.operations = operations; this.limits = limits; this.clock = clock; this.requests = requests; this.proposals = proposals; this.secrets = secrets; this.tests = tests; this.steers = steers;
+        this.operations = operations; this.limits = limits; this.clock = clock; this.contexts = contexts; this.proposals = proposals; this.secrets = secrets; this.tests = tests; this.steers = steers; this.evidence = evidence;
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -105,14 +102,35 @@ public class CopilotExecutionStore {
     }
 
     @Transactional
-    public CopilotModelDispatchDTO beginModel(String id, String worker, StorageMeasurement measurement) {
+    public CopilotContextTicketDTO contextTicket(String id, String worker) {
+        var task = owned(id, worker);
+        if (task == null || task.stopRequested()) return null;
+        var previous = tasks.latestTurn(id);
+        if (previous != null && ("DISPATCHED".equals(previous.state()) || "TOOLS".equals(previous.state()))) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
+        var target = models.resolveForCall(task.sessionHash(), task.exerciseId());
+        var head = contexts.head(task.exerciseId());
+        long through = head == null ? 0 : head.throughSequence();
+        long convertedThrough = contexts.foreignThrough(task.exerciseId(), through, target.connection().id(), target.model().id(),
+            Long.parseLong(target.connection().configurationVersion()), Long.parseLong(target.model().configurationVersion()));
+        return new CopilotContextTicketDTO(id, task.exerciseId(), task.sessionHash(), worker, head == null ? 0 : head.version(),
+            head == null ? null : head.summaryId(), through, tasks.lastSequence(task.exerciseId()), target, steers.pendingIds(id), convertedThrough);
+    }
+
+    @Transactional
+    public CopilotModelDispatchDTO beginModel(String id, String worker, CopilotContextPreparedDTO prepared, StorageMeasurement measurement) {
         var task = owned(id, worker);
         if (task == null || task.stopRequested()) return null;
         var previous = tasks.latestTurn(id);
         if (previous != null && !("SUCCEEDED".equals(previous.state()) || "INTERRUPTED".equals(previous.state()) || "FAILED".equals(previous.state()))) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
-        if (tasks.contextBytes(task.exerciseId()) > limits.contextBytes()) throw new BusinessException(CopilotErrorCode.COPILOT_CONTEXT_REQUIRED);
+        var ticket = prepared.ticket();
+        if (!id.equals(ticket.taskId()) || !worker.equals(ticket.workerId()) || !task.exerciseId().equals(ticket.exerciseId())) throw new IllegalArgumentException("Context ticket does not match this worker");
+        var head = contexts.head(task.exerciseId());
+        if ((head == null ? 0 : head.version()) != ticket.version() || tasks.lastSequence(task.exerciseId()) != ticket.highWater()
+            || !steers.pendingIds(id).equals(ticket.steerIds()) || contexts.active(task.exerciseId())) return null;
         var grant = identity.authorizeMutation(task.sessionHash());
         var target = models.resolveForCall(task.sessionHash(), task.exerciseId());
+        if (!target.connection().equals(ticket.target().connection()) || !target.model().equals(ticket.target().model())) return null;
+        if (!prepared.plan().safe() || prepared.plan().projection().encodedBytes() > limits.contextBytes()) throw new BusinessException(CopilotErrorCode.COPILOT_CONTEXT_REQUIRED);
         var exercise = workspace.exercise(task.exerciseId());
         Instant notAfter = clock.instant().plus(Duration.ofSeconds(120));
         if (exercise.deadlineAt().isBefore(notAfter)) notAfter = exercise.deadlineAt();
@@ -122,18 +140,20 @@ public class CopilotExecutionStore {
             Long.parseLong(target.model().configurationVersion()), target.connection().protocol().name(), target.model().modelId(),
             target.model().contextWindow(), null, 0, clock.instant(), notAfter, null, null);
         operations.reserve(task.sessionHash(), task.exerciseId(), turn.id(), "COPILOT_MODEL", measurement, MODEL_CREDIT);
-        var adjustments = steers.pending(id);
+        var adjustments = prepared.adjustments();
+        if (!adjustments.stream().map(CopilotSteerEntity::id).toList().equals(ticket.steerIds())) throw new IllegalArgumentException("Prepared directions do not match the context ticket");
         for (var steer : adjustments) {
             String message = UUID.randomUUID().toString();
             tasks.message(new CopilotMessageEntity(0, message, id, task.exerciseId(), "USER", steer.messagePayload(), clock.instant()));
             if (steers.stage(steer.id(), message) != 1) throw new IllegalStateException("Steer already included in another request");
         }
-        if (tasks.contextBytes(task.exerciseId()) > limits.contextBytes()) throw new BusinessException(CopilotErrorCode.COPILOT_CONTEXT_REQUIRED);
-        boolean converted = tasks.foreignHistory(task.exerciseId(), turn.connectionId(), turn.modelConfigurationId(), turn.connectionConfigurationVersion(), turn.modelConfigurationVersion());
-        var request = requests.create(target, tasks.context(task.exerciseId()).stream().map(CopilotMessageEntity::payload).toList(), converted);
+        boolean converted = ticket.textHistory();
+        var request = prepared.plan().projection().request();
         tasks.turn(turn);
-        tasks.configuration(turn.id(), evidencePayload(Map.of("connection", target.connection(), "model", target.model())));
+        tasks.configuration(turn.id(), prepared.configurationPayload());
         tasks.historyMode(turn.id(), converted);
+        contexts.dispatchContext(turn.id(), prepared.plan().projection().estimatedTokens(), prepared.plan().projection().encodedBytes(),
+            ticket.version(), ticket.summaryId(), ticket.throughSequence(), tasks.lastSequence(task.exerciseId()), ticket.textHistoryThroughSequence());
         if (!adjustments.isEmpty()) {
             if (steers.applied(id, turn.id(), clock.instant()) != adjustments.size()) throw new IllegalStateException("Steer dispatch lost its ordered instructions");
             for (var steer : adjustments) operations.settle(task.exerciseId(), steer.id(), true);
@@ -163,7 +183,7 @@ public class CopilotExecutionStore {
         Long output = usage == null || usage.outputTokenCount() == null ? null : usage.outputTokenCount().longValue();
         Long total = usage == null || usage.totalTokenCount() == null ? null : usage.totalTokenCount().longValue();
         tasks.message(new CopilotMessageEntity(0, message, id, task.exerciseId(), "ASSISTANT", payload, clock.instant()));
-        if (tasks.response(turnId, tools ? "TOOLS" : "SUCCEEDED", message, input, output, total, input == null || output == null, evidencePayload(usage), clock.instant()) != 1) {
+        if (tasks.response(turnId, tools ? "TOOLS" : "SUCCEEDED", message, input, output, total, input == null || output == null, evidence.usage(usage), clock.instant()) != 1) {
             throw new IllegalStateException("Model response lost its dispatch marker");
         }
         // Keep the batch's emergency pairing credit until every tool has a durable result.
@@ -276,7 +296,7 @@ public class CopilotExecutionStore {
     }
 
     private boolean recordTool(CopilotTaskEntity task, CopilotTurnEntity turn, CopilotToolEntity tool, String payload, boolean last) {
-        if (payload.getBytes(StandardCharsets.UTF_8).length > 480 * 1024) throw new IllegalArgumentException("Tool payload exceeds reserved storage");
+        if (payload.getBytes(StandardCharsets.UTF_8).length > CopilotProperties.MAX_TOOL_PAYLOAD_BYTES) throw new IllegalArgumentException("Tool payload exceeds reserved storage");
         String message = UUID.randomUUID().toString();
         if (tasks.completeTool(tool.id(), "SUCCEEDED", message, clock.instant()) != 1) return false;
         tasks.message(new CopilotMessageEntity(0, message, task.id(), task.exerciseId(), "TOOL", payload, clock.instant()));
@@ -366,9 +386,17 @@ public class CopilotExecutionStore {
             operations.settle(task.exerciseId(), turn.id(), false);
         }
         if (turn != null && "TOOLS".equals(turn.state())) interruptBatch(task, turn, "SERVICE_INTERRUPTED");
-        String reason = turn != null && "DISPATCHED".equals(turn.state()) ? "MODEL_RESULT_UNKNOWN" : "SERVICE_INTERRUPTED";
+        String reason = turn != null && "DISPATCHED".equals(turn.state()) || contexts.interruptedInline(id) ? "MODEL_RESULT_UNKNOWN" : "SERVICE_INTERRUPTED";
         unappliedSteers(task, reason);
         tasks.finish(id, task.workerId(), task.stopRequested() ? "STOPPED" : "INTERRUPTED", reason, clock.instant());
+    }
+
+    @Transactional
+    public String interruptionReason(String id, String worker) {
+        var task = owned(id, worker);
+        if (task == null) return "SERVICE_INTERRUPTED";
+        var turn = tasks.latestTurn(id);
+        return turn != null && "DISPATCHED".equals(turn.state()) || contexts.interruptedInline(id) ? "MODEL_RESULT_UNKNOWN" : "SERVICE_INTERRUPTED";
     }
 
     private void recoverIdle(CopilotTaskEntity task) {
@@ -392,15 +420,6 @@ public class CopilotExecutionStore {
         if (turn != null && "TOOLS".equals(turn.state())) interruptBatch(task, turn, reason);
         unappliedSteers(task, reason);
         tasks.finishIdle(task.id(), "USER_STOP".equals(reason) ? "STOPPED" : "INTERRUPTED", reason, clock.instant());
-    }
-
-    private String evidencePayload(Object value) {
-        if (value == null) return null;
-        try {
-            String payload = evidenceJson.writeValueAsString(value);
-            if (payload.getBytes(StandardCharsets.UTF_8).length > 32768) throw new IllegalStateException("Model metadata exceeds reserved storage");
-            return payload;
-        } catch (JsonProcessingException failure) { throw new IllegalStateException("Cannot preserve model metadata", failure); }
     }
 
     private CopilotTaskEntity owned(String id, String worker) {

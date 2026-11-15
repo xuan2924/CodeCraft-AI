@@ -205,6 +205,20 @@ node scripts/test-tracer.mjs --workspace --boundary-only --copilot-tests
 node scripts/test-tracer.mjs --workspace --copilot-browser
 ```
 
+单独验证上下文压缩后的真实 DeepSeek 工具续用（**显式收费，最多 4 次 SDK 调用**）：先提供环境变量 `DEEPSEEK` 或 `DeepSeek`，并设置 `COPILOT_IT_JDBC_URL` 指向可创建/删除临时数据库的隔离 PostgreSQL（测试用户/密码均为 `fixture`，勿指向生产库）。该场景使用持久历史及文件读取夹具，不启动 Go，也不代替上面的浏览器/执行链路验证；默认测试不会运行它。
+
+```bash
+COPILOT_LIVE_DEEPSEEK=1 node --input-type=module -e "
+import {maven} from './scripts/process.mjs';
+const key = process.env.DEEPSEEK ?? process.env.DeepSeek;
+if (!key?.trim()) throw new Error('Missing explicit live credential');
+maven(['-q','-DskipTests','test-compile']);
+maven(['-q','-Dit.test=CopilotPersistenceIT#realDeepSeekCompactsRetainedHistoryThenContinuesWithAPairedReadTool','failsafe:integration-test','failsafe:verify'], {env:{...process.env,DeepSeek:key}});
+"
+```
+
+仅输出调用目的/次数及实际 usage；响应证据写入 `backend/server/target/copilot-summary-live-*.json`，写入前扫描明文 Key。费用未知不记为零，失败不自动再跑或提高收费上限。界面“上下文与摘要”可提交、核对或取消压缩；刷新只读取，原消息与工具证据不会因压缩删除。
+
 Java 集成测试使用已有 `~/.m2/repository` 的只读挂载，以离线 Maven 运行预先编译的 classes/test-classes；首次先完成本机 Maven 构建。每次/每种模式的 Failsafe 输出放在其 `.runtime/cc-tracer-*/java-tests-*`，缺失产物/依赖、零执行或跳过所选测试均失败。工作区故障测试容器临时挂载 Docker socket，通过受限命令适配器真实暂停/恢复本次 Go 容器并注入损坏文件；**它是可信测试夹具，拥有 Docker 管理权限，不是用户代码沙箱**。正式 Java 服务容器及题目容器不获得该挂载；测试容器内的故障子 JVM 属于可信夹具。
 
 `--copilot-recovery` 不读取或传递供应商 Key，SDK 只允许 `sdk-fixture.invalid` 的受控发布者，拒绝真实供应商；普通 USER 会话由测试库预置，其余模型配置/检查、计时、审批、steer、接管和注销走正式服务。覆盖待审批恢复、文件回执入库前后 JVM 强杀、模型半截流不重发、AUTO 撤销栅栏，以及 Java/Go 重启后按原执行身份停止 Docker 测试。只在确认旧 JVM 退出后定向老化内部 worker lease，不改变会话/演练或 Go 截止时间。该夹具不证明真实供应商兼容性，也不进入默认 CI。

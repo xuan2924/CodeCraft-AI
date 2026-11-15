@@ -8,6 +8,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 public record CopilotProperties(@DefaultValue("2") int workers, @DefaultValue("262144") int responseBytes,
     @DefaultValue("1048576") int contextBytes, @DefaultValue("16") int batchTools,
     @DefaultValue("3") int noProgressLimit, @DefaultValue("130s") Duration workerLease) {
+    public static final int MAX_TOOL_PAYLOAD_BYTES = 480 * 1024;
+
     public CopilotProperties {
         if (workers < 1 || workers > 8 || responseBytes < 4096 || responseBytes > 262144
             || contextBytes < responseBytes || contextBytes > 8 * 1024 * 1024 || batchTools < 1 || batchTools > 32

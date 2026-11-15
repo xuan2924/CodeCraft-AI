@@ -26,6 +26,8 @@ public interface CopilotTaskRepository {
     CopilotTaskEntity latest(String exercise);
     @Select("SELECT EXISTS(SELECT 1 FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','STOPPING'))")
     boolean active(String exercise);
+    @Select("SELECT " + TASK + " FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','STOPPING')")
+    CopilotTaskEntity activeTask(String exercise);
     @Insert("""
         INSERT INTO copilot_task(id,exercise_id,user_id,session_hash,request_key,fingerprint,state,created_at)
         VALUES(#{id}::uuid,#{exerciseId}::uuid,#{userId}::uuid,#{sessionHash},#{requestKey},#{fingerprint},'QUEUED',#{createdAt})

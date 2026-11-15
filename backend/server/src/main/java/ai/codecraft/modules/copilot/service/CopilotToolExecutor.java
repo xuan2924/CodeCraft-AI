@@ -16,11 +16,13 @@ public class CopilotToolExecutor {
     private final CopilotProposalStore proposals;
     private final ObjectMapper json;
     private final CopilotTestTools tests;
-    public CopilotToolExecutor(CopilotReadTools reads, CopilotProposalPreparation preparation, CopilotProposalStore proposals, ObjectMapper json, CopilotTestTools tests) {
-        this.reads = reads; this.preparation = preparation; this.proposals = proposals; this.json = json; this.tests = tests;
+    private final CopilotEvidenceTools evidence;
+    public CopilotToolExecutor(CopilotReadTools reads, CopilotProposalPreparation preparation, CopilotProposalStore proposals, ObjectMapper json, CopilotTestTools tests, CopilotEvidenceTools evidence) {
+        this.reads = reads; this.preparation = preparation; this.proposals = proposals; this.json = json; this.tests = tests; this.evidence = evidence;
     }
     public CopilotToolExecutionDTO execute(CopilotTaskEntity task, String worker, CopilotToolEntity tool) throws JsonProcessingException {
         if ("run_tests".equals(tool.name())) return tests.execute(task, worker, tool);
+        if ("read_evidence".equals(tool.name())) return new CopilotToolExecutionDTO(false, evidence.execute(task.id(), worker, tool.arguments()));
         if (!"propose_changes".equals(tool.name())) {
             return new CopilotToolExecutionDTO(false, json.writeValueAsString(reads.execute(task.sessionHash(), task.exerciseId(), tool.name(), tool.arguments())));
         }

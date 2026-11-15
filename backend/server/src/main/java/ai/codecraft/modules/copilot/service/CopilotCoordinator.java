@@ -2,6 +2,7 @@ package ai.codecraft.modules.copilot.service;
 
 import ai.codecraft.modules.copilot.config.CopilotProperties;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
+import ai.codecraft.modules.copilot.repository.CopilotCompactionRepository;
 import jakarta.annotation.PreDestroy;
 import java.time.Clock;
 import java.util.Set;
@@ -27,14 +28,18 @@ public class CopilotCoordinator implements AutoCloseable {
     private final CopilotProposalStore proposals;
     private final CopilotTestTools tests;
     private final CopilotAutoApproval automatic;
+    private final CopilotCompactionRepository contexts;
+    private final CopilotCompactionExecution summaries;
+    private final CopilotCompactionRunner summaryRunner;
     private final Clock clock;
     private final ThreadPoolExecutor workers;
     private final Set<String> active = ConcurrentHashMap.newKeySet();
     private final ConcurrentMap<String, WorkerThread> threads = new ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    public CopilotCoordinator(CopilotTaskRepository tasks, CopilotExecutionStore store, CopilotRunner runner, CopilotProperties limits, Clock clock, CopilotProposalStore proposals, CopilotTestTools tests, CopilotAutoApproval automatic) {
+    public CopilotCoordinator(CopilotTaskRepository tasks, CopilotExecutionStore store, CopilotRunner runner, CopilotProperties limits, Clock clock, CopilotProposalStore proposals, CopilotTestTools tests, CopilotAutoApproval automatic, CopilotCompactionRepository contexts, CopilotCompactionExecution summaries, CopilotCompactionRunner summaryRunner) {
         this.tasks = tasks; this.store = store; this.runner = runner; this.clock = clock; this.proposals = proposals; this.tests = tests; this.automatic = automatic;
+        this.contexts = contexts; this.summaries = summaries; this.summaryRunner = summaryRunner;
         workers = new ThreadPoolExecutor(limits.workers(), limits.workers(), 0, TimeUnit.SECONDS, new SynchronousQueue<>(),
             Thread.ofPlatform().name("copilot-", 0).factory(), new ThreadPoolExecutor.AbortPolicy());
     }
@@ -50,6 +55,9 @@ public class CopilotCoordinator implements AutoCloseable {
             for (String id : automatic.pending()) {
                 if (!submit(id, () -> automatic.apply(id))) break;
             }
+            for (String id : contexts.runnableStandalone()) {
+                if (!submit("summary:" + id, () -> summaryRunner.runStandalone(id))) break;
+            }
             for (String id : tasks.queued()) {
                 if (!submit(id, () -> runner.run(id, UUID.randomUUID().toString()))) break;
             }
@@ -60,6 +68,11 @@ public class CopilotCoordinator implements AutoCloseable {
     public void recover() {
         if (closed.get()) return;
         try {
+            for (String id : contexts.discover()) {
+                String key = summaries.recover(id);
+                var thread = key == null ? null : threads.get(key);
+                if (thread != null) thread.interrupt();
+            }
             for (String id : tasks.expired(clock.instant())) {
                 var thread = threads.get(id);
                 if (thread != null) thread.interrupt();

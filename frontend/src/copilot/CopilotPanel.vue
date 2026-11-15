@@ -10,6 +10,7 @@ import CopilotProposals from './CopilotProposals.vue';
 import CopilotTests from './CopilotTests.vue';
 import CopilotApprovalMode from './CopilotApprovalMode.vue';
 import CopilotSteers from './CopilotSteers.vue';
+import CopilotContext from './CopilotContext.vue';
 
 const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string] }>();
@@ -17,6 +18,7 @@ const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.credential}`);
 const text = ref('');
 const fee = ref(false);
+const contextBusy = ref(true);
 const saving = ref(false);
 const saveError = ref('');
 const after = ref('-1');
@@ -34,7 +36,7 @@ const start = useCommand<api.Task>(() => scope.value, () => {
   text.value = ''; fee.value = false; after.value = '-1'; void latest.refetch(); void history.refetch();
 }, commandPolicy, () => emit('unauthorized'));
 const stop = useCommand<api.Task>(() => `${props.owner}/${props.exerciseId}/${task.value?.id}`, () => { void latest.refetch(); }, commandPolicy, () => emit('unauthorized'));
-const canSend = computed(() => !props.disabled && !!props.credential && !running.value && !latest.isPending.value && !latest.isError.value
+const canSend = computed(() => !props.disabled && !!props.credential && !running.value && !contextBusy.value && !latest.isPending.value && !latest.isError.value
   && !start.pending.value && !start.uncertain.value && !saving.value && fee.value && !!text.value.trim());
 async function send() {
   if (!canSend.value) return;
@@ -88,7 +90,7 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
   >
     <h2>Copilot · 读取、修改提案与测试</h2>
     <p>模型读取服务端已保存代码，可提出整批修改，默认须经你审批后写入；可对指定保存版本运行基础测试，结果不代表后续版本或未保存草稿。</p>
-    <p>请求可能收费，多轮任务可能持续调用模型。关闭页面不停止后台任务；停止后已发出的请求仍可能收费。</p>
+    <p>请求可能收费，多轮任务及自动摘要可能持续调用模型。关闭页面不停止后台任务；停止后已发出的请求仍可能收费。</p>
     <CopilotApprovalMode
       :owner="owner"
       :exercise-id="exerciseId"
@@ -195,11 +197,16 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
         <pre>{{ message.text }}</pre>
       </article>
     </div>
-    <aside v-if="latest.data.value?.partial.text" aria-label="未确认回复预览">
+    <aside
+      v-if="latest.data.value?.partial.text"
+      aria-label="未确认回复预览"
+    >
       <h3>未确认的部分回复</h3>
       <pre>{{ latest.data.value.partial.text }}</pre>
       <p>此预览不代表任务完成，也不会作为完整助手消息或工具请求执行。</p>
-      <p v-if="latest.data.value.partial.truncated">预览已截断。完整确认的回复将在上方对话记录显示。</p>
+      <p v-if="latest.data.value.partial.truncated">
+        预览已截断。完整确认的回复将在上方对话记录显示。
+      </p>
     </aside>
     <p>当前仅展示有界的一页消息，不代表完整历史；任务状态以上方结构化状态为准。</p>
     <NButton @click="after = '-1'; history.refetch()">
@@ -261,6 +268,14 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     >
       保存草稿并发送
     </NButton>
+    <CopilotContext
+      :owner="owner"
+      :exercise-id="exerciseId"
+      :credential="credential"
+      :disabled="disabled"
+      @busy="contextBusy = $event"
+      @unauthorized="emit('unauthorized')"
+    />
   </section>
 </template>
 <style scoped>

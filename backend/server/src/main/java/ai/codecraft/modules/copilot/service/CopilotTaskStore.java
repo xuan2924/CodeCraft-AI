@@ -10,6 +10,7 @@ import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
 import ai.codecraft.modules.copilot.repository.CopilotSteerRepository;
+import ai.codecraft.modules.copilot.repository.CopilotCompactionRepository;
 import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
@@ -40,12 +41,13 @@ public class CopilotTaskStore {
     private final CopilotProposalRepository proposals;
     private final CopilotTestLifecycle tests;
     private final CopilotSteerRepository steers;
+    private final CopilotCompactionRepository contexts;
 
     public CopilotTaskStore(CopilotTaskRepository tasks, IdentityTransactionService identity, IdentitySecrets secrets,
         ExerciseTransactionService exercises, WorkspaceCoordinationStore control, ExerciseModelService models,
-        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers) {
+        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCompactionRepository contexts) {
         this.tasks = tasks; this.identity = identity; this.secrets = secrets; this.exercises = exercises;
-        this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals; this.tests = tests; this.steers = steers;
+        this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals; this.tests = tests; this.steers = steers; this.contexts = contexts;
     }
 
     @Transactional
@@ -64,7 +66,7 @@ public class CopilotTaskStore {
             if (!previous.fingerprint().equals(fingerprint)) throw new BusinessException(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT);
             return describe(previous);
         }
-        if (tasks.active(exercise)) throw new BusinessException(CopilotErrorCode.COPILOT_BUSY);
+        if (tasks.active(exercise) || contexts.active(exercise)) throw new BusinessException(CopilotErrorCode.COPILOT_BUSY);
         models.resolveForCall(session, exercise);
         String id = UUID.randomUUID().toString();
         operations.reserve(session, exercise, id, "COPILOT_START", measurement, START_CREDIT);

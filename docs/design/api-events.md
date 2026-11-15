@@ -140,6 +140,14 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - `RECEIVED` 尚未纳入请求，`APPLIED` 已纳入持久请求上下文且带原 `turnId`，`NOT_APPLIED` 表示结束前未派发并带原因。后两者有完成时间；已纳入请求不等于供应商收到或成功回复。停止/到期不补发，已绑定写入/测试先按原 ID 收敛。
 - `COPILOT_STEER_NOT_ACTIVE`（409）表示新指令不被当前任务受理，`COPILOT_STEER_LIMIT`（429）表示待处理队列已满。先接受的 steer 使旧待审批提案 `INVALIDATED/STEER_SUPERSEDED`，已批准原写入不由 steer 撤销。
 
+### Copilot 上下文与压缩
+
+- `GET /api/exercises/{exercise}/copilot/context`：私有、no-store，返回 `exerciseId, version, summaryId, throughSequence, summary, requests`；摘要为非权威文本，`requests` 为最近 20 条、按数字接收序号倒序。读取不准备上下文、不调用模型、不恢复任务。
+- `POST /api/exercises/{exercise}/copilot/compactions`：`{feeAcknowledged:true}`，需要 USER、归属、ACTIVE、CSRF、当前操作凭证及幂等键，返回 `202`。同键只返回原请求；结果未知时仅原键/原内容核对。既有回执可在控制权变化后读取，不借重试重新派发。已有活动请求返回 `COPILOT_COMPACTION_BUSY`（409）。
+- `POST /api/exercises/{exercise}/copilot/compactions/{id}/stop`：归属与 USER/CSRF 校验，单调取消，无需页面操作凭证。等待请求立即取消；已派发调用须先收敛，不能据此推断未收费或退款，不取消原提案/写入/测试。
+- 请求记录为 `id, sequence, exerciseId, trigger, state, reason, attempts, stopRequested, sourceVersion, throughSequence, createdAt, completedAt`；序号/版本为十进制字符串，未派发来源字段可为 null。`trigger` 为 MANUAL/AUTO，状态为 WAITING/RUNNING/APPLIED/FAILED/INTERRUPTED/CANCELLED/NOT_NEEDED。`attempts` 只表示持久派发登记数（0–2），不保证供应商收到；NOT_NEEDED 表示当前无需继续压缩，不抹去此前已发生的调用。
+- 前端区分受理未知、等待安全点、取消待收敛及 `MODEL_RESULT_UNKNOWN`，不自动重发收费请求。账号/演练切换取消本地观察与迟到回调；换控制凭证不丢失原压缩请求的未知回执。运行或受理未知期间不能另起新目标。
+
 ### Copilot 关联测试
 
 - `GET /api/copilot-tasks/{taskId}/tests`：返回最近 20 条绑定元数据（父任务、工具、原测试 ID、保存修订、`base`、`WAITING`/`RESOLVED`、确定终态与时间）。只读、归属校验、no-store，不触发执行或回填；完整记录沿用 `/api/exercises/{exerciseId}/tasks/{testTaskId}`。

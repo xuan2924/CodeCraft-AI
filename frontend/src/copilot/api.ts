@@ -89,6 +89,51 @@ export async function sendSteer(owner: string, exercise: string, taskId: string,
   const value = steerResponse(await post(`/api/copilot-tasks/${path(taskId)}/steers`, { text }, signal, key, credential, owner), owner, exercise, taskId);
   if (value.text !== text) return invalid(); return value;
 }
+const compactionStates = ['WAITING', 'RUNNING', 'APPLIED', 'FAILED', 'INTERRUPTED', 'CANCELLED', 'NOT_NEEDED'] as const;
+export interface Compaction {
+  id: string; sequence: string; exerciseId: string; trigger: 'MANUAL' | 'AUTO'; state: typeof compactionStates[number];
+  reason: string | null; attempts: number; stopRequested: boolean; sourceVersion: string | null; throughSequence: string | null;
+  createdAt: string; completedAt: string | null;
+}
+export interface Context { exerciseId: string; version: string; summaryId: string | null; throughSequence: string; summary: string | null; requests: Compaction[] }
+function compaction(value: unknown, exercise: string): Compaction {
+  if (!object(value) || value.exerciseId !== exercise || value.trigger !== 'MANUAL' && value.trigger !== 'AUTO'
+    || typeof value.attempts !== 'number' || !Number.isInteger(value.attempts) || value.attempts < 0 || value.attempts > 2
+    || typeof value.stopRequested !== 'boolean' || value.reason !== null && (typeof value.reason !== 'string' || !value.reason || value.reason.length > 128)) return invalid();
+  const state = compactionStates.find((entry) => entry === value.state);
+  if (!state || (state === 'WAITING' || state === 'RUNNING') !== (value.completedAt === null) || value.sequence === '0') return invalid();
+  const sourceVersion = value.sourceVersion === null ? null : sequence(value.sourceVersion);
+  const throughSequence = value.throughSequence === null ? null : sequence(value.throughSequence);
+  if ((sourceVersion === null) !== (throughSequence === null)
+    || state === 'APPLIED' && (sourceVersion === null || throughSequence === '0' || value.attempts === 0 || value.stopRequested || value.reason !== null)) return invalid();
+  return { id: uuid(value.id), sequence: sequence(value.sequence), exerciseId: uuid(value.exerciseId), trigger: value.trigger, state,
+    reason: value.reason, attempts: value.attempts, stopRequested: value.stopRequested, sourceVersion, throughSequence,
+    createdAt: date(value.createdAt), completedAt: value.completedAt === null ? null : date(value.completedAt) };
+}
+export async function context(owner: string, exercise: string, signal: AbortSignal): Promise<Context> {
+  const value = await request(`/api/exercises/${path(exercise)}/copilot/context`, signal, { headers: ownerHeaders(owner) });
+  if (!object(value) || value.exerciseId !== exercise || !Array.isArray(value.requests) || value.requests.length > 20
+    || value.summary !== null && (typeof value.summary !== 'string' || !value.summary.trim() || new globalThis.TextEncoder().encode(value.summary).length > 32768)) return invalid();
+  const version = sequence(value.version); const throughSequence = sequence(value.throughSequence);
+  const summaryId = value.summaryId === null ? null : uuid(value.summaryId);
+  if (version === '0' ? summaryId !== null || value.summary !== null || throughSequence !== '0' : summaryId === null || value.summary === null || throughSequence === '0') return invalid();
+  let previous = 9223372036854775808n; const ids = new Set<string>();
+  const requests = value.requests.map((entry: unknown) => {
+    const item = compaction(entry, exercise);
+    if (BigInt(item.sequence) >= previous || ids.has(item.id)) return invalid();
+    previous = BigInt(item.sequence); ids.add(item.id); return item;
+  });
+  if (requests.filter((entry) => entry.state === 'WAITING' || entry.state === 'RUNNING').length > 1) return invalid();
+  return { exerciseId: exercise, version, summaryId, throughSequence, summary: value.summary, requests };
+}
+export async function compact(owner: string, exercise: string, credential: string, key: string, signal: AbortSignal): Promise<Compaction> {
+  const result = compaction(await post(`/api/exercises/${path(exercise)}/copilot/compactions`, { feeAcknowledged: true }, signal, key, credential, owner), exercise);
+  if (result.trigger !== 'MANUAL') return invalid(); return result;
+}
+export async function cancelCompaction(owner: string, exercise: string, id: string, key: string, signal: AbortSignal): Promise<Compaction> {
+  const result = compaction(await post(`/api/exercises/${path(exercise)}/copilot/compactions/${path(id)}/stop`, {}, signal, key, undefined, owner), exercise);
+  if (result.id !== id) return invalid(); return result;
+}
 const testResults = ['PASSED', 'FAILED', 'TIMED_OUT', 'STOPPED', 'ENVIRONMENT_ERROR', 'INTERRUPTED'] as const;
 export interface TestRun {
   toolId: string; taskId: string; testTaskId: string; revision: string; target: 'base'; state: 'WAITING' | 'RESOLVED';

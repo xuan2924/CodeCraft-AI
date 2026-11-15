@@ -28,10 +28,11 @@ public class CopilotRunner {
     private final CopilotToolExecutor tools;
     private final CopilotProperties limits;
     private final ModelCallProperties calls;
+    private final CopilotContextService contexts;
 
     public CopilotRunner(CopilotExecutionStore store, StorageCapacityService capacity, ModelCallDriver driver,
-        CopilotToolExecutor tools, CopilotProperties limits, ModelCallProperties calls) {
-        this.store = store; this.capacity = capacity; this.driver = driver; this.tools = tools; this.limits = limits; this.calls = calls;
+        CopilotToolExecutor tools, CopilotProperties limits, ModelCallProperties calls, CopilotContextService contexts) {
+        this.store = store; this.capacity = capacity; this.driver = driver; this.tools = tools; this.limits = limits; this.calls = calls; this.contexts = contexts;
     }
 
     public void run(String id, String worker) {
@@ -52,7 +53,9 @@ public class CopilotRunner {
                     if (turn != null && "SUCCEEDED".equals(turn.state()) && !store.madeProgress(id, worker, turn.id())) {
                         store.finish(id, worker, "FAILED", "NO_PROGRESS"); return;
                     }
-                    var dispatch = capacity.admit(task.sessionHash(), task.exerciseId(), measurement -> store.beginModel(id, worker, measurement));
+                    var prepared = contexts.beforeModel(id, worker);
+                    if (prepared == null) continue;
+                    var dispatch = capacity.admit(task.sessionHash(), task.exerciseId(), measurement -> store.beginModel(id, worker, prepared, measurement));
                     if (dispatch == null) continue;
                     var target = dispatch.target();
                     var result = driver.call(target, dispatch.request(), new ModelInvocationLimitsDTO(target.model().maxOutputTokens(), target.model().thinkingBudgetTokens()),
@@ -107,7 +110,7 @@ public class CopilotRunner {
         boolean wasInterrupted = Thread.interrupted();
         try {
             var task = store.current(id, worker);
-            if (task != null) store.finish(id, worker, task.stopRequested() ? "STOPPED" : "INTERRUPTED", task.stopRequested() ? "USER_STOP" : "SERVICE_INTERRUPTED");
+            if (task != null) store.finish(id, worker, task.stopRequested() ? "STOPPED" : "INTERRUPTED", task.stopRequested() ? "USER_STOP" : store.interruptionReason(id, worker));
         } finally { if (wasInterrupted) Thread.currentThread().interrupt(); }
     }
     private final class PartialCapture implements Consumer<String> {

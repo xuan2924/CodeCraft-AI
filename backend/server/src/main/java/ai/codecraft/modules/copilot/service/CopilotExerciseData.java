@@ -14,6 +14,9 @@ public class CopilotExerciseData implements ExerciseDataContributor {
     @Override public boolean quiescent(String exerciseId) { return repository.quiescent(exerciseId); }
     @Override public Set<String> protectedTestRecords(String exerciseId) { return repository.protectedTestRecords(exerciseId); }
     @Override public void erase(String exerciseId) {
+        repository.deleteContext(exerciseId);
+        repository.deleteCompactionCalls(exerciseId);
+        repository.deleteCompactions(exerciseId);
         repository.deleteSteers(exerciseId);
         repository.deleteTests(exerciseId);
         repository.deleteProposals(exerciseId);

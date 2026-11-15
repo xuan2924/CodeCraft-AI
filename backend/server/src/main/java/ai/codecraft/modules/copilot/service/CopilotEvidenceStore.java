@@ -1,0 +1,54 @@
+package ai.codecraft.modules.copilot.service;
+
+import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.modules.copilot.model.dto.CopilotEvidenceDTO;
+import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
+import ai.codecraft.modules.copilot.repository.CopilotCompactionRepository;
+import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
+import ai.codecraft.modules.identity.service.IdentityTransactionService;
+import ai.codecraft.modules.workspace.service.WorkspaceCoordinationStore;
+import java.time.Clock;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class CopilotEvidenceStore {
+    private final CopilotTaskRepository tasks;
+    private final CopilotCompactionRepository contexts;
+    private final IdentityTransactionService identity;
+    private final WorkspaceCoordinationStore workspace;
+    private final Clock clock;
+
+    public CopilotEvidenceStore(CopilotTaskRepository tasks, CopilotCompactionRepository contexts,
+        IdentityTransactionService identity, WorkspaceCoordinationStore workspace, Clock clock) {
+        this.tasks = tasks; this.contexts = contexts; this.identity = identity; this.workspace = workspace; this.clock = clock;
+    }
+
+    /** Authorization takes an owner row lock; large payload decoding remains outside this transaction. */
+    @Transactional
+    public CopilotEvidenceDTO read(String taskId, String worker, String id) {
+        var initial = tasks.find(taskId);
+        if (initial == null) throw new BusinessException(CopilotErrorCode.COPILOT_NOT_FOUND);
+        identity.lockResourceOwner(initial.userId());
+        var task = tasks.find(taskId);
+        if (task == null) throw new BusinessException(CopilotErrorCode.COPILOT_NOT_FOUND);
+        var grant = identity.authorizePrivateDelivery(task.sessionHash());
+        if (!"USER".equals(grant.role()) || !grant.userId().equals(task.userId()) || !worker.equals(task.workerId()) || task.workerNotAfter() == null || !clock.instant().isBefore(task.workerNotAfter())
+            || task.stopRequested() || !"RUNNING".equals(task.state())) {
+            throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
+        }
+        var exercise = workspace.exercise(task.exerciseId());
+        if (exercise == null || !"ACTIVE".equals(exercise.state()) || exercise.deadlineAt() == null || !clock.instant().isBefore(exercise.deadlineAt())) {
+            throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
+        }
+        var message = tasks.messageById(id);
+        if (message != null && task.exerciseId().equals(message.exerciseId())) {
+            return new CopilotEvidenceDTO(id, message.kind(), message.sequence(), message.payload(), null, null);
+        }
+        var summary = contexts.find(id);
+        if (summary != null && task.exerciseId().equals(summary.exerciseId()) && "APPLIED".equals(summary.state())) {
+            return new CopilotEvidenceDTO(id, "SUMMARY", summary.throughSequence(), summary.summaryPayload(), summary.sourceIdsPayload(), summary.sourceSummaryId());
+        }
+        throw new BusinessException(CopilotErrorCode.COPILOT_EVIDENCE_NOT_FOUND);
+    }
+}
