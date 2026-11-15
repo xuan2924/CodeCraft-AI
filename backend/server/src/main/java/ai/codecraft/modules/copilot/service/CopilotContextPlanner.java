@@ -67,13 +67,8 @@ public class CopilotContextPlanner {
             items.add(new CopilotContextItemDTO(row, message, encode(evidence)));
         }
         var units = completeUnits(items, source.hasMore());
-        var history = new ArrayList<ChatMessage>();
         // Stable task guidance precedes history; never insert a synthetic new user turn after a tool result.
-        for (String payload : source.skillPayloads()) {
-            var guidance = ChatMessageDeserializer.messageFromJson(payload);
-            if (!(guidance instanceof UserMessage)) throw new IllegalStateException("Skill guidance is not untrusted user content");
-            history.add(guidance);
-        }
+        var history = skillGuidance(source);
         if (source.summaryText() != null) history.add(summaryMessage(source.summaryId(), source.throughSequence(), source.summaryText()));
         var pinned = new HashSet<String>();
         for (var goal : source.goals()) {
@@ -192,14 +187,24 @@ public class CopilotContextPlanner {
 
     private boolean retainedCanFit(ModelInvocationDTO target, CopilotContextInputDTO source,
         List<List<CopilotContextItemDTO>> units, int eligible) {
-        var retained = new ArrayList<ChatMessage>();
+        var retained = skillGuidance(source);
         var ids = new HashSet<String>();
         for (int index = eligible; index < units.size(); index++) for (var item : units.get(index)) ids.add(item.source().id());
         for (var goal : source.goals()) if (ids.add(goal.id())) retained.add(ChatMessageDeserializer.messageFromJson(goal.payload()));
         for (int index = eligible; index < units.size(); index++) for (var item : units.get(index)) retained.add(requests.historyMessage(item.message(), item.source().sequence() <= source.textHistoryThroughSequence()));
         for (String payload : source.pendingUserPayloads()) retained.add(ChatMessageDeserializer.messageFromJson(payload));
-        // Even a tiny summary cannot fix an oversized pinned goal, pending direction queue or retained complete batch.
+        // Even a tiny summary cannot fix oversized Skill guidance, pinned goals, pending directions or retained complete batches.
         return requests.estimate(requests.draft(retained)) + 512L + target.model().maxOutputTokens() < window(target);
+    }
+
+    private ArrayList<ChatMessage> skillGuidance(CopilotContextInputDTO source) {
+        var result = new ArrayList<ChatMessage>();
+        for (String payload : source.skillPayloads()) {
+            var guidance = ChatMessageDeserializer.messageFromJson(payload);
+            if (!(guidance instanceof UserMessage)) throw new IllegalStateException("Skill guidance is not untrusted user content");
+            result.add(guidance);
+        }
+        return result;
     }
 
     private long window(ModelInvocationDTO target) { return Math.min(target.model().contextWindow(), execution.contextBytes()); }

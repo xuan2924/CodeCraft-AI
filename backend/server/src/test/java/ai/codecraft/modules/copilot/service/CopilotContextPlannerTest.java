@@ -112,6 +112,16 @@ class CopilotContextPlannerTest {
         assertThat(planner.plan(target(32768, ModelThinkingMode.OFF), input(rows, false)).safe()).isTrue();
     }
 
+    @Test void doesNotChargeForACompressionThatCannotFitIrreducibleSkillGuidance() {
+        var goal = row(1, UserMessage.from("current goal"));
+        var source = new CopilotContextInputDTO(null, null, 0,
+            List.of(goal, row(2, AiMessage.from("x".repeat(16000))), row(3, AiMessage.from("recent"))), List.of(goal), List.of(), false, 0,
+            List.of(ChatMessageSerializer.messageToJson(UserMessage.from("s".repeat(64000)))));
+        var plan = planner.plan(target(32768, ModelThinkingMode.OFF), source);
+        assertThat(plan.safe()).isFalse();
+        assertThat(plan.compaction()).isNull();
+    }
+
     @Test void doesNotChargeWhenUnappliedDirectionsAloneCannotFitTheWindow() {
         var pending = new ArrayList<String>();
         for (int index = 0; index < 32; index++) pending.add(ChatMessageSerializer.messageToJson(UserMessage.from("x".repeat(4000))));

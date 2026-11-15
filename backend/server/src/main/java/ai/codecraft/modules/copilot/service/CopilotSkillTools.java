@@ -4,7 +4,6 @@ import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.copilot.model.dto.CopilotSkillResultDTO;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.skills.model.dto.SkillPackageRequest;
-import ai.codecraft.modules.skills.service.SkillSnapshots;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -20,12 +19,11 @@ import org.springframework.stereotype.Service;
 @Service
 public class CopilotSkillTools {
     private static final Set<String> FIELDS = Set.of("skill_id", "path", "offset", "limit");
-    private final CopilotExecutionStore execution;
-    private final SkillSnapshots snapshots;
+    private final CopilotEvidenceStore evidence;
     private final ObjectMapper json;
     private final ObjectReader arguments;
-    public CopilotSkillTools(CopilotExecutionStore execution, SkillSnapshots snapshots, @Qualifier("workspaceJson") ObjectMapper json) {
-        this.execution = execution; this.snapshots = snapshots; this.json = json;
+    public CopilotSkillTools(CopilotEvidenceStore evidence, @Qualifier("workspaceJson") ObjectMapper json) {
+        this.evidence = evidence; this.json = json;
         arguments = json.readerFor(JsonNode.class).with(JsonParser.Feature.STRICT_DUPLICATE_DETECTION).with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     }
     public String execute(String taskId, String worker, String input) throws JsonProcessingException {
@@ -33,7 +31,7 @@ public class CopilotSkillTools {
             if (input == null || input.getBytes(StandardCharsets.UTF_8).length > 4096) throw invalid();
             JsonNode value;
             try { value = arguments.readValue(input); }
-            catch (JsonProcessingException malformed) { throw invalid(); }
+            catch (JsonProcessingException malformed) { throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST, malformed); }
             if (value == null || !value.isObject() || !value.path("skill_id").isTextual()) throw invalid();
             var fields = value.fieldNames();
             while (fields.hasNext()) if (!FIELDS.contains(fields.next())) throw invalid();
@@ -43,9 +41,7 @@ public class CopilotSkillTools {
             String path = value.has("path") ? value.get("path").textValue() : "SKILL.md";
             int offset = integer(value, "offset", 0); int limit = integer(value, "limit", 65536);
             if (offset < 0 || limit < 128 || limit > 65536) throw invalid();
-            var task = execution.current(taskId, worker);
-            if (task == null || task.stopRequested()) throw new BusinessException(CopilotErrorCode.COPILOT_NOT_FOUND);
-            var source = snapshots.source(task.userId(), task.id(), skill);
+            var source = evidence.readSkill(taskId, worker, skill);
             var bundle = json.readValue(source.filesPayload(), SkillPackageRequest.class);
             var file = bundle.files().stream().filter(item -> item.path().equals(path)).findFirst().orElseThrow(CopilotSkillTools::invalid);
             byte[] bytes = file.content().getBytes(StandardCharsets.UTF_8);

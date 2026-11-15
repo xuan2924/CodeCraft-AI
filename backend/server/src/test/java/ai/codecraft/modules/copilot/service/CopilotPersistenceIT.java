@@ -385,10 +385,30 @@ class CopilotPersistenceIT {
         testRuns = proxy(new CopilotTestStore(sql.getMapper(CopilotTestRepository.class), repository, execution, tasks, childLifecycle,
             childExecutions, identity, lifecycle, coordination, clock), CopilotTestStore.class);
         testTools = new CopilotTestTools(testRuns, capacity, new CopilotTestResultFormatter(), json);
-        evidenceStore = proxy(new CopilotEvidenceStore(repository, contextRepository, identity, coordination, clock), CopilotEvidenceStore.class);
+        evidenceStore = proxy(new CopilotEvidenceStore(repository, contextRepository, identity, coordination, clock, skillSnapshots), CopilotEvidenceStore.class);
         var evidenceTools = new CopilotEvidenceTools(evidenceStore, json);
-        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(execution, skillSnapshots, json));
+        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(evidenceStore, json));
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts);
+    }
+
+    @Test
+    void skillReadsReauthorizeAfterAdmissionEvenWhileTheWorkerLeaseIsStillValid() throws Exception {
+        var original = personalSkills.save(SESSION, null, "private-skill", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md",
+            "---\nname: private-guide\ndescription: Guidance\n---\nPrivate retained content"))));
+        personalSkills.change(SESSION, original.id(), "private-enable", original.version(), true, false);
+        var task = tasks.accept(SESSION, exercise, CONTROL, "read-authority", "Inspect", true, measurement);
+        String worker = UUID.randomUUID().toString(); execution.claim(task.id(), worker);
+        var tool = new CopilotSkillTools(evidenceStore, json);
+        String input = "{\"skill_id\":\"" + original.id() + "\"}";
+        assertThat(tool.execute(task.id(), worker, input)).contains("Private retained content");
+        when(identity.authorizePrivateDelivery(SESSION)).thenThrow(new BusinessException(IdentityErrorCode.UNAUTHENTICATED));
+        assertThat(execution.current(task.id(), worker)).isNotNull();
+        assertThat(tool.execute(task.id(), worker, input)).contains("UNAUTHENTICATED").doesNotContain("Private retained content");
+        doReturn(identity.authorization(SESSION)).when(identity).authorizePrivateDelivery(SESSION);
+        jdbc.update("UPDATE workspace_exercise SET deadline_at=? WHERE id=?::uuid", Timestamp.from(clock.instant().plusSeconds(1)), exercise);
+        clock.now = clock.now.plusSeconds(2);
+        assertThat(execution.current(task.id(), worker)).isNotNull();
+        assertThat(tool.execute(task.id(), worker, input)).contains("COPILOT_INVALID_STATE").doesNotContain("Private retained content");
     }
 
     @Test

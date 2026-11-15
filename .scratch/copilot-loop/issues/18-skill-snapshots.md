@@ -42,3 +42,9 @@ P2-21 收口演练删除与版本回收；本票必须先保证快照完整性�
 - 前端 Copilot/Skill 受影响测试、类型与修改文件 Lint 通过；额外覆盖显式 IDs 在 CSRF 等待期间不被表单修改、晚到私有原文在账号/任务切换后隐藏并取消。
 - 真实 DeepSeek `deepseek-flash` / OpenAI Chat / OFF 显式执行 `realDeepSeekLoadsPinnedSkillGuidanceOnDemandAndUsesItsPrivateMarker`，硬上限 3 次，实际 2 次请求通过：先从仅名称/描述的目录选择 `load_skill`，再使用正文独有随机标记回答。数值 usage 为输入/输出/总量 `1837/82/1919`、`2058/9/2067`；不打印 Key 或请求正文，不因验证补做自动重试。此证据仅覆盖本组合，不冒充 #19/20。
 - 日志 `%TEMP%/skill-load-red.log` / `skill-load-green.log`、`skill-live-deepseek.log`、`skill-snapshot-final-directed.log`、`skill-snapshot-final-ui.log`、`skill-snapshot-final-typecheck.log`、`skill-snapshot-final-lint.log`。完整阶段回归、双轴审查及 #21/#22 跨功能证据继续收口，不把上述局部证据当作第二阶段已完成。
+
+### 双轴审查与阻塞修复
+
+对 `e267977...367d073` 运行独立 Standards / Spec 审查。Standards 发现 P1：工具准入之后，`execution.current` 仅验证 worker 租约，未重新验证会话/演练期限；Spec 发现 P1：压缩收益/可容纳判断没有计入不可压缩的 Skill 指导，可能发起无法恢复继续能力的收费摘要。均先补红测复现，再修复：`load_skill` 复用 `CopilotEvidenceStore` 的所有者锁+新鲜 USER 授权+worker/任务/演练状态检查，读取后再在事务外解码；上下文实际请求与 `retainedCanFit` 共用相同 Skill 指导构建，超窗时 `safe=false,compaction=null`。
+
+同时保留 JSON 异常原因链并只向外返回安全码。UTF-8 边界的少量重复为启发式建议，当前保留各工具独立限额与响应协议，不为几行边界检查新增公共载体。Spec 确认显式加载的固定主文档全范围、任务/版本引用与派发时间满足记录契约，无须再复制正文账本。定向 `CopilotContextPlannerTest,CopilotSkillToolsTest,CopilotEvidenceToolsTest` 及真实 PG 撤销/到期、按需旧版本、显式/steer 路径通过（`%TEMP%/skill-read-authority-red.log`、`skill-compaction-red.log`、`skill-review18-green.log`）。
