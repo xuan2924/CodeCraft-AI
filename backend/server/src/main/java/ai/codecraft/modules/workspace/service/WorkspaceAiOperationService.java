@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 /** Domain entry into the existing operation ledger and unified storage credit; never dispatches work. */
 @Service
 public class WorkspaceAiOperationService {
-    private static final Set<String> KINDS = Set.of("COPILOT_CONVERSATION", "COPILOT_START", "COPILOT_MODEL", "COPILOT_READ", "COPILOT_PROPOSAL", "COPILOT_TEST", "COPILOT_APPROVAL_MODE", "COPILOT_STEER", "COPILOT_COMPACTION", "COPILOT_SUMMARY");
+    private static final Set<String> KINDS = Set.of("COPILOT_CONVERSATION", "COPILOT_START", "COPILOT_MODEL", "COPILOT_READ", "COPILOT_PROPOSAL", "COPILOT_TEST", "COPILOT_COMMAND", "COPILOT_APPROVAL_MODE", "COPILOT_STEER", "COPILOT_COMPACTION", "COPILOT_SUMMARY");
     private final IdentityTransactionService identity;
     private final ExerciseRepository exercises;
     private final WorkspaceWriteRepository controls;

@@ -10,4 +10,5 @@ public interface ExerciseDataContributor {
     boolean quiescent(String exerciseId);
     void erase(String exerciseId);
     default Set<String> protectedTestRecords(String exerciseId) { return Set.of(); }
+    default Set<String> protectedCommandRecords(String exerciseId) { return Set.of(); }
 }

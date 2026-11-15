@@ -18,12 +18,15 @@ public class CopilotToolExecutor {
     private final CopilotTestTools tests;
     private final CopilotEvidenceTools evidence;
     private final CopilotSkillTools skills;
-    public CopilotToolExecutor(CopilotReadTools reads, CopilotProposalPreparation preparation, CopilotProposalStore proposals, ObjectMapper json, CopilotTestTools tests, CopilotEvidenceTools evidence, CopilotSkillTools skills) {
+    private final CopilotCommandService commands;
+    public CopilotToolExecutor(CopilotReadTools reads, CopilotProposalPreparation preparation, CopilotProposalStore proposals, ObjectMapper json, CopilotTestTools tests, CopilotEvidenceTools evidence, CopilotSkillTools skills, CopilotCommandService commands) {
+        this.commands = commands;
         this.reads = reads; this.preparation = preparation; this.proposals = proposals; this.json = json; this.tests = tests; this.evidence = evidence; this.skills = skills;
     }
     public CopilotToolExecutionDTO execute(CopilotTaskEntity task, String worker, CopilotToolEntity tool) throws JsonProcessingException {
         if ("load_skill".equals(tool.name())) return new CopilotToolExecutionDTO(false, skills.execute(task.id(), worker, tool.arguments()));
         if ("run_tests".equals(tool.name())) return tests.execute(task, worker, tool);
+        if ("bash".equals(tool.name())) return commands.execute(task, worker, tool);
         if ("read_evidence".equals(tool.name())) return new CopilotToolExecutionDTO(false, evidence.execute(task.id(), worker, tool.arguments()));
         if (!"propose_changes".equals(tool.name())) {
             return new CopilotToolExecutionDTO(false, json.writeValueAsString(reads.execute(task.sessionHash(), task.exerciseId(), tool.name(), tool.arguments())));

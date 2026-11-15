@@ -65,7 +65,7 @@ public class CopilotSteerStore {
         workspace.checkControl(task.exerciseId(), IdentitySecrets.digest(credential));
         var exercise = workspace.exercise(task.exerciseId());
         var original = identity.tryAuthorizeMutation(task.sessionHash());
-        if (task.stopRequested() || !Set.of("QUEUED", "RUNNING", "WAITING_APPROVAL", "WAITING_WRITE", "WAITING_TEST").contains(task.state())
+        if (task.stopRequested() || !Set.of("QUEUED", "RUNNING", "WAITING_APPROVAL", "WAITING_WRITE", "WAITING_TEST", "WAITING_COMMAND").contains(task.state())
             || exercise == null || !"ACTIVE".equals(exercise.state()) || exercise.deadlineAt() == null || !clock.instant().isBefore(exercise.deadlineAt())
             || original == null || !task.userId().equals(original.userId()) || !"USER".equals(original.role()) || original.passwordChangeRequired()
             || !clock.instant().isBefore(original.expiresAt())) throw new BusinessException(CopilotErrorCode.COPILOT_STEER_NOT_ACTIVE);

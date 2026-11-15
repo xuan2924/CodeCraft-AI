@@ -64,7 +64,7 @@ public interface CopilotCompactionRepository {
     @Select("SELECT id::text FROM copilot_compaction WHERE state IN ('WAITING','RUNNING') ORDER BY last_checked_at,sequence LIMIT 100")
     List<String> discover();
 
-    @Select("SELECT c.id::text FROM copilot_compaction c WHERE c.state='WAITING' AND NOT c.stop_requested AND NOT EXISTS(SELECT 1 FROM copilot_task t WHERE t.exercise_id=c.exercise_id AND t.state IN ('QUEUED','RUNNING','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','STOPPING')) ORDER BY c.last_checked_at,c.sequence LIMIT 100")
+    @Select("SELECT c.id::text FROM copilot_compaction c WHERE c.state='WAITING' AND NOT c.stop_requested AND NOT EXISTS(SELECT 1 FROM copilot_task t WHERE t.exercise_id=c.exercise_id AND t.state IN ('QUEUED','RUNNING','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','STOPPING')) ORDER BY c.last_checked_at,c.sequence LIMIT 100")
     List<String> runnableStandalone();
 
     @Select("SELECT EXISTS(SELECT 1 FROM copilot_compaction WHERE worker_task_id=#{task}::uuid AND state='INTERRUPTED' AND failure_code='MODEL_RESULT_UNKNOWN')")

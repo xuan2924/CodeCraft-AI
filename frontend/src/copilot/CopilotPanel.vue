@@ -8,6 +8,7 @@ import * as api from './api';
 import { commandPolicy, errorMessage } from './errors';
 import CopilotProposals from './CopilotProposals.vue';
 import CopilotTests from './CopilotTests.vue';
+import CopilotCommands from './CopilotCommands.vue';
 import CopilotApprovalMode from './CopilotApprovalMode.vue';
 import CopilotSteers from './CopilotSteers.vue';
 import CopilotContext from './CopilotContext.vue';
@@ -86,7 +87,7 @@ watch([() => props.owner, () => props.exerciseId, () => task.value?.id, running]
   connect();
   cleanup(() => { disposed = true; controller.abort(); close(); if (timer !== undefined) globalThis.clearTimeout(timer); });
 }, { immediate: true });
-const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待派发', RUNNING: '正在执行', PAUSED: '已暂停，等待处理', WAITING_APPROVAL: '等待修改审批', WAITING_WRITE: '等待写入回执', WAITING_TEST: '等待测试确定结果', STOPPING: '正在停止，等待当前操作收敛', STOPPED: '已停止', SUCCEEDED: '已完成', FAILED: '失败', INTERRUPTED: '已中断，不会自动重发' };
+const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待派发', RUNNING: '正在执行', PAUSED: '已暂停，等待处理', WAITING_APPROVAL: '等待审批', WAITING_WRITE: '等待写入回执', WAITING_TEST: '等待测试确定结果', WAITING_COMMAND: '等待命令及文件同步结果', STOPPING: '正在停止，等待当前操作收敛', STOPPED: '已停止', SUCCEEDED: '已完成', FAILED: '失败', INTERRUPTED: '已中断，不会自动重发' };
 </script>
 <template>
   <section
@@ -167,6 +168,17 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       :task-id="task.id"
       :running="running"
       @inspect="emit('inspect-test', $event)"
+    />
+    <CopilotCommands
+      v-if="task"
+      :key="owner + task.id + ':commands'"
+      :owner="owner"
+      :exercise-id="exerciseId"
+      :task="task"
+      :credential="credential"
+      :disabled="disabled"
+      @unauthorized="emit('unauthorized')"
+      @changed="emit('changed')"
     />
     <CopilotProposals
       v-if="task"

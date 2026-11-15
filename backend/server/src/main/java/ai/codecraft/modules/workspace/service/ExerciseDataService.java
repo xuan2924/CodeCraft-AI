@@ -27,6 +27,12 @@ public class ExerciseDataService {
         return Set.copyOf(protectedRecords);
     }
 
+    public Set<String> protectedCommandRecords(String exerciseId) {
+        var protectedRecords = new HashSet<String>();
+        for (var contributor : contributors) protectedRecords.addAll(contributor.protectedCommandRecords(exerciseId));
+        return Set.copyOf(protectedRecords);
+    }
+
     public boolean quiescent(String exerciseId) {
         return contributors.stream().allMatch(contributor -> contributor.quiescent(exerciseId));
     }

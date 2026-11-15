@@ -64,6 +64,13 @@ import ai.codecraft.modules.copilot.repository.CopilotConversationRepository;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.copilot.repository.CopilotProposalRepository;
 import ai.codecraft.modules.copilot.repository.CopilotTestRepository;
+import ai.codecraft.modules.copilot.repository.CopilotCommandRepository;
+import ai.codecraft.modules.workspace.repository.CommandTaskRepository;
+import ai.codecraft.modules.workspace.service.CommandTaskStore;
+import ai.codecraft.modules.workspace.service.CommandTaskCoordinator;
+import ai.codecraft.modules.workspace.model.dto.CommandStartRequest;
+import ai.codecraft.modules.workspace.model.entity.CommandTaskEntity;
+import ai.codecraft.workspace.v1.CommandSnapshot;
 import ai.codecraft.modules.workspace.repository.TestTaskRepository;
 import ai.codecraft.modules.workspace.repository.TaskStreamRepository;
 import ai.codecraft.modules.workspace.repository.FinalizationRepository;
@@ -246,6 +253,10 @@ class CopilotPersistenceIT {
     private StorageCapacityService capacity;
     private CopilotToolExecutor executor;
     private TestTaskStore childExecutions;
+    private CommandTaskStore childCommands;
+    private CopilotCommandLifecycle commandLifecycle;
+    private CopilotCommandStore commandStore;
+    private CopilotCommandService commandTools;
     private TestTaskCoordinator testCoordinator;
     private CopilotTestLifecycle childLifecycle;
     private CopilotUsageService usage;
@@ -272,7 +283,7 @@ class CopilotPersistenceIT {
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
             ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
-            CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
+            CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
@@ -285,7 +296,7 @@ class CopilotPersistenceIT {
 
     @BeforeEach
     void seed() throws Exception {
-        jdbc.execute("TRUNCATE copilot_skill_snapshot,personal_skill_command,personal_skill,personal_skill_version,copilot_context,copilot_compaction_call,copilot_compaction,copilot_steer,copilot_approval_change,copilot_approval_mode,copilot_test_run,copilot_proposal,copilot_tool,copilot_message,copilot_turn,copilot_task,workspace_task_event,workspace_task_stream,workspace_test_stop,workspace_test_task,workspace_mutation,workspace_transition,workspace_operation");
+        jdbc.execute("TRUNCATE copilot_command,workspace_command,copilot_skill_snapshot,personal_skill_command,personal_skill,personal_skill_version,copilot_context,copilot_compaction_call,copilot_compaction,copilot_steer,copilot_approval_change,copilot_approval_mode,copilot_test_run,copilot_proposal,copilot_tool,copilot_message,copilot_turn,copilot_task,workspace_task_event,workspace_task_stream,workspace_test_stop,workspace_test_task,workspace_mutation,workspace_transition,workspace_operation");
         clock.now = "1".equals(System.getenv("COPILOT_LIVE_DEEPSEEK")) ? Instant.now() : Instant.parse("2026-01-01T00:00:00Z");
         String owner = UUID.randomUUID().toString(); exercise = UUID.randomUUID().toString();
         String instance = UUID.randomUUID().toString(); String preparation = UUID.randomUUID().toString();
@@ -343,6 +354,9 @@ class CopilotPersistenceIT {
         childExecutions = proxy(new TestTaskStore(identity, secrets, exercises, writes, sql.getMapper(TestTaskRepository.class), executionProblems, clock, json,
             streams, publisher, sql.getMapper(FinalizationRepository.class), budget, maintenance, capacityStore), TestTaskStore.class);
         childLifecycle = proxy(new CopilotTestLifecycle(sql.getMapper(CopilotTestRepository.class), childExecutions), CopilotTestLifecycle.class);
+        childCommands = proxy(new CommandTaskStore(identity, secrets, exercises, writes, sql.getMapper(TestTaskRepository.class),
+            sql.getMapper(CommandTaskRepository.class), executionProblems, capacityStore, json, clock, data), CommandTaskStore.class);
+        commandLifecycle = proxy(new CopilotCommandLifecycle(sql.getMapper(CopilotCommandRepository.class), childCommands, clock), CopilotCommandLifecycle.class);
         var lifecycle = proxy(new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock, secrets, coordination,
             new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, selection), ExerciseTransactionService.class);
         var operations = proxy(new WorkspaceAiOperationService(identity, exercises, writes, capacityStore, clock), WorkspaceAiOperationService.class);
@@ -354,14 +368,14 @@ class CopilotPersistenceIT {
         personalSkills = new SkillService(new SkillPackageParser(skillLimits), proxy(new SkillStore(sql.getMapper(SkillRepository.class), identity, skillLimits, json, clock), SkillStore.class), json);
         skillSnapshots = proxy(new SkillSnapshots(sql.getMapper(SkillSnapshotRepository.class)), SkillSnapshots.class);
         skillContext = new CopilotSkillContext(skillSnapshots, repository, json, limits);
-        tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class), skillSnapshots, conversations), CopilotTaskStore.class);
+        tasks = proxy(new CopilotTaskStore(repository, identity, secrets, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class), skillSnapshots, conversations, commandLifecycle), CopilotTaskStore.class);
         var contextRepository = sql.getMapper(CopilotCompactionRepository.class);
         compactions = proxy(new CopilotCompactionStore(contextRepository, repository, identity, secrets, lifecycle, coordination, operations, clock, conversations), CopilotCompactionStore.class);
         var callEvidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
         summaryExecution = proxy(new CopilotCompactionExecution(contextRepository, repository, sql.getMapper(CopilotSteerRepository.class), identity, coordination, operations, selection, limits, clock, callEvidence), CopilotCompactionExecution.class);
         var contextLimits = new CopilotContextProperties(80, 4, 8192, 4096, 8192, 512, 2048);
         execution = proxy(new CopilotExecutionStore(repository, identity, coordination, selection, operations, limits, clock, contextRepository,
-            sql.getMapper(CopilotProposalRepository.class), secrets, childLifecycle, sql.getMapper(CopilotSteerRepository.class), callEvidence, skillSnapshots), CopilotExecutionStore.class);
+            sql.getMapper(CopilotProposalRepository.class), secrets, childLifecycle, sql.getMapper(CopilotSteerRepository.class), callEvidence, skillSnapshots, commandLifecycle), CopilotExecutionStore.class);
         var requestFactory = new CopilotRequestFactory();
         var planner = new CopilotContextPlanner(requestFactory, contextLimits, json, limits);
         contextPreparation = proxy(new CopilotContextPreparation(contextRepository, sql.getMapper(CopilotSteerRepository.class),
@@ -397,9 +411,14 @@ class CopilotPersistenceIT {
         testRuns = proxy(new CopilotTestStore(sql.getMapper(CopilotTestRepository.class), repository, execution, tasks, childLifecycle,
             childExecutions, identity, lifecycle, coordination, clock), CopilotTestStore.class);
         testTools = new CopilotTestTools(testRuns, capacity, new CopilotTestResultFormatter(), json);
+        commandStore = proxy(new CopilotCommandStore(sql.getMapper(CopilotCommandRepository.class), repository,
+            sql.getMapper(CopilotApprovalModeRepository.class), execution, tasks, childCommands, commandLifecycle,
+            identity, secrets, lifecycle, coordination, json, clock), CopilotCommandStore.class);
+        commandTools = new CopilotCommandService(commandStore, sql.getMapper(CopilotCommandRepository.class), childCommands,
+            mock(CommandTaskCoordinator.class), capacity, new CopilotCommandResultFormatter(), json);
         evidenceStore = proxy(new CopilotEvidenceStore(repository, contextRepository, identity, coordination, clock, skillSnapshots), CopilotEvidenceStore.class);
         var evidenceTools = new CopilotEvidenceTools(evidenceStore, json);
-        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(evidenceStore, json));
+        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(evidenceStore, json), commandTools);
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts);
     }
 
@@ -1826,7 +1845,7 @@ class CopilotPersistenceIT {
         var workspace = new ProposalWorkspace(); workspace.loseApplyResponse = true;
         var task = beginProposal(workspace, true);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
-        try (var coordinator = new CopilotCoordinator(repository, execution, runner, limits, clock, proposals, testTools, automatic, sql.getMapper(CopilotCompactionRepository.class), summaryExecution, summaryRunner)) {
+        try (var coordinator = new CopilotCoordinator(repository, execution, runner, limits, clock, proposals, testTools, automatic, sql.getMapper(CopilotCompactionRepository.class), summaryExecution, summaryRunner, commandTools)) {
             coordinator.dispatch();
             await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_WRITE"));
         }
@@ -2353,6 +2372,222 @@ class CopilotPersistenceIT {
     private CopilotTaskResponse beginTest(boolean repeat) throws Exception {
         var task = beginTestAttempt(repeat);
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_TEST");
+        return task;
+    }
+
+    @Test
+    void bashAskRejectPairsTheOriginalCallAndContinuesWithoutAnExecution() throws Exception {
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        assertThat(command.mode()).isEqualTo("ASK");
+        assertThat(repository.find(task.id()).workerId()).isNull();
+        commandTools.decide(SESSION, command.id(), CONTROL, "reject-command", new CopilotProposalDecisionRequest("REJECT", "Use Java APIs instead"));
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_command WHERE exercise_id=?::uuid", Integer.class, exercise)).isZero();
+        assertThat(repository.context(exercise).stream().filter(message -> "TOOL".equals(message.kind())).toList()).singleElement()
+            .satisfies(message -> assertThat(message.payload()).contains("bash-first", "COMMAND_REJECTED", "Use Java APIs instead"));
+    }
+
+    @Test
+    void bashOldAskIsNotApprovedByModeSwitchAndDecisionReplayDoesNotRequireNewControl() throws Exception {
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        approvalModes.change(SESSION, exercise, CONTROL, "auto-now", new CopilotApprovalModeRequest("AUTO", "0"));
+        commandTools.approveAuto(task.id());
+        assertThat(commandTools.read(SESSION, command.id()).state()).isEqualTo("PENDING");
+        var approved = commandTools.decide(SESSION, command.id(), CONTROL, "approve-command", new CopilotProposalDecisionRequest("APPROVE", null));
+        assertThat(approved.commandTaskId()).isNotNull();
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_COMMAND");
+        assertThat(commandTools.decide(SESSION, command.id(), "no-longer-current", "approve-command", new CopilotProposalDecisionRequest("APPROVE", null)).commandTaskId())
+            .isEqualTo(approved.commandTaskId());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_command WHERE exercise_id=?::uuid", Integer.class, exercise)).isEqualTo(1);
+    }
+
+    @Test
+    void bashRegisteredAutoKeepsItsModeVersionAndBindsExactlyOnce() throws Exception {
+        approvalModes.change(SESSION, exercise, CONTROL, "auto-before", new CopilotApprovalModeRequest("AUTO", "0"));
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        assertThat(command.modeVersion()).isEqualTo("1");
+        approvalModes.change(SESSION, exercise, CONTROL, "ask-after", new CopilotApprovalModeRequest("ASK", "1"));
+        commandTools.approveAuto(task.id());
+        commandTools.approveAuto(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_COMMAND");
+        assertThat(commandTools.read(SESSION, command.id()).mode()).isEqualTo("AUTO");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_command WHERE exercise_id=?::uuid", Integer.class, exercise)).isEqualTo(1);
+    }
+
+    @Test
+    void bashBusyNeverAdoptsOrStopsTheIndependentManualCommand() throws Exception {
+        var manual = childCommands.accept(SESSION, exercise, "manual-command", CONTROL, new CommandStartRequest("echo manual", ".", "1"), measurement);
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        var result = commandTools.decide(SESSION, command.id(), CONTROL, "approve-busy", new CopilotProposalDecisionRequest("APPROVE", null));
+        assertThat(result.result().code()).isEqualTo("COMMAND_SLOT_BUSY");
+        assertThat(result.commandTaskId()).isNull();
+        tasks.stop(SESSION, task.id(), "stop-parent");
+        assertThat(childCommands.find(manual.id()).stopRequested()).isFalse();
+    }
+
+    @Test
+    void bashUnknownStartIsNotReplayedAndParentStopWaitsForItsExactCancellationProof() throws Exception {
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        var approved = commandTools.decide(SESSION, command.id(), CONTROL, "approve-unknown", new CopilotProposalDecisionRequest("APPROVE", null));
+        var child = childCommands.find(approved.commandTaskId());
+        var coordinator = new CommandTaskCoordinator(childCommands, sandbox);
+        when(sandbox.inventory(anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
+        when(sandbox.startCommand(any())).thenThrow(Status.UNAVAILABLE.asRuntimeException());
+        assertThatThrownBy(() -> coordinator.observe(child)).isInstanceOf(StatusRuntimeException.class);
+        tasks.stop(SESSION, task.id(), "stop-command-parent");
+        when(sandbox.stopCommand(any())).thenReturn(StopTaskResponse.getDefaultInstance());
+        assertThatThrownBy(() -> coordinator.observe(childCommands.find(child.id()))).isInstanceOf(IllegalStateException.class);
+        commandTools.recoverTask(task.id()); execution.recover(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPING");
+        assertThat(data.protectedCommandRecords(exercise)).contains(child.id());
+        when(sandbox.stopCommand(any())).thenReturn(StopTaskResponse.newBuilder().setHostEpoch("A".repeat(26)).setCancelledBeforeRegistration(true).build());
+        coordinator.observe(childCommands.find(child.id()));
+        assertThat(childCommands.beginPruning(child.id())).isFalse();
+        commandTools.recoverTask(task.id()); execution.recover(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
+        assertThat(data.protectedCommandRecords(exercise)).isEmpty();
+        verify(sandbox, times(1)).startCommand(any());
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void bashNonzeroExitWaitsForCopyCleanupBeforeResumingTheModel() throws Exception {
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        var approved = commandTools.decide(SESSION, command.id(), CONTROL, "approve-exit", new CopilotProposalDecisionRequest("APPROVE", null));
+        var child = childCommands.find(approved.commandTaskId());
+        var coordinator = new CommandTaskCoordinator(childCommands, sandbox);
+        when(sandbox.inventory(anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
+        when(sandbox.startCommand(any())).thenReturn(bashSnapshot(child, false));
+        coordinator.observe(child);
+        commandTools.recoverTask(task.id());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_COMMAND");
+        when(sandbox.command(any())).thenReturn(bashSnapshot(child, true));
+        coordinator.observe(childCommands.find(child.id()));
+        commandTools.recoverTask(task.id()); commandTools.recoverTask(task.id());
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+        var result = commandTools.read(SESSION, command.id()).result();
+        assertThat(result.code()).isEqualTo("COMMAND_RESULT");
+        assertThat(result.result().exitCode()).isEqualTo(7);
+        assertThat(result.result().logs().getFirst().text()).isEqualTo("command log");
+        verify(sandbox, times(1)).startCommand(any());
+        verify(driver, times(2)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void bashSteerInvalidatesUnapprovedCommandWithoutTurningAStaleApprovalIntoExecution() throws Exception {
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        steers.accept(SESSION, task.id(), CONTROL, "steer-command", new CopilotSteerRequest("Do not run that command"));
+        var observed = commandTools.decide(SESSION, command.id(), CONTROL, "stale-approve", new CopilotProposalDecisionRequest("APPROVE", null));
+        assertThat(observed.decision()).isNull();
+        assertThat(observed.result().code()).isEqualTo("NOT_EXECUTED");
+        assertThat(observed.result().reason()).isEqualTo("STEER_SUPERSEDED");
+        assertThat(observed.commandTaskId()).isNull();
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+    }
+
+    @Test
+    void bashRevokedOriginalAuthorityCancelsItsChildWithoutResumingTheModel() throws Exception {
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        var approved = commandTools.decide(SESSION, command.id(), CONTROL, "approve-revoke", new CopilotProposalDecisionRequest("APPROVE", null));
+        invalidateOriginalAuthorizationUsingRealProxy();
+        commandTools.recoverTask(task.id());
+        assertThat(childCommands.find(approved.commandTaskId()).stopRequested()).isTrue();
+        childCommands.cancelledBeforeRegistration(approved.commandTaskId());
+        commandTools.recoverTask(task.id()); execution.recover(task.id());
+        assertThat(repository.find(task.id()).state()).isEqualTo("INTERRUPTED");
+        assertThat(repository.find(task.id()).reason()).isEqualTo("AUTHORIZATION_ENDED");
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void bashStopCommittedBeforeApprovalCannotStartOrReviveTheParent() throws Exception {
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        tasks.stop(SESSION, task.id(), "stop-before-approval");
+        var result = commandTools.decide(SESSION, command.id(), CONTROL, "late-approval", new CopilotProposalDecisionRequest("APPROVE", null));
+        assertThat(result.commandTaskId()).isNull();
+        assertThat(result.result().code()).isEqualTo("TASK_STOPPED");
+        execution.recover(task.id());
+        assertThat(repository.find(task.id()).state()).isEqualTo("STOPPED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_command WHERE exercise_id=?::uuid", Integer.class, exercise)).isZero();
+    }
+
+    @Test
+    void bashCompetingApprovalsBindOneExecutionAndDoNotAdoptTheLosersKey() throws Exception {
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        var barrier = new CyclicBarrier(2);
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            var first = workers.submit(() -> raceBashApproval(command.id(), "first-decision", barrier));
+            var second = workers.submit(() -> raceBashApproval(command.id(), "second-decision", barrier));
+            assertThat(List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)))
+                .containsExactlyInAnyOrder("WAITING", "COPILOT_PROPOSAL_DECIDED");
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_command WHERE exercise_id=?::uuid", Integer.class, exercise)).isEqualTo(1);
+    }
+
+    @Test
+    void bashExpiredApprovalDoesNotCreateAnExecutionOrRestartTheModel() throws Exception {
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        clock.now = clock.instant().plusSeconds(7200);
+        commandTools.recoverTask(task.id()); execution.recover(task.id());
+        assertThat(repository.find(task.id()).state()).isEqualTo("INTERRUPTED");
+        assertThat(commandTools.read(SESSION, command.id()).result().code()).isEqualTo("EXERCISE_ENDED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_command WHERE exercise_id=?::uuid", Integer.class, exercise)).isZero();
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void bashSteerWaitsForAnAcceptedCommandRatherThanCancellingOrReplayingIt() throws Exception {
+        var task = beginBash();
+        var command = commandTools.recent(SESSION, task.id(), 0).commands().getFirst();
+        var accepted = commandTools.decide(SESSION, command.id(), CONTROL, "approve-before-steer", new CopilotProposalDecisionRequest("APPROVE", null));
+        steers.accept(SESSION, task.id(), CONTROL, "steer-in-command", new CopilotSteerRequest("Explain the result before doing anything else"));
+        commandTools.recoverTask(task.id());
+        assertThat(repository.find(task.id()).state()).isEqualTo("WAITING_COMMAND");
+        assertThat(childCommands.find(accepted.commandTaskId()).stopRequested()).isFalse();
+        assertThat(steers.list(SESSION, task.id(), 0).items().getFirst().state()).isEqualTo("RECEIVED");
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    private String raceBashApproval(String command, String key, CyclicBarrier barrier) throws Exception {
+        barrier.await(5, TimeUnit.SECONDS);
+        try { return commandTools.decide(SESSION, command, CONTROL, key, new CopilotProposalDecisionRequest("APPROVE", null)).state(); }
+        catch (BusinessException rejected) { return rejected.errorCode().code(); }
+    }
+
+    private CommandSnapshot bashSnapshot(CommandTaskEntity task, boolean cleaned) {
+        return CommandSnapshot.newBuilder().setSynchronization("UNCHANGED").setExecution(TestTaskSnapshot.newBuilder()
+            .setExerciseId(task.exerciseId()).setTaskId(task.id()).setExecutionInstanceId(task.executionInstanceId())
+            .setWorkspaceInstanceId(task.workspaceInstanceId()).setRevision(task.revision()).setTarget("bash").setState("EXITED")
+            .setReason("command_exit").setExitCode(7).setQuiescent(true).setStartedAtUnixMillis(clock.instant().minusSeconds(1).toEpochMilli())
+            .setFinishedAtUnixMillis(clock.instant().toEpochMilli()).setCleanup("SUCCEEDED").setCopyCleanup(cleaned ? "SUCCEEDED" : "PENDING")
+            .setStateVersion(cleaned ? 3 : 2).setProblem(ProblemIdentity.newBuilder().setProblemId("fixture").setVersion("1")
+                .setPackageSha256("a".repeat(64)).setExecutionImageDigest("sha256:" + "b".repeat(64)).setPlatform("linux/amd64"))
+            .addLogs(TestLogChunk.newBuilder().setChannel("stdout").setData(ByteString.copyFromUtf8("command log")))).build();
+    }
+
+    private CopilotTaskResponse beginBash() throws Exception {
+        var request = ToolExecutionRequest.builder().id("bash-first").name("bash")
+            .arguments("{\"expected_revision\":\"1\",\"command\":\"echo hello; exit 7\",\"directory\":\".\"}").build();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(request))).build(), 100),
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Command result understood.")).build(), 100));
+        var task = tasks.accept(SESSION, exercise, CONTROL, "bash-start", "Inspect using Bash", true, measurement);
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.find(SESSION, task.id()).state()).as("bash registration reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("WAITING_APPROVAL");
         return task;
     }
 

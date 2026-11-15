@@ -41,6 +41,7 @@ public class CopilotTaskStore {
     private final Clock clock;
     private final CopilotProposalRepository proposals;
     private final CopilotTestLifecycle tests;
+    private final CopilotCommandLifecycle commands;
     private final CopilotSteerRepository steers;
     private final CopilotCompactionRepository contexts;
     private final SkillSnapshots skills;
@@ -48,8 +49,8 @@ public class CopilotTaskStore {
 
     public CopilotTaskStore(CopilotTaskRepository tasks, IdentityTransactionService identity, IdentitySecrets secrets,
         ExerciseTransactionService exercises, WorkspaceCoordinationStore control, ExerciseModelService models,
-        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCompactionRepository contexts, SkillSnapshots skills, CopilotConversationStore conversations) {
-        this.conversations = conversations;
+        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCompactionRepository contexts, SkillSnapshots skills, CopilotConversationStore conversations, CopilotCommandLifecycle commands) {
+        this.conversations = conversations; this.commands = commands;
         this.tasks = tasks; this.identity = identity; this.secrets = secrets; this.exercises = exercises;
         this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals; this.tests = tests; this.steers = steers; this.contexts = contexts; this.skills = skills;
     }
@@ -157,6 +158,7 @@ public class CopilotTaskStore {
         validateKey(key);
         tasks.stop(task.id(), clock.instant());
         tests.stop(task.id());
+        commands.stop(task.id());
         var pending = proposals.pending(task.id());
         if (pending != null && "APPLYING".equals(pending.state())) {
             var outcome = operations.mutationOutcome(task.exerciseId(), pending.operationId());

@@ -22,6 +22,7 @@ import ai.codecraft.modules.copilot.service.CopilotApprovalModeService;
 import ai.codecraft.modules.copilot.service.CopilotCompactionService;
 import ai.codecraft.modules.copilot.service.CopilotUsageService;
 import ai.codecraft.modules.copilot.service.CopilotSkillService;
+import ai.codecraft.modules.copilot.service.CopilotCommandService;
 import ai.codecraft.modules.copilot.model.dto.CopilotCompactionRequest;
 import ai.codecraft.modules.copilot.service.CopilotSteerService;
 import ai.codecraft.modules.copilot.model.dto.CopilotSteerRequest;
@@ -81,6 +82,7 @@ class CopilotHttpTest {
     private CopilotCompactionService compactions;
     private CopilotUsageService usage;
     private CopilotSkillService skills;
+    private CopilotCommandService commands;
     private IdentityTransactionService identity;
 
     @BeforeAll void initialize() {
@@ -93,6 +95,7 @@ class CopilotHttpTest {
         compactions = context.getBean(CopilotCompactionService.class);
         usage = context.getBean(CopilotUsageService.class);
         skills = context.getBean(CopilotSkillService.class);
+        commands = context.getBean(CopilotCommandService.class);
         conversations = context.getBean(CopilotConversationService.class);
         tasks = context.getBean(CopilotTaskService.class); identity = context.getBean(IdentityTransactionService.class);
         mvc = MockMvcBuilders.webAppContextSetup(context).addFilters(context.getBean("springSecurityFilterChain", Filter.class)).build();
@@ -122,7 +125,7 @@ class CopilotHttpTest {
 
     @AfterAll void close() { context.close(); }
     @BeforeEach void authorize() {
-        reset(tasks, conversations, proposals, tests, modes, steers, compactions, usage, skills, identity);
+        reset(tasks, conversations, proposals, tests, modes, steers, compactions, usage, skills, commands, identity);
         var user = mock(UserEntity.class); when(user.role()).thenReturn("USER");
         var auth = new AuthenticatedIdentityDTO(user, null, new SessionResponse("owner", "fixture", "USER", false, Instant.parse("2030-01-01T00:00:00Z")));
         when(identity.authenticate(any())).thenAnswer(call -> {
@@ -288,12 +291,36 @@ class CopilotHttpTest {
         verify(usage).currentInConversation(HASH, ID, ID);
     }
 
+    @Test void bashCommandHistoryAndDetailsArePrivateReadOnlyNoStore() throws Exception {
+        for (String path : List.of("/api/copilot-tasks/" + ID + "/commands", "/api/copilot-commands/" + ID)) {
+            mvc.perform(get(path).servletPath(path)).andExpect(status().isUnauthorized());
+            mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header("X-Codecraft-Owner", "old-owner"))
+                .andExpect(status().isUnauthorized());
+            mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header("X-Codecraft-Owner", "owner"))
+                .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"));
+        }
+        verify(commands).recent(HASH, ID, 0); verify(commands).read(HASH, ID);
+        verify(commands, never()).decide(any(), any(), any(), any(), any());
+    }
+
+    @Test void bashDecisionRequiresCsrfAndTransmitsTheOriginalDecisionKey() throws Exception {
+        String path = "/api/copilot-commands/" + ID + "/decision";
+        mvc.perform(post(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header("Origin", "https://app.example.test")
+            .contentType("application/json").content("{\"decision\":\"APPROVE\"}")).andExpect(status().isForbidden());
+        verify(commands, never()).decide(any(), any(), any(), any(), any());
+        mvc.perform(post(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header("Origin", "https://app.example.test")
+            .header(IdentityHttp.CSRF_HEADER, "fixture-csrf").header("X-Codecraft-Owner", "owner").header("Idempotency-Key", "original")
+            .header("X-Operation-Credential", "control").contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
+            .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"));
+        verify(commands).decide(HASH, ID, "control", "original", new CopilotProposalDecisionRequest("APPROVE", null));
+    }
+
     private MockHttpServletRequestBuilder start() {
         return post(PATH).servletPath(PATH).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header("Origin", "https://app.example.test")
             .header("Idempotency-Key", "original").header("X-Operation-Credential", "control").contentType("application/json");
     }
     @Configuration @EnableWebMvc @EnableWebSecurity
-    @Import({IdentitySecurity.class, CopilotConversationController.class, CopilotController.class, CopilotApprovalController.class, CopilotSteerController.class, CopilotContextController.class, CopilotSkillController.class, CopilotErrors.class, GlobalExceptionHandler.class})
+    @Import({IdentitySecurity.class, CopilotConversationController.class, CopilotController.class, CopilotApprovalController.class, CopilotSteerController.class, CopilotContextController.class, CopilotSkillController.class, CopilotCommandController.class, CopilotErrors.class, GlobalExceptionHandler.class})
     static class Fixture {
         @Bean TaskEventTransport transport() { return mock(TaskEventTransport.class); }
         @Bean CopilotConversationService conversations() { return mock(CopilotConversationService.class); }
@@ -303,6 +330,7 @@ class CopilotHttpTest {
         @Bean CopilotSteerService steers() { return mock(CopilotSteerService.class); }
         @Bean CopilotCompactionService compactions() { return mock(CopilotCompactionService.class); }
         @Bean CopilotSkillService skills() { return mock(CopilotSkillService.class); }
+        @Bean CopilotCommandService commands() { return mock(CopilotCommandService.class); }
         @Bean CopilotUsageService usage() { return mock(CopilotUsageService.class); }
         @Bean CopilotProposalService proposals() { return mock(CopilotProposalService.class); }
         @Bean IdentityTransactionService identity() { return mock(IdentityTransactionService.class); }

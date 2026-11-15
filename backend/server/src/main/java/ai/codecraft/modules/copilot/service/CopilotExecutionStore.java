@@ -54,12 +54,14 @@ public class CopilotExecutionStore {
     private final CopilotProposalRepository proposals;
     private final IdentitySecrets secrets;
     private final CopilotTestLifecycle tests;
+    private final CopilotCommandLifecycle commands;
     private final CopilotSteerRepository steers;
     private final SkillSnapshots skills;
 
     public CopilotExecutionStore(CopilotTaskRepository tasks, IdentityTransactionService identity,
         WorkspaceCoordinationStore workspace, ExerciseModelService models, WorkspaceAiOperationService operations,
-        CopilotProperties limits, Clock clock, CopilotCompactionRepository contexts, CopilotProposalRepository proposals, IdentitySecrets secrets, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCallEvidence evidence, SkillSnapshots skills) {
+        CopilotProperties limits, Clock clock, CopilotCompactionRepository contexts, CopilotProposalRepository proposals, IdentitySecrets secrets, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCallEvidence evidence, SkillSnapshots skills, CopilotCommandLifecycle commands) {
+        this.commands = commands;
         this.tasks = tasks; this.identity = identity; this.workspace = workspace; this.models = models;
         this.operations = operations; this.limits = limits; this.clock = clock; this.contexts = contexts; this.proposals = proposals; this.secrets = secrets; this.tests = tests; this.steers = steers; this.evidence = evidence; this.skills = skills;
     }
@@ -79,8 +81,10 @@ public class CopilotExecutionStore {
         return task != null && supersedeOldBatch(task);
     }
 
+    private boolean unsettledEffects(String task) { return proposals.applying(task) || tests.waiting(task) || commands.waiting(task); }
+
     private boolean supersedeOldBatch(CopilotTaskEntity task) {
-        if (task.stopRequested() || !steers.unstaged(task.id()) || proposals.applying(task.id()) || tests.waiting(task.id())) return false;
+        if (task.stopRequested() || !steers.unstaged(task.id()) || unsettledEffects(task.id())) return false;
         var turn = tasks.latestTurn(task.id());
         if (turn == null || !"TOOLS".equals(turn.state())) return false;
         var current = tasks.toolAt(turn.id(), turn.toolPosition());
@@ -223,7 +227,12 @@ public class CopilotExecutionStore {
         if (tasks.toolAt(turnId, turn.toolPosition()) != null) return null;
         String operation = UUID.randomUUID().toString();
         boolean proposal = "propose_changes".equals(request.name());
-        String kind = proposal ? "COPILOT_PROPOSAL" : "run_tests".equals(request.name()) ? "COPILOT_TEST" : "COPILOT_READ";
+        String kind = switch (request.name()) {
+            case "propose_changes" -> "COPILOT_PROPOSAL";
+            case "run_tests" -> "COPILOT_TEST";
+            case "bash" -> "COPILOT_COMMAND";
+            default -> "COPILOT_READ";
+        };
         operations.reserve(task.sessionHash(), task.exerciseId(), operation, kind, measurement,
             proposal ? CopilotProposalPreparation.PREPARATION_CREDIT : 512 * 1024);
         var tool = new CopilotToolEntity(operation, turnId, id, task.exerciseId(), turn.toolPosition(), request.id(), request.name(), request.arguments(), "RUNNING", null, clock.instant(), null);
@@ -249,6 +258,22 @@ public class CopilotExecutionStore {
     @Transactional
     public void parkTest(String id, String worker, String toolId) {
         parkTool(id, worker, toolId, "WAITING_TEST", "TEST_RUNNING", false);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void parkCommandApproval(String id, String worker, String toolId) {
+        parkTool(id, worker, toolId, "WAITING_APPROVAL", "COMMAND_APPROVAL_REQUIRED", false);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void awaitCommand(String id, String toolId) {
+        var task = tasks.find(id);
+        var tool = tasks.toolById(toolId);
+        if (task == null || task.stopRequested() || task.workerId() != null || !"WAITING_APPROVAL".equals(task.state())
+            || tool == null || !id.equals(tool.taskId()) || tasks.waitTool(toolId, "WAITING_COMMAND") != 1
+            || tasks.waitFor(id, "WAITING_COMMAND", "COMMAND_RUNNING") != 1) {
+            throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
+        }
     }
 
     private void parkTool(String id, String worker, String toolId, String state, String reason, boolean settlePreparation) {
@@ -285,7 +310,7 @@ public class CopilotExecutionStore {
         var task = tasks.find(id);
         var tool = tasks.toolById(toolId);
         var turn = tasks.latestTurn(id);
-        if (task.workerId() != null || proposals.pending(id) != null || tests.waiting(id) || tool == null || turn == null || !id.equals(tool.taskId())
+        if (task.workerId() != null || proposals.pending(id) != null || tests.waiting(id) || commands.pending(id) || tool == null || turn == null || !id.equals(tool.taskId())
             || !turn.id().equals(tool.turnId()) || turn.toolPosition() != tool.position() || !"TOOLS".equals(turn.state())) {
             throw new IllegalStateException("Waiting tool no longer matches its pending batch");
         }
@@ -319,7 +344,8 @@ public class CopilotExecutionStore {
 
     /** Unknown writes must be reconciled before remaining protocol results can be synthesized. */
     private void interruptBatch(CopilotTaskEntity task, CopilotTurnEntity turn, String reason) {
-        if (proposals.applying(task.id()) || tests.waiting(task.id())) throw new IllegalStateException("Unconfirmed child operation cannot be interrupted");
+        if (unsettledEffects(task.id())) throw new IllegalStateException("Unconfirmed child operation cannot be interrupted");
+        commands.cancelPending(task.id(), reason);
         if ("STEER_SUPERSEDED".equals(reason)) proposals.invalidateSteered(task.id(), clock.instant());
         else proposals.cancelPending(task.id(), reason, clock.instant());
         var assistant = (AiMessage) ChatMessageDeserializer.messageFromJson(tasks.messageById(turn.assistantMessageId()).payload());
@@ -357,7 +383,7 @@ public class CopilotExecutionStore {
     @Transactional
     public void finish(String id, String worker, String state, String reason) {
         var task = owned(id, worker);
-        if (task == null || proposals.applying(id) || tests.waiting(id)) return;
+        if (task == null || unsettledEffects(id)) return;
         if ("SUCCEEDED".equals(state) && !task.stopRequested() && steers.pendingCount(id) > 0) {
             var exercise = workspace.exercise(task.exerciseId());
             if (exercise != null && "ACTIVE".equals(exercise.state()) && exercise.deadlineAt() != null && clock.instant().isBefore(exercise.deadlineAt())) {
@@ -386,7 +412,7 @@ public class CopilotExecutionStore {
         tasks.checked(id, clock.instant());
         if (task.workerId() == null) { recoverIdle(task); return; }
         if (task.workerId() == null || task.workerNotAfter() == null || clock.instant().isBefore(task.workerNotAfter())) return;
-        if (proposals.applying(id) || tests.waiting(id)) return;
+        if (unsettledEffects(id)) return;
         var turn = tasks.latestTurn(id);
         if (turn != null && "DISPATCHED".equals(turn.state())) {
             tasks.failTurn(turn.id(), "INTERRUPTED", "MODEL_RESULT_UNKNOWN", clock.instant());
@@ -407,7 +433,7 @@ public class CopilotExecutionStore {
     }
 
     private void recoverIdle(CopilotTaskEntity task) {
-        if (!Set.of("QUEUED", "PAUSED", "WAITING_APPROVAL", "WAITING_WRITE", "WAITING_TEST", "STOPPING").contains(task.state())) return;
+        if (!Set.of("QUEUED", "PAUSED", "WAITING_APPROVAL", "WAITING_WRITE", "WAITING_TEST", "WAITING_COMMAND", "STOPPING").contains(task.state())) return;
         var exercise = workspace.exercise(task.exerciseId());
         boolean ended = exercise == null || !"ACTIVE".equals(exercise.state()) || exercise.deadlineAt() == null || !clock.instant().isBefore(exercise.deadlineAt());
         if (!task.stopRequested() && !ended) return;
@@ -422,6 +448,7 @@ public class CopilotExecutionStore {
             return;
         }
         if (tests.waiting(task.id())) { tests.stop(task.id()); return; }
+        if (commands.waiting(task.id())) { commands.stop(task.id()); return; }
         String reason = task.reason() == null ? "USER_STOP" : task.reason();
         var turn = tasks.latestTurn(task.id());
         if (turn != null && "TOOLS".equals(turn.state())) interruptBatch(task, turn, reason);

@@ -42,6 +42,11 @@ public class CopilotRequestFactory {
         ToolSpecification.builder().name("run_tests").description("Run the published base tests on a stable copy of the exact saved revision. No shell or custom command. Wait for the confirmed result; failures are normal tool results. The same goal/revision/target reuses its previous confirmed result; a busy slot does not queue a test.")
             .parameters(JsonObjectSchema.builder().addStringProperty("expected_revision", "Exact saved revision as a decimal string")
                 .addEnumProperty("target", List.of("base")).required("expected_revision", "target").additionalProperties(false).build()).build(),
+        ToolSpecification.builder().name("bash").description("Propose a Docker-only development command on the exact saved revision. ASK waits for command approval; AUTO uses the recorded mode. Network and dependency downloads are allowed within sandbox limits. Approval does not preapprove unknown file changes: inspect synchronization and exit results. Nonzero exit is normal; output never proves authority tests passed. Busy does not queue work; do not repeat rejected commands or replay uncertain execution.")
+            .parameters(JsonObjectSchema.builder().addStringProperty("expected_revision", "Exact saved revision as a decimal string")
+                .addStringProperty("command", "Exact Bash text, at most 4096 UTF-8 bytes")
+                .addStringProperty("directory", "Canonical project-relative working directory; use . for project root")
+                .required("expected_revision", "command", "directory").additionalProperties(false).build()).build(),
         ToolSpecification.builder().name("load_skill").description("Read untrusted guidance from an enabled Skill snapshot fixed for this task. No filesystem, URL fetch, scripts or permission changes. Exact package paths only; follow nextOffset for more UTF-8 text.")
             .parameters(JsonObjectSchema.builder().addStringProperty("skill_id", "Skill UUID from this task catalog")
                 .addStringProperty("path", "Exact package path; default SKILL.md")

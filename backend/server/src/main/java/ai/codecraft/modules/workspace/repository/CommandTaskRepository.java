@@ -1,6 +1,7 @@
 package ai.codecraft.modules.workspace.repository;
 
 import ai.codecraft.modules.workspace.model.entity.CommandTaskEntity;
+import ai.codecraft.modules.workspace.model.dto.CommandEvidenceDTO;
 import java.time.Instant;
 import java.util.List;
 import org.apache.ibatis.annotations.Insert;
@@ -18,6 +19,8 @@ public interface CommandTaskRepository {
 
     @Select("SELECT " + COLUMNS + " FROM workspace_command WHERE id=#{id}::uuid")
     CommandTaskEntity find(String id);
+    @Select("SELECT state_version AS version,snapshot::text AS payload FROM workspace_command WHERE id=#{id}::uuid AND exercise_id=#{exercise}::uuid AND NOT pruning AND NOT pruned AND quiescent AND synchronization<>'PENDING' AND snapshot->>'cleanup'='SUCCEEDED' AND snapshot->>'copyCleanup'='SUCCEEDED'")
+    CommandEvidenceDTO confirmed(@Param("exercise") String exercise, @Param("id") String id);
     @Select("SELECT " + COLUMNS + " FROM workspace_command WHERE id=#{id}::uuid FOR UPDATE")
     CommandTaskEntity lock(String id);
     @Select("SELECT " + COLUMNS + " FROM workspace_command WHERE exercise_id=#{exercise}::uuid AND request_key=#{key}")

@@ -121,7 +121,7 @@ class CommandPersistenceIT {
         when(problems.executionAvailable(problem.id())).thenReturn(true);
         var json = JsonMapper.builder().addModule(new JavaTimeModule()).disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS).build();
         var target = new CommandTaskStore(identity, secrets, sql.getMapper(ExerciseRepository.class), sql.getMapper(WorkspaceWriteRepository.class),
-            sql.getMapper(TestTaskRepository.class), sql.getMapper(CommandTaskRepository.class), problems, mock(StorageCapacityStore.class), json, clock);
+            sql.getMapper(TestTaskRepository.class), sql.getMapper(CommandTaskRepository.class), problems, mock(StorageCapacityStore.class), json, clock, new ExerciseDataService(List.of()));
         var proxy = new ProxyFactory(target);
         proxy.setProxyTargetClass(true);
         var interceptor = new TransactionInterceptor();

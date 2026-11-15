@@ -120,6 +120,14 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 
 ## Copilot 任务与审批接口
 
+### Copilot Bash 命令
+
+- `GET /api/copilot-tasks/{task}/commands?before={sequence}`：原父任务命令提案，数字序号倒序每页最多 20 条，返回 `nextBefore`；包括固定命令/目录/基线、登记模式版本、决定与子命令引用。`GET /api/copilot-commands/{id}` 核对单条状态。GET 只读，不批准、不 Start。
+- `POST /api/copilot-commands/{id}/decision`：复用 `{decision: APPROVE|REJECT, reason?}`，要求 CSRF、同键幂等及当前操作凭证。回执核对先于新控制权/容量检查；只接受登记为 ASK 的原提案，AUTO 不提供手动决定。批准不代表未知 Diff 已获批准。
+- 提案 `PENDING → WAITING → RESOLVED`（未执行的决定可以直接 RESOLVED）；绑定后父任务/工具为 `WAITING_COMMAND`，属于活动任务但释放 worker。父停止以原绑定联动，不停止独立手动命令；真实执行、同步结论和清理收敛后才结束父任务。
+- 输出、退出原因及 Diff 复用 `/api/exercises/{exercise}/commands/{command}` 的原记录；父工具另保留有界模型节选。完整命令记录被安全精简后可读父工具节选，但不得声称完整输出或 Diff 仍在。所有接口沿用所有者归属、no-store 和迟到响应隔离。
+- 发生忙、拒绝、基线冲突、确定容量不足、非零退出、超时或同步拒绝时回填原调用的结构化结果；未知 Start/停止先对账，前端同键核对决定不得换命令或重复批准。
+
 ### 项目内对话身份
 
 - `GET /api/exercises/{id}/copilot/conversations`：本人、no-store，返回至多 100 个 `{id, exerciseId, initial, createdAt}`。初始对话 ID 为演练 ID；New 使用独立 UUID，与登录 session 无关。

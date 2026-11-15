@@ -17,6 +17,7 @@ import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import ai.codecraft.workspace.v1.CommandChanges;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
+import io.grpc.Status;
 
 class CommandTaskServiceTest {
     private final CommandTaskStore store = mock(CommandTaskStore.class);
@@ -57,7 +58,7 @@ class CommandTaskServiceTest {
 
     @Test void translatedSandboxFailureKeepsItsTechnicalCause() {
         var task = task();
-        var failure = io.grpc.Status.UNAVAILABLE.withDescription("fixture transport unavailable").asRuntimeException();
+        var failure = Status.UNAVAILABLE.withDescription("fixture transport unavailable").asRuntimeException();
         when(store.read("session", "exercise", "task")).thenReturn(task);
         when(sandbox.commandChanges(task)).thenThrow(failure);
         assertThatThrownBy(() -> service.changes("session", "exercise", "task")).isInstanceOf(BusinessException.class).hasCause(failure);

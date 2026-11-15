@@ -1,9 +1,12 @@
 package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
+import ai.codecraft.modules.identity.model.exception.IdentityFailure;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.model.dto.CommandStartRequest;
+import ai.codecraft.modules.workspace.model.dto.CommandEvidenceDTO;
 import ai.codecraft.modules.workspace.model.dto.CommandHistoryResponse;
 import ai.codecraft.modules.workspace.model.dto.CommandTaskResponse;
 import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
@@ -29,6 +32,7 @@ import java.util.UUID;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 /** Durable business intent only; external execution and measurement stay outside transactions. */
 @Service
@@ -43,12 +47,13 @@ public class CommandTaskStore {
     private final StorageCapacityStore capacity;
     private final ObjectMapper json;
     private final Clock clock;
+    private final ExerciseDataService data;
 
     public CommandTaskStore(IdentityTransactionService identity, IdentitySecrets secrets, ExerciseRepository exercises,
         WorkspaceWriteRepository writes, TestTaskRepository admission, CommandTaskRepository commands, ProblemRepository problems,
-        StorageCapacityStore capacity, @Qualifier("workspaceJson") ObjectMapper json, Clock clock) {
+        StorageCapacityStore capacity, @Qualifier("workspaceJson") ObjectMapper json, Clock clock, ExerciseDataService data) {
         this.identity = identity; this.secrets = secrets; this.exercises = exercises; this.writes = writes; this.admission = admission;
-        this.commands = commands; this.problems = problems; this.capacity = capacity; this.json = json; this.clock = clock;
+        this.commands = commands; this.problems = problems; this.capacity = capacity; this.json = json; this.clock = clock; this.data = data;
     }
 
     @Transactional
@@ -59,14 +64,29 @@ public class CommandTaskStore {
 
     @Transactional
     public CommandTaskEntity accept(String session, String exerciseId, String key, String credential, CommandStartRequest input, StorageMeasurement measurement) {
+        return accept(session, exerciseId, key, credential, input, measurement, false);
+    }
+
+    /** Parent binding must commit in the caller's transaction; never adopts an existing manual receipt. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public CommandTaskEntity acceptCopilot(String session, String exerciseId, String key, CommandStartRequest input, StorageMeasurement measurement) {
+        return accept(session, exerciseId, key, null, input, measurement, true);
+    }
+
+    private CommandTaskEntity accept(String session, String exerciseId, String key, String credential, CommandStartRequest input, StorageMeasurement measurement, boolean background) {
         var actor = identity.authorizeMutation(session);
+        if (background && !"USER".equals(actor.role())) throw new IdentityFailure(IdentityErrorCode.FORBIDDEN);
         var exercise = owned(actor.userId(), exerciseId);
         var control = writes.lock(exerciseId);
         String fingerprint = fingerprint(key, input);
         var previous = receipt(exerciseId, key, fingerprint);
-        if (previous != null) return previous;
+        if (previous != null) {
+            if (background) fail(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
+            return previous;
+        }
+        if (control == null) fail(background ? WorkspaceErrorCode.WORKSPACE_UNAVAILABLE : WorkspaceErrorCode.STALE_CONTROL);
         String hash = IdentitySecrets.digest(credential);
-        if (control == null || hash == null || !hash.equals(control.credentialHash())) fail(WorkspaceErrorCode.STALE_CONTROL);
+        if (!background && (hash == null || !hash.equals(control.credentialHash()))) fail(WorkspaceErrorCode.STALE_CONTROL);
         if (!exercise.state().equals("ACTIVE")) fail(WorkspaceErrorCode.INVALID_STATE);
         if (!clock.instant().isBefore(exercise.deadlineAt())) fail(WorkspaceErrorCode.EXERCISE_EXPIRED);
         if (control.transitionId() != null || control.fenceId() != null) fail(WorkspaceErrorCode.CONTROL_TRANSITION_PENDING);
@@ -141,6 +161,10 @@ public class CommandTaskStore {
     @Transactional
     public boolean beginPruning(String id) {
         var task = lock(id);
+        if (data.protectedCommandRecords(task.exerciseId()).contains(id)) {
+            commands.checked(id, clock.instant());
+            return false;
+        }
         return !task.pruned() && commands.beginPruning(id, clock.instant()) == 1;
     }
 
@@ -203,6 +227,25 @@ public class CommandTaskStore {
         if (!task.pruned()) commands.stop(id);
     }
 
+    /** Stops only the exact child identity supplied by a trusted, persisted parent binding. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void requestBoundStop(String exerciseId, String id) {
+        var task = lock(id);
+        if (!task.exerciseId().equals(exerciseId)) throw new IllegalStateException("Command binding belongs to another exercise");
+        if (!task.pruned()) commands.stop(id);
+    }
+
+    /** Read-only recovery cannot dispatch execution; unresolved synchronization/cleanup has no receipt. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public CommandEvidenceDTO confirmedResult(String exerciseId, String id) {
+        return commands.confirmed(exerciseId, id);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public boolean resultUnchanged(String exerciseId, String id, CommandEvidenceDTO expected) {
+        return expected != null && expected.equals(commands.confirmed(exerciseId, id));
+    }
+
     /** Requires a durable exact-identity cancellation receipt, not a missing query result. */
     @Transactional
     public void cancelledBeforeRegistration(String id) {
@@ -255,6 +298,9 @@ public class CommandTaskStore {
         if (exercises.deleted(id)) fail(WorkspaceErrorCode.EXERCISE_DELETED);
         return exercise;
     }
+
+    /** Shares the manual command contract with internal tool adapters before durable proposal registration. */
+    public void validate(CommandStartRequest input) { fingerprint("validation", input); }
 
     private String fingerprint(String key, CommandStartRequest input) {
         if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}") || input == null || input.command() == null || input.command().isBlank()

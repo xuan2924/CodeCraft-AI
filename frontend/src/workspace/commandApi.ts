@@ -24,7 +24,7 @@ function counter(value: unknown): value is string {
   return typeof value === 'string' && /^(0|[1-9]\d{0,18})$/.test(value) && BigInt(value) <= 9223372036854775807n;
 }
 function timestamp(value: unknown): value is string { return typeof value === 'string' && Number.isFinite(Date.parse(value)); }
-function parse(value: unknown, exercise: string, workspace: string): CommandTask {
+export function parseCommand(value: unknown, exercise: string, workspace: string): CommandTask {
   if (!object(value) || value.exerciseId !== exercise || value.workspaceInstanceId !== workspace || !id(value.id) || !id(value.executionInstanceId)
     || !counter(value.revision) || !counter(value.stateVersion) || !counter(value.droppedBytes)
     || typeof value.command !== 'string' || value.command.length > 4096 || typeof value.directory !== 'string' || value.directory.length > 1024
@@ -71,18 +71,18 @@ function base(exercise: string) { return `/api/exercises/${encodeURIComponent(ex
 export async function history(owner: string, exercise: string, workspace: string, after: string | null, signal: AbortSignal): Promise<CommandHistory> {
   const value = await request(`${base(exercise)}${after ? `?after=${encodeURIComponent(after)}` : ''}`, signal, { headers: ownerHeaders(owner) });
   if (!object(value) || !Array.isArray(value.commands) || value.commands.length > 20 || (value.nextCursor !== null && !id(value.nextCursor))) return invalid();
-  const commands = value.commands.map((entry: unknown) => parse(entry, exercise, workspace));
+  const commands = value.commands.map((entry: unknown) => parseCommand(entry, exercise, workspace));
   if (new Set(commands.map(item => item.id)).size !== commands.length) return invalid();
   return { commands, nextCursor: value.nextCursor };
 }
 export async function detail(owner: string, exercise: string, workspace: string, command: string, signal: AbortSignal): Promise<CommandTask> {
-  const result = parse(await request(`${base(exercise)}/${encodeURIComponent(command)}`, signal, { headers: ownerHeaders(owner) }), exercise, workspace);
+  const result = parseCommand(await request(`${base(exercise)}/${encodeURIComponent(command)}`, signal, { headers: ownerHeaders(owner) }), exercise, workspace);
   if (result.id !== command) return invalid();
   return result;
 }
 export async function start(owner: string, exercise: string, workspace: string, input: CommandInput, key: string, credential: string, signal: AbortSignal): Promise<CommandOutcome> {
   try {
-    const result = parse(await post(base(exercise), input, signal, key, credential, owner), exercise, workspace);
+    const result = parseCommand(await post(base(exercise), input, signal, key, credential, owner), exercise, workspace);
     if (result.command !== input.command || result.directory !== input.directory || result.revision !== input.expectedRevision) return invalid();
     return result;
   } catch (failure) {
@@ -94,7 +94,7 @@ export async function start(owner: string, exercise: string, workspace: string, 
 }
 export async function stop(owner: string, exercise: string, workspace: string, command: string, key: string, credential: string, signal: AbortSignal): Promise<CommandOutcome> {
   try {
-    const result = parse(await post(`${base(exercise)}/${encodeURIComponent(command)}/stop`, {}, signal, key, credential, owner), exercise, workspace);
+    const result = parseCommand(await post(`${base(exercise)}/${encodeURIComponent(command)}/stop`, {}, signal, key, credential, owner), exercise, workspace);
     if (result.id !== command) return invalid();
     return result;
   } catch (failure) {

@@ -13,7 +13,7 @@ const client = useQueryClient();
 const before = ref('0'); const text = ref(''); const feedback = ref('');
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.taskId}/${props.credential}`);
 const baseKey = computed(() => ['copilot-steers', props.owner, props.exerciseId, props.taskId]);
-const accepting = computed(() => ['QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST'].includes(props.state));
+const accepting = computed(() => ['QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND'].includes(props.state));
 const history = useQuery({ queryKey: computed(() => [...baseKey.value, before.value, props.state]),
   queryFn: ({ signal }) => api.steers(props.owner, props.exerciseId, props.taskId, before.value, signal), retry: false, gcTime: 0,
   refetchInterval: computed(() => accepting.value || props.state === 'STOPPING' || props.state === 'PAUSED' ? 2000 : false) });
