@@ -58,5 +58,11 @@ public class WorkspaceBrowserModelFixture extends ModelCallDriver {
         return new ModelCallResultDTO(ChatResponse.builder().aiMessage(response).build(), bytes);
     }
 
+    @Override
+    public ModelCallResultDTO call(ModelInvocationDTO target, ChatRequest request, ModelInvocationLimitsDTO limits,
+        int maximumDecodedBytes, Instant notAfter, Consumer<String> partialResponse, Consumer<String> partialThinking) {
+        return call(target, request, limits, maximumDecodedBytes, notAfter, partialResponse);
+    }
+
     private BusinessException unsupported() { return new BusinessException(ModelAccessErrorCode.MODEL_PROTOCOL_UNSUPPORTED); }
 }

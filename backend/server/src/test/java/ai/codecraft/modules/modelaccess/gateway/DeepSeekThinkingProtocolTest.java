@@ -72,11 +72,13 @@ class DeepSeekThinkingProtocolTest {
         var history = new ArrayList<ChatMessage>(); history.add(UserMessage.from("Inspect both files"));
         try (var driver = new ModelCallDriver(new ModelSdkClientFactory(validator, properties), properties, Clock.systemUTC())) {
             var visible = new StringBuilder();
+            var thinking = new StringBuilder();
             var first = driver.call(target, ChatRequest.builder().messages(history).toolSpecifications(tool).build(), limit, 32768,
-                Clock.systemUTC().instant().plusSeconds(5), visible::append);
+                Clock.systemUTC().instant().plusSeconds(5), visible::append, thinking::append);
             var assistant = (AiMessage) ChatMessageDeserializer.messageFromJson(ChatMessageSerializer.messageToJson(first.response().aiMessage()));
             assertThat(assistant.thinking()).isEqualTo("plan carefully");
             assertThat(visible.toString()).isEqualTo("Reading");
+            assertThat(thinking.toString()).isEqualTo("plan carefully");
             assertThat(assistant.toolExecutionRequests()).hasSize(2);
             assertThat(assistant.toolExecutionRequests().getFirst().arguments()).isEqualTo("{\"path\":\"first.txt\"}");
             assertThat(assistant.toolExecutionRequests().getLast().id()).isEqualTo("call-b");

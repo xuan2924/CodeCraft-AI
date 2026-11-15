@@ -34,6 +34,8 @@ class WorkspaceBrowserModelFixtureTest {
         try (var fixture = new WorkspaceBrowserModelFixture(factory, properties, Clock.systemUTC())) {
             var basic = ChatRequest.builder().messages(prompts.basic("expected-marker")).build();
             assertThat(fixture.call(target, basic, limits, 32768).response().aiMessage().text()).isEqualTo("expected-marker");
+            assertThat(fixture.call(target, basic, limits, 32768, Clock.systemUTC().instant().plusSeconds(5), ignored -> {}, ignored -> {})
+                .response().aiMessage().text()).isEqualTo("expected-marker");
             var tool = ChatRequest.builder().messages(prompts.tool("00000000-0000-0000-0000-000000000001"))
                 .toolSpecifications(ToolSpecification.builder().name("connection_probe").build()).build();
             var assistant = fixture.call(target, tool, limits, 32768).response().aiMessage();

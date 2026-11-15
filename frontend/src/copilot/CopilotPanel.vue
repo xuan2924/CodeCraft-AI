@@ -13,6 +13,7 @@ import CopilotSteers from './CopilotSteers.vue';
 import CopilotContext from './CopilotContext.vue';
 import CopilotUsage from './CopilotUsage.vue';
 import CopilotSkills from './CopilotSkills.vue';
+import CopilotMessageBody from './CopilotMessageBody.vue';
 
 const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string] }>();
@@ -198,17 +199,23 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
         :key="message.id"
       >
         <h3>{{ ({ USER: '你', ASSISTANT: 'Copilot', TOOL: '工具回执' })[message.kind] }}</h3>
-        <pre>{{ message.text }}</pre>
+        <CopilotMessageBody
+          :text="message.text"
+          :thinking="message.thinking"
+        />
       </article>
     </div>
     <aside
-      v-if="latest.data.value?.partial.text"
+      v-if="latest.data.value?.partial.text || latest.data.value?.partial.thinking"
       aria-label="未确认回复预览"
     >
       <h3>未确认的部分回复</h3>
-      <pre>{{ latest.data.value.partial.text }}</pre>
+      <CopilotMessageBody
+        :text="latest.data.value.partial.text"
+        :thinking="latest.data.value.partial.thinking"
+      />
       <p>此预览不代表任务完成，也不会作为完整助手消息或工具请求执行。</p>
-      <p v-if="latest.data.value.partial.truncated">
+      <p v-if="latest.data.value.partial.truncated || latest.data.value.partial.thinkingTruncated">
         预览已截断。完整确认的回复将在上方对话记录显示。
       </p>
     </aside>

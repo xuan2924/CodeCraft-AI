@@ -116,7 +116,7 @@ public class CopilotTaskStore {
         var task = authorize(session, id);
         var partial = tasks.partial(id);
         return new CopilotDeliveryDTO(task.userId(), describe(task), Long.toString(tasks.lastSequence(task.exerciseId())), tasks.textHistory(id),
-            partial == null ? new CopilotPartialResponse(null, "0", "", false) : partial);
+            partial == null ? new CopilotPartialResponse(null, "0", "", false, "", false) : partial);
     }
 
     @Transactional

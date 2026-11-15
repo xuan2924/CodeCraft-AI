@@ -114,7 +114,8 @@ Cookie 名规划为 `codecraft_session`；清理时使用同名同路径。开�
 - `GET /api/copilot-tasks/{taskId}`、`POST /api/copilot-tasks/{taskId}/stop`：读取或单调停止。停止要求当前身份、CSRF 与幂等键，但不要求工作区写入凭证或新空间；不停止独立手动测试。
 - `GET /api/exercises/{id}/copilot/messages?after=...`：默认 `-1` 返回最近页，`0` 从最早记录开始，其余为向前读取游标。每页最多 100 条、数据库协议负载最多 512 KiB；前端不得把一页视为完整历史。
 - `GET /api/exercises/{id}/copilot/tasks/{taskId}/events`：独立只读 SSE，`copilot_snapshot` 推送持久化状态与有界预览，不创建或重启任务。游标只用于快照去重；刷新/重连从 REST 消息记录恢复，不保证重放每个文本增量。所有终态以结构化任务状态为准。
-- 未确认的文本在已预留空间内按块落盘，预览最多 4096 个 Unicode 字符并明确截断。它不进入下一轮模型消息，也不能执行工具；完整响应确认后才保存正式消息。失败保留已落盘预览，成功后由完整消息替代。
+- 未确认的文本与供应商实际返回的明文思考在已预留的同一总字节预算内分别按块落盘。预览 `partial.text` / `partial.thinking` 各最多 4096 个 Unicode 字符，分别以 `truncated` / `thinkingTruncated` 标记截断，共用 `sequence` 推进快照。它们不进入下一轮模型消息，也不能执行工具；完整响应确认后才保存正式消息并同时清空两种预览。失败保留已落盘预览，不保证最后一个尚未刷新的分片已持久化。
+- 对话记录展示投影分别提供 `text` 和 `thinking`；只有助手实际返回的明文思考进入后者。签名、加密思考等 opaque 字段仅在原协议证据中保留，不下发为展示内容，不改变后续请求的原字段回填。
 - REST 使用当前身份与资源归属校验，支持 `X-Codecraft-Owner` 防止旧页面跨账号提交；所有响应禁止缓存。SSE 复用现有有界非阻塞传输与持续身份核验。
 
 ### 修改提案

@@ -168,11 +168,13 @@ public class CopilotExecutionStore {
     }
 
     @Transactional
-    public void partial(String id, String worker, String turnId, String text) {
-        if (text == null || text.getBytes(StandardCharsets.UTF_8).length > limits.responseBytes()) throw new IllegalArgumentException("Partial response exceeds reserved storage");
+    public void partial(String id, String worker, String turnId, String text, String thinking) {
+        if (text == null || thinking == null || (long) text.getBytes(StandardCharsets.UTF_8).length + thinking.getBytes(StandardCharsets.UTF_8).length > limits.responseBytes()) {
+            throw new IllegalArgumentException("Partial response exceeds reserved storage");
+        }
         if (owned(id, worker) == null) return;
         var turn = tasks.latestTurn(id);
-        if (turn != null && turn.id().equals(turnId)) tasks.partialText(turnId, text);
+        if (turn != null && turn.id().equals(turnId)) tasks.partialText(turnId, text, thinking);
     }
 
     @Transactional

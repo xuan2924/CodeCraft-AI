@@ -372,6 +372,8 @@ class CopilotPersistenceIT {
         when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(new WorkspaceFileResponse(instance, "1", "src/Main.java", "class Main {}"));
         driver = mock(ModelCallDriver.class);
         // Keep non-streaming scenarios focused on completed responses; streaming cases replace this bridge explicitly.
+        when(driver.call(any(), any(), any(), anyInt(), any(), any(), any())).thenAnswer(call -> driver.call(
+            call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4), call.getArgument(5)));
         when(driver.call(any(), any(), any(), anyInt(), any(), any())).thenAnswer(call -> driver.call(
             call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4)));
         summaryRunner = new CopilotCompactionRunner(summaryExecution, contextPreparation, planner, new CopilotSummaryCodec(json),
@@ -1330,14 +1332,18 @@ class CopilotPersistenceIT {
         doAnswer(call -> {
             Consumer<String> partial = call.getArgument(5);
             partial.accept("Unconfirmed reply, not tool arguments");
+            Consumer<String> thinking = call.getArgument(6);
+            thinking.accept("Unconfirmed thinking");
+            assertThat(tasks.delivery(SESSION, task.id()).partial().thinking()).isEqualTo("Unconfirmed thinking");
             assertThat(tasks.delivery(SESSION, task.id()).partial().text()).contains("Unconfirmed reply");
             assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("RUNNING");
             assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(1);
             verify(files, never()).read(any(), any(), any());
             if (!completes) throw new BusinessException(ModelAccessErrorCode.MODEL_NETWORK_UNAVAILABLE);
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Confirmed reply")).tokenUsage(new TokenUsage(100, 20, 120)).build(), 100);
-        }).when(driver).call(any(), any(), any(), anyInt(), any(), any());
+        }).when(driver).call(any(), any(), any(), anyInt(), any(), any(), any());
         runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(tasks.delivery(SESSION, task.id()).partial().thinking()).isEqualTo(completes ? "" : "Unconfirmed thinking");
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo(completes ? "SUCCEEDED" : "FAILED");
         assertThat(tasks.delivery(SESSION, task.id()).partial().text()).isEqualTo(completes ? "" : "Unconfirmed reply, not tool arguments");
         assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(completes ? 2 : 1);
@@ -1355,7 +1361,7 @@ class CopilotPersistenceIT {
         else assertThat(usage).isNull();
         String configuration = jdbc.queryForObject("SELECT configuration_payload FROM copilot_turn WHERE task_id=?::uuid", String.class, task.id());
         assertThat(configuration).contains("OPENAI_CHAT", "https://example.test").doesNotContain("fixture-not-real", "apiKey");
-        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any(), any());
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any(), any(), any());
     }
 
     @Test

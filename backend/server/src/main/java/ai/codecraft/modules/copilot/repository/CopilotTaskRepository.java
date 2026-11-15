@@ -100,10 +100,10 @@ public interface CopilotTaskRepository {
     long lastSequence(String exercise);
     @Select("SELECT coalesce(max(sequence),0) FROM copilot_message WHERE task_id=#{task}::uuid AND kind='USER'")
     long goalSequence(String task);
-    @Select("SELECT id::text AS turn_id,partial_sequence::text AS sequence,left(partial_text,4096) AS text,length(partial_text)>4096 AS truncated FROM copilot_turn WHERE task_id=#{task}::uuid ORDER BY ordinal DESC LIMIT 1")
+    @Select("SELECT id::text AS turn_id,partial_sequence::text AS sequence,left(partial_text,4096) AS text,length(partial_text)>4096 AS truncated,left(partial_thinking,4096) AS thinking,length(partial_thinking)>4096 AS thinking_truncated FROM copilot_turn WHERE task_id=#{task}::uuid ORDER BY ordinal DESC LIMIT 1")
     CopilotPartialResponse partial(String task);
-    @Update("UPDATE copilot_turn SET partial_text=#{text},partial_sequence=partial_sequence+1 WHERE id=#{turn}::uuid AND state='DISPATCHED'")
-    int partialText(String turn, String text);
+    @Update("UPDATE copilot_turn SET partial_text=#{text},partial_thinking=#{thinking},partial_sequence=partial_sequence+1 WHERE id=#{turn}::uuid AND state='DISPATCHED'")
+    int partialText(String turn, String text, String thinking);
     @Select("SELECT coalesce((SELECT text_history FROM copilot_turn WHERE task_id=#{task}::uuid ORDER BY ordinal DESC LIMIT 1),false)")
     boolean textHistory(String task);
     @Select("SELECT coalesce(sum(octet_length(payload)),0)::bigint FROM copilot_message WHERE exercise_id=#{exercise}::uuid")
@@ -137,7 +137,7 @@ public interface CopilotTaskRepository {
     void turn(CopilotTurnEntity turn);
     @Update("UPDATE copilot_turn SET configuration_payload=#{payload} WHERE id=#{turn}::uuid")
     void configuration(String turn, String payload);
-    @Update("UPDATE copilot_turn SET state=#{state},partial_text='',partial_sequence=partial_sequence+1,assistant_message_id=#{message}::uuid,input_tokens=#{input},output_tokens=#{output},total_tokens=#{total},usage_incomplete=#{incomplete},usage_payload=#{usagePayload},completed_at=#{now} WHERE id=#{id}::uuid AND state='DISPATCHED'")
+    @Update("UPDATE copilot_turn SET state=#{state},partial_text='',partial_thinking='',partial_sequence=partial_sequence+1,assistant_message_id=#{message}::uuid,input_tokens=#{input},output_tokens=#{output},total_tokens=#{total},usage_incomplete=#{incomplete},usage_payload=#{usagePayload},completed_at=#{now} WHERE id=#{id}::uuid AND state='DISPATCHED'")
     int response(String id, String state, String message, Long input, Long output, Long total, boolean incomplete, String usagePayload, Instant now);
     @Update("UPDATE copilot_turn SET tool_position=tool_position+1,state=CASE WHEN #{last} THEN 'SUCCEEDED' ELSE 'TOOLS' END WHERE id=#{id}::uuid AND state='TOOLS' AND tool_position=#{expected}")
     int advanceTool(String id, int expected, boolean last);

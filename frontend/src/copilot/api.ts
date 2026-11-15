@@ -2,12 +2,17 @@ import { ApiError, events, object, ownerHeaders, post, request } from '../api/re
 
 const states = ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'STOPPING', 'STOPPED', 'SUCCEEDED', 'FAILED', 'INTERRUPTED'] as const;
 export interface Task { id: string; exerciseId: string; state: typeof states[number]; reason: string | null; stopRequested: boolean; createdAt: string; completedAt: string | null }
-export interface Snapshot { task: Task; lastSequence: string; textHistory: boolean; partial: { turnId: string | null; sequence: string; text: string; truncated: boolean } }
-export interface Message { sequence: string; id: string; taskId: string; kind: 'USER' | 'ASSISTANT' | 'TOOL'; text: string }
+export interface Snapshot { task: Task; lastSequence: string; textHistory: boolean; partial: { turnId: string | null; sequence: string; text: string; truncated: boolean; thinking?: string; thinkingTruncated?: boolean } }
+export interface Message { sequence: string; id: string; taskId: string; kind: 'USER' | 'ASSISTANT' | 'TOOL'; text: string; thinking?: string }
 export interface Messages { messages: Message[]; nextCursor: string | null }
 function invalid(): never { throw new ApiError(502, 'INVALID_RESPONSE'); }
 function uuid(value: unknown): string { if (typeof value !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)) return invalid(); return value; }
 function sequence(value: unknown): string { if (typeof value !== 'string' || !/^(0|[1-9]\d{0,18})$/.test(value) || BigInt(value) > 9223372036854775807n) return invalid(); return value; }
+function thinkingText(value: unknown, maximum: number): string {
+  if (value === undefined) return '';
+  if (typeof value !== 'string' || value.length > maximum) return invalid();
+  return value;
+}
 function date(value: unknown): string { if (typeof value !== 'string' || value.length > 64 || !Number.isFinite(Date.parse(value))) return invalid(); return value; }
 function task(value: unknown, exercise: string): Task {
   if (!object(value)) return invalid();
@@ -20,9 +25,11 @@ function task(value: unknown, exercise: string): Task {
 function snapshot(value: unknown, exercise: string): Snapshot {
   if (!object(value) || typeof value.textHistory !== 'boolean' || !object(value.partial)) return invalid();
   const partial = value.partial;
-  if (typeof partial.text !== 'string' || partial.text.length > 8192 || typeof partial.truncated !== 'boolean') return invalid();
+  if (typeof partial.text !== 'string' || partial.text.length > 8192 || typeof partial.truncated !== 'boolean'
+    || partial.thinkingTruncated !== undefined && typeof partial.thinkingTruncated !== 'boolean') return invalid();
   return { task: task(value.task, exercise), lastSequence: sequence(value.lastSequence), textHistory: value.textHistory,
-    partial: { turnId: partial.turnId === null ? null : uuid(partial.turnId), sequence: sequence(partial.sequence), text: partial.text, truncated: partial.truncated } };
+    partial: { turnId: partial.turnId === null ? null : uuid(partial.turnId), sequence: sequence(partial.sequence), text: partial.text, truncated: partial.truncated,
+      thinking: thinkingText(partial.thinking, 8192), thinkingTruncated: partial.thinkingTruncated ?? false } };
 }
 function path(id: string) { return encodeURIComponent(uuid(id)); }
 export function active(task: Task | null | undefined) { return !!task && ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'STOPPING'].includes(task.state); }
@@ -46,9 +53,10 @@ export async function messages(owner: string, exercise: string, after: string, s
     if (!object(entry) || !['USER', 'ASSISTANT', 'TOOL'].includes(String(entry.kind)) || typeof entry.text !== 'string' || entry.text.length > 512 * 1024) return invalid();
     const seq = sequence(entry.sequence);
     if (BigInt(seq) <= previous) return invalid(); previous = BigInt(seq);
-    characters += entry.text.length; if (characters > 524288) return invalid();
+    const thinking = thinkingText(entry.thinking, 524288);
+    characters += entry.text.length + thinking.length; if (characters > 524288) return invalid();
     const kind = entry.kind === 'USER' ? 'USER' : entry.kind === 'ASSISTANT' ? 'ASSISTANT' : 'TOOL';
-    return { sequence: seq, id: uuid(entry.id), taskId: uuid(entry.taskId), kind, text: entry.text };
+    return { sequence: seq, id: uuid(entry.id), taskId: uuid(entry.taskId), kind, text: entry.text, thinking };
   });
   const nextCursor = value.nextCursor === null ? null : sequence(value.nextCursor);
   if (nextCursor !== null && nextCursor !== items.at(-1)?.sequence) return invalid();

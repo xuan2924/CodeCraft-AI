@@ -16,7 +16,6 @@ import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.function.Consumer;
 import org.springframework.stereotype.Service;
 
 /** Application-owned loop. Suspended batches resume their durable position, never regenerate their model response. */
@@ -58,8 +57,9 @@ public class CopilotRunner {
                     var dispatch = capacity.admit(task.sessionHash(), task.exerciseId(), measurement -> store.beginModel(id, worker, prepared, measurement));
                     if (dispatch == null) continue;
                     var target = dispatch.target();
+                    var preview = new PartialCapture(id, worker, dispatch.turn().id());
                     var result = driver.call(target, dispatch.request(), new ModelInvocationLimitsDTO(target.model().maxOutputTokens(), target.model().thinkingBudgetTokens()),
-                        Math.min(limits.responseBytes(), calls.maxDecodedBytes()), dispatch.turn().notAfter(), new PartialCapture(id, worker, dispatch.turn().id()));
+                        Math.min(limits.responseBytes(), calls.maxDecodedBytes()), dispatch.turn().notAfter(), preview::text, preview::thinking);
                     assistant = result.response().aiMessage();
                     validate(assistant);
                     if (!store.completeModel(id, worker, dispatch.turn().id(), ChatMessageSerializer.messageToJson(assistant), assistant.hasToolExecutionRequests(), result.response().tokenUsage())) return;
@@ -113,20 +113,25 @@ public class CopilotRunner {
             if (task != null) store.finish(id, worker, task.stopRequested() ? "STOPPED" : "INTERRUPTED", task.stopRequested() ? "USER_STOP" : store.interruptionReason(id, worker));
         } finally { if (wasInterrupted) Thread.currentThread().interrupt(); }
     }
-    private final class PartialCapture implements Consumer<String> {
+    private final class PartialCapture {
         private final String task;
         private final String worker;
         private final String turn;
         private final StringBuilder text = new StringBuilder();
+        private final StringBuilder thinking = new StringBuilder();
         private int persisted;
         private long lastFlush;
         PartialCapture(String task, String worker, String turn) { this.task = task; this.worker = worker; this.turn = turn; }
-        @Override public void accept(String chunk) {
+        void text(String chunk) { append(text, chunk); }
+        void thinking(String chunk) { append(thinking, chunk); }
+        private void append(StringBuilder destination, String chunk) {
             if (chunk == null || chunk.isEmpty()) return;
-            text.append(chunk);
+            boolean first = destination.isEmpty();
+            destination.append(chunk);
+            int size = text.length() + thinking.length();
             long now = System.nanoTime();
-            if (lastFlush == 0 || text.length() - persisted >= 2048 || now - lastFlush >= 200_000_000L) {
-                store.partial(task, worker, turn, text.toString()); persisted = text.length(); lastFlush = now;
+            if (first || lastFlush == 0 || size - persisted >= 2048 || now - lastFlush >= 200_000_000L) {
+                store.partial(task, worker, turn, text.toString(), thinking.toString()); persisted = size; lastFlush = now;
             }
         }
     }

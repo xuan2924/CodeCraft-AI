@@ -1,7 +1,6 @@
 package ai.codecraft.modules.copilot.service;
 
 import ai.codecraft.common.exception.BusinessException;
-import ai.codecraft.modules.copilot.model.dto.CopilotMessageResponse;
 import ai.codecraft.modules.copilot.model.dto.CopilotDeliveryDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotMessagesResponse;
 import ai.codecraft.modules.copilot.model.dto.CopilotStartRequest;
@@ -11,10 +10,6 @@ import ai.codecraft.modules.workspace.model.dto.TaskStreamBatchDTO;
 import ai.codecraft.modules.workspace.service.StorageCapacityService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.ChatMessageDeserializer;
-import dev.langchain4j.data.message.ToolExecutionResultMessage;
-import dev.langchain4j.data.message.UserMessage;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import org.springframework.stereotype.Service;
@@ -42,16 +37,7 @@ public class CopilotTaskService {
 
     public CopilotMessagesResponse messages(String session, String exercise, long after) {
         var records = store.messages(session, exercise, after);
-        var messages = records.stream().map(value -> {
-            var message = ChatMessageDeserializer.messageFromJson(value.payload());
-            String text;
-            if (message instanceof UserMessage user) text = user.singleText();
-            else if (message instanceof AiMessage assistant) {
-                text = (assistant.text() == null ? "" : assistant.text()) + (assistant.hasToolExecutionRequests() ? "\n工具调用：" + assistant.toolExecutionRequests().stream().map(call -> call.name() + " [" + call.id() + "]").toList() : "");
-            } else if (message instanceof ToolExecutionResultMessage result) text = result.toolName() + " [" + result.id() + "]\n" + result.text();
-            else throw new IllegalStateException("Unsupported stored message");
-            return new CopilotMessageResponse(Long.toString(value.sequence()), value.id(), value.taskId(), value.kind(), text);
-        }).toList();
+        var messages = records.stream().map(CopilotMessagePresentation::from).toList();
         return new CopilotMessagesResponse(messages, messages.isEmpty() ? null : messages.getLast().sequence());
     }
 
