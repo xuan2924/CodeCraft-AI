@@ -80,12 +80,48 @@ async function copy(text: string) {
 </template>
 
 <style scoped>
-.message-body { min-width: 0; }
-summary { cursor: pointer; }
+.message-body { min-width: 0; font-size: 13px; line-height: 1.6; }
+summary { cursor: pointer; font-size: 12px; color: var(--oc-fg-muted); }
 pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .prose { font-family: inherit; }
-.thinking { padding: 0.75rem 0; }
-.code-block { margin: 0.75rem 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
-.code-block header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--line); }
-.code-block pre { padding: 0.75rem; overflow-x: auto; white-space: pre; }
+.thinking {
+  padding: 10px 12px;
+  margin-top: 6px;
+  border-radius: 8px;
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+.code-block {
+  margin: 8px 0;
+  border: 1px solid var(--oc-border-strong);
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  overflow: hidden;
+}
+.code-block header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--oc-border);
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+.code-block header button {
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--oc-border-strong);
+  background: var(--oc-surface-2);
+  color: var(--oc-fg);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.code-block header button:hover {
+  background: var(--oc-surface-hover);
+}
+.code-block pre { padding: 10px 12px; overflow-x: auto; white-space: pre; font-size: 12.5px; }
 </style>

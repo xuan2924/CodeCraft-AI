@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
 import * as execution from '../workspace/commandApi';
@@ -14,7 +14,6 @@ import * as api from './commandApi';
 const props = defineProps<{ owner: string; exerciseId: string; task: Task; credential: string; disabled: boolean }>();
 const emit = defineEmits<{ unauthorized: []; changed: [] }>();
 const client = useQueryClient();
-const theme = { borderColor: 'var(--border)' };
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.task.id}`);
 const root = computed(() => ['copilot-commands', props.owner, props.exerciseId, props.task.id]);
 const selected = ref('');
@@ -83,7 +82,7 @@ function decide(kind: 'APPROVE' | 'REJECT') {
   <section
     class="copilot-commands"
     aria-label="Copilot Bash 命令"
-    :style="{ borderColor: theme.borderColor }"
+    :style="{ borderColor: 'var(--border)' }"
   >
     <h3>Copilot 开发命令</h3>
     <p
@@ -96,9 +95,9 @@ function decide(kind: 'APPROVE' | 'REJECT') {
       v-if="head.isError.value"
       role="alert"
     >
-      {{ errorMessage(head.error.value) }} <NButton @click="head.refetch()">
+      {{ errorMessage(head.error.value) }} <Button @click="head.refetch()">
         重试命令历史
-      </NButton>
+      </Button>
     </p>
     <p v-if="head.data.value?.commands.length === 0">
       此任务尚未提出 Bash 命令。
@@ -113,19 +112,19 @@ function decide(kind: 'APPROVE' | 'REJECT') {
         :value="item.id"
       >#{{ item.sequence }} · {{ item.state }} · {{ item.command.slice(0, 80) }}</option>
     </select></label>
-    <NButton
+    <Button
       v-if="page?.nextBefore"
       :disabled="older.isFetching.value"
       @click="before = page!.nextBefore"
     >
       更早的命令提案
-    </NButton>
-    <NButton
+    </Button>
+    <Button
       v-if="before"
       @click="before = null"
     >
       返回最近命令
-    </NButton>
+    </Button>
     <p
       v-if="before && older.isPending.value"
       role="status"
@@ -136,9 +135,9 @@ function decide(kind: 'APPROVE' | 'REJECT') {
       v-if="older.isError.value"
       role="alert"
     >
-      {{ errorMessage(older.error.value) }} <NButton @click="older.refetch()">
+      {{ errorMessage(older.error.value) }} <Button @click="older.refetch()">
         重试历史页
-      </NButton>
+      </Button>
     </p>
     <p
       v-if="selected && detail.isPending.value"
@@ -150,9 +149,9 @@ function decide(kind: 'APPROVE' | 'REJECT') {
       v-if="detail.isError.value"
       role="alert"
     >
-      {{ errorMessage(detail.error.value) }} <NButton @click="detail.refetch()">
+      {{ errorMessage(detail.error.value) }} <Button @click="detail.refetch()">
         核对命令状态
-      </NButton>
+      </Button>
     </p>
     <template v-if="current">
       <p>{{ current.mode }} · 登记模式版本 {{ current.modeVersion }} · 基线修订 {{ current.baseRevision }}</p>
@@ -172,18 +171,18 @@ function decide(kind: 'APPROVE' | 'REJECT') {
         /></label>
         <small>{{ rejectionBytes }} / 2048 UTF-8 字节</small>
         <div class="actions">
-          <NButton
+          <Button
             :disabled="!canDecide"
             @click="decide('APPROVE')"
           >
             批准此命令
-          </NButton>
-          <NButton
+          </Button>
+          <Button
             :disabled="!canDecide || rejectionBytes > 2048"
             @click="decide('REJECT')"
           >
             拒绝此命令
-          </NButton>
+          </Button>
         </div>
       </template>
       <p
@@ -208,9 +207,9 @@ function decide(kind: 'APPROVE' | 'REJECT') {
         v-if="output.isError.value"
         role="alert"
       >
-        {{ workspaceMessage(output.error.value) }} <NButton @click="output.refetch()">
+        {{ workspaceMessage(output.error.value) }} <Button @click="output.refetch()">
           核对原执行记录
-        </NButton>
+        </Button>
       </p>
       <p v-if="!output.data.value && current.result?.result">
         下方为父工具保留的输出节选，不是重新执行；完整执行记录可能已按历史策略清理。
@@ -231,21 +230,48 @@ function decide(kind: 'APPROVE' | 'REJECT') {
     >
       {{ decision.error.value }}
     </p>
-    <NButton
+    <Button
       v-if="decision.uncertain.value"
       :disabled="decision.pending.value"
       @click="decision.retry()"
     >
       核对原命令决定（不会批准其他历史项）
-    </NButton>
+    </Button>
   </section>
 </template>
 
 <style scoped>
-.copilot-commands { display: grid; gap: 8px; min-width: 0; border: 1px solid; border-radius: 6px; padding: 12px; }
-h3, p { margin: 0; }
-label { display: grid; gap: 6px; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
-textarea, select { box-sizing: border-box; width: 100%; padding: 6px; font: inherit; color: inherit; background: transparent; }
+.copilot-commands {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--oc-border) !important;
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  padding: 14px;
+}
+h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
+p, small { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.55; }
+label { display: grid; gap: 6px; font-size: 12.5px; }
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+}
+textarea, select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+}
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 </style>

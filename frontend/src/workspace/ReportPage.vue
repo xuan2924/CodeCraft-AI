@@ -16,13 +16,26 @@ const allowed = computed(() => account.isFetchedAfterMount.value && !account.isE
 </script>
 <template>
   <main class="report-page">
-    <nav aria-label="报告导航">
-      <RouterLink :to="{ name: routes.history.name }">历史演练</RouterLink><RouterLink
+    <nav
+      aria-label="报告导航"
+      class="report-nav"
+    >
+      <RouterLink
+        class="nav-pill"
+        :to="{ name: routes.history.name }"
+      >← 历史演练</RouterLink>
+      <RouterLink
         v-if="exercise"
+        class="nav-pill"
         :to="{ name: routes.workspace.name, query: { exercise } }"
       >查看原工作区</RouterLink>
     </nav>
-    <h1>回顾与评价</h1>
+    <header class="report-page-header">
+      <p class="eyebrow">
+        CODECRAFT / EVALUATION REPORT
+      </p>
+      <h1>回顾与评价</h1>
+    </header>
     <StatePanel
       v-if="account.isPending.value || !account.isFetchedAfterMount.value"
       kind="loading"
@@ -44,5 +57,61 @@ const allowed = computed(() => account.isFetchedAfterMount.value && !account.isE
   </main>
 </template>
 <style scoped>
-.report-page { max-width:1280px; margin:auto; padding:32px 24px; } nav { display:flex; gap:24px; } h1 { margin:24px 0 32px; font-size:20px; color:var(--muted); } @media(max-width:600px) { .report-page { padding:16px; } }
+.report-page {
+  max-width: 1260px;
+  margin: 0 auto;
+  padding: 32px 32px 64px;
+}
+
+.report-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.nav-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  color: var(--oc-fg-muted);
+  text-decoration: none;
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: color 160ms var(--oc-ease), border-color 160ms var(--oc-ease), background-color 160ms var(--oc-ease);
+}
+
+.nav-pill:hover {
+  color: var(--oc-fg);
+  border-color: var(--oc-border-strong);
+  background: var(--oc-surface-2);
+}
+
+.report-page-header {
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--oc-accent);
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(24px, 3vw, 32px);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+@media (max-width: 600px) {
+  .report-page {
+    padding: 20px 16px 40px;
+  }
+}
 </style>

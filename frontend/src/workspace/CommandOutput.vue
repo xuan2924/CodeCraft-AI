@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { message } from './api';
 import * as api from './commandApi';
@@ -61,12 +61,12 @@ watch(changes.error, failure => {
       :logs="task.logs"
       label="命令"
     />
-    <NButton
+    <Button
       v-if="task.quiescent && task.synchronization !== 'PENDING'"
       @click="showChanges = !showChanges"
     >
       {{ showChanges ? '收起文件 Diff' : '查看命令文件 Diff' }}
-    </NButton>
+    </Button>
     <template v-if="showChanges">
       <p
         v-if="changes.isPending.value"
@@ -78,9 +78,9 @@ watch(changes.error, failure => {
         v-if="changes.isError.value"
         role="alert"
       >
-        {{ message(changes.error.value) }} <NButton @click="changes.refetch()">
+        {{ message(changes.error.value) }} <Button @click="changes.refetch()">
           重新读取 Diff
-        </NButton>
+        </Button>
       </p>
       <WorkspaceFileDiff
         v-if="changes.data.value"
@@ -93,8 +93,25 @@ watch(changes.error, failure => {
 </template>
 
 <style scoped>
-.command-output { display: grid; gap: 8px; min-width: 0; }
-p { margin: 0; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.command-output {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+}
+p { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.55; }
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12.5px;
+}
 code { overflow-wrap: anywhere; }
 </style>

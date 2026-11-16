@@ -169,10 +169,36 @@ function submit() {
   </form>
 </template>
 <style scoped>
-.platform-form { padding: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-panel); }
-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; } .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-label { display: grid; gap: 6px; margin-bottom: 16px; font-size: 14px; }
-input, select, textarea { width: 100%; min-width: 0; background: var(--background); color: var(--foreground); border: 1px solid var(--control-border); border-radius: var(--radius-control); padding: 10px; font: inherit; }
-textarea { resize: vertical; } p { color: var(--muted); font-size: 13px; line-height: 1.7; } h2 { margin-top: 0; }
-@media (max-width: 850px) { .form-grid { grid-template-columns: minmax(0, 1fr); } .platform-form { padding: 16px; } }
+.platform-form {
+  padding: 24px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+}
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+label { display: grid; gap: 6px; margin-bottom: 14px; font-size: 13px; font-weight: 550; }
+input, select, textarea {
+  width: 100%;
+  min-width: 0;
+  background: var(--oc-bg-input);
+  color: var(--oc-fg);
+  border: 1px solid var(--oc-border-input);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  font: inherit;
+  transition: border-color 180ms var(--oc-ease), box-shadow 180ms var(--oc-ease);
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  border-color: var(--oc-accent);
+  box-shadow: 0 0 0 3px var(--oc-accent-glow);
+}
+textarea { resize: vertical; }
+p { color: var(--oc-fg-muted); font-size: 13px; line-height: 1.65; }
+h2 { margin-top: 0; font-size: 18px; font-weight: 600; }
+@media (max-width: 850px) {
+  .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .platform-form { padding: 16px; }
+}
 </style>

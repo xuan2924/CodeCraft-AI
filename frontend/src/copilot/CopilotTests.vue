@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import * as api from './api';
 import { errorMessage } from './errors';
 
@@ -28,9 +28,9 @@ const labels = { PASSED: '通过', FAILED: '测试失败', TIMED_OUT: '执行超
       role="alert"
     >
       {{ errorMessage(records.error.value) }}
-      <NButton @click="records.refetch()">
+      <Button @click="records.refetch()">
         重试读取测试记录
-      </NButton>
+      </Button>
     </p>
     <p v-else-if="!records.data.value?.length">
       这个 Copilot 任务尚未启动测试。
@@ -43,9 +43,9 @@ const labels = { PASSED: '通过', FAILED: '测试失败', TIMED_OUT: '执行超
           :key="test.toolId"
         >
           <span>版本 {{ test.revision }}，基础测试：{{ test.resultState ? labels[test.resultState] : '等待确定结果，后续工具尚未执行' }}</span>
-          <NButton @click="emit('inspect', test.testTaskId)">
+          <Button @click="emit('inspect', test.testTaskId)">
             查看原测试记录与日志
-          </NButton>
+          </Button>
         </li>
       </ul>
     </template>

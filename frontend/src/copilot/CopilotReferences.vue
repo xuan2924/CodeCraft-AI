@@ -216,8 +216,45 @@ async function copy() {
   </section>
 </template>
 <style scoped>
-section { border: 1px solid var(--border); padding: .75rem; margin: .75rem 0; }
-label { display: block; margin: .5rem 0; }
-textarea { width: 100%; min-height: 8rem; box-sizing: border-box; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+section {
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  background: var(--oc-surface);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+h3 { margin: 0; font-size: 13px; font-weight: 600; }
+p { margin: 0; font-size: 12px; color: var(--oc-fg-muted); line-height: 1.55; }
+label { display: grid; gap: 6px; font-size: 12.5px; }
+input, select, textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+}
+textarea { min-height: 7rem; }
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+}
+button[type="button"] {
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--oc-border-strong);
+  background: var(--oc-surface-2);
+  color: var(--oc-fg);
+  font-size: 12px;
+  cursor: pointer;
+  width: fit-content;
+}
+button[type="button"]:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

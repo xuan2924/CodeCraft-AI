@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
 import * as api from './api';
@@ -60,41 +60,41 @@ function cancel() {
       :disabled="busy || disabled || !credential"
     >我理解手动压缩可能产生模型费用</label>
     <div class="actions">
-      <NButton
+      <Button
         v-if="start.uncertain.value"
         :disabled="start.pending.value"
         @click="start.retry"
       >
         核对原压缩请求
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         v-else
         :disabled="!canStart"
         :loading="start.pending.value"
         @click="compact"
       >
         手动压缩上下文
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         v-if="stop.uncertain.value"
         :disabled="stop.pending.value"
         @click="stop.retry"
       >
         核对原取消请求
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         v-else-if="active"
         :disabled="active.stopRequested || stop.pending.value"
         @click="cancel"
       >
         取消压缩
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         :disabled="history.isFetching.value"
         @click="history.refetch()"
       >
         重新读取上下文状态
-      </NButton>
+      </Button>
     </div>
     <p
       v-if="start.error.value || stop.error.value"
@@ -159,11 +159,26 @@ function cancel() {
 </template>
 
 <style scoped>
-.context { margin: 16px 0; padding-block: 12px; border-block: 1px solid var(--line); }
-p, li { line-height: 1.6; overflow-wrap: anywhere; }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 12px; }
-.records { max-height: 20rem; overflow: auto; padding-left: 24px; }
-li { margin-block: 12px; }
-summary { cursor: pointer; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto; }
+.context {
+  padding-top: 12px;
+  border-top: 1px solid var(--oc-border);
+  display: grid;
+  gap: 8px;
+}
+h3 { margin: 0; font-size: 13px; font-weight: 600; }
+p, li { margin: 0; line-height: 1.55; overflow-wrap: anywhere; font-size: 12px; color: var(--oc-fg-muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.records { max-height: 20rem; overflow: auto; padding-left: 20px; margin: 0; display: grid; gap: 6px; }
+summary { cursor: pointer; font-size: 12.5px; }
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 24rem;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+}
 </style>

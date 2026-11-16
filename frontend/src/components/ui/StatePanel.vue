@@ -10,12 +10,14 @@ withDefaults(defineProps<{ kind?: 'loading' | 'empty' | 'error'; title: string; 
     :role="kind === 'error' ? 'alert' : 'status'"
     :aria-busy="kind === 'loading' || undefined"
   >
-    <component
-      :is="kind === 'loading' ? LoaderCircle : kind === 'error' ? AlertCircle : Inbox"
-      :class="{ 'ui-spinner': kind === 'loading' }"
-      :size="28"
-      aria-hidden="true"
-    />
+    <div class="ui-state-icon">
+      <component
+        :is="kind === 'loading' ? LoaderCircle : kind === 'error' ? AlertCircle : Inbox"
+        :class="{ 'ui-spinner': kind === 'loading' }"
+        :size="22"
+        aria-hidden="true"
+      />
+    </div>
     <strong>{{ title }}</strong><p>{{ description }}</p><slot />
   </div>
 </template>

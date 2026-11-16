@@ -21,5 +21,17 @@ defineProps<{ text: string }>();
   </TooltipProvider>
 </template>
 <style>
-.ui-tooltip { z-index: 60; max-width: min(400px, calc(100vw - 32px)); padding: 8px 12px; border: 1px solid var(--control-border); border-radius: var(--radius-control); background: var(--surface); color: var(--foreground); overflow-wrap: anywhere; font-size: 13px; }
+.ui-tooltip {
+  z-index: 60;
+  max-width: min(400px, calc(100vw - 32px));
+  padding: 8px 12px;
+  border: 1px solid var(--oc-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--oc-surface-2);
+  color: var(--oc-fg);
+  box-shadow: var(--oc-shadow-md), var(--oc-hairline-top);
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
 </style>

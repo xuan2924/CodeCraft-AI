@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { projectInstructions } from './projectInstructionsApi';
 const props = defineProps<{ owner: string; exerciseId: string; taskId: string | null; running: boolean }>();
@@ -29,16 +29,16 @@ const labels = { LOADED: '已加载', MISSING: '未发现', LIMIT_EXCEEDED: '超
       v-if="snapshot.isError.value"
       role="alert"
     >
-      项目指令快照读取失败；不代表没有规则。<NButton @click="snapshot.refetch()">
+      项目指令快照读取失败；不代表没有规则。<Button @click="snapshot.refetch()">
         重新读取
-      </NButton>
+      </Button>
     </p>
-    <NButton
+    <Button
       v-if="taskId"
       @click="snapshot.refetch()"
     >
       核对最近请求来源
-    </NButton>
+    </Button>
     <template v-if="snapshot.data.value">
       <p>最近一次已派发请求 · 正式修订 r{{ snapshot.data.value.revision }}（不是当前文件内容）</p>
       <p
@@ -58,6 +58,24 @@ const labels = { LOADED: '已加载', MISSING: '未发现', LIMIT_EXCEEDED: '超
   </details>
 </template>
 <style scoped>
-p { margin: 8px 0; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 20rem; overflow: auto; }
+details {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  font-size: 12.5px;
+}
+summary { cursor: pointer; font-weight: 550; }
+p { margin: 8px 0; color: var(--oc-fg-muted); line-height: 1.55; }
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 20rem;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+}
 </style>

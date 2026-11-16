@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
 import * as api from './api';
@@ -122,12 +122,21 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     class="copilot-panel"
     :aria-label="delegated ? '委派子任务对话' : 'Copilot 对话'"
   >
-    <h2>{{ delegated ? '子任务 Copilot' : 'Copilot' }} · 读取、修改提案与测试</h2>
-    <p v-if="delegated">
-      子任务不能再次委派；这里的审批、方向调整及停止针对当前子任务，本场审批模式仍共享。没有另起主任务或自动保存草稿的入口。
-    </p>
-    <p>模型读取服务端已保存代码，可提出整批修改，默认须经你审批后写入；可对指定保存版本运行基础测试，结果不代表后续版本或未保存草稿。</p>
-    <p>请求可能收费，多轮任务、委派子任务及自动摘要可能持续调用你的模型。关闭页面不停止后台任务；停止后已发出的请求仍可能收费。</p>
+    <div class="copilot-head">
+      <h2>{{ delegated ? '子任务 Copilot' : 'Copilot' }} · 读取、修改提案与测试</h2>
+      <p
+        v-if="delegated"
+        class="copilot-desc"
+      >
+        子任务不能再次委派；这里的审批、方向调整及停止针对当前子任务，本场审批模式仍共享。没有另起主任务或自动保存草稿的入口。
+      </p>
+      <p class="copilot-desc">
+        模型读取服务端已保存代码，可提出整批修改，默认须经你审批后写入；可对指定保存版本运行基础测试，结果不代表后续版本或未保存草稿。
+      </p>
+      <p class="copilot-desc">
+        请求可能收费，多轮任务、委派子任务及自动摘要可能持续调用你的模型。关闭页面不停止后台任务；停止后已发出的请求仍可能收费。
+      </p>
+    </div>
     <CopilotApprovalMode
       v-if="!delegated"
       :owner="owner"
@@ -139,47 +148,68 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     <p
       v-if="latest.isPending.value"
       role="status"
+      class="copilot-status"
     >
       正在读取任务…
     </p>
     <p
       v-else-if="latest.isError.value"
       role="alert"
+      class="copilot-alert"
     >
       {{ errorMessage(latest.error.value) }}
     </p>
     <p
       v-else-if="task"
       role="status"
+      class="copilot-task-badge"
     >
       {{ labels[task.state] }} · {{ task.id }}
     </p>
-    <p v-else>
+    <p
+      v-else
+      class="copilot-desc"
+    >
       尚无 Copilot 任务。
     </p>
-    <p v-if="task?.reason">
+    <p
+      v-if="task?.reason"
+      class="copilot-warn"
+    >
       {{ errorMessage(new ApiError(409, task.reason)) }}
     </p>
-    <p v-if="latest.data.value?.textHistory">
+    <p
+      v-if="latest.data.value?.textHistory"
+      class="copilot-desc"
+    >
       模型配置域已变化：完整历史批次作为带来源的只读文本证据传入；原始协议证据仍保留，不重做已完成工具。
     </p>
-    <p v-if="running">
+    <p
+      v-if="running"
+      class="copilot-status"
+    >
       {{ connected ? '实时状态已连接' : '实时状态重连中；只读轮询仍在核对，不会重启任务。' }}
     </p>
-    <NButton
+    <Button
       v-if="running"
+      variant="danger"
+      size="small"
       :disabled="stop.pending.value"
       @click="stop.uncertain.value ? stop.retry() : stopTask()"
     >
       {{ stop.uncertain.value ? '核对原停止请求' : delegated ? '停止此子任务并交回结果' : '停止 Copilot 任务' }}
-    </NButton>
+    </Button>
     <p
       v-if="stop.error.value"
       role="alert"
+      class="copilot-alert"
     >
       {{ stop.error.value }}
     </p>
-    <p v-if="task?.state === 'PAUSED'">
+    <p
+      v-if="task?.state === 'PAUSED'"
+      class="copilot-warn"
+    >
       {{ delegated ? '子任务已暂停。处理配置或容量问题后，可停止子任务并把停止结果交回父任务；不会自动重发。' : '请处理模型配置或容量问题；可先停止当前任务，再显式发起新请求。不会自动回退或重发。' }}
     </p>
     <CopilotSteers
@@ -226,30 +256,43 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       class="messages"
       aria-live="polite"
     >
-      <p v-if="history.isPending.value">
+      <p
+        v-if="history.isPending.value"
+        class="copilot-desc"
+      >
         正在读取已保存对话…
       </p>
       <p
         v-else-if="history.isError.value"
         role="alert"
+        class="copilot-alert"
       >
         {{ errorMessage(history.error.value) }}
       </p>
-      <p v-else-if="!history.data.value?.messages.length">
+      <p
+        v-else-if="!history.data.value?.messages.length"
+        class="copilot-desc"
+      >
         本页没有保留的消息。
       </p>
       <article
         v-for="message in history.data.value?.messages"
         :key="message.id"
+        class="message-card"
+        :data-kind="message.kind"
       >
-        <h3>{{ ({ USER: '你', ASSISTANT: 'Copilot', TOOL: '工具回执' })[message.kind] }}</h3>
-        <NButton
-          v-if="!delegated"
-          :disabled="disabled || !credential"
-          @click="emit('fork', message.id)"
-        >
-          Fork 到此消息
-        </NButton>
+        <div class="message-head">
+          <h3>{{ ({ USER: '你', ASSISTANT: 'Copilot', TOOL: '工具回执' })[message.kind] }}</h3>
+          <Button
+            v-if="!delegated"
+            variant="ghost"
+            size="small"
+            :disabled="disabled || !credential"
+            @click="emit('fork', message.id)"
+          >
+            Fork 到此消息
+          </Button>
+        </div>
         <CopilotWebResult
           v-if="message.kind === 'TOOL' && /^web_(search|read) \[/.test(message.text)"
           :text="message.text"
@@ -264,6 +307,7 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     </div>
     <aside
       v-if="latest.data.value?.partial.text || latest.data.value?.partial.thinking"
+      class="partial-preview"
       aria-label="未确认回复预览"
     >
       <h3>未确认的部分回复</h3>
@@ -276,22 +320,37 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
         预览已截断。完整确认的回复将在上方对话记录显示。
       </p>
     </aside>
-    <p>当前仅展示有界的一页消息，不代表完整历史；任务状态以上方结构化状态为准。</p>
-    <NButton @click="after = '-1'; history.refetch()">
-      显示最近消息
-    </NButton>
-    <NButton @click="after = '0'">
-      从最早记录查看
-    </NButton>
-    <NButton
-      v-if="after !== '-1' && history.data.value?.nextCursor"
-      @click="after = history.data.value.nextCursor"
-    >
-      下一页历史
-    </NButton>
-    <NButton @click="latest.refetch(); history.refetch()">
-      重新读取
-    </NButton>
+    <p class="copilot-desc">
+      当前仅展示有界的一页消息，不代表完整历史；任务状态以上方结构化状态为准。
+    </p>
+    <div class="copilot-pagination">
+      <Button
+        size="small"
+        @click="after = '-1'; history.refetch()"
+      >
+        显示最近消息
+      </Button>
+      <Button
+        size="small"
+        @click="after = '0'"
+      >
+        从最早记录查看
+      </Button>
+      <Button
+        v-if="after !== '-1' && history.data.value?.nextCursor"
+        size="small"
+        @click="after = history.data.value.nextCursor"
+      >
+        下一页历史
+      </Button>
+      <Button
+        variant="ghost"
+        size="small"
+        @click="latest.refetch(); history.refetch()"
+      >
+        重新读取
+      </Button>
+    </div>
     <CopilotDelegations
       v-if="task && !delegated"
       :owner="owner"
@@ -322,7 +381,10 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       :running="running"
       @unauthorized="emit('unauthorized')"
     />
-    <template v-if="!delegated">
+    <div
+      v-if="!delegated"
+      class="copilot-composer"
+    >
       <CopilotSkills
         v-model="selectedSkills"
         :owner="owner"
@@ -335,14 +397,18 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
         :id="`copilot-text-${exerciseId}`"
         v-model="text"
         rows="4"
+        placeholder="描述目标、约束或待排查问题…"
         :disabled="saving || start.pending.value || start.uncertain.value"
       />
-      <label :for="`copilot-fee-${exerciseId}`"><input
+      <label
+        :for="`copilot-fee-${exerciseId}`"
+        class="fee-checkbox"
+      ><input
         :id="`copilot-fee-${exerciseId}`"
         v-model="fee"
         type="checkbox"
         :disabled="saving || start.pending.value || start.uncertain.value"
-      >我确认模型请求可能收费</label>
+      ><span>我确认模型请求可能收费</span></label>
       <CopilotReferences
         v-model="references"
         :owner="owner"
@@ -352,37 +418,47 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
         :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
         @unauthorized="emit('unauthorized')"
       />
-      <p>发送前将尝试保存当前页全部草稿；如需继续编辑，请不要发送。保存冲突或期间产生新编辑时不会启动请求。</p>
+      <p class="copilot-desc">
+        发送前将尝试保存当前页全部草稿；如需继续编辑，请不要发送。保存冲突或期间产生新编辑时不会启动请求。
+      </p>
       <p
         v-if="saveError"
         role="alert"
+        class="copilot-alert"
       >
         {{ saveError }}
       </p>
       <p
         v-if="start.error.value"
         role="alert"
+        class="copilot-alert"
       >
         {{ start.error.value }}
       </p>
-      <p v-if="start.uncertain.value">
+      <p
+        v-if="start.uncertain.value"
+        class="copilot-warn"
+      >
         受理结果未知，仅可核对原请求；不会换键重复派发。
       </p>
-      <NButton
+      <Button
         v-if="start.uncertain.value"
+        size="small"
         :disabled="start.pending.value || disabled || !credential"
         @click="start.retry"
       >
         核对原 Copilot 请求
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         v-else
+        variant="primary"
+        size="small"
         :disabled="!canSend"
         :loading="saving || start.pending.value"
         @click="send"
       >
         保存草稿并发送
-      </NButton>
+      </Button>
       <CopilotFollowups
         :owner="owner"
         :exercise-id="exerciseId"
@@ -407,24 +483,26 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       <p
         v-if="handoffNotice"
         role="status"
+        class="copilot-status"
       >
         {{ handoffNotice }}
       </p>
       <p
         v-if="handoff.error.value"
         role="alert"
+        class="copilot-alert"
       >
         {{ handoff.error.value }}
       </p>
-      <button
+      <Button
         v-if="handoff.uncertain.value"
-        type="button"
+        size="small"
         :disabled="handoff.pending.value"
         @click="handoff.retry()"
       >
         核对原旁支带回 steer（不换键）
-      </button>
-    </template>
+      </Button>
+    </div>
     <CopilotUsage
       :conversation-id="conversationId"
       :owner="owner"
@@ -443,10 +521,175 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
   </section>
 </template>
 <style scoped>
-.copilot-panel { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 24px; }
-.messages { max-height: 560px; overflow: auto; }
-article { border-bottom: 1px solid var(--line); padding-bottom: 12px; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
-label, textarea { display: block; margin: 12px 0; }
-textarea { box-sizing: border-box; width: 100%; }
+.copilot-panel {
+  border-top: 1px solid var(--oc-border);
+  padding-top: 16px;
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.copilot-head {
+  display: grid;
+  gap: 6px;
+}
+
+.copilot-head h2 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.copilot-desc {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--oc-fg-muted);
+  line-height: 1.55;
+}
+
+.copilot-status {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--oc-accent);
+}
+
+.copilot-task-badge {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--oc-accent-soft);
+  border: 1px solid var(--oc-border-accent);
+  color: var(--oc-accent);
+  font-size: 12px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.copilot-alert {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--oc-danger-bg);
+  border: 1px solid var(--oc-danger-border);
+  color: var(--oc-danger);
+  font-size: 12.5px;
+}
+
+.copilot-warn {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--oc-warning-bg);
+  border: 1px solid var(--oc-warning-border);
+  color: var(--oc-warning);
+  font-size: 12.5px;
+}
+
+.messages {
+  max-height: 560px;
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.message-card {
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  display: grid;
+  gap: 8px;
+}
+
+.message-card[data-kind="USER"] {
+  background: var(--oc-selected);
+  border-color: var(--oc-border-accent);
+}
+
+.message-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.message-head h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--oc-fg);
+}
+
+.partial-preview {
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  border: 1px dashed var(--oc-border-accent);
+  display: grid;
+  gap: 8px;
+}
+
+.partial-preview h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.partial-preview p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.copilot-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.copilot-composer {
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border-strong);
+  box-shadow: var(--oc-hairline-top);
+  display: grid;
+  gap: 10px;
+}
+
+.copilot-composer label {
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.fee-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500 !important;
+  font-size: 12.5px;
+  color: var(--oc-fg-muted);
+}
+
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+
+textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+  resize: vertical;
+}
+
+textarea:focus-visible {
+  border-color: var(--oc-accent);
+  box-shadow: 0 0 0 3px var(--oc-accent-glow);
+}
 </style>

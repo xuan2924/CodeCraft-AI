@@ -4,7 +4,7 @@ import { X } from '@lucide/vue';
 import Button from './Button.vue';
 
 defineOptions({ name: 'UiDialog' });
-defineProps<{ title: string; description: string; busy?: boolean }>();
+defineProps<{ title: string; description: string; busy?: boolean; persistent?: boolean }>();
 const open = defineModel<boolean>('open', { default: false });
 </script>
 
@@ -19,9 +19,15 @@ const open = defineModel<boolean>('open', { default: false });
     >
       <slot name="trigger" />
     </DialogTrigger>
-    <DialogPortal>
-      <DialogOverlay class="ui-dialog-overlay" />
+    <DialogPortal :force-mount="persistent || undefined">
+      <DialogOverlay
+        v-show="open"
+        :force-mount="persistent || undefined"
+        class="ui-dialog-overlay"
+      />
       <DialogContent
+        v-show="open"
+        :force-mount="persistent || undefined"
         class="ui-dialog"
         :aria-busy="busy || undefined"
       >

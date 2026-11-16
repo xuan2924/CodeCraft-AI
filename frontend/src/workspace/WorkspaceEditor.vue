@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import * as api from './api';
 import { buffer, committed, dirty as contentDirty, observe, useLatestBaseline, type Buffer } from './editorBuffer';
@@ -11,7 +11,6 @@ import ClosedDrafts from './ClosedDrafts.vue';
 
 const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean; testBusy?: boolean; testTarget?: 'base' | 'challenge'; answeringClosed?: boolean }>();
 const emit = defineEmits<{ saved: []; select: [path: string]; 'stale-control': []; 'run-test': [revision: string]; 'write-busy': [value: boolean] }>();
-const theme = { borderColor: 'var(--border)' };
 const buffers = reactive(new Map<string, Buffer>());
 const deleted = reactive(new Map<string, string>());
 function dirty(value: Buffer): boolean { return contentDirty(value) || deleted.has(value.path); }
@@ -298,76 +297,106 @@ onScopeDispose(() => {
     :disabled="locked"
     class="editor-panel"
     aria-label="文件编辑"
-    :style="{ '--editor-border': theme.borderColor }"
   >
-    <h2>{{ selected || '选择或创建文件' }}</h2>
+    <div class="editor-header-bar">
+      <div class="editor-file-meta">
+        <h2>{{ selected || '选择或创建文件' }}</h2>
+        <div class="editor-status-row">
+          <p
+            role="status"
+            class="editor-status-chip"
+          >
+            {{ busy ? '正在保存或核对…' : notice }}
+          </p>
+          <p
+            role="status"
+            class="editor-backup-chip"
+          >
+            {{ backup }}
+          </p>
+        </div>
+      </div>
+      <div class="editor-actions">
+        <Button
+          variant="primary"
+          size="small"
+          :disabled="!canWrite || busy || !!unresolved || testBusy || testPrompt"
+          @click="requestTest"
+        >
+          {{ testTarget === 'challenge' ? '运行挑战与基础回归' : '运行基础测试' }}
+        </Button>
+        <Button
+          variant="secondary"
+          size="small"
+          :disabled="!current || !canWrite || busy || !!unresolved"
+          @click="saveCurrent"
+        >
+          保存文件
+        </Button>
+        <Button
+          variant="ghost"
+          size="small"
+          :disabled="!current || busy || !!unresolved"
+          @click="closeFile"
+        >
+          关闭文件
+        </Button>
+        <Button
+          v-if="unresolved"
+          size="small"
+          :disabled="busy"
+          @click="submit(unresolved)"
+        >
+          核对原保存
+        </Button>
+        <Button
+          v-if="current && dirty(current)"
+          variant="danger"
+          size="small"
+          :disabled="busy || !!unresolved"
+          @click="discard(current)"
+        >
+          丢弃当前草稿
+        </Button>
+      </div>
+    </div>
     <p
       v-if="answeringClosed || props.exercise.state !== 'ACTIVE'"
       role="status"
+      class="editor-banner"
     >
       作答已关闭。这里保留本地内容供查看或复制，不会自动保存，也不是最终冻结代码；备份内容可展开查看。
-    </p>
-    <p role="status">
-      {{ busy ? '正在保存或核对…' : notice }}
-    </p>
-    <p role="status">
-      {{ backup }}
     </p>
     <p
       v-if="error"
       role="alert"
+      class="editor-banner editor-banner-error"
     >
       {{ error }}
     </p>
     <div
       v-if="testPrompt"
+      class="editor-prompt-card"
       role="group"
       aria-label="运行前保存确认"
     >
       <p>有未保存修改，测试不会使用这些草稿。保存所有已打开文件后运行，或返回编辑。</p>
-      <NButton
-        :disabled="busy || !!unresolved || testBusy || !canWrite"
-        @click="saveAndTest"
-      >
-        保存后运行
-      </NButton>
-      <NButton @click="testPrompt = false">
-        返回编辑
-      </NButton>
-    </div>
-    <div class="editor-actions">
-      <NButton
-        :disabled="!canWrite || busy || !!unresolved || testBusy || testPrompt"
-        @click="requestTest"
-      >
-        {{ testTarget === 'challenge' ? '运行挑战与基础回归' : '运行基础测试' }}
-      </NButton>
-      <NButton
-        :disabled="!current || !canWrite || busy || !!unresolved"
-        @click="saveCurrent"
-      >
-        保存文件
-      </NButton>
-      <NButton
-        :disabled="!current || busy || !!unresolved"
-        @click="closeFile"
-      >
-        关闭文件
-      </NButton>
-      <NButton
-        v-if="unresolved"
-        :disabled="busy"
-        @click="submit(unresolved)"
-      >
-        核对原保存
-      </NButton>
-      <NButton
-        v-if="current && dirty(current)"
-        :disabled="busy || !!unresolved"
-        @click="discard(current)"
-      >
-        丢弃当前草稿
-      </NButton>
+      <div class="editor-actions">
+        <Button
+          variant="primary"
+          size="small"
+          :disabled="busy || !!unresolved || testBusy || !canWrite"
+          @click="saveAndTest"
+        >
+          保存后运行
+        </Button>
+        <Button
+          size="small"
+          @click="testPrompt = false"
+        >
+          返回编辑
+        </Button>
+      </div>
     </div>
     <div
       v-for="draft in recoverable"
@@ -376,14 +405,15 @@ onScopeDispose(() => {
     >
       <span>可恢复草稿 · {{ new Date(draft.updatedAt).toLocaleString() }} · 页面 {{ draft.id }}</span>
       <details><summary>查看备份内容</summary><pre>{{ draft.content }}</pre></details>
-      <NButton
+      <Button
+        size="small"
         :disabled="editorLocked || busy"
         @click="restore(draft)"
       >
         恢复此草稿
-      </NButton>
+      </Button>
     </div>
-    <details>
+    <details class="local-backups-details">
       <summary>查看本场本地草稿备份（含已删除文件）</summary>
       <ClosedDrafts
         :owner="owner"
@@ -391,22 +421,32 @@ onScopeDispose(() => {
         active
       />
     </details>
-    <NButton
-      v-for="path in deleted.keys()"
-      :key="path"
-      @click="emit('select', path)"
+    <div
+      v-if="deleted.size"
+      class="deleted-drafts-bar"
     >
-      已删除文件的草稿：{{ path }}
-    </NButton>
+      <Button
+        v-for="path in deleted.keys()"
+        :key="path"
+        size="small"
+        @click="emit('select', path)"
+      >
+        已删除文件的草稿：{{ path }}
+      </Button>
+    </div>
     <p
       v-if="current && deleted.has(current.path)"
       role="alert"
+      class="editor-banner editor-banner-error"
     >
       正式文件已在修订 {{ deleted.get(current.path) }} 删除；本地草稿已保留，不能直接覆盖保存。请复制草稿后显式新建文件，或丢弃草稿。
     </p>
     <div :class="{ 'conflict-columns': !!current?.remote }">
       <div>
-        <h3 v-if="current?.remote">
+        <h3
+          v-if="current?.remote"
+          class="conflict-heading"
+        >
           本地草稿（可整理）
         </h3>
         <CodeEditor
@@ -419,45 +459,57 @@ onScopeDispose(() => {
       </div>
       <section
         v-if="current?.remote"
+        class="conflict-remote-card"
         aria-label="当前服务端内容"
       >
-        <h3>当前服务端 · 修订 {{ current.remote.revision }}</h3>
+        <h3 class="conflict-heading">
+          当前服务端 · 修订 {{ current.remote.revision }}
+        </h3>
         <pre>{{ current.remote.content }}</pre>
         <details><summary>查看编辑基线</summary><pre>{{ current.baseContent }}</pre></details>
-        <NButton
+        <Button
+          size="small"
           :disabled="busy || !!unresolved"
           @click="useLatestBaseline(current); scheduleBackup()"
         >
           保留本地内容，采用此基线
-        </NButton>
-        <p>此操作不提交代码；整理后仍需显式保存。服务器再次变化时会再次冲突。</p>
+        </Button>
+        <p class="conflict-note">
+          此操作不提交代码；整理后仍需显式保存。服务器再次变化时会再次冲突。
+        </p>
       </section>
     </div>
     <div class="file-actions">
       <label for="file-destination">新建或重命名的目标路径</label>
-      <input
-        id="file-destination"
-        v-model="newPath"
-        autocomplete="off"
-      >
-      <NButton
-        :disabled="!canWrite || busy || !!unresolved"
-        @click="createFile"
-      >
-        创建文本文件
-      </NButton>
-      <NButton
-        :disabled="!canWrite || !current || dirty(current) || busy || !!unresolved"
-        @click="removeOrRename(true)"
-      >
-        重命名文件
-      </NButton>
-      <NButton
-        :disabled="!canWrite || !current || dirty(current) || busy || !!unresolved"
-        @click="removeOrRename(false)"
-      >
-        删除文件
-      </NButton>
+      <div class="file-actions-row">
+        <input
+          id="file-destination"
+          v-model="newPath"
+          autocomplete="off"
+        >
+        <Button
+          size="small"
+          :disabled="!canWrite || busy || !!unresolved"
+          @click="createFile"
+        >
+          创建文本文件
+        </Button>
+        <Button
+          size="small"
+          :disabled="!canWrite || !current || dirty(current) || busy || !!unresolved"
+          @click="removeOrRename(true)"
+        >
+          重命名文件
+        </Button>
+        <Button
+          variant="danger"
+          size="small"
+          :disabled="!canWrite || !current || dirty(current) || busy || !!unresolved"
+          @click="removeOrRename(false)"
+        >
+          删除文件
+        </Button>
+      </div>
       <p>删除或重命名前，先保存或明确丢弃该文件的草稿。</p>
     </div>
     <div
@@ -468,33 +520,241 @@ onScopeDispose(() => {
       class="leave-dialog"
     >
       <h3>离开前处理未保存内容</h3>
-      <NButton
-        :disabled="busy || !!unresolved || !canWrite"
-        @click="leave('save')"
-      >
-        保存后离开
-      </NButton>
-      <NButton
-        :disabled="busy || !!unresolved"
-        @click="leave('discard')"
-      >
-        丢弃并离开
-      </NButton>
-      <NButton @click="leave('cancel')">
-        取消离开
-      </NButton>
+      <div class="editor-actions">
+        <Button
+          variant="primary"
+          size="small"
+          :disabled="busy || !!unresolved || !canWrite"
+          @click="leave('save')"
+        >
+          保存后离开
+        </Button>
+        <Button
+          variant="danger"
+          size="small"
+          :disabled="busy || !!unresolved"
+          @click="leave('discard')"
+        >
+          丢弃并离开
+        </Button>
+        <Button
+          size="small"
+          @click="leave('cancel')"
+        >
+          取消离开
+        </Button>
+      </div>
     </div>
   </fieldset>
 </template>
 
 <style scoped>
-.editor-panel { min-width: 0; border: 0; margin: 0; padding: 0; }
-.editor-actions, .file-actions, .draft-choice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.file-actions { margin-top: 16px; }
-.file-actions input { width: min(100%, 36rem); padding: 8px; font-family: Consolas, monospace; }
-.file-actions label, .file-actions p { width: 100%; }
-.conflict-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
-.conflict-columns pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 45vh; overflow: auto; }
-.leave-dialog { padding: 20px; border: 2px solid var(--editor-border); }
-@media (max-width: 760px) { .conflict-columns { grid-template-columns: 1fr; } }
+.editor-panel {
+  min-width: 0;
+  min-inline-size: 0;
+  width: 100%;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.editor-header-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px 14px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  box-shadow: var(--oc-hairline-top);
+}
+
+.editor-file-meta {
+  min-width: 0;
+  flex: 1 1 180px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.editor-file-meta h2 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  font-family: var(--oc-font-mono);
+  overflow-wrap: anywhere;
+}
+
+.editor-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.editor-status-chip,
+.editor-backup-chip {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.editor-banner {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  font-size: 12.5px;
+  color: var(--oc-fg-muted);
+}
+
+.editor-banner-error {
+  color: var(--oc-danger);
+  background: var(--oc-danger-bg);
+  border-color: var(--oc-danger-border);
+}
+
+.editor-prompt-card,
+.draft-choice {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border-strong);
+  font-size: 12.5px;
+}
+
+.editor-prompt-card p {
+  margin: 0;
+}
+
+.local-backups-details {
+  font-size: 12.5px;
+  color: var(--oc-fg-muted);
+}
+
+.local-backups-details summary {
+  cursor: pointer;
+}
+
+.deleted-drafts-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.conflict-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.conflict-heading {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.conflict-remote-card {
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.conflict-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.conflict-columns pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 45vh;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12.5px;
+}
+
+.file-actions {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+}
+
+.file-actions label {
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--oc-fg-muted);
+}
+
+.file-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-actions input {
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 7px 10px;
+  font-family: var(--oc-font-mono);
+  font-size: 12.5px;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 7px;
+}
+
+.file-actions p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.leave-dialog {
+  padding: 18px;
+  border-radius: 12px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border-strong);
+  box-shadow: var(--oc-shadow-md);
+  display: grid;
+  gap: 12px;
+}
+
+.leave-dialog h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+@media (max-width: 760px) {
+  .conflict-columns {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

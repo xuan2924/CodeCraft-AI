@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { RouterLink } from 'vue-router';
 import * as api from './api';
 import ModelCheckView from './ModelCheckView.vue';
@@ -46,17 +46,17 @@ const availability = computed(() => {
 });
 </script>
 <template>
-  <section aria-label="演练模型选择">
-    <h3>本次工程练习使用的模型</h3>
-    <p>此选择仅用于个人 Copilot，不影响平台面试官与评测者。配置编辑不自动应用到演练；不自动回退其他模型。</p>
+  <section
+    class="exercise-model-picker"
+    aria-label="演练模型选择"
+  >
     <RouterLink :to="{ name: 'models' }">管理个人模型连接</RouterLink>
     <p role="status">
       {{ availability }}
     </p>
-    <p v-if="selection.data.value?.selected">
-      当前选择：{{ selection.data.value.selected.connectionId }} / {{ selection.data.value.selected.modelConfigurationId }}，
-      配置版本 {{ selection.data.value.selected.connectionConfigurationVersion }} / {{ selection.data.value.selected.modelConfigurationVersion }}
-    </p>
+    <details v-if="selection.data.value?.selected">
+      <summary>已选配置版本详情</summary><p>连接 {{ selection.data.value.selected.connectionId }} / 模型 {{ selection.data.value.selected.modelConfigurationId }}，版本 {{ selection.data.value.selected.connectionConfigurationVersion }} / {{ selection.data.value.selected.modelConfigurationVersion }}</p>
+    </details>
     <p v-if="connections.isPending.value">
       正在读取连接…
     </p>
@@ -86,18 +86,18 @@ const availability = computed(() => {
         {{ item.name }} · {{ item.protocol }}
       </option>
     </select>
-    <NButton
+    <Button
       v-if="connections.data.value?.nextCursor"
       @click="connectionCursor = connections.data.value.nextCursor; connectionId = ''"
     >
       下一页连接
-    </NButton>
-    <NButton
+    </Button>
+    <Button
       v-if="connectionCursor"
       @click="connectionCursor = null; connectionId = ''"
     >
       连接首页
-    </NButton>
+    </Button>
     <p v-if="connectionId && models.isPending.value">
       正在读取模型…
     </p>
@@ -124,18 +124,18 @@ const availability = computed(() => {
         {{ connection?.name }} / {{ item.name }} · {{ item.modelId }}
       </option>
     </select>
-    <NButton
+    <Button
       v-if="models.data.value?.nextCursor"
       @click="modelCursor = models.data.value.nextCursor; modelId = ''"
     >
       下一页模型
-    </NButton>
-    <NButton
+    </Button>
+    <Button
       v-if="modelCursor"
       @click="modelCursor = null; modelId = ''"
     >
       模型首页
-    </NButton>
+    </Button>
     <p
       v-if="selection.isError.value"
       role="alert"
@@ -148,23 +148,23 @@ const availability = computed(() => {
     >
       {{ command.error.value }}
     </p>
-    <NButton
+    <Button
       v-if="command.uncertain.value"
       :disabled="command.pending.value || disabled"
       @click="command.retry"
     >
       核对原模型选择
-    </NButton>
-    <NButton
+    </Button>
+    <Button
       v-else
       :disabled="!model || !connection || !credential || disabled || command.pending.value"
       @click="select"
     >
       显式使用此版本
-    </NButton>
-    <NButton @click="connections.refetch(); models.refetch(); selection.refetch()">
+    </Button>
+    <Button @click="connections.refetch(); models.refetch(); selection.refetch()">
       刷新配置与选择
-    </NButton>
+    </Button>
     <p v-if="!preparing">
       将在下次请求使用；当前请求及工具批次不受选择影响，待审批保留。切换不发起额外检查。
     </p>
@@ -181,3 +181,18 @@ const availability = computed(() => {
     </template>
   </section>
 </template>
+<style scoped>
+.exercise-model-picker { display: grid; gap: 12px; min-width: 0; }
+.exercise-model-picker p { font-size: 13px; line-height: 1.65; color: var(--oc-fg-muted); margin: 0; }
+.exercise-model-picker > label { font-size: 13px; font-weight: 550; margin-top: 6px; }
+.exercise-model-picker select {
+  width: 100%;
+  padding: 9px 12px;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: var(--radius-control);
+}
+.exercise-model-picker details { font-size: 12.5px; overflow-wrap: anywhere; color: var(--oc-fg-muted); }
+summary { cursor: pointer; }
+</style>

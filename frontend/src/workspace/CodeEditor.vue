@@ -70,5 +70,15 @@ onScopeDispose(() => {
 </template>
 
 <style scoped>
-.code-editor { height: 56vh; min-height: 280px; width: 100%; min-width: 0; border: 1px solid var(--editor-border, #d9d9d9); }
+.code-editor {
+  height: 54vh;
+  min-height: 280px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--oc-shadow-xs);
+}
 </style>

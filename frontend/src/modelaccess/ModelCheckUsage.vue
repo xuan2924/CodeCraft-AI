@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { checkUsage } from './usageApi';
 import { errorMessage, identityFailure } from './errors';
 import UsageSummary from './UsageSummary.vue';
@@ -33,11 +33,11 @@ watch(usage.error, error => { if (identityFailure(error)) emit('unauthorized'); 
       v-else-if="usage.data.value"
       :data="usage.data.value"
     />
-    <NButton
+    <Button
       :disabled="usage.isFetching.value"
       @click="usage.refetch()"
     >
       重新读取检查用量
-    </NButton>
+    </Button>
   </section>
 </template>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand, type CommandFailurePolicy } from '../api/useCommand';
 import { message, type Exercise } from './api';
@@ -10,7 +10,6 @@ import CommandOutput from './CommandOutput.vue';
 import { stateLabels } from './commandPresentation';
 const props = defineProps<{ owner: string; exercise: Exercise; credential: string; disabled: boolean; prepare: () => Promise<string | null> }>();
 const emit = defineEmits<{ changed: []; unauthorized: []; locked: [value: boolean] }>();
-const theme = { borderColor: 'var(--border)' };
 const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exercise.exerciseId}/${props.exercise.workspaceInstanceId}`);
 const root = computed(() => ['workspace-commands', props.owner, props.exercise.exerciseId, props.exercise.workspaceInstanceId]);
@@ -104,7 +103,7 @@ function requestStop() {
 <template>
   <section
     class="commands"
-    :style="{ borderColor: theme.borderColor }"
+    :style="{ borderColor: 'var(--border)' }"
     aria-label="联网 Bash"
   >
     <h3>Bash · 联网开发命令</h3>
@@ -126,12 +125,12 @@ function requestStop() {
         :disabled="start.pending.value || start.uncertain.value || preparing"
       /></label>
       <small>{{ commandBytes }} / 4096 字节 · 将在 /project/{{ directory }} 执行</small>
-      <NButton
+      <Button
         type="submit"
         :disabled="!mayStart"
       >
         {{ preparing || start.pending.value ? '正在受理…' : '执行 Bash' }}
-      </NButton>
+      </Button>
     </form>
     <p
       v-if="notice"
@@ -145,13 +144,13 @@ function requestStop() {
     >
       {{ start.error.value }}
     </p>
-    <NButton
+    <Button
       v-if="start.uncertain.value"
       :disabled="start.pending.value"
       @click="start.retry()"
     >
       使用原请求键核对，不重复执行
-    </NButton>
+    </Button>
     <p
       v-if="head.isPending.value"
       role="status"
@@ -162,9 +161,9 @@ function requestStop() {
       v-if="head.isError.value"
       role="alert"
     >
-      {{ message(head.error.value) }} <NButton @click="head.refetch()">
+      {{ message(head.error.value) }} <Button @click="head.refetch()">
         重新读取记录
-      </NButton>
+      </Button>
     </p>
     <p v-if="head.data.value?.commands.length === 0">
       还没有开发命令。
@@ -183,18 +182,18 @@ function requestStop() {
       </select>
     </label>
     <div class="actions">
-      <NButton
+      <Button
         v-if="page?.nextCursor"
         @click="cursor = page.nextCursor"
       >
         更早的记录
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         v-if="cursor"
         @click="cursor = null"
       >
         返回最近记录
-      </NButton>
+      </Button>
     </div>
     <p
       v-if="cursor && older.isPending.value"
@@ -206,9 +205,9 @@ function requestStop() {
       v-if="cursor && older.isError.value"
       role="alert"
     >
-      {{ message(older.error.value) }} <NButton @click="older.refetch()">
+      {{ message(older.error.value) }} <Button @click="older.refetch()">
         重试读取历史
-      </NButton>
+      </Button>
     </p>
     <p
       v-if="selected && detail.isPending.value"
@@ -220,9 +219,9 @@ function requestStop() {
       v-if="detail.isError.value"
       role="alert"
     >
-      {{ message(detail.error.value) }} <NButton @click="detail.refetch()">
+      {{ message(detail.error.value) }} <Button @click="detail.refetch()">
         重新核对记录
-      </NButton>
+      </Button>
     </p>
     <CommandOutput
       v-if="detail.data.value"
@@ -231,26 +230,26 @@ function requestStop() {
       @unauthorized="emit('unauthorized')"
     >
       <template #controls>
-        <NButton
+        <Button
           v-if="!detail.data.value.quiescent"
           :disabled="detail.data.value.stopRequested || stop.pending.value || stop.uncertain.value || (exercise.state === 'ACTIVE' && !credential)"
           @click="requestStop"
         >
           停止实际命令
-        </NButton>
+        </Button>
         <p
           v-if="stop.error.value"
           role="alert"
         >
           {{ stop.error.value }}
         </p>
-        <NButton
+        <Button
           v-if="stop.uncertain.value"
           :disabled="stop.pending.value"
           @click="stop.retry()"
         >
           核对原停止请求
-        </NButton>
+        </Button>
       </template>
     </CommandOutput>
     <small>最多保留最近 20 条可清理的已完成输出，容量不足时可提前精简；未知执行、同步冲突和被拒绝的候选变化不会被普通历史淘汰。刷新只读取原执行身份。</small>
@@ -258,12 +257,37 @@ function requestStop() {
 </template>
 
 <style scoped>
-.commands { display: grid; gap: 8px; min-width: 0; border: 1px solid; border-radius: 6px; padding: 12px; }
-h3, p { margin: 0; }
-form, label { display: grid; gap: 6px; }
-input, textarea, select { box-sizing: border-box; width: 100%; padding: 6px; font: inherit; color: inherit; background: transparent; }
-textarea, .command-preview { font-family: Consolas, 'Cascadia Mono', monospace; }
+.commands {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--oc-border) !important;
+  border-radius: 10px;
+  padding: 16px;
+  background: var(--oc-surface);
+  box-shadow: var(--oc-hairline-top);
+}
+h3 { margin: 0; font-size: 14.5px; font-weight: 600; }
+p { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.55; }
+small { font-size: 12px; color: var(--oc-fg-muted); line-height: 1.5; }
+form, label { display: grid; gap: 6px; font-size: 12.5px; font-weight: 550; }
+input, textarea, select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+  transition: border-color 180ms var(--oc-ease), box-shadow 180ms var(--oc-ease);
+}
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  border-color: var(--oc-accent);
+  box-shadow: 0 0 0 3px var(--oc-accent-glow);
+}
+textarea, .command-preview { font-family: var(--oc-font-mono); font-size: 12.5px; }
 .command-preview { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto; }
-code { overflow-wrap: anywhere; }
-.actions { display: flex; gap: 8px; }
+code { overflow-wrap: anywhere; padding: 2px 5px; border-radius: 4px; background: var(--oc-surface-2); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
 </style>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import * as api from './api';
 import { errorMessage, identityFailure } from './errors';
@@ -96,12 +96,12 @@ function start() {
     <p v-else>
       暂无保留的检查记录。历史记录可能已清理，保存配置不代表供应商兼容性已验证。
     </p>
-    <NButton
+    <Button
       :disabled="result.isFetching.value"
       @click="result.refetch()"
     >
       重新读取结果
-    </NButton>
+    </Button>
     <p class="help">
       最多 3 次真实模型请求，可能收费；失败不自动重试。关闭页面或取消等待不代表供应商未收费。通过结果自原完成时间起 30 分钟内可复用；终态检查记录保留至少 30 天。
     </p>
@@ -125,15 +125,15 @@ function start() {
       启动结果未确认；重试只核对原请求，不创建新的一组。
     </p>
     <div class="actions">
-      <NButton
+      <Button
         v-if="command.uncertain.value"
         :disabled="command.pending.value"
         :loading="command.pending.value"
         @click="command.retry"
       >
         核对原检查请求
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         v-else
         variant="primary"
         :disabled="!fee || active || bothValid || result.isPending.value || result.isError.value || command.pending.value"
@@ -141,16 +141,17 @@ function start() {
         @click="start"
       >
         {{ bothValid ? '两项结果均可复用' : '开始检查' }}
-      </NButton>
+      </Button>
     </div>
   </div>
 </template>
 <style scoped>
-.check-view { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 12px; }
-h4 { font-size: 17px; margin: 0 0 12px; }
-dt { font-weight: 600; margin-top: 12px; }
-dd { margin: 8px 0; line-height: 1.7; overflow-wrap: anywhere; }
-.help { color: var(--muted); font-size: 14px; }
-.actions { margin-top: 16px; }
-input { margin-right: 8px; }
+.check-view { border-top: 1px solid var(--oc-border); margin-top: 16px; padding-top: 16px; display: grid; gap: 10px; }
+h4 { font-size: 15px; font-weight: 600; margin: 0; }
+dl { margin: 0; display: grid; gap: 8px; padding: 12px; border-radius: 10px; background: var(--oc-surface-2); border: 1px solid var(--oc-border); }
+dt { font-weight: 600; font-size: 13px; }
+dd { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.6; overflow-wrap: anywhere; }
+.help { color: var(--oc-fg-muted); font-size: 12.5px; margin: 0; line-height: 1.6; }
+.actions { margin-top: 4px; }
+label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 </style>

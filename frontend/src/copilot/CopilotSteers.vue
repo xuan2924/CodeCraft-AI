@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
 import * as api from './api';
@@ -76,27 +76,27 @@ async function send() {
       方向调整的受理结果未知，只能核对原键与原内容；读取任务状态不等于确认原请求。
     </p>
     <div class="actions">
-      <NButton
+      <Button
         v-if="command.uncertain.value"
         :disabled="command.pending.value"
         @click="command.retry"
       >
         核对原方向调整
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         v-else
         :disabled="!canSend"
         :loading="command.pending.value"
         @click="send"
       >
         发送方向调整
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         :disabled="history.isFetching.value"
         @click="history.refetch()"
       >
         重新读取方向记录
-      </NButton>
+      </Button>
     </div>
     <p
       v-if="history.isPending.value"
@@ -128,25 +128,42 @@ async function send() {
         </li>
       </ol>
       <p>按接收序号倒序查看，每页最多 20 条；生效时按接收顺序纳入。已纳入请求不保证供应商收到或成功回复。</p>
-      <NButton
+      <Button
         v-if="history.data.value.nextCursor"
         @click="before = history.data.value.nextCursor"
       >
         更早的方向调整
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         v-if="before !== '0'"
         @click="before = '0'"
       >
         最近方向调整
-      </NButton>
+      </Button>
     </template>
   </section>
 </template>
 <style scoped>
-.steers { margin: 16px 0; padding: 14px; border: 1px solid var(--line); }
-label, textarea { display: block; margin: 10px 0; }
-textarea { width: 100%; box-sizing: border-box; font: inherit; }
-p, li { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.steers {
+  padding: 14px;
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  display: grid;
+  gap: 8px;
+}
+h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
+label { display: grid; gap: 6px; font-size: 12.5px; font-weight: 550; }
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px 10px;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+}
+p, li { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: 12.5px; color: var(--oc-fg-muted); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 </style>

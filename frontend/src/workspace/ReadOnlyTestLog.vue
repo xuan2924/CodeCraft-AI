@@ -96,6 +96,28 @@ onScopeDispose(() => { disposed = true; globalThis.clearTimeout(timer); resize?.
 </template>
 
 <style scoped>
-.terminal-host { max-width: 100%; overflow: hidden; }
-.test-output { max-height: 24rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+.readonly-log { display: grid; gap: 8px; }
+.readonly-log p { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); }
+.terminal-host {
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--oc-border);
+  padding: 8px;
+  background: #111612;
+}
+details summary { cursor: pointer; font-size: 12.5px; color: var(--oc-fg-muted); }
+.test-output {
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
 </style>

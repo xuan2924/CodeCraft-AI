@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
 import { message, type Exercise, type Mutation } from './api';
@@ -9,7 +9,6 @@ import * as api from './historyApi';
 import WorkspaceFileDiff from './WorkspaceFileDiff.vue';
 const props = defineProps<{ owner: string; exercise: Exercise; credential: string; disabled: boolean; initialChange?: string }>();
 const emit = defineEmits<{ changed: []; unauthorized: []; locked: [value: boolean] }>();
-const theme = { borderColor: 'var(--border)' };
 const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exercise.exerciseId}/${props.exercise.workspaceInstanceId}`);
 const root = computed(() => ['code-history', scope.value]);
@@ -77,7 +76,7 @@ function restore() {
 <template>
   <section
     class="history"
-    :style="{ borderColor: theme.borderColor }"
+    :style="{ borderColor: 'var(--border)' }"
     aria-label="代码修改历史"
   >
     <h3>代码修改历史</h3>
@@ -95,9 +94,9 @@ function restore() {
     >
       {{ message(listing.error.value) }}
     </p>
-    <NButton @click="listing.refetch()">
+    <Button @click="listing.refetch()">
       刷新历史
-    </NButton>
+    </Button>
     <p v-if="listing.data.value?.changes.length === 0">
       尚无代码变化。
     </p>
@@ -114,48 +113,48 @@ function restore() {
       >r{{ item.baseRevision }} → r{{ item.resultRevision }} · {{ item.source }} · {{ item.retained ? '版本可用' : '版本已清理' }}</option>
     </select></label>
     <div class="actions">
-      <NButton
+      <Button
         v-if="listing.data.value?.nextBefore"
         :disabled="busy"
         @click="cursor = listing.data.value.nextBefore; selected = ''"
       >
         更早的修改
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         v-if="cursor"
         :disabled="busy"
         @click="cursor = null; selected = ''"
       >
         返回最近修改
-      </NButton>
+      </Button>
     </div>
     <template v-if="change">
       <p>{{ change.recordedAt }} · 任务 {{ change.taskId ?? '无' }} · 会话 {{ change.conversationId ?? '无' }}</p>
       <div class="actions">
-        <NButton
+        <Button
           :disabled="!change.retained || busy"
           @click="inspect('DIFF')"
         >
           查看修改 Diff
-        </NButton>
-        <NButton
+        </Button>
+        <Button
           :disabled="!change.retained || busy"
           @click="inspect('UNDO')"
         >
           预览撤销此次修改
-        </NButton>
-        <NButton
+        </Button>
+        <Button
           :disabled="!change.retained || busy"
           @click="inspect('ROLLBACK', change.baseRevision)"
         >
           预览回滚到修改前
-        </NButton>
-        <NButton
+        </Button>
+        <Button
           :disabled="!change.retained || busy"
           @click="inspect('ROLLBACK', change.resultRevision)"
         >
           预览回滚到修改后
-        </NButton>
+        </Button>
       </div>
     </template>
     <p
@@ -195,12 +194,12 @@ function restore() {
           type="checkbox"
           :disabled="busy || stale || preview.data.value.conflicts.length > 0"
         >确认按此预览恢复源码，保留本地草稿</label>
-        <NButton
+        <Button
           :disabled="!mayRestore"
           @click="restore"
         >
           确认恢复为新修订
-        </NButton>
+        </Button>
       </template>
     </template>
     <p
@@ -215,13 +214,13 @@ function restore() {
     >
       {{ command.error.value }}
     </p>
-    <NButton
+    <Button
       v-if="command.uncertain.value"
       :disabled="command.pending.value"
       @click="command.retry()"
     >
       核对原恢复请求，不更换意图
-    </NButton>
+    </Button>
     <p
       v-if="unresolved"
       role="status"
@@ -234,19 +233,38 @@ function restore() {
     >
       {{ message(operation.error.value) }}
     </p>
-    <NButton
+    <Button
       v-if="operation.error.value"
       @click="operation.refetch()"
     >
       重新核对回执
-    </NButton>
+    </Button>
   </section>
 </template>
 
 <style scoped>
-.history { display: grid; gap: 8px; min-width: 0; border: 1px solid; border-radius: 6px; padding: 12px; }
-h3, p { margin: 0; overflow-wrap: anywhere; }
-label { display: grid; gap: 6px; }
-select { box-sizing: border-box; width: 100%; padding: 6px; font: inherit; color: inherit; background: transparent; }
+.history {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--oc-border) !important;
+  border-radius: 10px;
+  padding: 16px;
+  background: var(--oc-surface);
+  box-shadow: var(--oc-hairline-top);
+}
+h3 { margin: 0; font-size: 14.5px; font-weight: 600; }
+p { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.55; overflow-wrap: anywhere; }
+label { display: grid; gap: 6px; font-size: 12.5px; font-weight: 550; }
+select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+}
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 </style>

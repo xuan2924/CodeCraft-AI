@@ -39,8 +39,17 @@ const file = computed(() => props.files.find(value => value.path === chosenFile.
 </template>
 
 <style scoped>
-.file-diff { display: grid; gap: 8px; min-width: 0; }
-p { margin: 0; }
-label { display: grid; gap: 6px; }
-select { box-sizing: border-box; width: 100%; padding: 6px; font: inherit; color: inherit; background: transparent; }
+.file-diff { display: grid; gap: 10px; min-width: 0; }
+p { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); }
+label { display: grid; gap: 6px; font-size: 12.5px; font-weight: 550; }
+select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+}
 </style>

@@ -51,19 +51,23 @@ onScopeDispose(() => { epoch++; controller?.abort(); globalThis.clearTimeout(exp
   >
     <label for="login-captcha">图片验证码</label>
     <div class="captcha-image">
-      <img
-        v-if="challenge"
-        :src="challenge.image"
-        alt="登录验证码图片，请输入图中字符"
-        width="160"
-        height="56"
-      >
-      <span
-        v-else
-        role="status"
-      >{{ pending ? '正在生成图片…' : '请刷新验证码' }}</span>
+      <div class="captcha-frame">
+        <img
+          v-if="challenge"
+          :src="challenge.image"
+          alt="登录验证码图片，请输入图中字符"
+          width="160"
+          height="56"
+        >
+        <span
+          v-else
+          role="status"
+          class="captcha-placeholder"
+        >{{ pending ? '正在生成图片…' : '请刷新验证码' }}</span>
+      </div>
       <Button
         variant="secondary"
+        size="small"
         :disabled="disabled || pending"
         @click="refresh"
       >
@@ -75,6 +79,7 @@ onScopeDispose(() => { epoch++; controller?.abort(); globalThis.clearTimeout(exp
       v-model="answer"
       autocomplete="off"
       maxlength="5"
+      placeholder="输入图中 5 位字符"
       :disabled="disabled || !challenge"
       aria-describedby="captcha-help"
       @input="emit('change', challenge?.id ?? '', answer)"
@@ -83,6 +88,7 @@ onScopeDispose(() => { epoch++; controller?.abort(); globalThis.clearTimeout(exp
     <p
       v-if="error"
       role="alert"
+      class="captcha-error"
     >
       {{ error }}
     </p>
@@ -90,9 +96,79 @@ onScopeDispose(() => { epoch++; controller?.abort(); globalThis.clearTimeout(exp
 </template>
 
 <style scoped>
-.captcha-field { display: grid; gap: 8px; min-width: 0; }
-.captcha-image { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.captcha-image img { border-radius: var(--radius-control); }
-input { width: 100%; padding: 10px 12px; border: 1px solid var(--control-border); border-radius: 6px; background: var(--background); color: var(--foreground); }
-small { color: var(--muted-foreground); }
+.captcha-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.captcha-field label {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--oc-fg);
+}
+
+.captcha-image {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.captcha-frame {
+  display: grid;
+  place-items: center;
+  min-width: 160px;
+  min-height: 56px;
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid var(--oc-border-strong);
+  background: var(--oc-bg-input);
+  overflow: hidden;
+}
+
+.captcha-frame img {
+  display: block;
+  border-radius: 6px;
+}
+
+.captcha-placeholder {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+  padding: 0 12px;
+}
+
+input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--oc-border-input);
+  border-radius: var(--radius-control);
+  background: var(--oc-bg-input);
+  color: var(--oc-fg);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition:
+    border-color 180ms var(--oc-ease),
+    box-shadow 180ms var(--oc-ease);
+}
+
+input:hover:not(:disabled) {
+  border-color: #7c8492;
+}
+
+input:focus-visible {
+  border-color: var(--oc-accent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 3px var(--oc-accent-glow);
+}
+
+small {
+  color: var(--oc-fg-muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.captcha-error {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--oc-danger);
+}
 </style>

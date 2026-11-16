@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import * as api from './api';
 import { useModelCommand } from './useModelCommand';
 const props = defineProps<{ owner: string; connection: api.Connection; model: api.Model | null }>();
@@ -125,15 +125,15 @@ function save() {
       结果未确认；重试使用原参数和原幂等键。关闭不代表操作未执行。
     </p>
     <div class="actions">
-      <NButton
+      <Button
         v-if="command.uncertain.value"
         :disabled="command.pending.value"
         :loading="command.pending.value"
         @click="command.retry"
       >
         用原请求重试
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         v-else
         type="submit"
         variant="primary"
@@ -141,20 +141,43 @@ function save() {
         :loading="command.pending.value"
       >
         保存模型
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         :disabled="command.pending.value"
         @click="emit('cancel')"
       >
         关闭表单
-      </NButton>
+      </Button>
     </div>
   </form>
 </template>
 <style scoped>
-fieldset { display: grid; gap: 10px; border: 1px solid var(--line); padding: 20px; min-width: 0; }
-legend { padding: 0 8px; font-size: 18px; font-weight: 600; }
-input, select { width: 100%; min-width: 0; padding: 10px; font: inherit; color: inherit; background: var(--background); border: 1px solid var(--control-border); border-radius: 4px; }
-.help { color: var(--muted); font-size: 14px; }
-.actions { display: flex; flex-wrap: wrap; gap: 12px; }
+form { display: grid; gap: 12px; }
+fieldset {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--oc-border);
+  border-radius: 12px;
+  background: var(--oc-bg-subtle);
+  padding: 20px;
+  min-width: 0;
+}
+legend { padding: 0 8px; font-size: 16px; font-weight: 600; }
+label { font-size: 13px; font-weight: 550; }
+input, select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: var(--radius-control);
+}
+input:focus-visible, select:focus-visible {
+  border-color: var(--oc-accent);
+  box-shadow: 0 0 0 3px var(--oc-accent-glow);
+}
+.help { color: var(--oc-fg-muted); font-size: 12.5px; margin: 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
 </style>

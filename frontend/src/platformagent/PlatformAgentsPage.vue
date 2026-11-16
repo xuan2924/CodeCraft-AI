@@ -329,13 +329,150 @@ function stateLabel(state: string) { return ({ DRAFT: '草稿', PUBLISHED: '已�
   </main>
 </template>
 <style scoped>
-.platform-page { padding: 24px; max-width: 1400px; margin: auto; } header { margin-bottom: 24px; } h1 { font-size: 30px; } .eyebrow { font-size: 12px; color: var(--accent); letter-spacing: .1em; }
-p, small { line-height: 1.7; color: var(--muted); } .role-pointers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
-.role-pointers article, .version-detail { min-width: 0; padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); overflow-wrap: anywhere; }
-.role-pointers article { display: flex; flex-direction: column; gap: 8px; } .role-pointers article button { margin-top: auto; }
-.version-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; } .version-list button { white-space: normal; overflow-wrap: anywhere; max-width: 100%; text-align: left; }
-.platform-columns { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 24px; align-items: start; }.version-id { font-family: monospace; }
-.version-detail section { border-top: 1px solid var(--border); margin-top: 24px; padding-top: 16px; } .version-detail button { margin: 6px 6px 6px 0; } summary { cursor: pointer; margin: 16px 0; } pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; }
-@media (max-width: 1050px) { .platform-columns { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 600px) { .platform-page { padding: 16px; } .role-pointers { grid-template-columns: minmax(0, 1fr); } }
+.platform-page {
+  padding: 36px 32px 64px;
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+header {
+  margin-bottom: 28px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: clamp(26px, 3vw, 34px);
+  font-weight: 650;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--oc-accent);
+  letter-spacing: 0.1em;
+}
+
+p,
+small {
+  line-height: 1.65;
+  color: var(--oc-fg-muted);
+  font-size: 13.5px;
+}
+
+.role-pointers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.role-pointers article,
+.version-detail {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-panel);
+  background: var(--oc-surface);
+  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+  overflow-wrap: anywhere;
+}
+
+.role-pointers article {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.role-pointers h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.role-pointers p {
+  margin: 0;
+  font-family: var(--oc-font-mono);
+  font-size: 13px;
+  color: var(--oc-fg);
+}
+
+.role-pointers article button {
+  margin-top: auto;
+  width: fit-content;
+}
+
+.version-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 24px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+}
+
+.version-list button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  text-align: left;
+}
+
+.platform-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.version-id {
+  font-family: var(--oc-font-mono);
+  font-size: 12.5px;
+}
+
+.version-detail section {
+  border-top: 1px solid var(--oc-border);
+  margin-top: 20px;
+  padding-top: 16px;
+}
+
+.version-detail button {
+  margin: 6px 6px 6px 0;
+}
+
+summary {
+  cursor: pointer;
+  margin: 14px 0;
+  font-size: 13px;
+  color: var(--oc-fg-muted);
+}
+
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 400px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12.5px;
+}
+
+@media (max-width: 1050px) {
+  .platform-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .platform-page {
+    padding: 20px 16px 40px;
+  }
+  .role-pointers {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 </style>

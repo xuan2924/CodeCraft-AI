@@ -45,9 +45,12 @@ function unknownCosts(calls: string, priced: string) { return (BigInt(calls) - B
 </template>
 
 <style scoped>
-h4 { margin-block: 12px 8px; }
-dl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 12px; }
-dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-p { line-height: 1.6; overflow-wrap: anywhere; }
-.help { color: var(--muted); font-size: 14px; }
+.usage-summary { display: grid; gap: 10px; }
+section { padding: 10px 12px; border-radius: 8px; background: var(--oc-surface); border: 1px solid var(--oc-border); display: grid; gap: 8px; }
+h4 { margin: 0; font-size: 13px; font-weight: 600; }
+dl { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 12px; font-size: 12px; }
+dt { color: var(--oc-fg-muted); }
+dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; font-weight: 550; }
+p { margin: 0; line-height: 1.55; overflow-wrap: anywhere; font-size: 12px; color: var(--oc-fg-muted); }
+.help { color: var(--oc-fg-muted); font-size: 12px; }
 </style>

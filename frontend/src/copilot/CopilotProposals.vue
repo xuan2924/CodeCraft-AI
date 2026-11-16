@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
 import * as api from './api';
@@ -86,23 +86,23 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
         v-for="item in list.data.value?.items"
         :key="item.id"
       >
-        <NButton
+        <Button
           :disabled="command.pending.value || command.uncertain.value"
           @click="selected = item.id"
         >
           {{ label(item) }} · 基线 {{ item.baseRevision }} · {{ item.fileCount }} 个文件
-        </NButton>
+        </Button>
       </li>
     </ul>
-    <NButton @click="before = '0'; list.refetch()">
+    <Button @click="before = '0'; list.refetch()">
       最近提案
-    </NButton>
-    <NButton
+    </Button>
+    <Button
       v-if="list.data.value?.nextCursor"
       @click="before = list.data.value.nextCursor"
     >
       更早的提案
-    </NButton>
+    </Button>
     <p
       v-if="selected && detail.isPending.value"
       role="status"
@@ -165,12 +165,12 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
           type="checkbox"
           :disabled="!ready"
         >我已核对整批 Diff，同意保留草稿并应用此提案；完成后原任务将继续，可能产生模型费用。</label>
-        <NButton
+        <Button
           :disabled="!ready || !consent"
           @click="decide('APPROVE')"
         >
           批准整批修改
-        </NButton>
+        </Button>
         <label :for="`proposal-reason-${proposal.id}`">拒绝理由（可选）</label>
         <textarea
           :id="`proposal-reason-${proposal.id}`"
@@ -178,12 +178,12 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
           :disabled="!ready"
           rows="2"
         />
-        <NButton
+        <Button
           :disabled="!ready"
           @click="decide('REJECT')"
         >
           拒绝整批并继续任务
-        </NButton>
+        </Button>
       </template>
     </template>
     <p
@@ -195,21 +195,50 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
     <p v-if="command.uncertain.value">
       审批结果未知；仅核对原请求，不换键、不修改内容。
     </p>
-    <NButton
+    <Button
       v-if="command.uncertain.value"
       :disabled="command.pending.value || disabled || !credential"
       @click="command.retry"
     >
       核对原审批请求
-    </NButton>
-    <NButton @click="list.refetch(); selected && status.refetch(); detail.isError.value && detail.refetch()">
+    </Button>
+    <Button @click="list.refetch(); selected && status.refetch(); detail.isError.value && detail.refetch()">
       重新读取提案
-    </NButton>
+    </Button>
   </section>
 </template>
 <style scoped>
-.proposals { border: 1px solid var(--line); padding: 16px; margin: 16px 0; }
-label, textarea, select { display: block; margin: 12px 0; }
-textarea, select { max-width: 100%; box-sizing: border-box; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; }
+.proposals {
+  border: 1px solid var(--oc-border-strong);
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+h3, h4, h5 { margin: 0; font-size: 13.5px; font-weight: 600; }
+p { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.55; }
+ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+label { display: grid; gap: 6px; font-size: 12.5px; }
+textarea, select {
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 420px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+}
 </style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onScopeDispose, ref } from 'vue';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { listAccountDrafts, type Draft } from './drafts';
 
 const props = defineProps<{ owner: string; exerciseId: string; active?: boolean }>();
@@ -41,12 +41,12 @@ onScopeDispose(() => { disposed = true; });
     <p v-else-if="!drafts.length">
       没有找到本场本地备份。
     </p>
-    <NButton
+    <Button
       :disabled="loading"
       @click="refresh"
     >
       刷新本地备份
-    </NButton>
+    </Button>
     <details
       v-for="draft in drafts"
       :key="draft.path + ':' + draft.id"
@@ -58,5 +58,26 @@ onScopeDispose(() => { disposed = true; });
 </template>
 
 <style scoped>
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 45vh; overflow: auto; }
+section {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+}
+h2 { margin: 0; font-size: 14px; font-weight: 600; }
+p { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.55; }
+summary { cursor: pointer; font-size: 12.5px; color: var(--oc-fg-muted); }
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 45vh;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12.5px;
+}
 </style>

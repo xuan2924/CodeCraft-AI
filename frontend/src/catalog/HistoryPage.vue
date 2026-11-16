@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { useIntervalFn, useTimestamp } from '@vueuse/core';
 import { useQuery } from '@tanstack/vue-query';
 import { RouterLink, useRouter } from 'vue-router';
+import { ArrowLeft } from '@lucide/vue';
 import { session } from '../auth/api';
 import StatePanel from '../components/ui/StatePanel.vue';
 import WorkspaceRetention from '../workspace/WorkspaceRetention.vue';
@@ -24,7 +25,25 @@ async function deleted(id: string, user: string) {
 </script>
 <template>
   <main class="history-page">
-    <header><p>CODECRAFT / HISTORY</p><h1>历史演练</h1><p>查看已结束的练习、冻结结果及真实保留状态。</p><RouterLink :to="{ name: routes.catalog.name }">返回题库</RouterLink></header>
+    <header class="history-hero">
+      <div>
+        <p class="eyebrow">
+          CODECRAFT / HISTORY &amp; RETENTION
+        </p>
+        <h1>历史演练</h1>
+        <p>查看已结束的练习、冻结结果及真实保留状态。</p>
+      </div>
+      <RouterLink
+        class="ui-button ui-button-secondary"
+        :to="{ name: routes.catalog.name }"
+      >
+        <ArrowLeft
+          :size="15"
+          aria-hidden="true"
+        />
+        <span>前往题库</span>
+      </RouterLink>
+    </header>
     <StatePanel
       v-if="account.isPending.value || !account.isFetchedAfterMount.value"
       kind="loading"
@@ -47,13 +66,68 @@ async function deleted(id: string, user: string) {
     <p
       v-if="error"
       role="alert"
+      class="history-error"
     >
       {{ error }}
     </p>
   </main>
 </template>
 <style scoped>
-.history-page { max-width: 1320px; margin: auto; padding: 24px; min-width: 0; }
-header { margin-bottom: 32px; } header p { color: var(--muted); } h1 { font-size: 32px; }
-@media (max-width: 600px) { .history-page { padding: 16px; } }
+.history-page {
+  max-width: 1220px;
+  margin: 0 auto;
+  padding: 36px 32px 64px;
+  min-width: 0;
+}
+
+.history-hero {
+  margin-bottom: 28px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--oc-accent);
+}
+
+.history-hero h1 {
+  margin: 0 0 8px;
+  font-size: clamp(28px, 3vw, 34px);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.history-hero p:not(.eyebrow) {
+  margin: 0;
+  color: var(--oc-fg-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.history-hero a {
+  text-decoration: none;
+}
+
+.history-error {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--oc-danger-bg);
+  border: 1px solid var(--oc-danger-border);
+  color: var(--oc-danger);
+  font-size: 13.5px;
+}
+
+@media (max-width: 600px) {
+  .history-page {
+    padding: 20px 16px 40px;
+  }
+}
 </style>

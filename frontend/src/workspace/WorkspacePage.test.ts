@@ -13,6 +13,9 @@ vi.mock('./WorkspaceEditor.vue', () => ({ __esModule: true, default: { props: ['
 
 const ok = (data: unknown) => new Response(JSON.stringify({ code: 'OK', data }), { status: 200 });
 const rejected = (status: number) => new Response(JSON.stringify({ code: 'RESOURCE_NOT_FOUND', data: null }), { status });
+const failedPreparation = () => ok({ exerciseId: 'e1', problemVersionId: 'v1', workspaceInstanceId: 'ws1', state: 'PREPARATION_FAILED',
+  revision: null, paths: [], deadlineAt: null, preparationFailureReason: 'PREPARATION_CANCELLED', cleanupState: null });
+const retryPreparation = (view: VueWrapper) => view.findAll('button').find((button) => button.text() === '使用新实例重试准备')!;
 let page: VueWrapper | undefined;
 let client: QueryClient | undefined;
 afterEach(() => { page?.unmount(); client?.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); endPreparation.mockReset(); vi.mocked(drafts.listAccountDrafts).mockReset().mockResolvedValue([]); vi.mocked(drafts.confirmExerciseDeletion).mockClear(); });
@@ -30,6 +33,7 @@ async function render(fetcher: typeof fetch, initial = '/') {
     { path: '/account', name: 'account', component: { template: '<div />' } },
     { path: '/models', name: 'models', component: { template: '<div />' } },
     { path: '/report', name: 'report', component: { template: '<div />' } },
+    { path: '/catalog', name: 'catalog', component: { template: '<div />' } },
   ] });
   await router.push(initial);
   page = mount(WorkspacePage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
@@ -64,8 +68,8 @@ it('retains the original mutation key after a lost response and aborts requests 
     if (path === '/api/auth/session') return ok({ id: 'owner', username: 'invited', role: 'USER', passwordChangeRequired: false, expiresAt: '2026-12-01T00:00:00Z' });
     if (path === '/api/auth/csrf') return ok({ token: 'fixture' });
     if (path === '/api/problems') return ok([{ problemVersionId: 'v1', title: '购物车总价', version: '1.0.0', requirements: '计算总价', durationSeconds: 2700, editableRoots: [], acceptanceFiles: {} }]);
-    if (path === '/api/exercises/current') return rejected(404);
-    if (path === '/api/exercises') {
+    if (path === '/api/exercises/current' || path === '/api/exercises/e1') return failedPreparation();
+    if (path === '/api/exercises/e1/preparation-retry') {
       keys.push(new Headers(options?.headers).get('Idempotency-Key') ?? '');
       bodies.push(String(options?.body));
       mutationSignal = options?.signal;
@@ -75,10 +79,10 @@ it('retains the original mutation key after a lost response and aborts requests 
     throw new Error('Unexpected request');
   });
   const view = await render(fetcher);
-  await view.get('[data-testid="create-workspace"]').trigger('click');
+  await retryPreparation(view).trigger('click');
   await flushPromises();
   expect(view.get('[role="alert"]').text()).toContain('无法确认结果');
-  expect(view.get('[data-testid="create-workspace"]').attributes('disabled')).toBeDefined();
+  expect(retryPreparation(view).attributes('disabled')).toBeDefined();
   const retry = view.findAll('button').find((button) => button.text() === '核对并重试原操作');
   expect(retry).toBeDefined();
   await retry?.trigger('click');
@@ -101,14 +105,14 @@ it('discards an old account mutation and ignores its late 401 after an account s
     if (path === '/api/auth/session') return ok(identityA);
     if (path === '/api/auth/csrf') return ok({ token: 'fixture' });
     if (path === '/api/problems') return ok([{ problemVersionId: 'v1', title: '购物车总价', version: '1.0.0', requirements: '计算总价', durationSeconds: 2700, editableRoots: [], acceptanceFiles: {} }]);
-    if (path === '/api/exercises/current') return rejected(404);
-    if (path === '/api/exercises') {
+    if (path === '/api/exercises/current' || path === '/api/exercises/e1') return failedPreparation();
+    if (path === '/api/exercises/e1/preparation-retry') {
       oldSignal = options?.signal;
       return new Promise<Response>((resolve) => { finish = resolve; });
     }
     throw new Error('Unexpected request');
   }));
-  await view.get('[data-testid="create-workspace"]').trigger('click');
+  await retryPreparation(view).trigger('click');
   await flushPromises();
   client?.setQueryData(['identity-session'], identityB);
   await flushPromises();
@@ -120,34 +124,16 @@ it('discards an old account mutation and ignores its late 401 after an account s
   expect(view.find('[role="alert"]').exists()).toBe(false);
 });
 
-it('does not clear a new account action when an old navigation finishes', async () => {
-  const identity = { id: 'owner-a', username: 'alice', role: 'USER', passwordChangeRequired: false, expiresAt: '2030-01-01T00:00:00Z' };
-  let creates = 0;
-  const view = await render(vi.fn<typeof fetch>(async (input) => {
-    const path = String(input);
-    if (path === '/api/auth/session') return ok(identity);
-    if (path === '/api/auth/csrf') return ok({ token: 'fixture' });
-    if (path === '/api/problems') return ok([{ problemVersionId: 'v1', title: '题目', version: '1', requirements: '', durationSeconds: 60, editableRoots: [], acceptanceFiles: {} }]);
-    if (path === '/api/exercises') {
-      if (++creates === 1) return ok({ exerciseId: 'old-created', state: 'PENDING' });
-      throw new TypeError('lost response for new account');
-    }
+it('directs users without an active exercise to the catalogue without creating one implicitly', async () => {
+  const fetcher = vi.fn<typeof fetch>(async (input) => {
+    if (String(input) === '/api/auth/session') return ok({ id: 'owner', username: 'invited', role: 'USER', passwordChangeRequired: false, expiresAt: '2030-01-01T00:00:00Z' });
+    if (String(input) === '/api/problems') return ok([]);
     return rejected(404);
-  }));
-  let finishNavigation!: () => void;
-  const navigation = vi.spyOn(view.vm.$router, 'replace').mockImplementationOnce(() => new Promise((resolve) => { finishNavigation = () => resolve(undefined); }));
-  try {
-    await view.get('[data-testid="create-workspace"]').trigger('click');
-    await flushPromises();
-    client?.setQueryData(['identity-session'], { ...identity, id: 'owner-b', username: 'bob' });
-    await flushPromises();
-    await view.get('[data-testid="create-workspace"]').trigger('click');
-    await flushPromises();
-    expect(view.text()).toContain('核对并重试原操作');
-    finishNavigation();
-    await flushPromises();
-    expect(view.text()).toContain('核对并重试原操作');
-  } finally { navigation.mockRestore(); }
+  });
+  const view = await render(fetcher);
+  expect(view.find('a[href="/catalog"]').exists()).toBe(true);
+  expect(view.find('[data-testid="create-workspace"]').exists()).toBe(false);
+  expect(fetcher.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
 });
 
 it('does not show private data when authentication cannot be confirmed', async () => {
@@ -159,35 +145,21 @@ it('does not show private data when authentication cannot be confirmed', async (
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
-it('selects a published version and displays only confirmed workspace files', async () => {
-  let created = false;
+it('opens the selected exercise and displays only confirmed workspace files', async () => {
   const fetcher = vi.fn<typeof fetch>(async (input, options) => {
     const path = String(input);
     if (path === '/api/auth/session') return ok({ id: 'owner', username: 'invited', role: 'USER', passwordChangeRequired: false, expiresAt: '2026-12-01T00:00:00Z' });
     if (path === '/api/auth/csrf') return ok({ token: 'fixture' });
     if (path === '/api/problems') return ok([{ problemVersionId: 'v1', title: '购物车总价', version: '1.0.0', requirements: '按整数分计算总价', durationSeconds: 2700,
       editableRoots: ['src/main/java', 'src/test/java'], acceptanceFiles: { 'CartTotalTest.java': 'public class CartTotalTest {}' } }]);
-    if (path === '/api/exercises' && options?.method === 'POST') {
-      expect(JSON.parse(String(options.body))).toEqual({ problemVersionId: 'v1' });
-      expect(new Headers(options.headers).get('Idempotency-Key')).toBeTruthy();
-      created = true;
-      return ok({ operationId: 'op1', exerciseId: 'ex1', state: 'PENDING', queryUrl: '/api/operations/op1' });
-    }
-    if (path === '/api/exercises/current' || path === '/api/exercises/ex1') return created ? ok({ exerciseId: 'ex1', problemVersionId: 'v1', workspaceInstanceId: 'ws1',
+    if (options?.method === 'POST') throw new Error('Opening an exercise must not mutate it');
+    if (path === '/api/exercises/ex1') return ok({ exerciseId: 'ex1', problemVersionId: 'v1', workspaceInstanceId: 'ws1',
       preparationOperationId: 'op1', state: 'READY', revision: '0', stateVersion: '2', paths: ['src/main/java/interview/CartTotal.java'], startedAt: null, deadlineAt: null,
-      reportAvailability: 'UNAVAILABLE_NOT_IMPLEMENTED', preparationFailureReason: null, cleanupState: null }) : rejected(404);
+      preparationFailureReason: null, cleanupState: null });
     if (path.includes('/files?')) return ok({ workspaceInstanceId: 'ws1', revision: '0', path: 'src/main/java/interview/CartTotal.java', content: 'public class CartTotal {}' });
     throw new Error('Unexpected request: ' + path);
   });
-  vi.stubGlobal('fetch', fetcher);
-  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workspace', component: WorkspacePage }, { path: '/account', name: 'account', component: { template: '<div />' } }, { path: '/models', name: 'models', component: { template: '<div />' } }] });
-  await router.push('/');
-  page = mount(WorkspacePage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
-  await flushPromises();
-  expect(page.text()).toContain('面试官和评测者使用本场绑定的平台版本');
-  await page.get('[data-testid="create-workspace"]').trigger('click');
-  await flushPromises();
+  page = await render(fetcher, '/?exercise=ex1');
   expect(page.text()).toContain('已准备，仅可浏览');
   await page.get('[data-testid="workspace-file"]').trigger('click');
   await flushPromises();
@@ -316,7 +288,7 @@ it('reopens an ended result and its draft backups even when another exercise is 
   expect(view.text()).toContain('已结束 · 修订 7');
   expect(view.get('[aria-label="结束后的本地草稿"]').text()).toContain('backed up before expiry');
   expect(fetcher.mock.calls.some(([path]) => String(path) === '/api/exercises/current')).toBe(false);
-  await view.get('[data-testid="create-workspace"]').trigger('click');
+  await view.vm.$router.push('/?exercise=new');
   await flushPromises();
   expect(view.text()).toContain('正在准备，结果未确认');
   expect(view.find('[aria-label="结束后的本地草稿"]').exists()).toBe(false);

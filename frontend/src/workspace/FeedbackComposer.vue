@@ -116,5 +116,51 @@ function submit() {
   </section>
 </template>
 <style scoped>
-.feedback-composer { margin-top:24px; border-top:1px solid var(--border); padding-top:16px; } p { line-height:1.65; } textarea { display:block; width:100%; box-sizing:border-box; font:inherit; color:var(--foreground); background:var(--surface); border:1px solid var(--border); padding:12px; margin:8px 0 16px; } .choice { display:flex; gap:8px; align-items:flex-start; margin:12px 0; overflow-wrap:anywhere; } pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:400px; overflow:auto; padding:16px; background:var(--surface); font-size:13px; } fieldset { border:1px solid var(--border); margin:16px 0; }
+.feedback-composer {
+  margin-top: 16px;
+  border-top: 1px solid var(--oc-border);
+  padding-top: 16px;
+  display: grid;
+  gap: 10px;
+}
+h3, h4 { margin: 0; font-size: 14px; font-weight: 600; }
+p { margin: 0; line-height: 1.6; font-size: 13px; color: var(--oc-fg-muted); }
+label { display: grid; gap: 6px; font-size: 13px; font-weight: 550; }
+textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.choice {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 6px 0;
+  font-weight: 450;
+  overflow-wrap: anywhere;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 400px;
+  overflow: auto;
+  padding: 14px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12.5px;
+}
+fieldset {
+  border: 1px solid var(--oc-border);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 4px 0;
+}
+legend { font-size: 12.5px; color: var(--oc-fg-muted); padding: 0 6px; }
 </style>

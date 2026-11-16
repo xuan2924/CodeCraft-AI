@@ -64,8 +64,41 @@ watch(rows.error, error => { if (commandPolicy.identityFailure(error)) emit('una
   </section>
 </template>
 <style scoped>
-.delegations { border-inline-start: 3px solid #687a8c; padding-inline-start: 1rem; margin-block: 1rem; }
-small { display: block; overflow-wrap: anywhere; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 20rem; overflow: auto; }
-button { text-align: start; overflow-wrap: anywhere; }
+.delegations {
+  border-inline-start: 3px solid var(--oc-accent);
+  padding: 12px 14px;
+  border-radius: 0 10px 10px 0;
+  background: var(--oc-surface-2);
+  display: grid;
+  gap: 8px;
+}
+h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
+p { margin: 0; font-size: 12px; color: var(--oc-fg-muted); line-height: 1.55; }
+small { display: block; overflow-wrap: anywhere; font-size: 11.5px; color: var(--oc-fg-muted); }
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 20rem;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+}
+button {
+  text-align: start;
+  overflow-wrap: anywhere;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--oc-border-strong);
+  background: var(--oc-surface);
+  color: var(--oc-fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+button[aria-pressed="true"] {
+  background: var(--oc-selected);
+  border-color: var(--oc-border-accent);
+}
 </style>

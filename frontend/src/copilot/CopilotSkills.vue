@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { listSkills, skillError } from '../skills/api';
 import { snapshotPackage, taskSkills } from './skillApi';
 import { commandPolicy } from './errors';
@@ -57,12 +57,12 @@ function select(id: string, event: globalThis.Event) {
         {{ item.name }} — {{ item.description }}
       </label>
     </fieldset>
-    <NButton
+    <Button
       :disabled="originals.isFetching.value || disabled"
       @click="originals.refetch()"
     >
       重新读取可选 Skill
-    </NButton>
+    </Button>
     <template v-if="taskId">
       <h4>当前任务固定版本</h4>
       <p
@@ -87,9 +87,9 @@ function select(id: string, event: globalThis.Event) {
         >
           <p>{{ item.name }}：{{ item.explicitLoaded ? 'SKILL.md 已显式加载' : item.explicitlySelected ? '已显式选择，等待派发加载' : '未显式加载，可能按需读取' }}</p>
           <p>不可变版本 {{ item.versionId }}</p>
-          <NButton @click="viewing = item.skillId">
+          <Button @click="viewing = item.skillId">
             查看 {{ item.name }} 留存原文
-          </NButton>
+          </Button>
         </li>
       </ul>
       <p>模型按需加载的路径、版本、切片与内容见对话中的 load_skill 工具结果。查看留存原文仅供本人核对，不触发模型请求或加载记录。</p>
@@ -97,9 +97,9 @@ function select(id: string, event: globalThis.Event) {
         v-if="viewing"
         aria-label="私有 Skill 留存原文"
       >
-        <NButton @click="viewing = null">
+        <Button @click="viewing = null">
           关闭原文
-        </NButton>
+        </Button>
         <p
           v-if="contents.isPending.value"
           role="status"
@@ -125,7 +125,28 @@ function select(id: string, event: globalThis.Event) {
   </section>
 </template>
 <style scoped>
-label { display: block; margin: 8px 0; }
-fieldset { margin-bottom: 12px; min-width: 0; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 32rem; overflow: auto; }
+section { display: grid; gap: 8px; }
+h3, h4 { margin: 0; font-size: 13px; font-weight: 600; }
+p { margin: 0; font-size: 12px; color: var(--oc-fg-muted); line-height: 1.55; }
+label { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; font-size: 12.5px; }
+fieldset {
+  margin: 0;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-surface);
+}
+legend { font-size: 12px; color: var(--oc-fg-muted); padding: 0 6px; }
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 32rem;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+}
 </style>

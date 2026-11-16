@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query';
-import { RouterLink } from 'vue-router';
-import { routes } from '../routes';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { fetchStatus } from './api';
 
 const { data, isFetching, isError, refetch } = useQuery({
@@ -16,21 +14,30 @@ const { data, isFetching, isError, refetch } = useQuery({
 </script>
 
 <template>
-  <main
-    class="status-page"
-  >
+  <main class="status-page">
     <header>
-      <p class="project-name">
-        CodeCraft / 工程底座
+      <p class="status-eyebrow">
+        INFRASTRUCTURE / HEALTH
       </p>
-      <h1>服务链路检查</h1>
-      <p>仅用于本机内部联调，不是完整演练入口。</p>
+      <h1>服务状态</h1>
+      <p>此页只检查底层依赖的可用性；演练执行环境以具体题目的准备结果为准。</p>
     </header>
     <section
       aria-label="依赖检查结果"
       aria-live="polite"
       :aria-busy="isFetching"
     >
+      <div class="status-heading">
+        <h2>依赖检查</h2>
+        <Button
+          variant="secondary"
+          :disabled="isFetching"
+          :loading="isFetching"
+          @click="refetch()"
+        >
+          重新检查
+        </Button>
+      </div>
       <p
         v-if="isFetching"
         role="status"
@@ -50,7 +57,8 @@ const { data, isFetching, isError, refetch } = useQuery({
           <tr>
             <th scope="col">
               依赖
-            </th><th scope="col">
+            </th>
+            <th scope="col">
               状态
             </th>
           </tr>
@@ -60,13 +68,37 @@ const { data, isFetching, isError, refetch } = useQuery({
             <th scope="row">
               PostgreSQL 数据库
             </th>
-            <td>{{ data.database === 'AVAILABLE' ? '可用' : '不可用' }}</td>
+            <td>
+              <span
+                class="health-badge"
+                :data-health="data.database"
+              ><span aria-hidden="true">●</span> {{ data.database === 'AVAILABLE' ? '可用' : '不可用' }}</span>
+            </td>
           </tr>
           <tr data-testid="sandbox">
             <th scope="row">
               Go 服务
             </th>
-            <td>{{ data.sandbox === 'AVAILABLE' ? '可用' : '不可用' }}</td>
+            <td>
+              <span
+                class="health-badge"
+                :data-health="data.sandbox"
+              ><span aria-hidden="true">●</span> {{ data.sandbox === 'AVAILABLE' ? '可用' : '不可用' }}</span>
+            </td>
+          </tr>
+          <tr data-testid="execution-environment">
+            <th scope="row">
+              Docker / 沙箱执行环境
+            </th>
+            <td>
+              <span
+                class="health-badge"
+                data-health="UNKNOWN"
+              >未检测</span>
+              <p class="health-helper">
+                当前检查不包含执行环境，请在演练准备时确认。
+              </p>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -79,18 +111,6 @@ const { data, isFetching, isError, refetch } = useQuery({
       >
         依赖不可用，请检查对应服务后重新检查。
       </p>
-      <NButton
-        variant="primary"
-        :disabled="isFetching"
-        :loading="isFetching"
-        @click="refetch()"
-      >
-        重新检查
-      </NButton>
     </section>
-    <footer>
-      <p>Go 在线仅表示 gRPC 可响应，不代表 Docker 或沙箱执行已就绪。</p>
-      <p>请从题库进入演练；此页只检查底层依赖。<RouterLink :to="{ name: routes.account.name }">受邀账号登录</RouterLink></p>
-    </footer>
   </main>
 </template>

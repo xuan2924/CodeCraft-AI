@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onScopeDispose, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
+import { Clock, Cpu, FileCode2, RefreshCw, ShieldCheck } from '@lucide/vue';
 import { session } from '../auth/api';
 import { routes } from '../routes';
 import { ApiError } from '../api/request';
@@ -14,17 +15,21 @@ import WorkspaceCommands from './WorkspaceCommands.vue';
 import WorkspaceHistory from './WorkspaceHistory.vue';
 import WorkspaceStorage from './WorkspaceStorage.vue';
 import ExerciseModelPicker from '../modelaccess/ExerciseModelPicker.vue';
-import CopilotPanel from '../copilot/CopilotConversations.vue';
+import CopilotConversations from '../copilot/CopilotConversations.vue';
 import InterviewerPanel from './InterviewerPanel.vue';
 import ChallengePanel from './ChallengePanel.vue';
 import * as challengeApi from './challengeApi';
 import ClosedDrafts from './ClosedDrafts.vue';
-import WorkspaceRetention from './WorkspaceRetention.vue';
+import ProblemRequirements from '../catalog/ProblemRequirements.vue';
+import Dialog from '../components/ui/Dialog.vue';
+import Tooltip from '../components/ui/Tooltip.vue';
 import { cancelSaveLogout, saveLogoutOwner } from './logoutIntent';
 import { confirmExerciseDeletion } from './drafts';
+import { useExerciseTimer } from './useExerciseTimer';
+
+const modelOpen = ref(false);
 
 const WorkspaceEditor = defineAsyncComponent(() => import('./WorkspaceEditor.vue'));
-const theme = { primaryColor: 'var(--accent)' };
 const client = useQueryClient();
 const account = useQuery({ queryKey: ['identity-session'], queryFn: ({ signal }) => session(signal), retry: false, gcTime: 0 });
 const allowed = computed(() => !!account.data.value && !account.data.value.passwordChangeRequired &&
@@ -50,21 +55,11 @@ const challengeBlocked = computed(() => (!problem.value || problem.value.hasChal
 const testTarget = computed(() => challenge.data.value?.entered ? 'challenge' as const : 'base' as const);
 const selected = ref('');
 const editorView = ref<{ saveForLogout: () => Promise<boolean>; prepareEnd: (choice: 'save' | 'discard' | 'retain') => Promise<boolean> }>();
-const now = ref(Date.now());
-const tick = globalThis.setInterval(() => { now.value = Date.now(); }, 1000);
+const { expired, remaining } = useExerciseTimer(exercise);
 const implementingStates = ['ACTIVE', 'PAUSING', 'PAUSED', 'RESUMING'];
 const historyStates = [...implementingStates, 'CLOSING', 'FINAL_TESTING', 'ENDED'];
-const serverOffset = ref(0);
-watch(() => exercise.value?.serverTime, (value) => { serverOffset.value = value ? Date.parse(value) - Date.now() : 0; });
-const expired = computed(() => !!exercise.value && ['ACTIVE', 'PAUSING'].includes(exercise.value.state) && !!exercise.value.deadlineAt && now.value + serverOffset.value >= Date.parse(exercise.value.deadlineAt));
 const canEnd = computed(() => !!exercise.value && implementingStates.includes(exercise.value.state) && !expired.value);
 const answeringClosed = computed(() => expired.value || exercise.value?.state !== 'ACTIVE');
-const remaining = computed(() => {
-  const millis = exercise.value && ['PAUSED', 'RESUMING'].includes(exercise.value.state)
-    ? exercise.value.pause?.remainingMillis ?? Number.NaN : Date.parse(exercise.value?.deadlineAt ?? '') - now.value - serverOffset.value;
-  const seconds = Math.max(0, Math.ceil(millis / 1000));
-  return Number.isFinite(seconds) ? `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}` : '';
-});
 const endPrompt = ref(false);
 const ending = ref(false);
 const hasEditor = ref(false);
@@ -184,7 +179,6 @@ watch(() => active.error.value, (failure) => {
 
 onScopeDispose(() => {
   disposed = true;
-  globalThis.clearInterval(tick);
   controller.abort();
   void client.cancelQueries({ queryKey: ['workspace'] }).then(() => client.removeQueries({ queryKey: ['workspace'] }));
 });
@@ -196,13 +190,8 @@ async function perform(action: api.Action) {
   error.value = '';
   unresolved.value = action;
   try {
-    const result = await api.act(action, controller.signal, credential.value || undefined, startedOwner);
+    await api.act(action, controller.signal, credential.value || undefined, startedOwner);
     if (disposed || generation !== startedGeneration) return;
-    if (action.path === '/api/exercises') {
-      lastExercise.value = result.exerciseId;
-      await router.replace({ query: { ...route.query, exercise: result.exerciseId } });
-      if (disposed || generation !== startedGeneration) return;
-    }
     unresolved.value = null;
     await client.invalidateQueries({ queryKey: ['workspace', startedOwner, 'current'] });
   } catch (failure) {
@@ -244,7 +233,6 @@ async function pauseExercise() {
     if (!disposed && started === generation) error.value = '草稿备份失败，本次未请求暂停，请先复制草稿。';
   } finally { if (started === generation) ending.value = false; }
 }
-function create(version: string) { void perform({ path: '/api/exercises', body: { problemVersionId: version }, key: globalThis.crypto.randomUUID() }); }
 function change(kind: 'start' | 'preparation-retry' | 'abandon' | 'pause' | 'resume') {
   if (exercise.value) void perform({ path: `/api/exercises/${encodeURIComponent(exercise.value.exerciseId)}/${kind}`, body: {}, key: globalThis.crypto.randomUUID() });
 }
@@ -280,26 +268,54 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
 <template>
   <main
     class="workspace-page"
-    :style="{ '--primary': theme.primaryColor }"
   >
-    <header>
-      <RouterLink :to="{ name: 'account' }">账号与登录</RouterLink>
-      <h1>题目与工作区</h1>
-      <p>显式保存、稳定版本测试与 AI 结对编程。开始前选择并检查个人 Copilot 模型；面试官和评测者使用本场绑定的平台版本。结束后回顾冻结结果与证据报告。</p>
+    <header class="workspace-header">
+      <h1>{{ exercise ? '演练工作区' : '当前演练' }}</h1>
+      <div class="header-actions">
+        <Button
+          v-if="exercise && ['READY', 'ACTIVE'].includes(exercise.state)"
+          variant="secondary"
+          size="small"
+          @click="modelOpen = true"
+        >
+          <Cpu
+            :size="14"
+            aria-hidden="true"
+          />
+          <span>Copilot 模型与检查</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="small"
+          :disabled="pending || active.isFetching.value"
+          @click="catalogue.refetch(); active.refetch(); exercise && controlState.refetch()"
+        >
+          <RefreshCw
+            :size="14"
+            aria-hidden="true"
+          />
+          <span>刷新查询</span>
+        </Button>
+      </div>
     </header>
     <p
       v-if="account.isPending.value"
       role="status"
+      class="ws-banner"
     >
       正在检查登录状态…
     </p>
     <p
       v-else-if="account.isError.value"
       role="alert"
+      class="ws-banner ws-banner-alert"
     >
       无法确认登录状态，请刷新页面重试。
     </p>
-    <p v-else-if="!allowed">
+    <p
+      v-else-if="!allowed"
+      class="ws-banner"
+    >
       请先登录并完成临时密码修改。
     </p>
     <template v-if="allowed">
@@ -316,247 +332,297 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
       <p
         v-if="error"
         role="alert"
-        class="failure"
+        class="failure ws-banner ws-banner-alert"
       >
         {{ error }}
       </p>
-      <NButton
+      <Button
         v-if="unresolved"
+        size="small"
         :disabled="pending"
         @click="perform(unresolved)"
       >
         核对并重试原操作
-      </NButton>
-      <WorkspaceRetention
-        :key="owner"
-        :owner="owner"
-        @deleted="acceptedDeletion"
-        @select="router.push({ query: { ...route.query, exercise: $event } })"
-      />
+      </Button>
       <p
         v-if="cleanupFailed"
         role="alert"
+        class="ws-banner ws-banner-alert"
       >
-        本地草稿清理失败，演练访问仍已撤销。<NButton @click="acceptedDeletion(cleanupFailed)">
+        本地草稿清理失败，演练访问仍已撤销。
+        <Button
+          size="small"
+          @click="acceptedDeletion(cleanupFailed)"
+        >
           重试清理本地草稿
-        </NButton>
+        </Button>
       </p>
       <p
         v-if="deletedExercise"
         role="status"
+        class="ws-banner"
       >
         演练已删除，不能恢复作答；后台清理进度可继续查询。
       </p>
       <p
         v-if="catalogue.isError.value || active.isError.value && !deletedExercise"
         role="alert"
-        class="failure"
+        class="failure ws-banner ws-banner-alert"
       >
         {{ api.message(catalogue.error.value ?? active.error.value) }} 先前数据不代表当前状态。
       </p>
       <p
         v-if="controlState.isError.value"
         role="alert"
+        class="ws-banner ws-banner-alert"
       >
         无法确认操作权，已暂停写入。{{ api.message(controlState.error.value) }}
       </p>
-      <NButton
-        :disabled="pending || active.isFetching.value"
-        @click="catalogue.refetch(); active.refetch(); exercise && controlState.refetch()"
-      >
-        刷新查询
-      </NButton>
       <p
         v-if="catalogue.isPending.value || active.isPending.value"
         role="status"
+        class="ws-banner"
       >
         正在读取题目与当前演练…
       </p>
       <template v-else-if="exercise || (!catalogue.isError.value && !active.isError.value)">
-        <template v-if="!exercise || exercise.state === 'ENDED'">
-          <p v-if="!catalogue.data.value?.length">
-            尚无已发布题目，请联系维护者。
-          </p>
-          <section
-            v-for="item in catalogue.data.value"
-            :key="item.problemVersionId"
-            class="problem-summary"
-          >
-            <h2>{{ item.title }} <small>{{ item.version }}</small></h2>
-            <pre class="requirements">{{ item.requirements }}</pre>
-            <p>允许编辑范围：{{ item.editableRoots.join('、') }}。开始计时后可保存。</p>
-            <p>开始后时长 {{ item.durationSeconds / 60 }} 分钟；准备阶段不计时。</p>
-            <NButton
-              variant="primary"
-              data-testid="create-workspace"
-              :disabled="pending || !!unresolved"
-              @click="create(item.problemVersionId)"
-            >
-              创建独立工作区
-            </NButton>
-          </section>
-        </template>
+        <section
+          v-if="!exercise"
+          class="workspace-empty"
+        >
+          <h2>还没有当前演练</h2>
+          <p>从题库选择题目，准备好模型与环境后再开始计时。</p>
+          <RouterLink
+            class="ui-button ui-button-primary"
+            :to="{ name: routes.catalog.name }"
+          >前往题库选择题目</RouterLink>
+        </section>
         <template v-if="exercise">
           <section
             class="exercise-summary"
             aria-label="演练状态"
           >
-            <h2>{{ problem?.title ?? '固定版本演练' }}</h2>
-            <p role="status">
-              {{ labels[exercise.state] }} · 修订 {{ exercise.revision ?? '尚未确认' }}
-            </p>
+            <div class="summary-primary">
+              <h2>{{ problem?.title ?? '固定版本演练' }}</h2>
+              <p
+                role="status"
+                class="status-pill"
+              >
+                {{ labels[exercise.state] }} · 修订 {{ exercise.revision ?? '尚未确认' }}
+              </p>
+              <p
+                v-if="['READY', ...implementingStates].includes(exercise.state)"
+                role="status"
+                class="control-pill"
+                :data-held="!!credential"
+              >
+                <ShieldCheck
+                  :size="13"
+                  aria-hidden="true"
+                />
+                <span>{{ credential ? '当前页面持有操作权' : '当前页面只读，可保留本地草稿' }}</span>
+              </p>
+            </div>
+            <div class="summary-controls">
+              <p
+                v-if="implementingStates.includes(exercise.state)"
+                role="status"
+                class="timer-pill"
+              >
+                <Clock
+                  :size="13"
+                  aria-hidden="true"
+                />
+                <span>{{ expired ? '作答已到期，等待服务器确认；本地草稿不会自动提交。' : `剩余时间 ${remaining}` }}</span>
+              </p>
+              <Button
+                v-if="!credential && ['READY', 'ACTIVE', 'PAUSED'].includes(exercise.state)"
+                variant="secondary"
+                size="small"
+                :disabled="pending || controlState.data.value?.state === 'PENDING'"
+                @click="takeControl(controlState.data.value?.held ? 'takeover' : 'acquire')"
+              >
+                {{ controlState.data.value?.held ? '接管操作权' : '申请操作权' }}
+              </Button>
+              <Button
+                v-if="exercise.state === 'READY'"
+                variant="primary"
+                size="small"
+                :disabled="pending || !!unresolved || !credential"
+                @click="change('start')"
+              >
+                确认开始计时
+              </Button>
+              <Button
+                v-if="exercise.state === 'ACTIVE' && !expired"
+                data-testid="pause-exercise"
+                size="small"
+                :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy"
+                @click="pauseExercise"
+              >
+                暂停演练
+              </Button>
+              <Button
+                v-if="exercise.state === 'PAUSED'"
+                data-testid="resume-exercise"
+                variant="primary"
+                size="small"
+                :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy"
+                @click="change('resume')"
+              >
+                恢复演练
+              </Button>
+              <Button
+                v-if="canEnd"
+                data-testid="end-exercise"
+                variant="danger"
+                size="small"
+                :disabled="pending || ending || !!unresolved || !canRecover || logoutBusy"
+                @click="endPrompt = true"
+              >
+                结束演练
+              </Button>
+              <Button
+                v-if="exercise.state === 'PREPARATION_FAILED'"
+                size="small"
+                :disabled="pending || !!unresolved"
+                @click="change('preparation-retry')"
+              >
+                使用新实例重试准备
+              </Button>
+              <Button
+                v-if="['READY', 'PREPARATION_FAILED'].includes(exercise.state)"
+                variant="danger"
+                size="small"
+                :disabled="pending || !!unresolved"
+                @click="change('abandon')"
+              >
+                放弃本次演练
+              </Button>
+            </div>
+            <details class="exercise-metadata">
+              <summary>版本与执行详情</summary>
+              <div class="metadata-grid">
+                <p
+                  v-if="exercise.preparationFailureReason"
+                  role="status"
+                >
+                  {{ failureReasons[exercise.preparationFailureReason] ?? '准备失败，请联系维护者核对。' }}
+                </p>
+                <p v-if="exercise.cleanupState">
+                  旧实例清理：{{ exercise.cleanupState === 'SUCCEEDED' ? '已确认' : '等待确认' }}
+                </p>
+                <p v-if="exercise.deadlineAt">
+                  服务器截止时间：{{ new Date(exercise.deadlineAt).toLocaleString() }}
+                </p>
+              </div>
+            </details>
             <p
-              v-if="exercise.preparationFailureReason"
-              role="status"
+              v-if="['PAUSING', 'PAUSED', 'RESUMING'].includes(exercise.state)"
+              class="summary-notice"
             >
-              {{ failureReasons[exercise.preparationFailureReason] ?? '准备失败，请联系维护者核对。' }}
-            </p>
-            <p v-if="exercise.cleanupState">
-              旧实例清理：{{ exercise.cleanupState === 'SUCCEEDED' ? '已确认' : '等待确认' }}
-            </p>
-            <p v-if="exercise.deadlineAt">
-              服务器截止时间：{{ new Date(exercise.deadlineAt).toLocaleString() }}
-            </p>
-            <p
-              v-if="implementingStates.includes(exercise.state)"
-              role="status"
-            >
-              {{ expired ? '作答已到期，等待服务器确认；本地草稿不会自动提交。' : `剩余时间 ${remaining}` }}
-            </p>
-            <p v-if="['PAUSING', 'PAUSED', 'RESUMING'].includes(exercise.state)">
               本地草稿保留，禁止新的作答和收费请求；已提交修改不回滚。恢复演练后，保留的 Copilot 队列仍须显式重新授权。
             </p>
-            <NButton
-              v-if="exercise.state === 'ACTIVE' && !expired"
-              data-testid="pause-exercise"
-              :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy"
-              @click="pauseExercise"
+            <p
+              v-if="exercise.state === 'PREPARING'"
+              class="summary-notice"
             >
-              暂停演练
-            </NButton>
-            <NButton
-              v-if="exercise.state === 'PAUSED'"
-              data-testid="resume-exercise"
-              :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy"
-              @click="change('resume')"
-            >
-              恢复演练
-            </NButton>
-            <NButton
-              v-if="canEnd"
-              data-testid="end-exercise"
-              :disabled="pending || ending || !!unresolved || !canRecover || logoutBusy"
-              @click="endPrompt = true"
-            >
-              结束演练
-            </NButton>
+              后台正在核对准备结果。结果未知时不能另开重试或放弃请求。
+            </p>
             <section
               v-if="endPrompt && canEnd"
+              class="end-confirm-panel"
               role="dialog"
               aria-modal="true"
               aria-label="结束演练确认"
             >
               <p>结束后不可继续作答。可先保存、明确丢弃，或只保留本地草稿而不提交新保存。保留草稿不需要本页操作权；最终验收使用服务器关闭并核对后的已提交版本。</p>
-              <p v-if="testBusy">
+              <p
+                v-if="testBusy"
+                class="end-warning"
+              >
                 仍有测试运行或状态待核对，结束后将由服务器停止并核对，不会把未知结果视为已停止。
               </p>
-              <NButton
-                :disabled="ending || pending || answeringClosed || !credential || !writable"
-                @click="endExercise('save')"
-              >
-                保存后结束
-              </NButton>
-              <NButton
-                :disabled="ending || pending || answeringClosed || !credential || !writable"
-                @click="endExercise('discard')"
-              >
-                丢弃并结束
-              </NButton>
-              <NButton
-                :disabled="ending || pending || !canRecover"
-                @click="endExercise('retain')"
-              >
-                保留草稿并结束
-              </NButton>
-              <NButton
-                :disabled="ending || pending"
-                @click="endPrompt = false"
-              >
-                返回编辑
-              </NButton>
+              <div class="end-confirm-actions">
+                <Button
+                  variant="primary"
+                  size="small"
+                  :disabled="ending || pending || answeringClosed || !credential || !writable"
+                  @click="endExercise('save')"
+                >
+                  保存后结束
+                </Button>
+                <Button
+                  variant="danger"
+                  size="small"
+                  :disabled="ending || pending || answeringClosed || !credential || !writable"
+                  @click="endExercise('discard')"
+                >
+                  丢弃并结束
+                </Button>
+                <Button
+                  size="small"
+                  :disabled="ending || pending || !canRecover"
+                  @click="endExercise('retain')"
+                >
+                  保留草稿并结束
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="small"
+                  :disabled="ending || pending"
+                  @click="endPrompt = false"
+                >
+                  返回编辑
+                </Button>
+              </div>
             </section>
             <section
               v-if="exercise.finalization"
+              class="finalization-panel"
               aria-label="最终验收结果"
             >
-              <p>最终冻结修订：{{ exercise.finalization.finalRevision ?? '尚未确认，正在核对' }}</p>
+              <p>最终冻结修订：<code>{{ exercise.finalization.finalRevision ?? '尚未确认，正在核对' }}</code></p>
               <p>{{ ({ PENDING: '最终验收待核对', PASSED: '最终验收通过', FAILED: '最终验收失败', TIMED_OUT: '最终验收超时', UNAVAILABLE: '最终验收结果不可用' })[exercise.finalization.verification] }}</p>
               <p>系统验收尝试 {{ exercise.finalization.attempts }} / {{ exercise.finalization.maxAttempts }}。</p>
               <RouterLink
                 v-if="exercise.state === 'ENDED'"
+                class="ui-button ui-button-primary ui-button-small"
                 :to="{ name: routes.report.name, query: { exercise: exercise.exerciseId } }"
               >进入回顾与评价报告</RouterLink>
               <p v-if="exercise.finalization.status === 'RECONCILIATION_REQUIRED'">
                 冻结事实未确认，不能虚构最终版本，请稍后刷新。
               </p>
             </section>
-            <p v-if="exercise.state === 'PREPARING'">
-              后台正在核对准备结果。结果未知时不能另开重试或放弃请求。
-            </p>
-            <p
-              v-if="['READY', ...implementingStates].includes(exercise.state)"
-              role="status"
-            >
-              {{ credential ? '当前页面持有操作权' : '当前页面只读，可保留本地草稿' }}
-            </p>
-            <NButton
-              v-if="!credential && ['READY', 'ACTIVE', 'PAUSED'].includes(exercise.state)"
-              :disabled="pending || controlState.data.value?.state === 'PENDING'"
-              @click="takeControl(controlState.data.value?.held ? 'takeover' : 'acquire')"
-            >
-              {{ controlState.data.value?.held ? '接管操作权' : '申请操作权' }}
-            </NButton>
-            <NButton
-              v-if="exercise.state === 'READY'"
-              :disabled="pending || !!unresolved || !credential"
-              @click="change('start')"
-            >
-              确认开始计时
-            </NButton>
-            <NButton
-              v-if="exercise.state === 'PREPARATION_FAILED'"
-              :disabled="pending || !!unresolved"
-              @click="change('preparation-retry')"
-            >
-              使用新实例重试准备
-            </NButton>
-            <NButton
-              v-if="['READY', 'PREPARATION_FAILED'].includes(exercise.state)"
-              :disabled="pending || !!unresolved"
-              @click="change('abandon')"
-            >
-              放弃本次演练
-            </NButton>
           </section>
           <p
             v-if="problem && !problem.executionAvailable"
             role="status"
+            class="ws-banner"
           >
             这个固定题目版本尚未配备正式执行配置，测试不可用；不会替换已有工作区版本。
           </p>
-          <ExerciseModelPicker
+          <Dialog
             v-if="['READY', 'ACTIVE'].includes(exercise.state)"
-            :key="owner + exercise.exerciseId"
-            :owner="owner"
-            :exercise-id="exercise.exerciseId"
-            :credential="credential"
-            :preparing="exercise.state === 'READY'"
-            :disabled="!writable || expired || pending || !!unresolved"
-            @unauthorized="credential = ''; account.refetch()"
-          />
+            v-model:open="modelOpen"
+            persistent
+            title="本场 Copilot 模型"
+            description="选择连接与具体模型，显式应用到本次演练。面试官使用平台模型，不受此选择影响。"
+          >
+            <ExerciseModelPicker
+              :key="owner + exercise.exerciseId"
+              :owner="owner"
+              :exercise-id="exercise.exerciseId"
+              :credential="credential"
+              :preparing="exercise.state === 'READY'"
+              :disabled="!writable || expired || pending || !!unresolved"
+              @unauthorized="credential = ''; account.refetch()"
+            />
+          </Dialog>
           <p
             v-if="challengeBlocked"
             role="alert"
+            class="ws-banner ws-banner-alert"
           >
             挑战阶段尚未确认，暂不启动新的 AI 或测试请求；请刷新核对。
           </p>
@@ -570,31 +636,33 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
           />
           <WorkbenchLayout>
             <template #assistant>
-              <InterviewerPanel
-                v-if="['READY', ...historyStates].includes(exercise.state)"
-                :key="`interviewer:${owner}:${exercise.exerciseId}`"
-                :owner="owner"
-                :exercise-id="exercise.exerciseId"
-                :credential="credential"
-                :phase="exercise.state"
-                :disabled="challengeBlocked || !writable || !['READY', 'ACTIVE'].includes(exercise.state) || expired || pending || !!unresolved || ending || endPrompt || logoutBusy"
-                @unauthorized="credential = ''; account.refetch()"
-              />
-              <CopilotPanel
-                v-if="historyStates.includes(exercise.state)"
-                :key="owner + exercise.exerciseId"
-                :owner="owner"
-                :exercise-id="exercise.exerciseId"
-                :credential="credential"
-                :disabled="challengeBlocked || !editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
-                :paths="exercise.paths"
-                :prepare="prepareCopilot"
-                @inspect-test="testView?.inspect($event)"
-                @changed="refreshWorkspace"
-                @unauthorized="credential = ''; account.refetch()"
-              />
+              <div class="assistant-stack">
+                <InterviewerPanel
+                  v-if="['READY', ...historyStates].includes(exercise.state)"
+                  :key="`interviewer:${owner}:${exercise.exerciseId}`"
+                  :owner="owner"
+                  :exercise-id="exercise.exerciseId"
+                  :credential="credential"
+                  :phase="exercise.state"
+                  :disabled="challengeBlocked || !writable || !['READY', 'ACTIVE'].includes(exercise.state) || expired || pending || !!unresolved || ending || endPrompt || logoutBusy"
+                  @unauthorized="credential = ''; account.refetch()"
+                />
+                <CopilotConversations
+                  v-if="historyStates.includes(exercise.state)"
+                  :key="owner + exercise.exerciseId"
+                  :owner="owner"
+                  :exercise-id="exercise.exerciseId"
+                  :credential="credential"
+                  :disabled="challengeBlocked || !editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
+                  :paths="exercise.paths"
+                  :prepare="prepareCopilot"
+                  @inspect-test="testView?.inspect($event)"
+                  @changed="refreshWorkspace"
+                  @unauthorized="credential = ''; account.refetch()"
+                />
+              </div>
             </template>
-            <template #tools>
+            <template #commands>
               <WorkspaceCommands
                 v-if="historyStates.includes(exercise.state)"
                 :key="owner + exercise.workspaceInstanceId"
@@ -618,12 +686,16 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                 @changed="refreshWorkspace"
                 @unauthorized="credential = ''; account.refetch()"
               />
+            </template>
+            <template #storage>
               <WorkspaceStorage
                 :key="owner + exercise.exerciseId"
                 :owner="owner"
                 :exercise-id="exercise.exerciseId"
                 @deleted="acceptedDeletion"
               />
+            </template>
+            <template #tests>
               <WorkspaceTests
                 v-if="historyStates.includes(exercise.state)"
                 :key="owner + exercise.workspaceInstanceId"
@@ -644,57 +716,84 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               />
             </template>
             <template #files>
-              <section aria-label="题目与文件">
-                <h2>题目要求</h2>
-                <pre class="requirements">{{ problem?.requirements }}</pre>
-                <p>允许编辑范围：{{ problem?.editableRoots.join('、') }}；pom.xml 与验收测试受保护。</p>
-                <h2>工作区文件</h2>
-                <p v-if="!exercise.paths.length">
-                  尚无已确认文件。
-                </p>
-                <ul class="file-list">
-                  <li
-                    v-for="path in exercise.paths"
-                    :key="path"
+              <section
+                class="files-pane"
+                aria-label="题目与文件"
+              >
+                <div class="pane-block">
+                  <div class="pane-heading">
+                    <h2>题目要求</h2>
+                    <Tooltip :text="`允许编辑：${problem?.editableRoots.join('、') ?? '尚未确认'}；pom.xml 与验收测试受保护。`">
+                      <Button
+                        variant="ghost"
+                        size="small"
+                      >
+                        编辑范围说明
+                      </Button>
+                    </Tooltip>
+                  </div>
+                  <ProblemRequirements :source="problem?.requirements ?? ''" />
+                </div>
+                <div class="pane-block">
+                  <h2>工作区文件</h2>
+                  <p
+                    v-if="!exercise.paths.length"
+                    class="empty-files"
                   >
-                    <button
-                      type="button"
-                      data-testid="workspace-file"
-                      :aria-pressed="selected === path"
-                      @click="selected = path"
+                    尚无已确认文件。
+                  </p>
+                  <ul class="file-list">
+                    <li
+                      v-for="path in exercise.paths"
+                      :key="path"
                     >
-                      {{ path }}
-                    </button>
-                  </li>
-                </ul>
-                <details
-                  v-for="(content, path) in problem?.acceptanceFiles"
-                  :key="path"
-                >
-                  <summary>受保护验收测试：{{ path }}</summary>
-                  <pre class="requirements">{{ content }}</pre>
-                </details>
+                      <button
+                        type="button"
+                        data-testid="workspace-file"
+                        :aria-pressed="selected === path"
+                        @click="selected = path"
+                      >
+                        <FileCode2
+                          :size="14"
+                          aria-hidden="true"
+                        />
+                        <span>{{ path }}</span>
+                      </button>
+                    </li>
+                  </ul>
+                  <details
+                    v-for="(content, path) in problem?.acceptanceFiles"
+                    :key="path"
+                    class="acceptance-file"
+                  >
+                    <summary>受保护验收测试：{{ path }}</summary>
+                    <pre class="requirements">{{ content }}</pre>
+                  </details>
+                </div>
               </section>
             </template>
             <template #editor>
               <p
                 v-if="source.isFetching.value"
                 role="status"
+                class="editor-status-msg"
               >
                 正在读取文件…
               </p>
               <p
                 v-if="source.isError.value"
                 role="alert"
+                class="editor-status-msg editor-status-err"
               >
                 {{ api.message(source.error.value) }}
               </p>
-              <NButton
+              <Button
                 v-if="source.isError.value"
+                size="small"
                 @click="source.refetch()"
               >
                 重试文件读取
-              </NButton>
+              </Button>
               <WorkspaceEditor
                 v-if="hasEditor"
                 :key="owner + exercise.workspaceInstanceId + editorGeneration"
@@ -716,6 +815,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               />
               <section
                 v-if="!hasEditor || answeringClosed"
+                class="readonly-source"
                 aria-label="只读源码"
               >
                 <h2>{{ selected || '选择文件查看源码' }}</h2>
@@ -749,14 +849,367 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
 </template>
 
 <style scoped>
-.workspace-page { max-width: 1920px; margin: 24px auto; padding: 0 20px; }
-.workspace-page header { max-width: 75ch; }
-.workspace-page h2 { font-size: 20px; overflow-wrap: anywhere; }
-.workspace-page section { margin-top: 20px; min-width: 0; }
-pre { font-family: Consolas, "Cascadia Code", monospace; font-size: 14px; line-height: 1.65; overflow: auto; max-height: 65vh; }
-.requirements { white-space: pre-wrap; overflow-wrap: anywhere; }
-.file-list { list-style: none; padding: 0; }
-.file-list button { width: 100%; padding: 10px 0; text-align: left; border: 0; background: transparent; color: var(--primary); overflow-wrap: anywhere; cursor: pointer; }
-.file-list button[aria-pressed="true"] { font-weight: 700; text-decoration: underline; }
-@media (max-width: 760px) { .workspace-page { padding: 0 16px; } }
+.workspace-page {
+  width: 100%;
+  height: 100dvh;
+  margin: 0;
+  padding: 0 18px 18px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.workspace-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  flex-shrink: 0;
+}
+
+.workspace-header h1 {
+  font-size: 14px;
+  margin: 0;
+  color: var(--oc-fg-muted);
+  font-weight: 550;
+  letter-spacing: -0.01em;
+}
+
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ws-banner {
+  margin: 4px 0 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  font-size: 13px;
+  color: var(--oc-fg-muted);
+  flex-shrink: 0;
+}
+
+.ws-banner-alert {
+  color: var(--oc-warning);
+  background: var(--oc-warning-bg);
+  border-color: var(--oc-warning-border);
+}
+
+/* HUD Status Card */
+.exercise-summary {
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px;
+  border: 1px solid var(--oc-border);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(160, 196, 165, 0.06), transparent 45%),
+    var(--oc-surface);
+  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.summary-primary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+.exercise-summary h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  margin-right: auto;
+  overflow-wrap: anywhere;
+}
+
+.status-pill,
+.control-pill,
+.timer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.status-pill {
+  background: var(--oc-accent-soft);
+  border: 1px solid var(--oc-border-accent);
+  color: var(--oc-accent);
+}
+
+.control-pill {
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  color: var(--oc-fg-muted);
+}
+
+.control-pill[data-held="true"] {
+  color: var(--oc-fg);
+  border-color: var(--oc-border-strong);
+}
+
+.timer-pill {
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border-strong);
+  color: var(--oc-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.exercise-metadata {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.exercise-metadata summary {
+  cursor: pointer;
+}
+
+.metadata-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 8px;
+}
+
+.metadata-grid p {
+  margin: 0;
+}
+
+.summary-notice {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--oc-fg-muted);
+}
+
+.end-confirm-panel,
+.finalization-panel {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border-strong);
+  display: grid;
+  gap: 10px;
+}
+
+.end-confirm-panel p,
+.finalization-panel p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--oc-fg-muted);
+  line-height: 1.6;
+}
+
+.end-warning {
+  color: var(--oc-warning) !important;
+}
+
+.end-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.finalization-panel a {
+  width: fit-content;
+  text-decoration: none;
+}
+
+.workspace-empty {
+  margin: auto;
+  text-align: center;
+  padding: 48px 32px;
+  max-width: 480px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--oc-shadow-sm), var(--oc-hairline-top);
+  color: var(--oc-fg-muted);
+}
+
+.workspace-empty h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.workspace-empty p {
+  margin: 0 0 20px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.workspace-empty a {
+  text-decoration: none;
+}
+
+.files-pane,
+.assistant-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+}
+
+.pane-block {
+  display: grid;
+  gap: 10px;
+}
+
+.pane-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--oc-border);
+}
+
+.pane-block h2 {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.empty-files {
+  margin: 0;
+  font-size: 13px;
+  color: var(--oc-fg-muted);
+}
+
+.file-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.file-list button {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--oc-fg-muted);
+  font-family: var(--oc-font-mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition:
+    background-color 150ms var(--oc-ease),
+    border-color 150ms var(--oc-ease),
+    color 150ms var(--oc-ease);
+}
+
+.file-list button svg {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.file-list button:hover {
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--oc-fg);
+}
+
+.file-list button[aria-pressed="true"] {
+  background: var(--oc-selected);
+  border-color: var(--oc-border-accent);
+  color: var(--oc-fg);
+  font-weight: 550;
+}
+
+.file-list button[aria-pressed="true"] svg {
+  color: var(--oc-accent);
+}
+
+.acceptance-file {
+  font-size: 12.5px;
+  color: var(--oc-fg-muted);
+}
+
+.acceptance-file summary {
+  cursor: pointer;
+}
+
+.workspace-page section {
+  min-width: 0;
+}
+
+pre {
+  font-family: var(--oc-font-mono);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow: auto;
+  max-height: 65vh;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+}
+
+.requirements {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.editor-status-msg {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--oc-fg-muted);
+}
+
+.editor-status-err {
+  color: var(--oc-danger);
+}
+
+.readonly-source {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--oc-border);
+}
+
+.readonly-source h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-family: var(--oc-font-mono);
+}
+
+@media (max-width: 1100px) {
+  .workspace-page {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+    padding: 0 12px 24px;
+  }
+  .exercise-summary {
+    max-height: none;
+  }
+  .workspace-header {
+    flex-wrap: wrap;
+    padding: 10px 4px;
+  }
+}
 </style>

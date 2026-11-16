@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import * as api from './api';
 import { useModelCommand } from './useModelCommand';
 const props = defineProps<{ owner: string; kind: 'connection' | 'model'; entity: api.Connection | api.Model }>();
@@ -22,12 +22,12 @@ function confirm() {
 </script>
 <template>
   <div>
-    <NButton
+    <Button
       v-if="!confirmation"
       @click="ask"
     >
       {{ kind === 'connection' ? '删除连接' : '删除模型' }}
-    </NButton>
+    </Button>
     <div
       v-else
       role="group"
@@ -49,15 +49,15 @@ function confirm() {
         删除结果未确认；重试核对原请求。关闭后请重新读取，不能假定未删除。
       </p>
       <div class="actions">
-        <NButton
+        <Button
           v-if="command.uncertain.value"
           :disabled="command.pending.value"
           :loading="command.pending.value"
           @click="command.retry"
         >
           核对原删除请求
-        </NButton>
-        <NButton
+        </Button>
+        <Button
           v-else
           variant="danger"
           :disabled="command.pending.value"
@@ -65,7 +65,7 @@ function confirm() {
           @click="confirm"
         >
           确认删除
-        </NButton>
+        </Button>
         <button
           ref="cancel"
           type="button"
@@ -79,7 +79,25 @@ function confirm() {
   </div>
 </template>
 <style scoped>
-.confirmation { border-left: 3px solid var(--failure); padding-left: 16px; }
-.actions { display: flex; flex-wrap: wrap; gap: 12px; }
-button { font: inherit; color: inherit; background: var(--background); border: 1px solid var(--control-border); border-radius: 4px; padding: 6px 14px; }
+.confirmation {
+  margin-top: 8px;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--oc-danger-bg);
+  border: 1px solid var(--oc-danger-border);
+  display: grid;
+  gap: 10px;
+}
+.confirmation p { margin: 0; font-size: 13px; line-height: 1.55; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+button {
+  font: inherit;
+  font-size: 13px;
+  color: var(--oc-fg);
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border-strong);
+  border-radius: 7px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
 </style>

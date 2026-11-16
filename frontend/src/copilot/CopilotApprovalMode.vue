@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { useCommand } from '../api/useCommand';
 import * as api from './api';
 import { commandPolicy, errorMessage } from './errors';
@@ -92,27 +92,27 @@ async function change() {
       切换结果未确认，只能核对原键与原内容；当前模式读取不代表原请求已收敛。
     </p>
     <div class="actions">
-      <NButton
+      <Button
         v-if="command.uncertain.value"
         :disabled="command.pending.value || disabled"
         @click="command.retry"
       >
         核对原模式切换
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         v-else
         :disabled="!editable || desired === 'AUTO' && !consent"
         :loading="command.pending.value"
         @click="change"
       >
         确认审批模式
-      </NButton>
-      <NButton
+      </Button>
+      <Button
         :disabled="current.isFetching.value"
         @click="current.refetch()"
       >
         重新读取模式
-      </NButton>
+      </Button>
     </div>
     <template v-if="current.data.value">
       <h4>最近保留的 20 次模式确认</h4>
@@ -132,8 +132,25 @@ async function change() {
   </section>
 </template>
 <style scoped>
-.approval-mode { padding: 14px; margin: 16px 0; border: 1px solid var(--line); }
-p, li { overflow-wrap: anywhere; line-height: 1.6; }
-label, select { display: block; margin: 10px 0; }
+.approval-mode {
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  display: grid;
+  gap: 8px;
+}
+h3, h4 { margin: 0; font-size: 13.5px; font-weight: 600; }
+p, li { margin: 0; overflow-wrap: anywhere; line-height: 1.55; font-size: 12.5px; color: var(--oc-fg-muted); }
+ol { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+label { display: grid; gap: 6px; font-size: 12.5px; font-weight: 550; }
+select {
+  width: 100%;
+  padding: 8px 10px;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+}
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 </style>

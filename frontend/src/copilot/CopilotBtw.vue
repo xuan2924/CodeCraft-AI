@@ -243,8 +243,43 @@ const canBringback = computed(() => !props.disabled && !props.handoffDisabled &&
   </details>
 </template>
 <style scoped>
-.btw { border: 1px solid var(--border); padding: .75rem; margin-top: 1rem; }
-label { display: block; margin-top: .5rem; }
-textarea { display: block; width: 100%; min-height: 4rem; box-sizing: border-box; }
-article { border-top: 1px solid var(--border); margin-top: .75rem; }
+.btw {
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  background: var(--oc-surface);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+summary { cursor: pointer; font-size: 12.5px; font-weight: 550; }
+p { margin: 0; font-size: 12px; color: var(--oc-fg-muted); line-height: 1.55; }
+label { display: grid; gap: 6px; font-size: 12.5px; }
+textarea {
+  display: block;
+  width: 100%;
+  min-height: 4rem;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+}
+article {
+  border-top: 1px solid var(--oc-border);
+  padding-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+button[type="button"] {
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--oc-border-strong);
+  background: var(--oc-surface-2);
+  color: var(--oc-fg);
+  font-size: 12px;
+  cursor: pointer;
+  width: fit-content;
+}
+button[type="button"]:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { object } from '../api/request';
 const props = defineProps<{ text: string; scope: string }>();
 interface Source { url: string; title: string; content: string; retainedTruncated: boolean }
@@ -94,21 +94,21 @@ const errors: Record<string, string> = { INTERRUPTED: '资料调用已中断，�
           当前展示 {{ offset + 1 }}–{{ Math.min(offset + 2048, characters.length) }} / {{ characters.length }} 字符；翻页只读已保留内容，不重新检索。
         </p>
         <pre tabindex="0">{{ page }}</pre>
-        <NButton
+        <Button
           :disabled="offset === 0"
           @click="offset = Math.max(0, offset - 2048)"
         >
           上一段资料
-        </NButton>
-        <NButton
+        </Button>
+        <Button
           :disabled="offset + 2048 >= characters.length"
           @click="offset += 2048"
         >
           继续查看保留资料
-        </NButton>
-        <NButton @click="copy">
+        </Button>
+        <Button @click="copy">
           复制当前资料片段
-        </NButton>
+        </Button>
       </template>
       <p
         v-if="notice"
@@ -120,8 +120,27 @@ const errors: Record<string, string> = { INTERRUPTED: '资料调用已中断，�
   </section>
 </template>
 <style scoped>
-p, h4 { margin: 8px 0; overflow-wrap: anywhere; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto; }
-a { overflow-wrap: anywhere; }
-select { max-width: 100%; padding: 6px; font: inherit; }
+section { display: grid; gap: 8px; }
+p, h4 { margin: 0; overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.55; }
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 24rem;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+}
+a { overflow-wrap: anywhere; font-size: 12.5px; }
+select {
+  max-width: 100%;
+  padding: 7px 10px;
+  font: inherit;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+}
 </style>

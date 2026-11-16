@@ -3,6 +3,8 @@ import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
 import { useIntervalFn, useTimestamp } from '@vueuse/core';
 import { session } from '../auth/api';
+import { RouterLink } from 'vue-router';
+import { routes } from '../routes';
 import Button from '../components/ui/Button.vue';
 import StatePanel from '../components/ui/StatePanel.vue';
 import FeedbackEntry from './FeedbackEntry.vue';
@@ -20,7 +22,13 @@ const listing = useQuery({ queryKey: computed(() => ['feedback', owner.value, ad
 </script>
 <template>
   <main class="feedback-page">
-    <h1>{{ admin ? '授权反馈处理' : '我的授权反馈' }}</h1><p>仅包含明确授权的快照，不允许浏览整场私有演练。原演练删除或到期后，反馈与回复也不可继续读取。</p>
+    <header class="feedback-hero">
+      <p class="eyebrow">
+        CODECRAFT / AUTHORIZED FEEDBACK
+      </p>
+      <h1>{{ admin ? '授权反馈处理' : '我的授权反馈' }}</h1>
+      <p>只分享你明确授权的快照，私有演练的其他内容不会被公开。</p>
+    </header>
     <StatePanel
       v-if="account.isPending.value || !account.isFetchedAfterMount.value"
       kind="loading"
@@ -33,13 +41,20 @@ const listing = useQuery({ queryKey: computed(() => ['feedback', owner.value, ad
       title="需要有效登录"
       description="请登录并完成必要的密码更新。"
     />
-    <template v-else>
-      <Button
-        variant="secondary"
-        @click="listing.refetch()"
-      >
-        刷新反馈
-      </Button>
+    <section
+      v-else
+      class="feedback-card"
+    >
+      <div class="feedback-toolbar">
+        <h2>反馈记录</h2>
+        <Button
+          variant="secondary"
+          size="small"
+          @click="listing.refetch()"
+        >
+          刷新反馈
+        </Button>
+      </div>
       <StatePanel
         v-if="listing.isPending.value"
         kind="loading"
@@ -57,7 +72,14 @@ const listing = useQuery({ queryKey: computed(() => ['feedback', owner.value, ad
           v-if="!listing.data.value?.length"
           title="暂无反馈"
           description="可以从面试官问答或报告页发起授权反馈；已删除演练的反馈不会继续展示。"
-        /><FeedbackEntry
+        >
+          <RouterLink
+            v-if="!admin"
+            class="ui-button ui-button-secondary"
+            :to="{ name: routes.history.name }"
+          >查看历史演练与报告</RouterLink>
+        </StatePanel>
+        <FeedbackEntry
           v-for="item in listing.data.value"
           :key="`${owner}/${item.id}`"
           :owner="owner"
@@ -65,24 +87,103 @@ const listing = useQuery({ queryKey: computed(() => ['feedback', owner.value, ad
           :value="item"
         />
       </template>
-      <div class="pagination">
+      <div
+        v-if="after || listing.data.value?.length === 20"
+        class="pagination"
+      >
         <Button
           variant="secondary"
+          size="small"
           :disabled="!after || listing.isFetching.value"
           @click="after = null"
         >
           返回第一页
-        </Button><Button
+        </Button>
+        <Button
           variant="secondary"
+          size="small"
           :disabled="listing.data.value?.length !== 20 || listing.isFetching.value || listing.isError.value"
           @click="after = listing.data.value?.at(-1)?.id ?? null"
         >
           下一页
         </Button>
       </div>
-    </template>
+    </section>
   </main>
 </template>
 <style scoped>
-.feedback-page { max-width:1000px; padding:32px 24px; margin:auto; } h1 { font-size:28px; } p { line-height:1.65; } .pagination { display:flex; gap:16px; } @media(max-width:600px) { .feedback-page { padding:16px; } }
+.feedback-page {
+  max-width: 1120px;
+  padding: 36px 32px 64px;
+  margin: 0 auto;
+}
+
+.feedback-hero {
+  margin-bottom: 28px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--oc-accent);
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: clamp(26px, 3vw, 34px);
+  font-weight: 650;
+}
+
+.feedback-hero p:not(.eyebrow) {
+  margin: 0;
+  line-height: 1.65;
+  color: var(--oc-fg-muted);
+  font-size: 14px;
+}
+
+.feedback-card {
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--oc-shadow-sm), var(--oc-hairline-top);
+  padding: 24px;
+  display: grid;
+  gap: 18px;
+}
+
+.feedback-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--oc-border);
+}
+
+.feedback-toolbar h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+a {
+  text-decoration: none;
+}
+
+.pagination {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+@media (max-width: 600px) {
+  .feedback-page {
+    padding: 20px 16px 40px;
+  }
+  .feedback-card {
+    padding: 16px;
+  }
+}
 </style>

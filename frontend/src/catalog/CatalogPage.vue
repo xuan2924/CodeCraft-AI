@@ -3,7 +3,8 @@ import { computed, ref, watch } from 'vue';
 import { useIntervalFn, useTimestamp } from '@vueuse/core';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { RouterLink, useRouter } from 'vue-router';
-import { Star, ArrowRight } from '@lucide/vue';
+import { ArrowRight, Search, Star } from '@lucide/vue';
+import ProblemRequirements from './ProblemRequirements.vue';
 import Button from '../components/ui/Button.vue';
 import Tooltip from '../components/ui/Tooltip.vue';
 import StatePanel from '../components/ui/StatePanel.vue';
@@ -30,6 +31,7 @@ watch([favorites.error, current.error], (errors) => {
     void account.refetch();
   }
 });
+const currentTitle = computed(() => catalogue.data.value?.find(entry => entry.problemVersionId === current.data.value?.problemVersionId)?.title ?? '当前演练');
 const search = ref('');
 const onlyFavorites = ref(false);
 const selected = ref('');
@@ -70,8 +72,20 @@ function start() {
       <div>
         <p class="eyebrow">
           CODECRAFT / ENGINEERING PRACTICE
-        </p><h1>从一个真实问题开始</h1><p>选择题目，检查环境，在工作区中完成你的工程实践。</p>
-      </div><RouterLink :to="{ name: routes.history.name }">历史演练 <ArrowRight :size="16" /></RouterLink>
+        </p>
+        <h1>题库</h1>
+        <p>从一个真实问题开始，在工作区中完成分析、编码与验证。</p>
+      </div>
+      <RouterLink
+        class="ui-button ui-button-secondary history-entry"
+        :to="{ name: routes.history.name }"
+      >
+        <span>历史演练</span>
+        <ArrowRight
+          :size="15"
+          aria-hidden="true"
+        />
+      </RouterLink>
     </header>
     <StatePanel
       v-if="account.isPending.value || !account.isFetchedAfterMount.value"
@@ -92,24 +106,37 @@ function start() {
         class="current-exercise"
         aria-label="进行中演练"
       >
-        <div>
-          <h2>继续你的演练</h2><p v-if="current.isPending.value">
+        <div class="current-exercise-copy">
+          <h2>继续你的演练</h2>
+          <p v-if="current.isPending.value">
             正在查询…
-          </p><p
+          </p>
+          <p
             v-else-if="current.isError.value"
             role="alert"
+            class="failure-text"
           >
             无法确认进行中的演练；暂不创建新的演练。
-          </p><p v-else-if="!current.data.value">
-            没有进行中的演练。准备好后，选择一道题目。
-          </p><p v-else>
-            演练 {{ current.data.value.exerciseId }} · {{ current.data.value.state }}
           </p>
+          <p v-else-if="!current.data.value">
+            没有进行中的演练。准备好后，选择一道题目。
+          </p>
+          <template v-else>
+            <h3 class="current-title">
+              <span>{{ currentTitle }}</span>
+              <span class="status-badge">{{ current.data.value.state === 'READY' ? '准备就绪' : current.data.value.state === 'PAUSED' ? '已暂停' : '当前演练' }}</span>
+            </h3>
+            <details class="exercise-identity">
+              <summary>演练标识</summary>
+              <code>{{ current.data.value.exerciseId }}</code>
+            </details>
+          </template>
         </div>
         <RouterLink
           v-if="current.data.value && !current.isError.value"
           :to="{ name: routes.workspace.name, query: { exercise: current.data.value.exerciseId } }"
-        >继续演练 →</RouterLink>
+          class="ui-button ui-button-primary"
+        >继续演练</RouterLink>
         <Button
           v-if="current.isError.value"
           variant="secondary"
@@ -119,15 +146,30 @@ function start() {
         </Button>
       </section>
       <div class="catalog-filters">
-        <label>搜索题目 <input
-          v-model="search"
-          type="search"
-          maxlength="128"
-        ></label><label><input
-          v-model="onlyFavorites"
-          type="checkbox"
-          :disabled="favorites.isError.value || favorites.isPending.value"
-        >仅收藏</label><span>{{ filtered.length }} 个版本</span>
+        <div class="search-box">
+          <Search
+            :size="15"
+            class="search-icon"
+            aria-hidden="true"
+          />
+          <input
+            v-model="search"
+            type="search"
+            aria-label="搜索题目"
+            placeholder="搜索题目…"
+            maxlength="128"
+          >
+        </div>
+        <label class="favorite-filter">
+          <input
+            v-model="onlyFavorites"
+            type="checkbox"
+            role="switch"
+            :disabled="favorites.isError.value || favorites.isPending.value"
+          >
+          <span>仅收藏</span>
+        </label>
+        <span class="version-count">{{ filtered.length }} 个版本</span>
       </div>
       <StatePanel
         v-if="catalogue.isPending.value"
@@ -168,7 +210,12 @@ function start() {
               :aria-pressed="detail?.problemVersionId === entry.problemVersionId"
               @click="selected = entry.problemVersionId"
             >
-              <strong>{{ entry.title }}</strong><span>Java · {{ entry.version }} · {{ entry.durationSeconds / 60 }} 分钟</span>
+              <strong>{{ entry.title }}</strong>
+              <span class="choice-meta">
+                <span class="meta-chip">Java</span>
+                <span class="meta-chip">v{{ entry.version }}</span>
+                <span class="meta-chip tabular">{{ entry.durationSeconds / 60 }} 分钟</span>
+              </span>
             </button>
           </Tooltip>
         </section>
@@ -177,36 +224,51 @@ function start() {
           class="problem-detail"
           aria-label="题目详情"
         >
-          <header>
+          <header class="detail-header">
             <div>
-              <p class="eyebrow">
-                JAVA / {{ detail.version }}
-              </p><h2>{{ detail.title }}</h2>
-            </div><Button
+              <div class="problem-meta">
+                <span>JAVA / {{ detail.version }}</span>
+                <span class="tabular">{{ detail.durationSeconds / 60 }} 分钟</span>
+              </div>
+              <h2>{{ detail.title }}</h2>
+            </div>
+            <Button
               v-if="detail.problemId"
               variant="ghost"
+              size="icon"
+              class="favorite-toggle"
               :aria-label="saved.has(detail.problemId) ? '取消收藏' : '收藏题目'"
               :aria-pressed="saved.has(detail.problemId)"
               :disabled="favorite.pending.value || favorite.uncertain.value || favorites.isError.value || favorites.isPending.value"
               @click="toggle(detail.problemId)"
             >
               <Star
-                :size="20"
+                :size="18"
                 :fill="saved.has(detail.problemId) ? 'currentColor' : 'none'"
               />
             </Button>
           </header>
-          <p class="requirements">
-            {{ detail.requirements }}
-          </p><p>时限 {{ detail.durationSeconds / 60 }} 分钟 · 服务端执行环境</p>
+          <div class="requirements">
+            <ProblemRequirements :source="detail.requirements" />
+            <p class="runtime-meta">
+              时限 {{ detail.durationSeconds / 60 }} 分钟 · 服务端执行环境
+            </p>
+          </div>
           <div class="start-action">
-            <p v-if="!detail.executionAvailable">
+            <p
+              v-if="!detail.executionAvailable"
+              class="alert-warning"
+              role="alert"
+            >
               该版本执行环境不可用，不能开始。
-            </p><p v-else-if="current.data.value">
+            </p>
+            <p v-else-if="current.data.value">
               请先继续或结束当前演练。
-            </p><p v-else>
+            </p>
+            <p v-else>
               创建后先完成模型与环境检查，不会立即开始计时。
-            </p><Tooltip :text="startReason || '进入准备页，检查模型与执行环境'">
+            </p>
+            <Tooltip :text="startReason || '进入准备页，检查模型与执行环境'">
               <span :tabindex="startReason ? 0 : undefined"><Button
                 variant="primary"
                 :disabled="!!startReason"
@@ -220,6 +282,7 @@ function start() {
       </div>
       <nav
         v-if="filtered.length > 12"
+        class="catalog-pagination"
         aria-label="题库分页"
       >
         <Button
@@ -228,7 +291,9 @@ function start() {
           @click="page--"
         >
           上一页
-        </Button><span>第 {{ page + 1 }} 页</span><Button
+        </Button>
+        <span class="page-indicator">第 {{ page + 1 }} 页</span>
+        <Button
           variant="secondary"
           :disabled="(page + 1) * 12 >= filtered.length"
           @click="page++"
@@ -239,9 +304,12 @@ function start() {
       <p
         v-if="favorites.isError.value"
         role="alert"
+        class="inline-alert"
       >
-        收藏读取失败。<Button
+        收藏读取失败。
+        <Button
           variant="secondary"
+          size="small"
           @click="favorites.refetch()"
         >
           重试收藏
@@ -250,9 +318,11 @@ function start() {
       <p
         v-if="favorite.error.value"
         role="alert"
+        class="inline-alert"
       >
         {{ favorite.error.value }}
-      </p><Button
+      </p>
+      <Button
         v-if="favorite.uncertain.value"
         :disabled="favorite.pending.value"
         @click="favorite.retry()"
@@ -262,9 +332,11 @@ function start() {
       <p
         v-if="create.error.value"
         role="alert"
+        class="inline-alert"
       >
         {{ create.error.value }}
-      </p><Button
+      </p>
+      <Button
         v-if="create.uncertain.value"
         :disabled="create.pending.value"
         @click="create.retry()"
@@ -273,15 +345,22 @@ function start() {
       </Button>
       <section
         v-if="withdrawn.length"
+        class="withdrawn-card"
         aria-label="已下架收藏"
       >
-        <h2>已下架收藏</h2><p>收藏仍保留，但不能创建新演练。</p><div
+        <div class="withdrawn-header">
+          <h2>已下架收藏</h2>
+          <p>收藏仍保留，但不能创建新演练。</p>
+        </div>
+        <div
           v-for="entry in withdrawn"
           :key="entry.problemId"
           class="withdrawn"
         >
-          <span>{{ entry.title }} · 不可开始</span><Button
+          <span>{{ entry.title }} · 不可开始</span>
+          <Button
             variant="secondary"
+            size="small"
             :disabled="favorite.pending.value || favorite.uncertain.value"
             @click="toggle(entry.problemId)"
           >
@@ -294,20 +373,481 @@ function start() {
 </template>
 
 <style scoped>
-.catalog-page { max-width: 1320px; margin: auto; padding: 24px; }
-.catalog-header, .current-exercise, .problem-detail header, .catalog-filters, nav, .withdrawn { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.catalog-header { margin-bottom: 32px; } h1 { font-size: clamp(24px, 3vw, 36px); } h2 { font-size: 20px; overflow-wrap: anywhere; }
-.eyebrow { color: var(--accent); font-size: 12px; letter-spacing: .08em; }
-p { line-height: 1.7; } .current-exercise p, .catalog-header p:not(.eyebrow), .problem-choice span { color: var(--muted); }
-.current-exercise { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-panel); padding: 20px; overflow-wrap: anywhere; }
-.catalog-filters { margin: 24px 0; } input[type="search"] { max-width: 100%; padding: 8px; background: var(--background); border: 1px solid var(--control-border); border-radius: var(--radius-control); color: var(--foreground); }
-.catalog-columns { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.4fr); gap: 24px; align-items: start; }
-.problem-list { display: grid; gap: 12px; } .problem-choice { padding: 20px; text-align: left; display: grid; gap: 12px; color: var(--foreground); background: var(--surface); border: 1px solid var(--control-border); border-radius: var(--radius-panel); cursor: pointer; overflow-wrap: anywhere; }
-.problem-choice strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.8em; }
-.problem-choice[aria-pressed="true"] { border-color: var(--accent); background: var(--selected); }
-.problem-detail { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-panel); padding: 24px; background: var(--surface); }
-.problem-detail header > div { flex: 1; min-width: 0; } .requirements { white-space: pre-wrap; overflow-wrap: anywhere; }
-.start-action { border-top: 1px solid var(--border); padding-top: 16px; margin-top: 24px; } nav { justify-content: center; margin: 20px 0; }
-.withdrawn { padding: 12px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
-@media (max-width: 850px) { .catalog-columns { grid-template-columns: minmax(0, 1fr); } .catalog-page { padding: 16px; } }
+.catalog-page {
+  max-width: 1220px;
+  margin: 0 auto;
+  padding: 36px 32px 64px;
+}
+
+.catalog-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--oc-accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+
+.catalog-header h1 {
+  margin: 0 0 8px;
+  font-size: clamp(28px, 3.2vw, 36px);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.catalog-header p:not(.eyebrow) {
+  margin: 0;
+  color: var(--oc-fg-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.history-entry {
+  text-decoration: none;
+}
+
+.current-exercise {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 22px 24px;
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-panel);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(160, 196, 165, 0.08), transparent 55%),
+    var(--oc-surface);
+  box-shadow: var(--oc-shadow-sm), var(--oc-hairline-top);
+  overflow-wrap: anywhere;
+}
+
+.current-exercise-copy {
+  min-width: 0;
+  flex: 1 1 280px;
+}
+
+.current-exercise h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--oc-accent);
+}
+
+.current-exercise p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--oc-fg-muted);
+  line-height: 1.6;
+}
+
+.failure-text {
+  color: var(--oc-danger) !important;
+}
+
+.current-title {
+  margin: 4px 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.status-badge {
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--oc-accent);
+  border: 1px solid var(--oc-border-accent);
+  background: var(--oc-accent-soft);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.exercise-identity {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.exercise-identity summary {
+  cursor: pointer;
+}
+
+.exercise-identity code {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+}
+
+.current-exercise a {
+  text-decoration: none;
+}
+
+/* Integrated Glass Filter Bar */
+.catalog-filters {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 22px 0;
+  padding: 12px 16px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  border-radius: 12px;
+  box-shadow: var(--oc-shadow-xs), var(--oc-hairline-top);
+}
+
+.search-box {
+  position: relative;
+  flex: 1 1 240px;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--oc-fg-dim);
+  pointer-events: none;
+}
+
+input[type="search"] {
+  width: 100%;
+  padding: 8px 12px 8px 36px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+  color: var(--oc-fg);
+  font-size: 13.5px;
+  transition:
+    border-color 180ms var(--oc-ease),
+    box-shadow 180ms var(--oc-ease);
+}
+
+input[type="search"]:hover {
+  border-color: #7c8492;
+}
+
+input[type="search"]:focus-visible {
+  border-color: var(--oc-accent);
+  box-shadow: 0 0 0 3px var(--oc-accent-glow);
+}
+
+.favorite-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--oc-fg);
+  cursor: pointer;
+  transition: border-color 160ms var(--oc-ease), background-color 160ms var(--oc-ease);
+}
+
+.favorite-filter:hover {
+  border-color: var(--oc-border-strong);
+  background: var(--oc-surface-hover);
+}
+
+.favorite-filter input {
+  accent-color: var(--oc-accent);
+}
+
+.version-count {
+  margin-left: auto;
+  color: var(--oc-fg-muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--oc-border);
+}
+
+/* Bento Master-Detail Grid */
+.catalog-columns {
+  display: grid;
+  grid-template-columns: minmax(270px, 0.85fr) minmax(0, 1.45fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.problem-list {
+  display: grid;
+  gap: 10px;
+}
+
+.problem-choice {
+  position: relative;
+  padding: 18px 20px;
+  text-align: left;
+  display: grid;
+  gap: 12px;
+  color: var(--oc-fg);
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  border-radius: 12px;
+  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  transition:
+    background-color 180ms var(--oc-ease),
+    border-color 180ms var(--oc-ease),
+    box-shadow 180ms var(--oc-ease),
+    transform 160ms var(--oc-ease);
+}
+
+.problem-choice:hover {
+  background: var(--oc-surface-2);
+  border-color: var(--oc-border-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--oc-hairline-top), var(--oc-shadow-sm);
+}
+
+.problem-choice strong {
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.9em;
+}
+
+.problem-choice[aria-pressed="true"] {
+  border-color: var(--oc-border-accent);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(160, 196, 165, 0.1), transparent 65%),
+    var(--oc-surface-2);
+  box-shadow:
+    var(--oc-hairline-top),
+    0 0 0 1px rgba(160, 196, 165, 0.2),
+    var(--oc-shadow-sm);
+}
+
+.choice-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.meta-chip {
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--oc-border);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sticky Detail Bento Card */
+.problem-detail {
+  min-width: 0;
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-panel);
+  background: var(--oc-surface);
+  box-shadow: var(--oc-shadow-md), var(--oc-hairline-top);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 48px);
+  position: sticky;
+  top: 24px;
+  overflow: hidden;
+}
+
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px 24px 18px;
+  border-bottom: 1px solid var(--oc-border);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.detail-header > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-header h2 {
+  margin: 8px 0 0;
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.problem-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  font-weight: 550;
+  letter-spacing: 0.04em;
+  color: var(--oc-accent);
+}
+
+.problem-meta span {
+  background: var(--oc-accent-soft);
+  border: 1px solid var(--oc-border-accent);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.favorite-toggle[aria-pressed="true"] {
+  color: var(--oc-warning);
+  background: var(--oc-warning-bg);
+  border-color: var(--oc-warning-border);
+}
+
+.requirements {
+  overflow: auto;
+  min-height: 0;
+  padding: 20px 24px 24px;
+}
+
+.runtime-meta {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--oc-border);
+  font-size: 12.5px;
+  color: var(--oc-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.start-action {
+  flex-shrink: 0;
+  border-top: 1px solid var(--oc-border);
+  padding: 16px 24px;
+  background: var(--oc-surface-glass);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.start-action p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--oc-fg-muted);
+  line-height: 1.5;
+}
+
+.start-action .alert-warning {
+  color: var(--oc-warning);
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--oc-warning-bg);
+  border: 1px solid var(--oc-warning-border);
+}
+
+.catalog-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin: 28px 0 12px;
+}
+
+.page-indicator {
+  font-size: 13px;
+  color: var(--oc-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.inline-alert {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--oc-danger-bg);
+  border: 1px solid var(--oc-danger-border);
+  color: var(--oc-danger);
+  font-size: 13.5px;
+}
+
+.withdrawn-card {
+  margin-top: 32px;
+  padding: 24px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--oc-shadow-xs), var(--oc-hairline-top);
+}
+
+.withdrawn-header h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.withdrawn-header p {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--oc-fg-muted);
+}
+
+.withdrawn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  border-top: 1px solid var(--oc-border);
+  font-size: 13.5px;
+  color: var(--oc-fg-muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 850px) {
+  .catalog-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .catalog-page {
+    padding: 20px 16px 40px;
+  }
+  .problem-detail {
+    position: static;
+    max-height: none;
+  }
+  .detail-header,
+  .requirements,
+  .start-action {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .start-action {
+    flex-wrap: wrap;
+  }
+}
 </style>

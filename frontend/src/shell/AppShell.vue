@@ -55,10 +55,13 @@ watch(() => route.fullPath, async () => {
           class="app-brand"
           aria-label="CodeCraft 首页"
         >
-          <Terminal
-            :size="24"
-            aria-hidden="true"
-          /><span>CodeCraft</span>
+          <span class="app-brand-mark">
+            <Terminal
+              :size="17"
+              aria-hidden="true"
+            />
+          </span>
+          <span class="app-brand-text">CodeCraft</span>
         </RouterLink>
         <Button
           class="app-nav-toggle"
@@ -90,7 +93,7 @@ watch(() => route.fullPath, async () => {
         >
           <component
             :is="link.icon"
-            :size="20"
+            :size="18"
             aria-hidden="true"
           /><span>{{ link.label }}</span>
         </RouterLink>
@@ -118,15 +121,18 @@ watch(() => route.fullPath, async () => {
           </Button>
         </template>
         <template v-else-if="identity">
-          <UserRound
-            :size="20"
-            aria-hidden="true"
-          />
-          <div>
+          <div class="app-session-avatar">
+            <UserRound
+              :size="16"
+              aria-hidden="true"
+            />
+          </div>
+          <div class="app-session-meta">
             <span
               class="app-username"
               :title="identity.username"
-            >{{ identity.username }}</span><small>{{ identity.passwordChangeRequired ? '需要修改临时密码' : identity.role === 'ADMIN' ? '管理员' : '受邀用户' }}</small>
+            >{{ identity.username }}</span>
+            <small>{{ identity.passwordChangeRequired ? '需要修改临时密码' : identity.role === 'ADMIN' ? '管理员' : '受邀用户' }}</small>
           </div>
         </template>
         <p v-else>
@@ -146,32 +152,219 @@ watch(() => route.fullPath, async () => {
 </template>
 
 <style scoped>
-.app-shell { min-height: 100dvh; display: grid; grid-template-columns: 220px minmax(0, 1fr); }
-.app-sidebar { position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column; padding: 24px 12px 16px; border-right: 1px solid var(--border); background: var(--background); }
-.app-brand-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 32px; }
-.app-brand { display: flex; align-items: center; gap: 10px; padding-left: 8px; color: var(--foreground); text-decoration: none; font-size: 20px; font-weight: 650; }
-.app-navigation { display: grid; gap: 8px; }
-.app-nav-link { display: flex; gap: 12px; align-items: center; min-height: 44px; padding: 10px 12px; border-left: 3px solid transparent; border-radius: 0 6px 6px 0; color: var(--foreground); text-decoration: none; font-size: 14px; }
-.app-nav-link:hover { background: var(--surface); }
-.app-nav-link.router-link-exact-active { background: var(--selected); border-left-color: var(--accent); }
-.app-nav-link svg { flex-shrink: 0; }
-.app-session { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: auto; padding: 20px 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
-.app-session > div { min-width: 0; flex: 1; }
-.app-session small { display: block; color: var(--muted); margin-top: 4px; }
-.app-session p { margin: 0; color: var(--muted); }
-.app-username { display: block; overflow-wrap: anywhere; }
-.app-content { min-width: 0; }
-.skip-link { position: fixed; top: -80px; left: 16px; z-index: 200; padding: 12px 16px; background: var(--primary); color: var(--primary-foreground); border-radius: 6px; }
-.skip-link:focus { top: 12px; }
-@media (min-width: 901px) {
-  .app-nav-toggle { display: none; }
+.app-shell {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
 }
+
+.app-sidebar {
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 12px 16px;
+  border-right: 1px solid var(--oc-border);
+  background: var(--oc-bg-subtle);
+}
+
+.app-brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 24px;
+  padding: 0 4px;
+}
+
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--oc-fg);
+  text-decoration: none;
+  font-size: 16.5px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.app-brand-mark {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border-strong);
+  color: var(--oc-accent);
+  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+}
+
+.app-navigation {
+  display: grid;
+  gap: 4px;
+}
+
+.app-nav-link {
+  position: relative;
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  color: var(--oc-fg-muted);
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 500;
+  transition:
+    background-color 160ms var(--oc-ease),
+    border-color 160ms var(--oc-ease),
+    color 160ms var(--oc-ease);
+}
+
+.app-nav-link:hover {
+  color: var(--oc-fg);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.app-nav-link.router-link-exact-active {
+  color: var(--oc-fg);
+  background: var(--oc-surface-2);
+  border-color: var(--oc-border);
+  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+}
+
+.app-nav-link.router-link-exact-active::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--oc-accent);
+}
+
+.app-nav-link.router-link-exact-active svg {
+  color: var(--oc-accent);
+}
+
+.app-nav-link svg {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.app-session {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding: 12px;
+  border: 1px solid var(--oc-border);
+  border-radius: 12px;
+  background: var(--oc-surface);
+  box-shadow: var(--oc-hairline-top);
+  font-size: 12.5px;
+}
+
+.app-session-avatar {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border-strong);
+  color: var(--oc-accent);
+  flex-shrink: 0;
+}
+
+.app-session-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.app-session small {
+  display: block;
+  color: var(--oc-fg-muted);
+  margin-top: 2px;
+  font-size: 11.5px;
+}
+
+.app-session p {
+  margin: 0;
+  color: var(--oc-fg-muted);
+}
+
+.app-username {
+  display: block;
+  color: var(--oc-fg);
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.app-content {
+  min-width: 0;
+  outline: none;
+}
+
+.skip-link {
+  position: fixed;
+  top: -80px;
+  left: 16px;
+  z-index: 200;
+  padding: 10px 16px;
+  background: var(--oc-cta-bg);
+  color: var(--oc-cta-fg);
+  font-weight: 600;
+  border-radius: 8px;
+  box-shadow: var(--oc-shadow-md);
+}
+
+.skip-link:focus {
+  top: 12px;
+}
+
+@media (min-width: 901px) {
+  .app-nav-toggle {
+    display: none;
+  }
+}
+
 @media (max-width: 900px) {
-  .app-shell { display: block; }
-  .app-sidebar { position: relative; height: auto; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--border); }
-  .app-brand-row { margin: 0; }
-  .app-navigation, .app-session { display: none; }
-  .navigation-expanded .app-navigation { display: grid; margin-top: 16px; }
-  .navigation-expanded .app-session { display: flex; margin-top: 16px; padding-top: 16px; }
+  .app-shell {
+    display: block;
+  }
+  .app-sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    height: auto;
+    padding: 12px 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--oc-border);
+    background: var(--oc-surface-glass);
+    backdrop-filter: blur(12px);
+  }
+  .app-brand-row {
+    margin: 0;
+    padding: 0;
+  }
+  .app-navigation,
+  .app-session {
+    display: none;
+  }
+  .navigation-expanded .app-navigation {
+    display: grid;
+    margin-top: 14px;
+  }
+  .navigation-expanded .app-session {
+    display: flex;
+    margin-top: 14px;
+  }
 }
 </style>

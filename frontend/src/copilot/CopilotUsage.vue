@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { usage } from './usageApi';
 import { commandPolicy, errorMessage } from './errors';
 import UsageSummary from '../modelaccess/UsageSummary.vue';
@@ -49,16 +49,24 @@ watch(result.error, error => { if (commandPolicy.identityFailure(error)) emit('u
       </p>
       <UsageSummary :data="result.data.value" />
     </template>
-    <NButton
+    <Button
       :disabled="result.isFetching.value"
       @click="result.refetch()"
     >
       重新读取演练用量
-    </NButton>
+    </Button>
   </section>
 </template>
 
 <style scoped>
-.copilot-usage { margin-block: 16px; }
-p { line-height: 1.6; overflow-wrap: anywhere; }
+.copilot-usage {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  display: grid;
+  gap: 8px;
+}
+h3 { margin: 0; font-size: 13px; font-weight: 600; }
+p { margin: 0; line-height: 1.55; overflow-wrap: anywhere; font-size: 12px; color: var(--oc-fg-muted); }
 </style>

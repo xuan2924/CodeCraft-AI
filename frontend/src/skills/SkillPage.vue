@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
-import { RouterLink } from 'vue-router';
+import Button from '../components/ui/Button.vue';
 import { session } from '../auth/api';
 import SkillPanel from './SkillPanel.vue';
 const client = useQueryClient();
@@ -20,43 +19,100 @@ function unauthorized() {
 </script>
 <template>
   <main class="skill-page">
-    <nav aria-label="页面导航">
-      <RouterLink :to="{ name: 'account' }">账号</RouterLink>
-      <RouterLink :to="{ name: 'workspace' }">工作区</RouterLink>
-      <RouterLink :to="{ name: 'models' }">模型连接</RouterLink>
-    </nav>
-    <h1>个人 Skill 文本库</h1>
+    <header class="skill-hero">
+      <p class="eyebrow">
+        CODECRAFT / COPILOT SKILLS
+      </p>
+      <h1>个人 Skill</h1>
+      <p>为 Copilot 保存可复用的工作指导，按任务显式选择。</p>
+    </header>
     <p
       v-if="account.isPending.value || !account.isFetchedAfterMount.value"
       role="status"
+      class="inline-status"
     >
       正在确认当前账号…
     </p>
     <div
       v-else-if="account.isError.value"
       role="alert"
+      class="skill-alert"
     >
-      <p>无法确认账号，已隐藏个人文本。</p><NButton @click="account.refetch()">
+      <p>无法确认账号，已隐藏个人文本。</p>
+      <Button @click="account.refetch()">
         重新确认账号
-      </NButton>
+      </Button>
     </div>
-    <p v-else-if="!allowed">
+    <p
+      v-else-if="!allowed"
+      class="inline-status"
+    >
       请使用已修改临时密码的普通用户账号登录；管理员不能管理个人 Skill。
     </p>
     <template v-else-if="account.data.value">
-      <p>当前账号：{{ account.data.value.username }}</p>
       <SkillPanel
         :key="account.data.value.id"
         :owner="account.data.value.id"
         @unauthorized="unauthorized"
       />
     </template>
-    <footer>离开页面不会撤销已提交的变更；结果不明时请重新读取确认。</footer>
   </main>
 </template>
 <style scoped>
-.skill-page { max-width: 1000px; margin: 36px auto; padding: 0 24px; overflow-wrap: anywhere; }
-nav { display: flex; gap: 20px; flex-wrap: wrap; }
-footer { margin-top: 32px; }
-@media (max-width: 480px) { .skill-page { margin: 24px auto; padding: 0 16px; } }
+.skill-page {
+  max-width: 1220px;
+  margin: 0 auto;
+  padding: 36px 32px 64px;
+  overflow-wrap: anywhere;
+}
+
+.skill-hero {
+  margin-bottom: 28px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--oc-accent);
+}
+
+.skill-hero h1 {
+  margin: 0 0 8px;
+  font-size: clamp(26px, 3vw, 34px);
+  font-weight: 650;
+}
+
+.skill-hero p:not(.eyebrow) {
+  margin: 0;
+  color: var(--oc-fg-muted);
+  line-height: 1.65;
+  font-size: 14px;
+}
+
+.inline-status {
+  color: var(--oc-fg-muted);
+  font-size: 14px;
+}
+
+.skill-alert {
+  padding: 18px;
+  border-radius: var(--radius-panel);
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  display: grid;
+  gap: 12px;
+  max-width: 480px;
+}
+
+.skill-alert p {
+  margin: 0;
+}
+
+@media (max-width: 600px) {
+  .skill-page {
+    padding: 20px 16px 40px;
+  }
+}
 </style>

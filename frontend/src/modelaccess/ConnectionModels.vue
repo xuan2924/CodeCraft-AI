@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import * as api from './api';
 import { errorMessage, identityFailure } from './errors';
 import ModelForm from './ModelForm.vue';
@@ -35,11 +35,11 @@ function deleted() { selected.value = null; form.value = null; notice.value = '�
       {{ notice }}
     </p>
     <div class="toolbar">
-      <h3>此连接下的模型</h3><NButton @click="form = 'new'">
+      <h3>此连接下的模型</h3><Button @click="form = 'new'">
         新增模型
-      </NButton><NButton @click="refresh">
+      </Button><Button @click="refresh">
         重新读取
-      </NButton>
+      </Button>
     </div>
     <p
       v-if="list.isPending.value"
@@ -73,17 +73,17 @@ function deleted() { selected.value = null; form.value = null; notice.value = '�
         </li>
       </ul>
       <div class="toolbar">
-        <NButton
+        <Button
           :disabled="!cursor"
           @click="cursor = null"
         >
           模型首页
-        </NButton><NButton
+        </Button><Button
           :disabled="!list.data.value.nextCursor"
           @click="cursor = list.data.value.nextCursor"
         >
           下一页模型
-        </NButton>
+        </Button>
       </div>
     </template>
     <ModelForm
@@ -128,9 +128,9 @@ function deleted() { selected.value = null; form.value = null; notice.value = '�
           <h4>{{ detail.data.value.name }}</h4><p><code>{{ detail.data.value.modelId }}</code> · 思考 {{ detail.data.value.thinkingMode === 'ON' ? '开启' : '关闭' }}</p>
           <p>上下文 {{ detail.data.value.contextWindow }} Token（用户提供） · 输出上限 {{ detail.data.value.maxOutputTokens }} Token</p>
           <div class="toolbar">
-            <NButton @click="form = 'edit'">
+            <Button @click="form = 'edit'">
               编辑模型
-            </NButton><DeleteConfiguration
+            </Button><DeleteConfiguration
               :key="selected"
               :owner="owner"
               kind="model"
@@ -152,13 +152,49 @@ function deleted() { selected.value = null; form.value = null; notice.value = '�
   </div>
 </template>
 <style scoped>
-.models { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 16px; }
-.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
-h3, h4 { margin: 0; } h3 { margin-right: auto; }
-ul { list-style: none; padding: 0; }
-li { border-bottom: 1px solid var(--line); }
-li button { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; text-align: left; padding: 12px 4px; font: inherit; color: inherit; background: transparent; border: 0; cursor: pointer; }
-li button[aria-pressed="true"] { font-weight: 700; border-left: 3px solid var(--primary); padding-left: 12px; }
-code { overflow-wrap: anywhere; }
-.model-detail { margin-top: 24px; }
+.models { margin-top: 24px; border-top: 1px solid var(--oc-border); padding-top: 20px; display: grid; gap: 14px; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+h3, h4 { margin: 0; font-size: 15px; font-weight: 600; }
+h3 { margin-right: auto; }
+ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+li button {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--oc-fg);
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 160ms var(--oc-ease), border-color 160ms var(--oc-ease);
+}
+li button:hover { background: var(--oc-surface-hover); border-color: var(--oc-border-strong); }
+li button[aria-pressed="true"] {
+  background: var(--oc-selected);
+  border-color: var(--oc-border-accent);
+  font-weight: 600;
+}
+code {
+  overflow-wrap: anywhere;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+}
+.model-detail {
+  padding: 18px;
+  border-radius: 12px;
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+  display: grid;
+  gap: 10px;
+}
+.model-detail p { margin: 0; font-size: 13px; color: var(--oc-fg-muted); }
 </style>

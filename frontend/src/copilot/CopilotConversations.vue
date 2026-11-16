@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { useCommand } from '../api/useCommand';
 import { commandPolicy, errorMessage } from './errors';
 import * as api from './api';
@@ -42,10 +42,13 @@ const current = computed(() => list.data.value?.find(item => item.id === selecte
 </script>
 
 <template>
-  <section aria-label="Copilot 会话">
+  <section
+    class="copilot-conversations"
+    aria-label="Copilot 会话"
+  >
     <div class="conversation-controls">
       <label>
-        当前会话
+        <span>当前会话</span>
         <select
           v-model="selected"
           :disabled="!list.data.value || create.pending.value"
@@ -60,63 +63,82 @@ const current = computed(() => list.data.value?.find(item => item.id === selecte
           </option>
         </select>
       </label>
-      <NButton
+      <Button
+        size="small"
         :disabled="disabled || !credential || !list.data.value || create.pending.value || create.uncertain.value"
         @click="newConversation"
       >
         {{ create.pending.value ? '正在新建…' : 'New · 新会话' }}
-      </NButton>
+      </Button>
     </div>
-    <p>会话各自保留聊天，共享当前代码。新建或切换不回滚代码，也不停止其他会话的任务；每个演练同一时间仅执行一个主任务。</p>
-    <p v-if="current?.forkSource">
+    <p class="conv-note">
+      会话各自保留聊天，共享当前代码。新建或切换不回滚代码，也不停止其他会话的任务；每个演练同一时间仅执行一个主任务。
+    </p>
+    <p
+      v-if="current?.forkSource"
+      class="conv-fork-banner"
+    >
       此分支继承自会话 {{ current.forkSource }}，截至消息 {{ current.forkMessage }}。对话历史来自过去，文件是当前版本；不会重放命令或恢复代码。
     </p>
     <div
       v-if="forkTarget"
+      class="conv-fork-confirm"
       aria-label="确认 Fork"
     >
       <p>继承会话 {{ forkTarget.source }} 至消息 {{ forkTarget.message }}（包含此消息）。仅继承完整工具批次，不复制审批或活动任务；当前代码不变。</p>
-      <NButton
-        :disabled="disabled || !credential || create.pending.value || create.uncertain.value"
-        @click="forkConversation"
-      >
-        确认创建对话分支
-      </NButton>
-      <NButton
-        :disabled="create.pending.value || create.uncertain.value"
-        @click="forkTarget = null"
-      >
-        取消 Fork
-      </NButton>
+      <div class="conv-actions">
+        <Button
+          variant="primary"
+          size="small"
+          :disabled="disabled || !credential || create.pending.value || create.uncertain.value"
+          @click="forkConversation"
+        >
+          确认创建对话分支
+        </Button>
+        <Button
+          size="small"
+          :disabled="create.pending.value || create.uncertain.value"
+          @click="forkTarget = null"
+        >
+          取消 Fork
+        </Button>
+      </div>
     </div>
     <p
       v-if="list.isPending.value"
       role="status"
+      class="conv-note"
     >
       正在读取会话…
     </p>
     <p
       v-if="list.isError.value"
       role="alert"
+      class="conv-error"
     >
       {{ errorMessage(list.error.value) }}
-      <NButton @click="list.refetch()">
+      <Button
+        size="small"
+        @click="list.refetch()"
+      >
         重新读取会话
-      </NButton>
+      </Button>
     </p>
     <p
       v-if="create.error.value"
       role="alert"
+      class="conv-error"
     >
       {{ create.error.value }}
     </p>
-    <NButton
+    <Button
       v-if="create.uncertain.value"
+      size="small"
       :disabled="create.pending.value"
       @click="create.retry()"
     >
       使用原请求键核对新建结果
-    </NButton>
+    </Button>
     <CopilotPanel
       v-if="current"
       :key="`${scope}/${current.id}`"
@@ -136,7 +158,82 @@ const current = computed(() => list.data.value?.find(item => item.id === selecte
 </template>
 
 <style scoped>
-.conversation-controls { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
-.conversation-controls label { display: grid; gap: 4px; }
-select { max-width: 100%; padding: 6px; font: inherit; }
+.copilot-conversations {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+}
+
+.conversation-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.conversation-controls label {
+  display: grid;
+  gap: 6px;
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+select {
+  max-width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: 8px;
+}
+
+.conv-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+  line-height: 1.55;
+}
+
+.conv-fork-banner,
+.conv-fork-confirm {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border-strong);
+  font-size: 12.5px;
+  display: grid;
+  gap: 8px;
+}
+
+.conv-fork-confirm p {
+  margin: 0;
+}
+
+.conv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.conv-error {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--oc-danger-bg);
+  border: 1px solid var(--oc-danger-border);
+  color: var(--oc-danger);
+  font-size: 12.5px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
 </style>

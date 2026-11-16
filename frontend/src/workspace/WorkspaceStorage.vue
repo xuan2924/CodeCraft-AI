@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import NButton from '../components/ui/Button.vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { message } from './api';
 import * as api from './storageApi';
@@ -33,13 +33,13 @@ function format(bytes: number) { return bytes > 0 && bytes < 104857.6 ? '< 0.1 M
   >
     <header>
       <h2>数据容量</h2>
-      <NButton
+      <Button
         size="small"
         :loading="query.isFetching.value"
         @click="query.refetch()"
       >
         刷新占用
-      </NButton>
+      </Button>
     </header>
     <p
       v-if="query.isPending.value"
@@ -72,10 +72,30 @@ function format(bytes: number) { return bytes > 0 && bytes < 104857.6 ? '< 0.1 M
 </template>
 
 <style scoped>
-.workspace-storage { border-block-start: 1px solid var(--line); padding-block: 0.75rem; }
-header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
-h2 { margin: 0; font-size: 1rem; }
-dl { display: flex; flex-wrap: wrap; gap: 0.6rem 1.5rem; }
-dt, small { color: var(--muted); }
-dd { margin-inline-start: 0; font-variant-numeric: tabular-nums; }
+.workspace-storage {
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  box-shadow: var(--oc-hairline-top);
+  display: grid;
+  gap: 12px;
+}
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+h2 { margin: 0; font-size: 14.5px; font-weight: 600; }
+dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+dl > div {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+}
+dt { color: var(--oc-fg-muted); font-size: 12px; margin-bottom: 4px; }
+dd { margin-inline-start: 0; font-variant-numeric: tabular-nums; font-size: 14px; font-weight: 600; color: var(--oc-fg); }
+p, small { margin: 0; color: var(--oc-fg-muted); font-size: 12.5px; line-height: 1.55; }
 </style>
