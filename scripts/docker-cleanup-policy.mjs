@@ -1,21 +1,15 @@
 import { imageRepositories } from './docker-images.mjs';
 import { root } from './process.mjs';
 
-const legacyTag = /^codecraft\/(?:java|sandbox):local-[0-9a-f]{24}$|^codecraft\/cart-total:(?:(?:validation|execution-test)-[0-9a-f]{12}|contract-red)$/;
 const currentTag = /^codecraft\/(?:java|sandbox|cart-total):local-[0-9a-f]{64}$/;
 
 // Work only on our known build tags, never global dangling images or foreign aliases.
-export function cleanupPlan(images, protectedIds, protectedTags = new Set()) {
+export function cleanupPlan(images, protectedIds) {
   const plan = [];
   for (const image of images) {
     const tags = image.RepoTags ?? [];
-    if (!tags.length || image.RepoDigests?.length || !tags.every((tag) => legacyTag.test(tag) || currentTag.test(tag))) continue;
-    if (!protectedIds.has(image.Id)) {
-      plan.push({ id: image.Id, tags, removeImage: true });
-    } else if (tags.some((tag) => currentTag.test(tag))) {
-      const obsolete = tags.filter((tag) => legacyTag.test(tag) && !protectedTags.has(tag));
-      if (obsolete.length) plan.push({ id: image.Id, tags: obsolete, removeImage: false });
-    }
+    if (!tags.length || image.RepoDigests?.length || !tags.every((tag) => currentTag.test(tag))) continue;
+    if (!protectedIds.has(image.Id)) plan.push({ id: image.Id, tags });
   }
   return plan;
 }

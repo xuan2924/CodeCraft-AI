@@ -65,15 +65,13 @@ test('cleanup protects current/container/publication IDs and never foreign image
   assert.deepEqual(cleanupPlan(images, new Set([id('a'), id('c'), id('d')])), []);
 });
 
-test('canonical problem image replaces legacy aliases without deleting its image', () => {
+test('cleanup ignores retired tag formats and protects registry references', () => {
   const current = image('codecraft/cart-total', 'a');
-  const usedAlias = 'codecraft/cart-total:execution-test-0123456789ab';
-  const obsoleteAlias = 'codecraft/cart-total:validation-0123456789ab';
-  current.RepoTags.push(usedAlias, obsoleteAlias);
-  assert.deepEqual(cleanupPlan([current], new Set([current.Id]), new Set([usedAlias])), [
-    { id: current.Id, tags: [obsoleteAlias], removeImage: false },
-  ]);
-  assert.equal(cleanupPlan([current], new Set())[0].removeImage, true);
+  assert.deepEqual(cleanupPlan([current], new Set([current.Id])), []);
+  assert.deepEqual(cleanupPlan([current], new Set()), [{ id: current.Id, tags: current.RepoTags }]);
+  current.RepoTags.push('codecraft/cart-total:validation-0123456789ab');
+  assert.deepEqual(cleanupPlan([current], new Set()), [], 'unknown aliases are never removed implicitly');
+  current.RepoTags = [tag('codecraft/cart-total', 'a')];
   current.RepoDigests = ['registry.example/project@' + id('a')];
   assert.deepEqual(cleanupPlan([current], new Set()), []);
 });
@@ -87,11 +85,12 @@ test('publication references fail closed and do not include random receipt field
 });
 
 test('runtime publications preserve verification, separate volatile receipts and exclude answers from Go', async () => {
-  const directory = fileURLToPath(new URL('../problems/cart-total/1.0.1/', import.meta.url));
+  const directory = fileURLToPath(new URL('../problems/cart-total/1.1.0/', import.meta.url));
   const inputs = await readPublicationInputs(directory);
   const { manifest } = await validatePackage(directory);
   const publication = { ...inputs, manifest, identity: { execution_image_digest: id('a') },
-    receipt: { publicationInputsSha256: publicationInputsSha256(inputs), validatedAt: 'first' } };
+    receipt: { publicationInputsSha256: publicationInputsSha256(inputs), validatedAt: 'first',
+      challenge: { publicationInputsSha256: publicationInputsSha256(inputs.challenge), packageSha256: 'b'.repeat(64), imageId: id('b'), platform: 'linux/amd64' } } };
   const first = containerInputs(publication);
   publication.receipt.validatedAt = 'second';
   const second = containerInputs(publication);

@@ -33,14 +33,11 @@ for (const file of publications) {
   for (const id of publicationImageIds(JSON.parse(await readFile(resolve(file), 'utf8')))) protectedIds.add(id);
 }
 const containers = inspect('container', ids(['ps', '-aq', '--no-trunc']));
-const protectedTags = new Set(keep);
 const scratch = await mkdtemp(join(tmpdir(), 'codecraft-image-cleanup-'));
 try {
   for (const container of containers) {
     protectedIds.add(container.Image);
-    protectedTags.add(container.Config.Image);
-    // Existing containers may still have the old baked-in publications. Include
-    // stopped containers, and fail closed if an expected publication cannot be read.
+    // Include stopped containers, and fail closed if their publication cannot be read.
     const image = inspect('image', [container.Image])[0];
     const publicationPath = containerPublicationPath(container, image);
     if (!publicationPath) continue;
@@ -57,15 +54,15 @@ for (const repository of ['codecraft/java', 'codecraft/sandbox', 'codecraft/cart
     throw new Error(`No current reference for ${repository}; build it or supply --keep IMAGE before cleanup`);
   }
 }
-const plan = cleanupPlan(images, protectedIds, protectedTags);
-for (const item of plan) console.log(`${item.removeImage ? 'REMOVE' : 'UNTAG'} ${item.id.slice(0, 19)} ${item.tags.join(', ')}`);
-console.log(`${apply ? 'Apply' : 'Preview'}: ${plan.filter((item) => item.removeImage).length} images, ${plan.reduce((count, item) => count + item.tags.length, 0)} tags. Containers/volumes/build cache are untouched.`);
+const plan = cleanupPlan(images, protectedIds);
+for (const item of plan) console.log(`REMOVE ${item.id.slice(0, 19)} ${item.tags.join(', ')}`);
+console.log(`${apply ? 'Apply' : 'Preview'}: ${plan.length} images, ${plan.reduce((count, item) => count + item.tags.length, 0)} tags. Containers/volumes/build cache are untouched.`);
 if (apply) {
   // Run with builds/tests stopped. Recheck all container references before each
   // deletion; never force. Docker remains the final guard against image-use races.
   for (const item of plan) {
     const live = inspect('container', ids(['ps', '-aq', '--no-trunc']));
-    if (item.removeImage && live.some((container) => container.Image === item.id)) {
+    if (live.some((container) => container.Image === item.id)) {
       console.log(`SKIP newly referenced ${item.id}`); continue;
     }
     const latest = inspect('image', [item.id])[0];
