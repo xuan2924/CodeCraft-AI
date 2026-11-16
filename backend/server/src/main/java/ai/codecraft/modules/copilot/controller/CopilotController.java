@@ -71,8 +71,8 @@ public class CopilotController {
     }
     @GetMapping("/api/exercises/{exercise}/copilot/tasks/latest")
     public ApiResponse<CopilotDeliveryDTO> latest(@PathVariable UUID exercise, @RequestParam(required = false) UUID conversation, HttpServletRequest request) {
-        return ApiResponse.success(conversation == null ? tasks.latest(IdentityHttp.sessionHash(request), exercise.toString())
-            : tasks.latestInConversation(IdentityHttp.sessionHash(request), exercise.toString(), conversation.toString()));
+        return ApiResponse.success(tasks.latestInConversation(IdentityHttp.sessionHash(request), exercise.toString(),
+            conversation == null ? null : conversation.toString()));
     }
     @GetMapping("/api/copilot-tasks/{task}")
     public ApiResponse<CopilotTaskResponse> find(@PathVariable UUID task, HttpServletRequest request) {
@@ -86,8 +86,8 @@ public class CopilotController {
     @GetMapping("/api/exercises/{exercise}/copilot/messages")
     public ApiResponse<CopilotMessagesResponse> messages(@PathVariable UUID exercise,
         @RequestParam(defaultValue = "-1") long after, @RequestParam(required = false) UUID conversation, HttpServletRequest request) {
-        return ApiResponse.success(conversation == null ? tasks.messages(IdentityHttp.sessionHash(request), exercise.toString(), after)
-            : tasks.messagesInConversation(IdentityHttp.sessionHash(request), exercise.toString(), after, conversation.toString()));
+        return ApiResponse.success(tasks.messagesInConversation(IdentityHttp.sessionHash(request), exercise.toString(), after,
+            conversation == null ? null : conversation.toString()));
     }
     @GetMapping(value = "/api/exercises/{exercise}/copilot/tasks/{task}/events", produces = "text/event-stream")
     public void events(@PathVariable UUID exercise, @PathVariable UUID task, @RequestParam(required = false) String after,

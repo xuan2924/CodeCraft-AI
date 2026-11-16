@@ -27,13 +27,13 @@ public class CopilotContextController {
     public CopilotContextController(CopilotCompactionService compactions, CopilotUsageService usage) { this.compactions = compactions; this.usage = usage; }
     @GetMapping("/api/exercises/{exercise}/copilot/usage")
     public ApiResponse<CopilotUsageResponse> usage(@PathVariable UUID exercise, @RequestParam(required = false) UUID conversation, HttpServletRequest request) {
-        return ApiResponse.success(conversation == null ? usage.current(IdentityHttp.sessionHash(request), exercise.toString())
-            : usage.currentInConversation(IdentityHttp.sessionHash(request), exercise.toString(), conversation.toString()));
+        return ApiResponse.success(usage.currentInConversation(IdentityHttp.sessionHash(request), exercise.toString(),
+            conversation == null ? null : conversation.toString()));
     }
     @GetMapping("/api/exercises/{exercise}/copilot/context")
     public ApiResponse<CopilotContextResponse> current(@PathVariable UUID exercise, @RequestParam(required = false) UUID conversation, HttpServletRequest request) {
-        return ApiResponse.success(conversation == null ? compactions.current(IdentityHttp.sessionHash(request), exercise.toString())
-            : compactions.currentInConversation(IdentityHttp.sessionHash(request), exercise.toString(), conversation.toString()));
+        return ApiResponse.success(compactions.currentInConversation(IdentityHttp.sessionHash(request), exercise.toString(),
+            conversation == null ? null : conversation.toString()));
     }
     @PostMapping("/api/exercises/{exercise}/copilot/compactions")
     @ResponseStatus(HttpStatus.ACCEPTED)

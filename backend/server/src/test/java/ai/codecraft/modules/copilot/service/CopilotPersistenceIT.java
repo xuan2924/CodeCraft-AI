@@ -73,6 +73,7 @@ import ai.codecraft.modules.copilot.model.dto.CopilotBtwRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotFollowupRequest;
 import ai.codecraft.modules.copilot.model.dto.CopilotReferenceSelectionDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotStartRequest;
+import ai.codecraft.modules.copilot.model.dto.CopilotReferencesPreparedDTO;
 import ai.codecraft.modules.copilot.model.entity.CopilotFollowupEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
 import ai.codecraft.modules.copilot.repository.CopilotConversationRepository;
@@ -517,7 +518,7 @@ class CopilotPersistenceIT {
         var original = personalSkills.save(SESSION, null, "private-skill", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md",
             "---\nname: private-guide\ndescription: Guidance\n---\nPrivate retained content"))));
         personalSkills.change(SESSION, original.id(), "private-enable", original.version(), true, false);
-        var task = tasks.accept(SESSION, exercise, CONTROL, "read-authority", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "read-authority", "Inspect", true, measurement);
         String worker = UUID.randomUUID().toString(); execution.claim(task.id(), worker);
         var tool = new CopilotSkillTools(evidenceStore, json);
         String input = "{\"skill_id\":\"" + original.id() + "\"}";
@@ -539,20 +540,20 @@ class CopilotPersistenceIT {
             new SkillFileDTO("references/data.txt", "x".repeat(262144 - main.length())))));
         var enabled = personalSkills.change(SESSION, original.id(), "large-enable", original.version(), true, false);
         var constrained = new StorageMeasurement(exercise, "A".repeat(26), 1, 268435456 - 300000);
-        assertThatThrownBy(() -> tasks.accept(SESSION, exercise, CONTROL, "capacity-skill", "Inspect", true, constrained)).hasMessageContaining("STORAGE_BUDGET_EXCEEDED");
-        assertThat(tasks.latest(SESSION, exercise)).isNull();
+        assertThatThrownBy(() -> startTask(SESSION, exercise, CONTROL, "capacity-skill", "Inspect", true, constrained)).hasMessageContaining("STORAGE_BUDGET_EXCEEDED");
+        assertThat(tasks.latestInConversation(SESSION, exercise, null)).isNull();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_skill_snapshot", Integer.class)).isZero();
         assertThat(personalSkills.list(SESSION)).hasSize(1);
         personalSkills.change(SESSION, original.id(), "large-disable", enabled.version(), false, false);
-        assertThat(tasks.accept(SESSION, exercise, CONTROL, "capacity-skill", "Inspect", true, constrained).state()).isEqualTo("QUEUED");
+        assertThat(startTask(SESSION, exercise, CONTROL, "capacity-skill", "Inspect", true, constrained).state()).isEqualTo("QUEUED");
     }
 
     @Test
     void taskAdmissionAndPersonalEditsSerializeToOneWholeSkillVersion() throws Exception {
         String main = "---\nname: racing\ndescription: Guidance\n---\nOld body";
         var created = personalSkills.save(SESSION, null, "skill-create", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", main))));
-        assertThatThrownBy(() -> tasks.acceptWithSkills(SESSION, exercise, CONTROL, "disabled-task", "Inspect", true, List.of(created.id()), measurement)).hasMessageContaining("SKILL_NOT_FOUND");
-        assertThat(tasks.latest(SESSION, exercise)).isNull();
+        assertThatThrownBy(() -> startTask(SESSION, exercise, CONTROL, "disabled-task", "Inspect", true, List.of(created.id()), measurement)).hasMessageContaining("SKILL_NOT_FOUND");
+        assertThat(tasks.latestInConversation(SESSION, exercise, null)).isNull();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_skill_snapshot", Integer.class)).isZero();
         var enabled = personalSkills.change(SESSION, created.id(), "skill-enable", created.version(), true, false);
         var barrier = new CyclicBarrier(2);
@@ -562,14 +563,14 @@ class CopilotPersistenceIT {
                 return personalSkills.save(SESSION, created.id(), "skill-update", enabled.version(),
                     new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", main.replace("Old body", "New body")))));
             });
-            var start = pool.submit(() -> { barrier.await(); return tasks.acceptWithSkills(SESSION, exercise, CONTROL, "race-task", "Inspect", true, List.of(created.id()), measurement); });
+            var start = pool.submit(() -> { barrier.await(); return startTask(SESSION, exercise, CONTROL, "race-task", "Inspect", true, List.of(created.id()), measurement); });
             var updated = edit.get(10, TimeUnit.SECONDS); var task = start.get(10, TimeUnit.SECONDS);
             String owner = repository.find(task.id()).userId();
             var snapshot = skillSnapshots.list(owner, task.id()).getFirst();
             assertThat(snapshot.versionId()).isIn(created.contentVersion(), updated.contentVersion());
             assertThat(skillSnapshots.source(owner, task.id(), created.id()).filesPayload()).contains(snapshot.versionId().equals(created.contentVersion()) ? "Old body" : "New body");
             personalSkills.change(SESSION, created.id(), "skill-disable", updated.version(), false, false);
-            assertThat(tasks.acceptWithSkills(SESSION, exercise, CONTROL, "race-task", "Inspect", true, List.of(created.id()), measurement)).isEqualTo(task);
+            assertThat(startTask(SESSION, exercise, CONTROL, "race-task", "Inspect", true, List.of(created.id()), measurement)).isEqualTo(task);
         }
         verify(driver, never()).call(any(), any(), any(), anyInt(), any(), any());
     }
@@ -579,10 +580,10 @@ class CopilotPersistenceIT {
         String main = "---\nname: chosen\ndescription: Explicit guidance\n---\nMarker original-guidance.";
         var created = personalSkills.save(SESSION, null, "skill-create", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", main))));
         var enabled = personalSkills.change(SESSION, created.id(), "skill-enable", created.version(), true, false);
-        var task = tasks.acceptWithSkills(SESSION, exercise, CONTROL, "explicit-task", "Follow selected guidance", true, List.of(created.id()), measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "explicit-task", "Follow selected guidance", true, List.of(created.id()), measurement);
         var owner = repository.find(task.id()).userId();
         assertThat(skillSnapshots.list(owner, task.id())).singleElement().satisfies(item -> assertThat(item.explicitLoaded()).isFalse());
-        assertThatThrownBy(() -> tasks.acceptWithSkills(SESSION, exercise, CONTROL, "explicit-task", "Follow selected guidance", true, List.of(), measurement))
+        assertThatThrownBy(() -> startTask(SESSION, exercise, CONTROL, "explicit-task", "Follow selected guidance", true, List.of(), measurement))
             .hasMessageContaining("COPILOT_IDEMPOTENCY_CONFLICT");
         personalSkills.save(SESSION, created.id(), "skill-update", enabled.version(), new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", main.replace("original-guidance", "new-guidance")))));
         steers.accept(SESSION, task.id(), CONTROL, "skill-steer", new CopilotSteerRequest("Keep the original task guidance"));
@@ -602,7 +603,7 @@ class CopilotPersistenceIT {
         String main = "---\nname: review-java\ndescription: Review Java changes\n---\nUse deterministic clocks, marker pinned-original.";
         var created = personalSkills.save(SESSION, null, "skill-create", null, new SkillPackageRequest(1, List.of(new SkillFileDTO("SKILL.md", main))));
         var enabled = personalSkills.change(SESSION, created.id(), "skill-enable", created.version(), true, false);
-        var task = tasks.accept(SESSION, exercise, CONTROL, "skill-task", "Use applicable guidance", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "skill-task", "Use applicable guidance", true, measurement);
         var callsSeen = new AtomicInteger();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
             ChatRequest request = call.getArgument(1);
@@ -621,7 +622,7 @@ class CopilotPersistenceIT {
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         assertThat(callsSeen.get()).isEqualTo(2);
         assertThat(personalSkills.list(SESSION)).isEmpty();
-        assertThat(tasks.messages(SESSION, exercise, -1)).anySatisfy(message -> assertThat(message.payload()).contains("load_skill", "pinned-original"));
+        assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).anySatisfy(message -> assertThat(message.payload()).contains("load_skill", "pinned-original"));
     }
 
     @Test
@@ -629,23 +630,23 @@ class CopilotPersistenceIT {
         retainedSummaryHistory();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder()
             .aiMessage(AiMessage.from("Actual usage")).tokenUsage(new TokenUsage(100, 20, 120)).build(), 100));
-        var task = tasks.accept(SESSION, exercise, CONTROL, "usage-goal", "Continue", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "usage-goal", "Continue", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
-        var before = usage.current(SESSION, exercise);
+        var before = usage.currentInConversation(SESSION, exercise, null);
         assertThat(before.context().state()).isEqualTo("REPORTED");
         assertThat(before.context().inputTokens()).isEqualTo("100");
         assertThat(before.totals()).singleElement().satisfies(total -> {
             assertThat(total.calls()).isEqualTo("7"); assertThat(total.inputTokens()).isEqualTo("100");
             assertThat(total.totalTokens()).isEqualTo("120"); assertThat(total.pricedCalls()).isEqualTo("0");
         });
-        assertThat(usage.current(SESSION, exercise)).isEqualTo(before);
+        assertThat(usage.currentInConversation(SESSION, exercise, null)).isEqualTo(before);
         String worker = UUID.randomUUID().toString(); var job = compactions.accept(SESSION, exercise, CONTROL, "usage-summary", new CopilotCompactionRequest(true), measurement);
         summaryExecution.claim(job.id(), worker, null);
         var prepared = contextPreparation.prepare(summaryExecution.ticket(job.id(), worker));
         var candidate = prepared.plan().compaction();
         var dispatch = summaryExecution.begin(job.id(), worker, prepared, candidate, json.writeValueAsString(candidate.sourceIds()), measurement);
         summaryExecution.complete(job.id(), worker, dispatch.call().id(), summaryReceipt(dispatch));
-        var after = usage.current(SESSION, exercise);
+        var after = usage.currentInConversation(SESSION, exercise, null);
         assertThat(after.context().state()).isEqualTo("WAITING_UPDATE");
         assertThat(after.context().inputTokens()).isNull();
         assertThat(after.totals()).filteredOn(total -> "SUMMARY".equals(total.purpose())).singleElement()
@@ -676,18 +677,18 @@ class CopilotPersistenceIT {
             assertThat(request.messages().getLast()).isInstanceOf(ToolExecutionResultMessage.class);
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Continued")).build(), 100);
         });
-        var task = tasks.accept(SESSION, exercise, CONTROL, "automatic-goal", "Continue", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "automatic-goal", "Continue", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(count.get()).isEqualTo(3);
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         verify(files, times(1)).read(SESSION, exercise, "src/Main.java");
-        assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("1");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("1");
     }
 
     @Test
     void queuedManualSummaryRunsAtTheModelBoundaryAndContinuesTheOriginalGoal() throws Exception {
         retainedSummaryHistory();
-        var task = tasks.accept(SESSION, exercise, CONTROL, "continue", "Continue this original goal", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "continue", "Continue this original goal", true, measurement);
         var job = compactions.accept(SESSION, exercise, CONTROL, "inline", new CopilotCompactionRequest(true), measurement);
         var count = new AtomicInteger();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
@@ -706,13 +707,13 @@ class CopilotPersistenceIT {
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(count.get()).isEqualTo(2);
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
-        assertThat(compactions.current(SESSION, exercise).requests().getFirst().state()).isEqualTo("APPLIED");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().state()).isEqualTo("APPLIED");
     }
 
     @Test
     void stoppingTheParentDuringSummaryPreventsPublicationAndTheNextChatDispatch() throws Exception {
         retainedSummaryHistory();
-        var task = tasks.accept(SESSION, exercise, CONTROL, "stop-summary-parent", "Continue", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "stop-summary-parent", "Continue", true, measurement);
         var job = compactions.accept(SESSION, exercise, CONTROL, "stop-inline", new CopilotCompactionRequest(true), measurement);
         var count = new AtomicInteger();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
@@ -725,8 +726,8 @@ class CopilotPersistenceIT {
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(count.get()).isEqualTo(1);
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
-        assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("0");
-        assertThat(compactions.current(SESSION, exercise).requests().getFirst().state()).isEqualTo("CANCELLED");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("0");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().state()).isEqualTo("CANCELLED");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_turn WHERE task_id=?::uuid", Integer.class, task.id())).isZero();
     }
 
@@ -744,8 +745,8 @@ class CopilotPersistenceIT {
         });
         summaryRunner.runStandalone(job.id());
         assertThat(count.get()).isEqualTo(2);
-        assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("0");
-        assertThat(compactions.current(SESSION, exercise).requests().getFirst().state()).isEqualTo("FAILED");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("0");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().state()).isEqualTo("FAILED");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_compaction_call", Integer.class)).isEqualTo(2);
     }
 
@@ -771,11 +772,11 @@ class CopilotPersistenceIT {
             chats.incrementAndGet();
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("All older source pages compacted")).build(), 100);
         });
-        var task = tasks.accept(SESSION, exercise, CONTROL, "paged-history", "Continue the original goal", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "paged-history", "Continue the original goal", true, measurement);
         new CopilotRunner(execution, capacity, driver, executor, limits, calls, context).run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         assertThat(summaries.get()).isEqualTo(2); assertThat(chats.get()).isEqualTo(1);
-        assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("2");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("2");
     }
 
     @Test
@@ -798,8 +799,8 @@ class CopilotPersistenceIT {
         var job = compactions.accept(SESSION, exercise, CONTROL, "full-summary", new CopilotCompactionRequest(true), measurement);
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 2, 268435456);
         summaryRunner.runStandalone(job.id());
-        assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("0");
-        assertThat(compactions.current(SESSION, exercise).requests().getFirst().reason()).isEqualTo("STORAGE_BUDGET_EXCEEDED");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("0");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().reason()).isEqualTo("STORAGE_BUDGET_EXCEEDED");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_compaction_call", Integer.class)).isZero();
     }
 
@@ -807,11 +808,11 @@ class CopilotPersistenceIT {
     void emptyHistoryDoesNotDispatchAPaidSummary() throws Exception {
         var job = compactions.accept(SESSION, exercise, CONTROL, "empty-summary", new CopilotCompactionRequest(true), measurement);
         summaryRunner.runStandalone(job.id());
-        assertThat(compactions.current(SESSION, exercise).requests().getFirst().state()).isEqualTo("NOT_NEEDED");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().state()).isEqualTo("NOT_NEEDED");
         var interrupted = compactions.accept(SESSION, exercise, CONTROL, "before-dispatch", new CopilotCompactionRequest(true), measurement);
         String worker = UUID.randomUUID().toString(); summaryExecution.claim(interrupted.id(), worker, null);
         summaryExecution.fail(interrupted.id(), worker, "MODEL_RESULT_UNKNOWN");
-        assertThat(compactions.current(SESSION, exercise).requests().getFirst().reason()).isEqualTo("SERVICE_INTERRUPTED");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().reason()).isEqualTo("SERVICE_INTERRUPTED");
         verify(driver, never()).call(any(), any(), any(), anyInt(), any());
         assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_compaction_call", Integer.class)).isZero();
     }
@@ -822,7 +823,7 @@ class CopilotPersistenceIT {
         var dispatch = dispatchedSummary(worker);
         int originalCount = jdbc.queryForObject("SELECT count(*) FROM copilot_message", Integer.class);
         assertThat(summaryExecution.complete(dispatch.call().compactionId(), worker, dispatch.call().id(), summaryReceipt(dispatch))).isFalse();
-        var view = compactions.current(SESSION, exercise);
+        var view = compactions.currentInConversation(SESSION, exercise, null);
         assertThat(view.version()).isEqualTo("1"); assertThat(view.summary()).contains("historical");
         assertThat(view.requests().getFirst().state()).isEqualTo("APPLIED");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_message", Integer.class)).isEqualTo(originalCount);
@@ -836,9 +837,9 @@ class CopilotPersistenceIT {
         when(identity.tryAuthorizeMutation(SESSION)).thenReturn(null);
         summaryExecution.recover(dispatch.call().compactionId());
         summaryExecution.complete(dispatch.call().compactionId(), worker, dispatch.call().id(), summaryReceipt(dispatch));
-        assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("0");
-        assertThat(compactions.current(SESSION, exercise).requests().getFirst().state()).isEqualTo("CANCELLED");
-        assertThat(compactions.current(SESSION, exercise).requests().getFirst().reason()).isEqualTo("AUTHORIZATION_ENDED");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("0");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().state()).isEqualTo("CANCELLED");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().reason()).isEqualTo("AUTHORIZATION_ENDED");
         assertThat(jdbc.queryForObject("SELECT total_tokens FROM copilot_compaction_call", Long.class)).isEqualTo(20L);
     }
 
@@ -849,8 +850,8 @@ class CopilotPersistenceIT {
         compactions.cancel(SESSION, exercise, dispatch.call().compactionId());
         assertThat(data.quiescent(exercise)).isFalse();
         summaryExecution.complete(dispatch.call().compactionId(), worker, dispatch.call().id(), summaryReceipt(dispatch));
-        assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("0");
-        assertThat(compactions.current(SESSION, exercise).requests().getFirst().state()).isEqualTo("CANCELLED");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("0");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().state()).isEqualTo("CANCELLED");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_message", Integer.class)).isEqualTo(originals);
         assertThat(jdbc.queryForObject("SELECT total_tokens FROM copilot_compaction_call", Long.class)).isEqualTo(20L);
         assertThat(data.quiescent(exercise)).isTrue();
@@ -874,14 +875,31 @@ class CopilotPersistenceIT {
         String worker = UUID.randomUUID().toString(); var dispatch = dispatchedSummary(worker);
         clock.now = clock.now.plusSeconds(131);
         assertThat(summaryExecution.complete(dispatch.call().compactionId(), worker, dispatch.call().id(), summaryReceipt(dispatch))).isFalse();
-        assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("0");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("0");
         assertThat(summaryExecution.recover(dispatch.call().compactionId())).isEqualTo("summary:" + dispatch.call().compactionId());
         assertThat(summaryExecution.complete(dispatch.call().compactionId(), worker, dispatch.call().id(), summaryReceipt(dispatch))).isFalse();
         assertThat(summaryExecution.claim(dispatch.call().compactionId(), UUID.randomUUID().toString(), null)).isNull();
-        assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("0");
-        assertThat(compactions.current(SESSION, exercise).requests().getFirst().reason()).isEqualTo("MODEL_RESULT_UNKNOWN");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("0");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().reason()).isEqualTo("MODEL_RESULT_UNKNOWN");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_compaction_call", Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT usage_incomplete FROM copilot_compaction_call", Boolean.class)).isTrue();
+    }
+
+    // Fixture convenience only: every scenario enters the same prepared admission used by HTTP.
+    private CopilotTaskResponse startTask(String session, String exercise, String credential, String key, String text,
+        boolean fee, StorageMeasurement measured) {
+        return startTask(session, exercise, credential, key, text, fee, List.of(), measured, null);
+    }
+
+    private CopilotTaskResponse startTask(String session, String exercise, String credential, String key, String text,
+        boolean fee, List<String> selected, StorageMeasurement measured) {
+        return startTask(session, exercise, credential, key, text, fee, selected, measured, null);
+    }
+
+    private CopilotTaskResponse startTask(String session, String exercise, String credential, String key, String text,
+        boolean fee, List<String> selected, StorageMeasurement measured, String conversation) {
+        return tasks.acceptPrepared(session, exercise, credential, key, new CopilotStartRequest(text, fee, selected, conversation),
+            new CopilotReferencesPreparedDTO(List.of(), ""), measured);
     }
 
     private void retainedSummaryHistory() throws Exception { retainedSummaryHistory(6); }
@@ -890,7 +908,7 @@ class CopilotPersistenceIT {
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder()
             .aiMessage(AiMessage.from("Retained historical detail ".repeat(300))).build(), 100));
         for (int index = 0; index < size; index++) {
-            var task = tasks.accept(SESSION, exercise, CONTROL, "history-" + index, "Explain " + index, true, measurement);
+            var task = startTask(SESSION, exercise, CONTROL, "history-" + index, "Explain " + index, true, measurement);
             runner.run(task.id(), UUID.randomUUID().toString());
             assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         }
@@ -919,33 +937,33 @@ class CopilotPersistenceIT {
         var job = compactions.accept(SESSION, exercise, CONTROL, "compact-1", input, measurement);
         assertThat(job.state()).isEqualTo("WAITING"); assertThat(Long.parseLong(job.sequence())).isPositive();
         assertThat(compactions.accept(SESSION, exercise, "stale-control", "compact-1", input, measurement).id()).isEqualTo(job.id());
-        assertThat(compactions.current(SESSION, exercise).requests()).hasSize(1);
-        assertThatThrownBy(() -> tasks.accept(SESSION, exercise, CONTROL, "blocked", "Explain", true, measurement))
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests()).hasSize(1);
+        assertThatThrownBy(() -> startTask(SESSION, exercise, CONTROL, "blocked", "Explain", true, measurement))
             .isInstanceOf(BusinessException.class).hasMessage("COPILOT_BUSY");
         assertThatThrownBy(() -> compactions.accept(SESSION, exercise, CONTROL, "compact-2", input, measurement))
             .isInstanceOf(BusinessException.class).hasMessage("COPILOT_COMPACTION_BUSY");
         assertThat(compactions.cancel(SESSION, exercise, job.id()).state()).isEqualTo("CANCELLED");
         assertThat(compactions.replay(SESSION, exercise, "compact-1", input).state()).isEqualTo("CANCELLED");
-        assertThat(tasks.accept(SESSION, exercise, CONTROL, "after-cancel", "Explain", true, measurement).state()).isEqualTo("QUEUED");
+        assertThat(startTask(SESSION, exercise, CONTROL, "after-cancel", "Explain", true, measurement).state()).isEqualTo("QUEUED");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_compaction_call", Integer.class)).isZero();
     }
 
     @Test
     void manualCompactionDoesNotReplaceAnActiveParentsEndedAuthorization() {
-        tasks.accept(SESSION, exercise, CONTROL, "original", "Explain", true, measurement);
+        startTask(SESSION, exercise, CONTROL, "original", "Explain", true, measurement);
         when(identity.tryAuthorizeMutation(SESSION)).thenReturn(null);
         assertThatThrownBy(() -> compactions.accept(SESSION, exercise, CONTROL, "compact", new CopilotCompactionRequest(true), measurement))
             .isInstanceOf(BusinessException.class).hasMessage("COPILOT_INVALID_STATE");
-        assertThat(compactions.current(SESSION, exercise).requests()).isEmpty();
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests()).isEmpty();
     }
 
     @Test
     void readEvidenceUsesRetainedVisibleTextAndTheNormalPairedToolCheckpoint() throws Exception {
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder()
             .aiMessage(AiMessage.builder().text("Confirmed old answer").thinking("opaque-signature").build()).build(), 100));
-        var first = tasks.accept(SESSION, exercise, CONTROL, "first", "Explain", true, measurement);
+        var first = startTask(SESSION, exercise, CONTROL, "first", "Explain", true, measurement);
         runner.run(first.id(), UUID.randomUUID().toString());
-        String source = tasks.messages(SESSION, exercise, -1).getLast().id();
+        String source = tasks.messagesInConversation(SESSION, exercise, -1, null).getLast().id();
         var request = ToolExecutionRequest.builder().id("evidence-1").name("read_evidence").arguments("{\"id\":\"" + source + "\"}").build();
         var count = new AtomicInteger();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
@@ -956,7 +974,7 @@ class CopilotPersistenceIT {
             assertThat(result.text()).contains("Confirmed old answer", source).doesNotContain("opaque-signature");
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Used retained evidence")).build(), 100);
         });
-        var task = tasks.accept(SESSION, exercise, CONTROL, "second", "Read retained evidence", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "second", "Read retained evidence", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         assertThat(count.get()).isEqualTo(2); verify(files, never()).read(anyString(), anyString(), anyString());
@@ -964,9 +982,9 @@ class CopilotPersistenceIT {
 
     @Test
     void evidenceReadRejectsForeignOrOrphanReferencesRetiredWorkersAndRevokedAuthorization() {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "evidence-scope", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "evidence-scope", "Inspect", true, measurement);
         String worker = UUID.randomUUID().toString(); execution.claim(task.id(), worker);
-        String own = tasks.messages(SESSION, exercise, -1).getFirst().id();
+        String own = tasks.messagesInConversation(SESSION, exercise, -1, null).getFirst().id();
         assertThat(evidenceStore.read(task.id(), worker, own).id()).isEqualTo(own);
         assertThatThrownBy(() -> evidenceStore.read(task.id(), UUID.randomUUID().toString(), own)).isInstanceOf(BusinessException.class).hasMessage("COPILOT_INVALID_STATE");
         String foreign = UUID.randomUUID().toString();
@@ -979,7 +997,7 @@ class CopilotPersistenceIT {
 
     @Test
     void contextPreparationIsOutsideTransactionsAndStaleDirectionsOrModelsCannotDispatch() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "context-start", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "context-start", "Inspect", true, measurement);
         String worker = UUID.randomUUID().toString(); assertThat(execution.claim(task.id(), worker)).isNotNull();
         var ticket = execution.contextTicket(task.id(), worker);
         new TransactionTemplate(transactions).executeWithoutResult(status ->
@@ -1004,7 +1022,7 @@ class CopilotPersistenceIT {
 
     @Test
     void projectInstructionSnapshotPublishesOnlyWithMatchingObservedRevisionAndRemainsPrivate() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "project-start", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "project-start", "Inspect", true, measurement);
         String worker = UUID.randomUUID().toString(); execution.claim(task.id(), worker);
         var prepared = contexts.beforeModel(task.id(), worker);
         String payload = "{\"exerciseId\":\"" + exercise + "\",\"revision\":\"1\",\"sources\":[],\"scopeTruncated\":false}";
@@ -1029,7 +1047,7 @@ class CopilotPersistenceIT {
 
     @Test
     void deletingModelAfterContextPreparationDoesNotDispatchItsCachedCredential() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "context-delete", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "context-delete", "Inspect", true, measurement);
         String worker = UUID.randomUUID().toString(); execution.claim(task.id(), worker);
         var prepared = contexts.beforeModel(task.id(), worker); deleteSelectedModel.run();
         assertThatThrownBy(() -> execution.beginModel(task.id(), worker, prepared, measurement)).isInstanceOf(BusinessException.class)
@@ -1041,7 +1059,7 @@ class CopilotPersistenceIT {
 
     @Test
     void queuedSteersAreIdempotentOrderedAndOnlyEffectiveWhenIncludedInTheOriginalTaskRequest() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original goal", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original goal", true, measurement);
         var first = steers.accept(SESSION, task.id(), CONTROL, "steer-one", new CopilotSteerRequest("First adjustment"));
         var second = steers.accept(SESSION, task.id(), CONTROL, "steer-two", new CopilotSteerRequest("Second adjustment"));
         assertThat(first.state()).isEqualTo("RECEIVED"); assertThat(second.state()).isEqualTo("RECEIVED");
@@ -1094,7 +1112,7 @@ class CopilotPersistenceIT {
 
     @Test
     void steerDuringModelResponseDoesNotMutateItsRequestOrExecuteItsOldTools() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         var calls = new AtomicInteger();
         var read = ToolExecutionRequest.builder().id("old-read").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
@@ -1117,7 +1135,7 @@ class CopilotPersistenceIT {
 
     @Test
     void modelSwitchQuotesSynthesizedOldResultsButKeepsTheNewModelsToolPairNative() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "switch-steer", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "switch-steer", "Original", true, measurement);
         var count = new AtomicInteger();
         var oldRead = ToolExecutionRequest.builder().id("never-started").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
         var newRead = ToolExecutionRequest.builder().id("new-model-read").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
@@ -1145,7 +1163,7 @@ class CopilotPersistenceIT {
 
     @Test
     void steerDuringPartialToolArgumentsWaitsForTheRealDriverCompletionBoundary() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         var factory = mock(ModelSdkClientFactory.class);
         var callsMade = new AtomicInteger();
         StreamingChatModel model = new StreamingChatModel() {
@@ -1186,7 +1204,7 @@ class CopilotPersistenceIT {
 
     @Test
     void steerDuringReadPreservesItsResultButNeverStartsTheRemainingTool() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         var first = ToolExecutionRequest.builder().id("started-read").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
         var second = ToolExecutionRequest.builder().id("unstarted-read").name("view_file").arguments(first.arguments()).build();
         var snapshot = files.read(SESSION, exercise, "src/Main.java");
@@ -1209,7 +1227,7 @@ class CopilotPersistenceIT {
     void steerDuringProposalPreparationInvalidatesItBeforeAutomaticApprovalCanWin() throws Exception {
         approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
         var workspace = new ProposalWorkspace();
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         when(files.read(SESSION, exercise, ProposalWorkspace.PATH)).thenAnswer(call -> {
             steers.accept(SESSION, task.id(), CONTROL, "during-preparation", new CopilotSteerRequest("Do not modify files"));
             return workspace.file();
@@ -1265,7 +1283,7 @@ class CopilotPersistenceIT {
 
     @Test
     void steerReceivedBeforeAFinalAnswerDispatchesAnotherRequestInTheSameTask() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         var calls = new AtomicInteger();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
             if (calls.getAndIncrement() == 0) steers.accept(SESSION, task.id(), CONTROL, "new-goal", new CopilotSteerRequest("One more adjustment"));
@@ -1283,7 +1301,7 @@ class CopilotPersistenceIT {
 
     @Test
     void stoppingBeforeSteerDispatchMarksItUnappliedAndDoesNotAddItToModelHistory() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         steers.accept(SESSION, task.id(), CONTROL, "not-applied", new CopilotSteerRequest("Never dispatched"));
         tasks.stop(SESSION, task.id(), "stop"); execution.recover(task.id());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
@@ -1295,7 +1313,7 @@ class CopilotPersistenceIT {
 
     @Test
     void stopAfterSteerReceptionDuringAModelCallDoesNotDispatchItsAdjustment() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
             steers.accept(SESSION, task.id(), CONTROL, "received", new CopilotSteerRequest("New direction"));
             tasks.stop(SESSION, task.id(), "stop");
@@ -1310,7 +1328,7 @@ class CopilotPersistenceIT {
     @Test
     void expirationBeforeSteerDispatchMarksItUnappliedInsteadOfQueuingANewRequest() throws Exception {
         jdbc.update("UPDATE workspace_exercise SET deadline_at=? WHERE id=?::uuid", Timestamp.from(clock.instant().plusSeconds(1)), exercise);
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
             steers.accept(SESSION, task.id(), CONTROL, "received", new CopilotSteerRequest("New direction"));
             clock.now = clock.now.plusSeconds(2);
@@ -1325,7 +1343,7 @@ class CopilotPersistenceIT {
 
     @Test
     void steerQueueIsBoundedPagedAndRetainedUntilItsOriginalTaskIsStopped() {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         for (int index = 0; index < 32; index++) steers.accept(SESSION, task.id(), CONTROL, "queued-" + index, new CopilotSteerRequest("Same instruction"));
         assertThatThrownBy(() -> steers.accept(SESSION, task.id(), CONTROL, "overflow", new CopilotSteerRequest("New instruction")))
             .hasMessage("COPILOT_STEER_LIMIT");
@@ -1342,7 +1360,7 @@ class CopilotPersistenceIT {
 
     @Test
     void steerRequiresCurrentControlPrivateOwnershipAndTheOriginalTasksAuthorization() {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         var instruction = new CopilotSteerRequest("Direction");
         assertThatThrownBy(() -> steers.accept(SESSION, task.id(), "obsolete", "old", instruction)).hasMessage("STALE_CONTROL");
         String replacement = "d".repeat(43);
@@ -1366,7 +1384,7 @@ class CopilotPersistenceIT {
 
     @Test
     void invalidOrOverBudgetSteersDoNotInsertACommandOrBlockStopping() {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         for (String text : List.of(" ", "中".repeat(1366), "bad" + (char) 0, String.valueOf((char) 0xd800))) {
             assertThatThrownBy(() -> steers.accept(SESSION, task.id(), CONTROL, "invalid", new CopilotSteerRequest(text))).hasMessage("COPILOT_INVALID_REQUEST");
         }
@@ -1389,16 +1407,16 @@ class CopilotPersistenceIT {
             assertThat(request.messages().stream().filter(ToolExecutionResultMessage.class::isInstance).map(ToolExecutionResultMessage.class::cast).map(ToolExecutionResultMessage::id)).containsExactly("read-1", "glob-1");
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("The saved Main class is empty.")).build(), 100);
         });
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect the saved Main class", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect the saved Main class", true, measurement);
         assertThat(data.quiescent(exercise)).isFalse();
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
-        assertThat(tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect the saved Main class", true, measurement).id()).isEqualTo(task.id());
+        assertThat(startTask(SESSION, exercise, CONTROL, "start", "Inspect the saved Main class", true, measurement).id()).isEqualTo(task.id());
         runner.run(task.id(), UUID.randomUUID().toString());
         verify(driver, times(2)).call(any(), any(), any(), anyInt(), any());
         assertThat(data.retainedBytes(exercise)).isPositive();
         assertThat(data.quiescent(exercise)).isTrue();
-        assertThat(tasks.messages(SESSION, exercise, -1).stream().map(value -> value.kind())).containsExactly("USER", "ASSISTANT", "TOOL", "TOOL", "ASSISTANT");
+        assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null).stream().map(value -> value.kind())).containsExactly("USER", "ASSISTANT", "TOOL", "TOOL", "ASSISTANT");
     }
 
     @Test
@@ -1417,7 +1435,7 @@ class CopilotPersistenceIT {
             assertThat(request.messages().toString()).contains("Read-only recorded tool evidence");
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Reply from the selected model.")).build(), 100);
         });
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         assertThat(tasks.delivery(SESSION, task.id()).textHistory()).isTrue();
@@ -1432,12 +1450,12 @@ class CopilotPersistenceIT {
             if (deleting) deleteSelectedModel.run(); else updateSelectedKey.run();
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(view))).build(), 100);
         });
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("PAUSED");
         assertThat(tasks.find(SESSION, task.id()).reason()).isEqualTo(deleting ? "MODEL_CONFIGURATION_NOT_FOUND" : "MODEL_VERSION_CONFLICT");
         verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
-        assertThat(tasks.messages(SESSION, exercise, -1).stream().map(value -> value.kind())).containsExactly("USER", "ASSISTANT", "TOOL");
+        assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null).stream().map(value -> value.kind())).containsExactly("USER", "ASSISTANT", "TOOL");
     }
 
     @Test
@@ -1445,8 +1463,8 @@ class CopilotPersistenceIT {
         var first = ToolExecutionRequest.builder().id("first").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
         var second = ToolExecutionRequest.builder().id("second").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(first, second))).build(), 100));
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
-        assertThatThrownBy(() -> tasks.accept(SESSION, exercise, CONTROL, "another", "Do not queue", true, measurement)).hasMessage("COPILOT_BUSY");
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
+        assertThatThrownBy(() -> startTask(SESSION, exercise, CONTROL, "another", "Do not queue", true, measurement)).hasMessage("COPILOT_BUSY");
         String instance = files.find(SESSION, exercise).workspaceInstanceId();
         when(files.read(SESSION, exercise, "src/Main.java")).thenAnswer(call -> {
             assertThat(sql.getMapper(StorageCapacityRepository.class).reservedBytes(exercise)).isGreaterThanOrEqualTo(2 * 1024 * 1024);
@@ -1455,7 +1473,7 @@ class CopilotPersistenceIT {
         });
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
-        var results = tasks.messages(SESSION, exercise, -1).stream().filter(value -> value.kind().equals("TOOL")).toList();
+        var results = tasks.messagesInConversation(SESSION, exercise, -1, null).stream().filter(value -> value.kind().equals("TOOL")).toList();
         assertThat(results).hasSize(2);
         assertThat(results.getFirst().payload()).contains("class Main");
         assertThat(results.getLast().payload()).contains("NOT_EXECUTED");
@@ -1467,7 +1485,7 @@ class CopilotPersistenceIT {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void partialResponsesStaySeparateFromConfirmedMessagesAndSurviveInterruptedCalls(boolean completes) throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
         doAnswer(call -> {
             Consumer<String> partial = call.getArgument(5);
             partial.accept("Unconfirmed reply, not tool arguments");
@@ -1476,7 +1494,7 @@ class CopilotPersistenceIT {
             assertThat(tasks.delivery(SESSION, task.id()).partial().thinking()).isEqualTo("Unconfirmed thinking");
             assertThat(tasks.delivery(SESSION, task.id()).partial().text()).contains("Unconfirmed reply");
             assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("RUNNING");
-            assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(1);
+            assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).hasSize(1);
             verify(files, never()).read(any(), any(), any());
             if (!completes) throw new BusinessException(ModelAccessErrorCode.MODEL_NETWORK_UNAVAILABLE);
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Confirmed reply")).tokenUsage(new TokenUsage(100, 20, 120)).build(), 100);
@@ -1485,8 +1503,8 @@ class CopilotPersistenceIT {
         assertThat(tasks.delivery(SESSION, task.id()).partial().thinking()).isEqualTo(completes ? "" : "Unconfirmed thinking");
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo(completes ? "SUCCEEDED" : "FAILED");
         assertThat(tasks.delivery(SESSION, task.id()).partial().text()).isEqualTo(completes ? "" : "Unconfirmed reply, not tool arguments");
-        assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(completes ? 2 : 1);
-        var accounting = usage.current(SESSION, exercise);
+        assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).hasSize(completes ? 2 : 1);
+        var accounting = usage.currentInConversation(SESSION, exercise, null);
         assertThat(accounting.totals()).singleElement().satisfies(total -> {
             assertThat(total.calls()).isEqualTo("1");
             assertThat(total.completeCalls()).isEqualTo("0");
@@ -1494,7 +1512,7 @@ class CopilotPersistenceIT {
             assertThat(total.inputTokens()).isEqualTo(completes ? "100" : null);
         });
         assertThat(accounting.costs()).isEmpty();
-        assertThat(usage.current(SESSION, exercise)).isEqualTo(accounting);
+        assertThat(usage.currentInConversation(SESSION, exercise, null)).isEqualTo(accounting);
         String usage = jdbc.queryForObject("SELECT usage_payload FROM copilot_turn WHERE task_id=?::uuid", String.class, task.id());
         if (completes) assertThat(json.readTree(usage).get("inputTokenCount").asInt()).isEqualTo(100);
         else assertThat(usage).isNull();
@@ -1505,7 +1523,7 @@ class CopilotPersistenceIT {
 
     @Test
     void btwHasIndependentLoopHistoryAndCannotExecuteWriteToolsOrUpgradeItsLane() throws Exception {
-        var main = tasks.accept(SESSION, exercise, CONTROL, "btw-main", "Main goal", true, measurement);
+        var main = startTask(SESSION, exercise, CONTROL, "btw-main", "Main goal", true, measurement);
         repository.message(new CopilotMessageEntity(0, UUID.randomUUID().toString(), main.id(), exercise, "ASSISTANT",
             ChatMessageSerializer.messageToJson(AiMessage.builder().text("Main saved answer").thinking("private-main-thinking").build()), clock.instant()));
         var input = new CopilotBtwRequest("Side question", true);
@@ -1514,7 +1532,7 @@ class CopilotPersistenceIT {
         assertThat(side.conversationId()).isNotEqualTo(exercise);
         assertThat(repository.find(main.id()).state()).isEqualTo("QUEUED");
         assertThat(conversations.list(SESSION, exercise)).extracting(item -> item.id()).containsExactly(exercise);
-        assertCode(() -> tasks.acceptInConversation(SESSION, exercise, CONTROL, "upgrade", "write", true, List.of(), measurement, side.conversationId()), "COPILOT_INVALID_REQUEST");
+        assertCode(() -> startTask(SESSION, exercise, CONTROL, "upgrade", "write", true, List.of(), measurement, side.conversationId()), "COPILOT_INVALID_REQUEST");
         assertCode(() -> followups.accept(SESSION, exercise, side.conversationId(), CONTROL, "upgrade-queue", new CopilotFollowupRequest("write", true), measurement), "COPILOT_INVALID_REQUEST");
         var turns = new AtomicInteger();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
@@ -1537,7 +1555,7 @@ class CopilotPersistenceIT {
 
     @Test
     void delegationRunsARealChildAndHandsOffExactlyOnceBeforeParentContinues() throws Exception {
-        var parent = tasks.accept(SESSION, exercise, CONTROL, "delegate-parent", "Parent goal", true, measurement);
+        var parent = startTask(SESSION, exercise, CONTROL, "delegate-parent", "Parent goal", true, measurement);
         repository.message(new CopilotMessageEntity(0, UUID.randomUUID().toString(), parent.id(), exercise, "ASSISTANT",
             ChatMessageSerializer.messageToJson(AiMessage.builder().text("Unrelated main chat").thinking("private-parent-thinking").build()), clock.instant()));
         var parentTurns = new AtomicInteger(); var childTurns = new AtomicInteger();
@@ -1566,7 +1584,7 @@ class CopilotPersistenceIT {
         var child = repository.find(binding.childTaskId());
         assertThat(child.lane()).isEqualTo("CHILD"); assertThat(child.userId()).isEqualTo(parked.userId());
         assertThat(child.sessionHash()).isEqualTo(parked.sessionHash());
-        assertCode(() -> tasks.acceptInConversation(SESSION, exercise, CONTROL, "upgrade-child", "Escape", true, List.of(), measurement, child.conversationId()), "COPILOT_INVALID_REQUEST");
+        assertCode(() -> startTask(SESSION, exercise, CONTROL, "upgrade-child", "Escape", true, List.of(), measurement, child.conversationId()), "COPILOT_INVALID_REQUEST");
         assertThat(conversations.list(SESSION, exercise)).noneMatch(row -> child.conversationId().equals(row.id()));
         runner.run(parent.id(), UUID.randomUUID().toString());
         assertThat(parentTurns.get()).isEqualTo(1);
@@ -1727,7 +1745,7 @@ class CopilotPersistenceIT {
         var binding = sql.getMapper(CopilotDelegationRepository.class).list(parent.id()).getFirst();
         var boundary = conversations.prepareFork(SESSION, exercise, exercise, binding.resultMessageId());
         var fork = conversations.fork(SESSION, exercise, CONTROL, "fork-delegation-result", boundary, measurement);
-        var next = tasks.acceptInConversation(SESSION, exercise, CONTROL, "read-inherited-delegation", "Read original child evidence", true, List.of(), measurement, fork.id());
+        var next = startTask(SESSION, exercise, CONTROL, "read-inherited-delegation", "Read original child evidence", true, List.of(), measurement, fork.id());
         String nextWorker = UUID.randomUUID().toString(); assertThat(execution.claim(next.id(), nextWorker)).isNotNull();
         assertThat(evidenceStore.read(next.id(), nextWorker, childMessage.id()).payload()).contains("Child goal");
         assertCode(() -> evidenceStore.read(next.id(), nextWorker, privateMessage.id()), "COPILOT_EVIDENCE_NOT_FOUND");
@@ -1740,7 +1758,7 @@ class CopilotPersistenceIT {
         assertThat(arguments.length()).isGreaterThan(12 * 1024).isLessThan(CopilotDelegationService.MAX_ARGUMENT_BYTES);
         var request = ToolExecutionRequest.builder().id("bounded-delegation").name("delegate_task").arguments(arguments).build();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(request))).build(), 100));
-        var parent = tasks.accept(SESSION, exercise, CONTROL, "bounded-envelope", "Delegate bounded context", true, measurement);
+        var parent = startTask(SESSION, exercise, CONTROL, "bounded-envelope", "Delegate bounded context", true, measurement);
         runner.run(parent.id(), UUID.randomUUID().toString());
         assertThat(repository.find(parent.id()).state()).isEqualTo("WAITING_CHILD");
         var child = delegations.list(SESSION, parent.id()).getFirst().child();
@@ -1758,7 +1776,7 @@ class CopilotPersistenceIT {
     private CopilotTaskResponse beginDelegation() throws Exception {
         var request = ToolExecutionRequest.builder().id("delegate-first").name("delegate_task").arguments("{\"goal\":\"Child goal\"}").build();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(request))).build(), 100));
-        var parent = tasks.accept(SESSION, exercise, CONTROL, "delegate-start", "Parent goal", true, measurement);
+        var parent = startTask(SESSION, exercise, CONTROL, "delegate-start", "Parent goal", true, measurement);
         runner.run(parent.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, parent.id()).state()).isEqualTo("WAITING_CHILD");
         return parent;
@@ -1766,7 +1784,7 @@ class CopilotPersistenceIT {
 
     @Test
     void btwCompletesWhileTheMainModelRequestIsStillInFlight() throws Exception {
-        var main = tasks.accept(SESSION, exercise, CONTROL, "concurrent-main", "Main goal", true, measurement);
+        var main = startTask(SESSION, exercise, CONTROL, "concurrent-main", "Main goal", true, measurement);
         var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
             ChatRequest request = call.getArgument(1);
@@ -1789,7 +1807,7 @@ class CopilotPersistenceIT {
 
     @Test
     void btwSummarySchedulingAndMainDispatchUseTheirOwnConversationGates() throws Exception {
-        var main = tasks.accept(SESSION, exercise, CONTROL, "summary-main", "Main", true, measurement);
+        var main = startTask(SESSION, exercise, CONTROL, "summary-main", "Main", true, measurement);
         String worker = UUID.randomUUID().toString(); assertThat(execution.claim(main.id(), worker)).isNotNull();
         var side = btw.start(SESSION, exercise, exercise, CONTROL, "summary-side", new CopilotBtwRequest("Side", true));
         jdbc.update("UPDATE copilot_task SET state='PAUSED' WHERE id=?::uuid", side.id());
@@ -1803,7 +1821,7 @@ class CopilotPersistenceIT {
 
     @Test
     void btwUnknownModelRecoveryKeepsItsIdentityAndNeverRestartsMainOrPaidDispatch() throws Exception {
-        var main = tasks.accept(SESSION, exercise, CONTROL, "recovery-main", "Main", true, measurement);
+        var main = startTask(SESSION, exercise, CONTROL, "recovery-main", "Main", true, measurement);
         var input = new CopilotBtwRequest("Side recovery", true);
         var side = btw.start(SESSION, exercise, exercise, CONTROL, "recovery-side", input);
         String worker = UUID.randomUUID().toString();
@@ -1819,7 +1837,7 @@ class CopilotPersistenceIT {
 
     @Test
     void btwStopDoesNotStopMainAndExpiryErasesBothConversationScopes() {
-        var main = tasks.accept(SESSION, exercise, CONTROL, "btw-main", "Main", true, measurement);
+        var main = startTask(SESSION, exercise, CONTROL, "btw-main", "Main", true, measurement);
         var side = btw.start(SESSION, exercise, exercise, CONTROL, "btw-side", new CopilotBtwRequest("Side", true));
         assertCode(() -> btw.start(SESSION, exercise, exercise, CONTROL, "another-side", new CopilotBtwRequest("Second", true)), "COPILOT_BUSY");
         tasks.stop(SESSION, side.id(), "stop-side"); execution.recover(side.id());
@@ -1868,7 +1886,7 @@ class CopilotPersistenceIT {
     @Test
     void followupsRemainFifoIndependentAndIdempotentAcrossDispatcherReentry() throws Exception {
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("done")).build(), 100));
-        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var anchor = startTask(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
         var firstInput = new CopilotFollowupRequest("first independent task", true);
         var first = followupService.enqueue(SESSION, exercise, exercise, CONTROL, "first", firstInput);
         var second = followupService.enqueue(SESSION, exercise, exercise, CONTROL, "second", new CopilotFollowupRequest("second independent task", true));
@@ -1891,7 +1909,7 @@ class CopilotPersistenceIT {
         assertThat(followupService.recent(SESSION, exercise, exercise)).extracting(item -> item.state()).containsExactly("DISPATCHED", "DISPATCHED");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_task WHERE exercise_id=?::uuid", Integer.class, exercise)).isEqualTo(3);
         runner.run(repository.latest(exercise).id(), UUID.randomUUID().toString());
-        var fresh = tasks.accept(SESSION, exercise, CONTROL, "fresh-anchor", "new independent goal", true, measurement);
+        var fresh = startTask(SESSION, exercise, CONTROL, "fresh-anchor", "new independent goal", true, measurement);
         var later = followups.accept(SESSION, exercise, exercise, CONTROL, "later", new CopilotFollowupRequest("after fresh anchor", true), measurement);
         jdbc.update("UPDATE copilot_task SET state='FAILED',completed_at=? WHERE id=?::uuid", java.sql.Timestamp.from(clock.instant()), fresh.id());
         followupService.dispatch(later.id());
@@ -1909,7 +1927,7 @@ class CopilotPersistenceIT {
             .setWorkspaceInstanceId(instance).setTransitionId(call.getArgument(1)).setEpoch(call.<Long>getArgument(2) + 1).setState("CLOSED").build());
         when(sandbox.openGate(eq(instance), anyString(), anyLong())).thenAnswer(call -> GateResponse.newBuilder()
             .setWorkspaceInstanceId(instance).setTransitionId(call.getArgument(1)).setEpoch(call.<Long>getArgument(2) + 1).setState("OPEN").build());
-        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var anchor = startTask(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
         followups.accept(SESSION, exercise, exercise, CONTROL, "queued", new CopilotFollowupRequest("after resume", true), measurement);
         var pause = exercisePauses.request(SESSION, exercise, "pause", CONTROL, false);
         assertThat(exercises.find(exercise).state()).isEqualTo("PAUSING");
@@ -2102,12 +2120,12 @@ class CopilotPersistenceIT {
     @ParameterizedTest
     @ValueSource(strings = {"PAUSING", "PAUSED", "RESUMING"})
     void suspendedExerciseRejectsEveryNewCopilotDispatchEvenWithCurrentCredential(String state) {
-        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var anchor = startTask(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
         jdbc.update("UPDATE workspace_exercise SET state=? WHERE id=?::uuid", state, exercise);
         assertCode(() -> followups.accept(SESSION, exercise, exercise, CONTROL, "new-followup", new CopilotFollowupRequest("must not queue", true), measurement), "INVALID_STATE");
         execution.recover(anchor.id());
         assertThat(repository.find(anchor.id()).state()).isEqualTo("INTERRUPTED");
-        assertCode(() -> tasks.accept(SESSION, exercise, CONTROL, "new-task", "must not call", true, measurement), "INVALID_STATE");
+        assertCode(() -> startTask(SESSION, exercise, CONTROL, "new-task", "must not call", true, measurement), "INVALID_STATE");
         assertThat(sql.getMapper(CopilotRetentionRepository.class).quiescent(exercise)).isTrue();
     }
 
@@ -2132,7 +2150,7 @@ class CopilotPersistenceIT {
 
     @Test
     void exercisePauseRetainsAllFollowupsAndResumeStillRequiresExplicitReauthorization() {
-        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var anchor = startTask(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
         var first = followups.accept(SESSION, exercise, exercise, CONTROL, "first", new CopilotFollowupRequest("first", true), measurement);
         var second = followups.accept(SESSION, exercise, exercise, CONTROL, "second", new CopilotFollowupRequest("second", true), measurement);
         jdbc.update("UPDATE workspace_exercise SET state='PAUSING' WHERE id=?::uuid", exercise);
@@ -2156,7 +2174,7 @@ class CopilotPersistenceIT {
 
     @Test
     void failedFollowupPausesLaterWorkUntilExplicitIdempotentReauthorization() {
-        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var anchor = startTask(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
         var first = followups.accept(SESSION, exercise, exercise, CONTROL, "first", new CopilotFollowupRequest("first", true), measurement);
         var second = followups.accept(SESSION, exercise, exercise, CONTROL, "second", new CopilotFollowupRequest("second", true), measurement);
         assertCode(() -> followupService.resume(SESSION, exercise, exercise, CONTROL, "early-resume", true), "COPILOT_FOLLOWUP_NOT_ACTIVE");
@@ -2181,7 +2199,7 @@ class CopilotPersistenceIT {
 
     @Test
     void followupAuthorizationDeadlineCancellationAndDeletionStayInsideOriginalOwnership() {
-        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var anchor = startTask(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
         var first = followups.accept(SESSION, exercise, exercise, CONTROL, "first", new CopilotFollowupRequest("first", true), measurement);
         var other = conversations.create(SESSION, exercise, CONTROL, "other", measurement);
         assertCode(() -> followups.cancel(SESSION, exercise, other.id(), first.id()), "COPILOT_NOT_FOUND");
@@ -2199,7 +2217,7 @@ class CopilotPersistenceIT {
     @Test
     void followupDiscoverySkipsThirtyTwoBlockedHeadsButStillFindsReadyAndExpiredWork() {
         for (int index = 0; index < 32; index++) seedBlockedFollowup(false);
-        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var anchor = startTask(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
         var ready = followups.accept(SESSION, exercise, exercise, CONTROL, "ready", new CopilotFollowupRequest("ready", true), measurement);
         jdbc.update("UPDATE copilot_task SET state='SUCCEEDED',completed_at=? WHERE id=?::uuid", java.sql.Timestamp.from(clock.instant()), anchor.id());
         String expired = seedBlockedFollowup(true);
@@ -2225,7 +2243,7 @@ class CopilotPersistenceIT {
 
     @Test
     void followupsKeepOldPendingItemsVisibleAndEnforceBoundedAdmission() {
-        tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        startTask(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
         var oldest = followups.accept(SESSION, exercise, exercise, CONTROL, "oldest", new CopilotFollowupRequest("oldest", true), measurement);
         for (int index = 0; index < 105; index++) {
             var item = followups.accept(SESSION, exercise, exercise, CONTROL, "cancel-" + index, new CopilotFollowupRequest("cancelled", true), measurement);
@@ -2241,7 +2259,7 @@ class CopilotPersistenceIT {
     void newConversationHasStableIdentityAndDoesNotMoveExistingTask() {
         var initial = conversations.list(SESSION, exercise);
         assertThat(initial).singleElement().satisfies(item -> assertThat(item.id()).isEqualTo(exercise));
-        var task = tasks.accept(SESSION, exercise, CONTROL, "initial-request", "Keep working", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "initial-request", "Keep working", true, measurement);
         var created = conversations.create(SESSION, exercise, CONTROL, "new-conversation", measurement);
         assertThat(created.id()).isNotEqualTo(exercise);
         assertThat(conversations.create(SESSION, exercise, CONTROL, "new-conversation", measurement)).isEqualTo(created);
@@ -2251,30 +2269,30 @@ class CopilotPersistenceIT {
 
     @Test
     void newConversationSeparatesTaskHistoryAndPreparedModelContext() throws Exception {
-        var original = tasks.accept(SESSION, exercise, CONTROL, "original-session", "ONLY_IN_OLD_CONVERSATION", true, measurement);
+        var original = startTask(SESSION, exercise, CONTROL, "original-session", "ONLY_IN_OLD_CONVERSATION", true, measurement);
         var created = conversations.create(SESSION, exercise, CONTROL, "isolated-conversation", measurement);
         assertThat(tasks.messagesInConversation(SESSION, exercise, -1, created.id())).isEmpty();
         assertThat(tasks.latestInConversation(SESSION, exercise, created.id())).isNull();
-        assertThatThrownBy(() -> tasks.acceptInConversation(SESSION, exercise, CONTROL, "busy-conversation", "new", true,
+        assertThatThrownBy(() -> startTask(SESSION, exercise, CONTROL, "busy-conversation", "new", true,
             List.of(), measurement, created.id())).isInstanceOfSatisfying(BusinessException.class,
                 failure -> assertThat(failure.errorCode()).isEqualTo(CopilotErrorCode.COPILOT_BUSY));
         tasks.stop(SESSION, original.id(), "stop-original");
-        var current = tasks.acceptInConversation(SESSION, exercise, CONTROL, "new-conversation-task", "ONLY_IN_NEW_CONVERSATION", true,
+        var current = startTask(SESSION, exercise, CONTROL, "new-conversation-task", "ONLY_IN_NEW_CONVERSATION", true,
             List.of(), measurement, created.id());
-        assertThat(tasks.messages(SESSION, exercise, -1)).singleElement().satisfies(message -> assertThat(message.taskId()).isEqualTo(original.id()));
+        assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).singleElement().satisfies(message -> assertThat(message.taskId()).isEqualTo(original.id()));
         assertThat(tasks.messagesInConversation(SESSION, exercise, -1, created.id())).singleElement()
             .satisfies(message -> assertThat(message.taskId()).isEqualTo(current.id()));
         String worker = UUID.randomUUID().toString();
         assertThat(execution.claim(current.id(), worker)).isNotNull();
         var ticket = execution.contextTicket(current.id(), worker);
         assertThat(ticket.conversationId()).isEqualTo(created.id());
-        String oldEvidence = tasks.messages(SESSION, exercise, -1).getFirst().id();
+        String oldEvidence = tasks.messagesInConversation(SESSION, exercise, -1, null).getFirst().id();
         assertThatThrownBy(() -> evidenceStore.read(current.id(), worker, oldEvidence)).isInstanceOfSatisfying(BusinessException.class,
             failure -> assertThat(failure.errorCode()).isEqualTo(CopilotErrorCode.COPILOT_EVIDENCE_NOT_FOUND));
         var prepared = contextPreparation.prepare(ticket);
         assertThat(ChatMessageSerializer.messagesToJson(prepared.plan().projection().request().messages()))
             .contains("ONLY_IN_NEW_CONVERSATION").doesNotContain("ONLY_IN_OLD_CONVERSATION");
-        assertThatThrownBy(() -> tasks.acceptInConversation(SESSION, exercise, CONTROL, "new-conversation-task", "ONLY_IN_NEW_CONVERSATION", true,
+        assertThatThrownBy(() -> startTask(SESSION, exercise, CONTROL, "new-conversation-task", "ONLY_IN_NEW_CONVERSATION", true,
             List.of(), measurement, exercise)).isInstanceOfSatisfying(BusinessException.class,
                 failure -> assertThat(failure.errorCode()).isEqualTo(CopilotErrorCode.COPILOT_IDEMPOTENCY_CONFLICT));
         assertThatThrownBy(() -> conversations.resolve(SESSION, exercise, UUID.randomUUID().toString()))
@@ -2284,7 +2302,7 @@ class CopilotPersistenceIT {
 
     @Test
     void forkInheritsNativePairsWithoutTasksAndKeepsBranchContextIndependent() throws Exception {
-        var original = tasks.accept(SESSION, exercise, CONTROL, "fork-original", "ORIGINAL_GOAL", true, measurement);
+        var original = startTask(SESSION, exercise, CONTROL, "fork-original", "ORIGINAL_GOAL", true, measurement);
         var call = ToolExecutionRequest.builder().id("old-call").name("bash").arguments("{}").build();
         String assistant = UUID.randomUUID().toString();
         String result = UUID.randomUUID().toString();
@@ -2308,7 +2326,7 @@ class CopilotPersistenceIT {
         repository.message(new CopilotMessageEntity(0, later, original.id(), exercise, "ASSISTANT", ChatMessageSerializer.messageToJson(AiMessage.from("PARENT_LATER")), clock.instant()));
         assertThat(repository.context(branch.id())).hasSize(3);
         tasks.stop(SESSION, original.id(), "stop-for-fork");
-        var child = tasks.acceptInConversation(SESSION, exercise, CONTROL, "fork-child", "CHILD_GOAL", true, List.of(), measurement, branch.id());
+        var child = startTask(SESSION, exercise, CONTROL, "fork-child", "CHILD_GOAL", true, List.of(), measurement, branch.id());
         String worker = UUID.randomUUID().toString(); execution.claim(child.id(), worker);
         var prepared = contexts.beforeModel(child.id(), worker);
         String messages = ChatMessageSerializer.messagesToJson(prepared.plan().projection().request().messages());
@@ -2357,8 +2375,8 @@ class CopilotPersistenceIT {
         summaryRunner.runStandalone(job.id());
         assertThat(compactions.currentInConversation(SESSION, exercise, created.id()).requests()).singleElement()
             .satisfies(item -> assertThat(item.state()).isEqualTo("NOT_NEEDED"));
-        assertThat(compactions.current(SESSION, exercise).version()).isEqualTo("1");
-        assertThat(compactions.current(SESSION, exercise).requests()).hasSize(1);
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("1");
+        assertThat(compactions.currentInConversation(SESSION, exercise, null).requests()).hasSize(1);
     }
 
     @Test
@@ -2373,7 +2391,7 @@ class CopilotPersistenceIT {
             assertThat(ChatMessageSerializer.messagesToJson(request.messages())).contains("confirmed snippet", "https://example.com/docs");
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("source-based answer")).build(), 100);
         });
-        var task = tasks.accept(SESSION, exercise, CONTROL, "web-task", "Search docs", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "web-task", "Search docs", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         runner.run(task.id(), UUID.randomUUID().toString());
@@ -2388,7 +2406,7 @@ class CopilotPersistenceIT {
             var view = ToolExecutionRequest.builder().id("read-" + count.incrementAndGet()).name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(view))).build(), 100);
         });
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("FAILED");
         assertThat(tasks.find(SESSION, task.id()).reason()).isEqualTo("NO_PROGRESS");
@@ -2398,7 +2416,7 @@ class CopilotPersistenceIT {
 
     @Test
     void stoppingBeforeDispatchNeverCallsTheProvider() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
         assertThat(tasks.stop(SESSION, task.id(), "stop").state()).isEqualTo("STOPPED");
         runner.run(task.id(), UUID.randomUUID().toString());
         verify(driver, never()).call(any(), any(), any(), anyInt(), any());
@@ -2407,7 +2425,7 @@ class CopilotPersistenceIT {
 
     @Test
     void expiredDispatchedRequestIsInterruptedWithoutAnotherPaidCall() throws Exception {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
         String worker = UUID.randomUUID().toString();
         assertThat(execution.claim(task.id(), worker)).isNotNull();
         assertThat(execution.beginModel(task.id(), worker, contexts.beforeModel(task.id(), worker), measurement)).isNotNull();
@@ -2422,18 +2440,18 @@ class CopilotPersistenceIT {
 
     @Test
     void foreignOwnersStaleControlAndExpiredExercisesCannotAdmitOrReadWork() throws Exception {
-        assertThatThrownBy(() -> tasks.accept(SESSION, exercise, "x".repeat(43), "stale", "Inspect", true, measurement)).hasMessage("STALE_CONTROL");
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
+        assertThatThrownBy(() -> startTask(SESSION, exercise, "x".repeat(43), "stale", "Inspect", true, measurement)).hasMessage("STALE_CONTROL");
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
         var other = new SessionAuthorizationDTO(UUID.randomUUID().toString(), "USER", false, 1, clock.instant().plusSeconds(3600));
         when(identity.authorizeMutation("other")).thenReturn(other);
         when(identity.authorizePrivateDelivery("other")).thenReturn(other);
         when(identity.authorization("other")).thenReturn(other);
         assertThatThrownBy(() -> tasks.find("other", task.id())).hasMessage("COPILOT_NOT_FOUND");
         assertThatThrownBy(() -> tasks.stop("other", task.id(), "stop")).hasMessage("COPILOT_NOT_FOUND");
-        assertThatThrownBy(() -> tasks.messages("other", exercise, -1)).hasMessage("RESOURCE_NOT_FOUND");
+        assertThatThrownBy(() -> tasks.messagesInConversation("other", exercise, -1, null)).hasMessage("RESOURCE_NOT_FOUND");
         tasks.stop(SESSION, task.id(), "stop");
         clock.now = clock.instant().plusSeconds(3601);
-        assertThatThrownBy(() -> tasks.accept(SESSION, exercise, CONTROL, "expired", "Inspect", true, measurement)).hasMessage("INVALID_STATE");
+        assertThatThrownBy(() -> startTask(SESSION, exercise, CONTROL, "expired", "Inspect", true, measurement)).hasMessage("INVALID_STATE");
         verify(driver, never()).call(any(), any(), any(), anyInt(), any(), any());
     }
 
@@ -2462,7 +2480,7 @@ class CopilotPersistenceIT {
         if (expiry) {
             clock.now = retainUntil.minusSeconds(1); deletion.expire(exercise);
             assertThat(sql.getMapper(ExerciseRepository.class).deleted(exercise)).isFalse();
-            assertThat(tasks.messages(SESSION, exercise, -1)).isNotEmpty();
+            assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).isNotEmpty();
             clock.now = retainUntil; deletion.expire(exercise);
         } else deletion.request(SESSION, exercise, "retain-delete");
         assertThatThrownBy(() -> tasks.find(SESSION, task.id())).hasMessage("EXERCISE_DELETED");
@@ -2477,7 +2495,7 @@ class CopilotPersistenceIT {
         deletion.failed(sql.getMapper(DeletionRepository.class).find(exercise), claim, "AI_RECOVERY_PENDING");
         clock.now = clock.now.plus(Duration.ofHours(24));
         assertThat(deletion.status(SESSION, exercise).interventionRequired()).isTrue();
-        assertThatThrownBy(() -> tasks.messages(SESSION, exercise, -1)).hasMessage("EXERCISE_DELETED");
+        assertThatThrownBy(() -> tasks.messagesInConversation(SESSION, exercise, -1, null)).hasMessage("EXERCISE_DELETED");
         execution.recover(task.id());
         assertThat(workspace.applies.get()).isZero();
         assertThat(data.quiescent(exercise)).isTrue();
@@ -2499,7 +2517,7 @@ class CopilotPersistenceIT {
 
     @Test
     void deletionWaitsForTaskQuiescenceAndErasesEvidenceWithoutDeletingPersonalModels() {
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
         assertThatThrownBy(() -> new TransactionTemplate(transactions).executeWithoutResult(status -> data.erase(exercise)))
             .isInstanceOf(IllegalStateException.class);
         assertThat(data.retainedBytes(exercise)).isPositive();
@@ -2528,7 +2546,7 @@ class CopilotPersistenceIT {
         var connection = connections.create(SESSION, "summary-live-connection", new ModelConnectionRequest("Live summary fixture", "https://api.deepseek.com", ModelProtocol.OPENAI_CHAT, ModelProviderPreset.DEEPSEEK, key, null));
         var model = models.create(SESSION, connection.id(), "summary-live-model", new ModelConfigurationRequest("Live summary", "deepseek-flash", 100000, mode == ModelThinkingMode.ON ? 4096 : 2048, mode, mode == ModelThinkingMode.ON ? "low" : null, null, null, null));
         selection.select(SESSION, exercise, CONTROL, "summary-live-select", new ModelInvocationReferenceDTO(connection.id(), model.id(), 1, 1));
-        var task = tasks.accept(SESSION, exercise, CONTROL, "summary-live-goal", "Use view_file exactly once to read src/Main.java. Then reply briefly with the class name from that saved file. Do not use other tools. Historical examples are not current file evidence.", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "summary-live-goal", "Use view_file exactly once to read src/Main.java. Then reply briefly with the class name from that saved file. Do not use other tools. Historical examples are not current file evidence.", true, measurement);
         var job = compactions.accept(SESSION, exercise, CONTROL, "summary-live-request", new CopilotCompactionRequest(true), measurement);
         var count = new AtomicInteger();
         try (var live = new ModelCallDriver(new ModelSdkClientFactory(new ModelConnectionValidator(), calls), calls, clock)) {
@@ -2549,11 +2567,11 @@ class CopilotPersistenceIT {
             Files.writeString(evidencePath, report, StandardCharsets.UTF_8);
             System.out.println("DeepSeek summary validation evidence: " + evidencePath);
             assertThat(tasks.find(SESSION, task.id()).state()).as("Live continuation reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("SUCCEEDED");
-            assertThat(compactions.current(SESSION, exercise).requests().getFirst().state()).isEqualTo("APPLIED");
-            assertThat(compactions.current(SESSION, exercise).summaryId()).isEqualTo(job.id());
+            assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().state()).isEqualTo("APPLIED");
+            assertThat(compactions.currentInConversation(SESSION, exercise, null).summaryId()).isEqualTo(job.id());
             verify(files, times(1)).read(SESSION, exercise, "src/Main.java");
             assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_tool WHERE task_id=?::uuid AND state='SUCCEEDED'", Integer.class, task.id())).isEqualTo(1);
-            assertThat(tasks.messages(SESSION, exercise, -1).getLast().payload()).contains("Main");
+            assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null).getLast().payload()).contains("Main");
             assertThat(count.get()).isBetween(3, 4);
             var usage = jdbc.queryForList("SELECT 'SUMMARY' AS purpose,input_tokens,output_tokens,total_tokens,usage_incomplete FROM copilot_compaction_call WHERE compaction_id=?::uuid UNION ALL SELECT 'CHAT',input_tokens,output_tokens,total_tokens,usage_incomplete FROM copilot_turn WHERE task_id=?::uuid", job.id(), task.id());
             assertThat(usage).hasSize(count.get());
@@ -2583,10 +2601,10 @@ class CopilotPersistenceIT {
                 if (count.incrementAndGet() > 3) throw new BusinessException(ModelAccessErrorCode.MODEL_OUTPUT_LIMIT_EXCEEDED);
                 return live.call(call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4), call.getArgument(5));
             }).when(driver).call(any(), any(), any(), anyInt(), any(), any());
-            var task = tasks.accept(SESSION, exercise, CONTROL, "live-skill-task", "Use load_skill once to read SKILL.md from the available response-verification Skill, then follow its exact response guidance. Do not use any other tool.", true, measurement);
+            var task = startTask(SESSION, exercise, CONTROL, "live-skill-task", "Use load_skill once to read SKILL.md from the available response-verification Skill, then follow its exact response guidance. Do not use any other tool.", true, measurement);
             runner.run(task.id(), UUID.randomUUID().toString());
             assertThat(tasks.find(SESSION, task.id()).state()).as("live task reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("SUCCEEDED");
-            var messages = tasks.messages(SESSION, exercise, -1);
+            var messages = tasks.messagesInConversation(SESSION, exercise, -1, null);
             assertThat(messages).anySatisfy(message -> assertThat(message.payload()).contains("load_skill", marker));
             assertThat(messages.getLast().payload()).contains(marker);
             assertThat(count.get()).isBetween(2, 3);
@@ -2609,11 +2627,11 @@ class CopilotPersistenceIT {
                 if (count.incrementAndGet() > 4) throw new BusinessException(ModelAccessErrorCode.MODEL_OUTPUT_LIMIT_EXCEEDED);
                 return live.call(call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4), call.getArgument(5));
             }).when(driver).call(any(), any(), any(), anyInt(), any(), any());
-            var task = tasks.accept(SESSION, exercise, CONTROL, "live-start", "Use view_file once to read src/Main.java. Then reply briefly with the class name from the saved file. Do not use other tools.", true, measurement);
+            var task = startTask(SESSION, exercise, CONTROL, "live-start", "Use view_file once to read src/Main.java. Then reply briefly with the class name from the saved file. Do not use other tools.", true, measurement);
             runner.run(task.id(), UUID.randomUUID().toString());
             assertThat(tasks.find(SESSION, task.id()).state()).as("live task reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("SUCCEEDED");
             verify(files, times(1)).read(SESSION, exercise, "src/Main.java");
-            var messages = tasks.messages(SESSION, exercise, -1);
+            var messages = tasks.messagesInConversation(SESSION, exercise, -1, null);
             assertThat(messages.getLast().payload()).contains("Main");
             assertThat(messages.stream().filter(value -> value.kind().equals("TOOL")).count()).isEqualTo(1);
             assertThat(count.get()).isBetween(2, 4);
@@ -2630,8 +2648,8 @@ class CopilotPersistenceIT {
     @Test
     void capacityFailureCannotCreateATaskOrConsumeProtectedRecoverySpace() {
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 1, 268435456);
-        assertThatThrownBy(() -> tasks.accept(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement)).isInstanceOf(BusinessException.class);
-        assertThat(tasks.latest(SESSION, exercise)).isNull();
+        assertThatThrownBy(() -> startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement)).isInstanceOf(BusinessException.class);
+        assertThat(tasks.latestInConversation(SESSION, exercise, null)).isNull();
     }
 
     @Test
@@ -2723,7 +2741,7 @@ class CopilotPersistenceIT {
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(requests)).build(), 100),
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Done")).build(), 100));
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Compare alternatives", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Compare alternatives", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
         for (int index = 0; index < 5; index++) {
             String proposal = sql.getMapper(CopilotProposalRepository.class).pending(task.id()).id();
@@ -2741,7 +2759,7 @@ class CopilotPersistenceIT {
             approvalModes.change(SESSION, exercise, CONTROL, "during-generation", new CopilotApprovalModeRequest("AUTO", "0"));
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(workspace.proposal()))).build(), 100);
         });
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Change the class", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Change the class", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
         var proposal = proposals.list(SESSION, task.id(), 0).items().getFirst();
         assertThat(proposal.mode()).isEqualTo("AUTO");
@@ -2902,7 +2920,7 @@ class CopilotPersistenceIT {
         var task = beginProposal(workspace, true);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
         assertThat(proposalViews.detail(SESSION, proposal).files().getFirst().before()).isEqualTo("class Main {}");
-        assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(3);
+        assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).hasSize(3);
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts);
         var approve = new CopilotProposalDecisionRequest("APPROVE", null);
         assertThat(proposals.decide(SESSION, proposal, CONTROL, "approve", approve, measurement).state()).isEqualTo("APPLYING");
@@ -2912,7 +2930,7 @@ class CopilotPersistenceIT {
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         assertThat(workspace.applies.get()).isEqualTo(1);
-        assertThat(tasks.messages(SESSION, exercise, -1).stream().map(value -> value.kind())).containsExactly("USER", "ASSISTANT", "TOOL", "TOOL", "TOOL", "ASSISTANT");
+        assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null).stream().map(value -> value.kind())).containsExactly("USER", "ASSISTANT", "TOOL", "TOOL", "TOOL", "ASSISTANT");
         verify(files, times(3)).read(SESSION, exercise, ProposalWorkspace.PATH);
         assertThat(proposals.decide(SESSION, proposal, "obsolete", "approve", approve, measurement).resultRevision()).isEqualTo("2");
         verify(driver, times(2)).call(any(), any(), any(), anyInt(), any());
@@ -2942,7 +2960,7 @@ class CopilotPersistenceIT {
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         assertThat(proposals.list(SESSION, task.id(), 0).items()).hasSize(1);
-        var messages = tasks.messages(SESSION, exercise, -1);
+        var messages = tasks.messagesInConversation(SESSION, exercise, -1, null);
         assertThat(messages.stream().filter(value -> value.kind().equals("TOOL")).map(value -> value.payload()).toList())
             .anyMatch(value -> value.contains("Keep the original class")).anyMatch(value -> value.contains("PROPOSAL_PREVIOUSLY_REJECTED"));
         assertThat(workspace.applies.get()).isZero();
@@ -3052,9 +3070,9 @@ class CopilotPersistenceIT {
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
         assertThat(workspace.applies.get()).isZero();
         verify(files, times(2)).read(SESSION, exercise, ProposalWorkspace.PATH);
-        assertThat(tasks.messages(SESSION, exercise, -1)).hasSize(5);
+        assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).hasSize(5);
         if (thinking) {
-            var retained = (AiMessage) ChatMessageDeserializer.messageFromJson(tasks.messages(SESSION, exercise, -1).get(1).payload());
+            var retained = (AiMessage) ChatMessageDeserializer.messageFromJson(tasks.messagesInConversation(SESSION, exercise, -1, null).get(1).payload());
             assertThat(retained.thinking()).isEqualTo("opaque-fixture-thinking");
             assertThat(retained.attributes()).containsAllEntriesOf(protocolAttributes(protocol));
         }
@@ -3123,7 +3141,7 @@ class CopilotPersistenceIT {
                 return result;
             }).when(driver).call(any(), any(), any(), anyInt(), any(), any());
             if ("AUTO".equals(decision)) approvalModes.change(SESSION, exercise, CONTROL, "live-auto", new CopilotApprovalModeRequest("AUTO", "0"));
-            var task = tasks.accept(SESSION, exercise, CONTROL, "live-start", "Read src/main/java/Main.java. Propose exactly one UPDATE replacing its entire content with: class Main { int answer = 42; }. Wait for approval. After its confirmed application, use view_file to read the saved file, then reply briefly with the value of answer. If rejected, reply REJECTED and do not propose another edit.", true, measurement);
+            var task = startTask(SESSION, exercise, CONTROL, "live-start", "Read src/main/java/Main.java. Propose exactly one UPDATE replacing its entire content with: class Main { int answer = 42; }. Wait for approval. After its confirmed application, use view_file to read the saved file, then reply briefly with the value of answer. If rejected, reply REJECTED and do not propose another edit.", true, measurement);
             runner.run(task.id(), UUID.randomUUID().toString());
             assertThat(tasks.find(SESSION, task.id()).state()).as("live proposal reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("WAITING_APPROVAL");
             assertThat(workspace.applies.get()).isZero();
@@ -3134,12 +3152,12 @@ class CopilotPersistenceIT {
             else proposals.decide(SESSION, proposal, CONTROL, "live-decision", new CopilotProposalDecisionRequest(decision, "REJECT".equals(decision) ? "Fixture rejection" : null), measurement);
             writeCoordinator.recover(); proposals.recoverTask(task.id());
             new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts).run(task.id(), UUID.randomUUID().toString());
-            assertThat(tasks.messages(SESSION, exercise, -1)).anySatisfy(message -> assertThat(message.payload()).isEqualTo(retainedAssistant));
+            assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).anySatisfy(message -> assertThat(message.payload()).isEqualTo(retainedAssistant));
             assertThat(tasks.find(SESSION, task.id()).state()).as("live continuation reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("SUCCEEDED");
             assertThat(workspace.applies.get()).isEqualTo("REJECT".equals(decision) ? 0 : 1);
-            assertThat(tasks.messages(SESSION, exercise, -1).getLast().payload()).contains("REJECT".equals(decision) ? "REJECTED" : "42");
+            assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null).getLast().payload()).contains("REJECT".equals(decision) ? "REJECTED" : "42");
             if (!"REJECT".equals(decision)) assertThat(proposals.summary(SESSION, proposal).resultRevision()).isEqualTo("2");
-            assertThat(tasks.messages(SESSION, exercise, -1).stream().filter(message -> "ASSISTANT".equals(message.kind())).map(message -> message.payload()).toList())
+            assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null).stream().filter(message -> "ASSISTANT".equals(message.kind())).map(message -> message.payload()).toList())
                 .containsExactlyElementsOf(nativeAssistants);
             var thinkingLengths = nativeAssistants.stream().map(payload -> ((AiMessage) ChatMessageDeserializer.messageFromJson(payload)).thinking())
                 .map(value -> value == null ? 0 : value.length()).toList();
@@ -3544,7 +3562,7 @@ class CopilotPersistenceIT {
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(request))).build(), 100),
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Command result understood.")).build(), 100));
-        var task = tasks.accept(SESSION, exercise, CONTROL, "bash-start", "Inspect using Bash", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "bash-start", "Inspect using Bash", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).as("bash registration reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("WAITING_APPROVAL");
         return task;
@@ -3556,7 +3574,7 @@ class CopilotPersistenceIT {
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(repeat ? List.of(first, second) : List.of(first))).build(), 100),
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Confirmed test result received.")).build(), 100));
-        var task = tasks.accept(SESSION, exercise, CONTROL, "test-start", "Run the base tests", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "test-start", "Run the base tests", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
         return task;
     }
@@ -3629,7 +3647,7 @@ class CopilotPersistenceIT {
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.builder().thinking(thinking ? "opaque-fixture-thinking" : null).attributes(thinking ? protocolAttributes(protocol) : Map.of())
                 .toolExecutionRequests(trailingRead ? List.of(prefix, proposal, read) : List.of(prefix, proposal)).build()).build(), 100),
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Finished.")).build(), 100));
-        var task = tasks.accept(SESSION, exercise, CONTROL, "start", "Propose an edit", true, measurement);
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Propose an edit", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_APPROVAL");
         verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());

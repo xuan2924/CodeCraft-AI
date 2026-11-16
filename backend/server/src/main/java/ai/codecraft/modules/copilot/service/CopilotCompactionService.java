@@ -13,7 +13,6 @@ public class CopilotCompactionService {
     public CopilotCompactionService(CopilotCompactionStore store, StorageCapacityService capacity) {
         this.store = store; this.capacity = capacity;
     }
-    public CopilotContextResponse current(String session, String exercise) { return store.current(session, exercise); }
     public CopilotContextResponse currentInConversation(String session, String exercise, String conversation) {
         return store.currentInConversation(session, exercise, conversation);
     }

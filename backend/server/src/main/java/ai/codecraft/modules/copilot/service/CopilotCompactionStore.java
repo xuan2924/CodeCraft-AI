@@ -47,11 +47,6 @@ public class CopilotCompactionStore {
     }
 
     @Transactional
-    public CopilotContextResponse current(String session, String exercise) {
-        return currentInConversation(session, exercise, exercise);
-    }
-
-    @Transactional
     public CopilotContextResponse currentInConversation(String session, String exercise, String conversation) {
         owner(session, exercise);
         String scope = conversations.resolve(session, exercise, conversation);

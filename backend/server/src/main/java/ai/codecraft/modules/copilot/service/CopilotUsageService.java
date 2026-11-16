@@ -27,11 +27,6 @@ public class CopilotUsageService {
 
     /** Private delivery serializes against revocation using the owner row lock; no model dispatch or bookkeeping writes. */
     @Transactional
-    public CopilotUsageResponse current(String session, String exercise) {
-        return currentInConversation(session, exercise, exercise);
-    }
-
-    @Transactional
     public CopilotUsageResponse currentInConversation(String session, String exercise, String conversation) {
         var grant = identity.authorizePrivateDelivery(session);
         if (!"USER".equals(grant.role())) throw new IdentityFailure(IdentityErrorCode.FORBIDDEN);

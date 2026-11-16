@@ -105,7 +105,7 @@ class CopilotHttpTest {
         String path = "/api/exercises/" + ID + "/copilot/usage";
         mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header("X-Codecraft-Owner", "owner"))
             .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"));
-        verify(usage).current(HASH, ID);
+        verify(usage).currentInConversation(HASH, ID, null);
         verify(compactions, never()).accept(any(), any(), any(), any(), any());
     }
 
@@ -161,10 +161,10 @@ class CopilotHttpTest {
         mvc.perform(get(path).servletPath(path)).andExpect(status().isUnauthorized());
         mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)).header("X-Codecraft-Owner", "old-owner"))
             .andExpect(status().isUnauthorized());
-        verify(tasks, never()).latest(any(), any());
+        verify(tasks, never()).latestInConversation(any(), any(), any());
         mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)))
             .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"));
-        verify(tasks).latest(HASH, ID); verify(tasks, never()).start(any(), any(), any(), any(), any());
+        verify(tasks).latestInConversation(HASH, ID, null); verify(tasks, never()).start(any(), any(), any(), any(), any());
     }
     @Test void malformedInputAndPersistenceFailuresAreSanitized() throws Exception {
         mvc.perform(start().header(IdentityHttp.CSRF_HEADER, "fixture-csrf").content("{"))
@@ -222,7 +222,7 @@ class CopilotHttpTest {
         mvc.perform(get(base + "context").servletPath(base + "context")).andExpect(status().isUnauthorized());
         mvc.perform(get(base + "context").servletPath(base + "context").cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN)))
             .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"));
-        verify(compactions).current(HASH, ID); verify(compactions, never()).accept(any(), any(), any(), any(), any());
+        verify(compactions).currentInConversation(HASH, ID, null); verify(compactions, never()).accept(any(), any(), any(), any(), any());
         String action = base + "compactions";
         mvc.perform(post(action).servletPath(action).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN))
             .contentType("application/json").content("{\"feeAcknowledged\":true}")).andExpect(status().isForbidden());

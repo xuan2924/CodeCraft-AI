@@ -32,10 +32,6 @@ public class CopilotTaskService {
         var prepared = references.prepare(session, exercise, input.references());
         return capacity.admit(session, exercise, measurement -> store.acceptPrepared(session, exercise, credential, key, input, prepared, measurement));
     }
-    public CopilotDeliveryDTO latest(String session, String exercise) {
-        var task = store.latest(session, exercise);
-        return task == null ? null : store.delivery(session, task.id());
-    }
     public CopilotDeliveryDTO latestInConversation(String session, String exercise, String conversation) {
         var task = store.latestInConversation(session, exercise, conversation);
         return task == null ? null : store.delivery(session, task.id());
@@ -46,12 +42,6 @@ public class CopilotTaskService {
     }
     public CopilotTaskResponse find(String session, String task) { return store.find(session, task); }
     public CopilotTaskResponse stop(String session, String task, String key) { return store.stop(session, task, key); }
-
-    public CopilotMessagesResponse messages(String session, String exercise, long after) {
-        var records = store.messages(session, exercise, after);
-        var messages = records.stream().map(CopilotMessagePresentation::from).toList();
-        return new CopilotMessagesResponse(messages, messages.isEmpty() ? null : messages.getLast().sequence());
-    }
 
     public TaskStreamBatchDTO batch(String session, String exercise, String task, String after, boolean deliver) {
         var snapshot = store.delivery(session, task);
