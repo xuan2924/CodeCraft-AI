@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { useMediaQuery } from '@vueuse/core';
 import AppShell from '../src/shell/AppShell.vue';
+import ConnectionForm from '../src/modelaccess/ConnectionForm.vue';
 import UiButton from '../src/components/ui/Button.vue';
 import UiDialog from '../src/components/ui/Dialog.vue';
 import TextField from '../src/components/ui/TextField.vue';
@@ -75,6 +76,13 @@ const identity = { id: 'fixture', username: '这是用于布局检查的很长�
           </template>
         </ResizablePanels>
       </div>
+      <details>
+        <summary>迁移期表单控件</summary>
+        <ConnectionForm
+          owner="fixture"
+          :connection="null"
+        />
+      </details>
     </main>
   </AppShell>
 </template>

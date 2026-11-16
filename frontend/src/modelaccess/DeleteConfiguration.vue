@@ -81,5 +81,5 @@ function confirm() {
 <style scoped>
 .confirmation { border-left: 3px solid var(--failure); padding-left: 16px; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; }
-button { font: inherit; color: inherit; background: var(--background); border: 1px solid var(--line); border-radius: 4px; padding: 6px 14px; }
+button { font: inherit; color: inherit; background: var(--background); border: 1px solid var(--control-border); border-radius: 4px; padding: 6px 14px; }
 </style>

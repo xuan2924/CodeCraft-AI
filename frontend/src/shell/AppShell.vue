@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue';
+import { computed, nextTick, useTemplateRef, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { Activity, BookOpen, Braces, Menu, Settings2, ShieldCheck, Terminal, UserRound } from '@lucide/vue';
 import type { Identity } from '../auth/api';
@@ -11,6 +11,8 @@ const props = defineProps<{ identity: Identity | null; pending: boolean; failed:
 defineEmits<{ retry: [] }>();
 const layout = useLayoutStore();
 const route = useRoute();
+const navigation = useTemplateRef<globalThis.HTMLElement>('navigation');
+const content = useTemplateRef<globalThis.HTMLElement>('content');
 const ready = computed(() => !props.pending && !props.failed && props.identity && !props.identity.passwordChangeRequired);
 const links = computed(() => [
   ...(ready.value && props.identity?.role === 'USER' ? [
@@ -22,7 +24,12 @@ const links = computed(() => [
   { ...routes.status, label: '服务状态', icon: Activity },
 ]);
 watch(() => [props.identity?.id, props.identity?.role, props.identity?.passwordChangeRequired, props.failed], () => layout.closeNavigation());
-watch(() => route.fullPath, () => layout.closeNavigation());
+watch(() => route.fullPath, async () => {
+  const navigationHadFocus = navigation.value?.contains(globalThis.document.activeElement);
+  layout.closeNavigation();
+  await nextTick();
+  if (navigationHadFocus) content.value?.focus();
+});
 </script>
 
 <template>
@@ -66,6 +73,7 @@ watch(() => route.fullPath, () => layout.closeNavigation());
       </div>
       <nav
         id="application-navigation"
+        ref="navigation"
         aria-label="主要页面"
         class="app-navigation"
       >
@@ -124,6 +132,7 @@ watch(() => route.fullPath, () => layout.closeNavigation());
     </aside>
     <div
       id="application-content"
+      ref="content"
       class="app-content"
       tabindex="-1"
     >
