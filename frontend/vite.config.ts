@@ -1,5 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import vue from '@vitejs/plugin-vue';
+import tailwindcss from '@tailwindcss/vite';
+import { fileURLToPath, URL } from 'node:url';
 
 const javaPort = Number(process.env.JAVA_PORT ?? 8080);
 const webPort = Number(process.env.WEB_PORT ?? 5173);
@@ -14,7 +16,8 @@ const localServer = {
 };
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), tailwindcss()],
+  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: localServer,
   preview: localServer,
   test: { environment: 'jsdom', include: ['src/**/*.test.ts'], restoreMocks: true },

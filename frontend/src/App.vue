@@ -1,18 +1,27 @@
 <script setup lang="ts">
-import { NConfigProvider, type GlobalThemeOverrides } from 'naive-ui';
+import { darkTheme, NConfigProvider } from 'naive-ui';
 import { RouterView } from 'vue-router';
+import { useAccount } from './auth/useAccount';
+import { legacyTheme } from './components/ui/legacyTheme';
+import AppShell from './shell/AppShell.vue';
 
-const theme: GlobalThemeOverrides = {
-  common: {
-    primaryColor: '#225c91', primaryColorHover: '#184a77', primaryColorPressed: '#123a60',
-    fontFamily: '"Segoe UI", "Microsoft YaHei", sans-serif',
-    borderRadius: '4px',
-  },
-};
+const { query, identity } = useAccount();
 </script>
 
 <template>
-  <NConfigProvider :theme-overrides="theme">
-    <RouterView />
+  <NConfigProvider
+    :theme="darkTheme"
+    :theme-overrides="legacyTheme"
+  >
+    <AppShell
+      :identity="identity"
+      :pending="query.isPending.value"
+      :failed="query.isError.value"
+      @retry="query.refetch()"
+    >
+      <div class="legacy-content">
+        <RouterView />
+      </div>
+    </AppShell>
   </NConfigProvider>
 </template>

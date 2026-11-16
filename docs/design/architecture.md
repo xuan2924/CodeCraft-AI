@@ -8,11 +8,11 @@
 - Java 主后端 + Go 执行服务 + Vue Web IDE。Copilot、Interviewer、Evaluator 是 Java 内部职责，不拆为三个服务。
 - Java 21、Spring Boot 3、Maven、LangChain4j；PostgreSQL + MyBatis + Flyway。
 - Go 使用 Docker SDK，通过 gRPC + Protobuf 与 Java 通信。
-- Vue 3、TypeScript、Vite、Naive UI、Tailwind CSS、Vue Router、Pinia、TanStack Vue Query、Monaco Editor、xterm.js。
+- Vue 3、TypeScript、Vite、shadcn-vue 源码式组件 + Reka UI、Tailwind CSS、Vue Router、Pinia、TanStack Vue Query、Monaco Editor、xterm.js。前端重构迁移期保留 Naive UI 的旧业务控件，最终移除归前端重构 08；图标使用官方替代包 `@lucide/vue`。
 - 浏览器通过 REST + SSE 访问 Java；测试日志经 Go gRPC 服务端流、Java SSE 转发。首期无 WebSocket 或交互式 shell。
 - Java 拥有题目、演练、身份、审批、事件和报告业务数据；Go 管理工作区、文件工具、执行、日志及资源回收，不访问业务数据库。
 - 浏览器不直连 Go、Docker 或模型供应商；模型凭证由用户/管理员提交给 Java 后安全保管，不回显完整值、不下发沙箱。Go RPC 仅供受信任内部调用方使用。
-- 前端 Router 管理路由，Pinia 管理共享客户端状态，Vue Query 管理服务端缓存；Naive UI 提供控件与主题，Tailwind 用于布局和轻量样式。
+- 前端 Router 管理路由（`src/routes.ts` 集中定义），Pinia 仅保存导航展开等共享客户端布局，Vue Query 管理身份及其他服务端缓存；不在 store 持久化凭证或复制服务端实体。`src/components/ui/` 提供基础控件、Reka 弹窗/可调整面板及主题，`tokens.ts` 是颜色唯一来源，旧 Naive UI 通过公开主题适配，不覆盖其内部布局。Tailwind 用于布局和轻量样式；迁移期不启用 Preflight，避免重置既有编辑器/终端和业务元素。
 
 ## 演练边界
 

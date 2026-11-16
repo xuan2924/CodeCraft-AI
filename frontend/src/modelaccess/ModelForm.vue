@@ -154,7 +154,7 @@ function save() {
 <style scoped>
 fieldset { display: grid; gap: 10px; border: 1px solid var(--line); padding: 20px; min-width: 0; }
 legend { padding: 0 8px; font-size: 18px; font-weight: 600; }
-input, select { width: 100%; min-width: 0; padding: 10px; font: inherit; color: inherit; background: white; border: 1px solid var(--line); border-radius: 4px; }
+input, select { width: 100%; min-width: 0; padding: 10px; font: inherit; color: inherit; background: var(--background); border: 1px solid var(--line); border-radius: 4px; }
 .help { color: var(--muted); font-size: 14px; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; }
 </style>

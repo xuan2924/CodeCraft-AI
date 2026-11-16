@@ -39,6 +39,14 @@
 
 新增依赖的理由限于已确认职责：Wrapper 保证 Maven 版本；Protobuf 插件生成唯一契约；Flyway PostgreSQL 模块支持迁移；Vue Test Utils/jsdom 提供组件环境；Playwright 提供真实浏览器测试。第一阶段不因技术路线中出现 LangChain4j 而提前添加模型 SDK、MapStruct 或其他通用框架。
 
+### 前端重构依赖与展示验证
+
+前端重构 01 采用 shadcn-vue 手工源码安装（`frontend/components.json`），共享控件位于 `src/components/ui/`，不是额外运行时组件库。已锁定 Reka UI 2.11.0、Pinia 3.0.4、Tailwind CSS / Vite 插件 4.3.5、`@lucide/vue` 1.73.0、motion-v 2.12.0、`@vueuse/core` 15.0.0、class-variance-authority 0.7.1、clsx 2.1.1、tailwind-merge 3.7.0；版本以 package.json / npm 锁文件为准。`lucide-vue-next@1.0.0` 已被官方标记 deprecated，按其提示改用 `@lucide/vue`，不保留双图标库。Motion 按批准清单安装，但当前基础布局不用它添加无必要动画。
+
+`npm run test:ui` 使用独立 `playwright.ui.config.ts` 启动 loopback Vite，在 `ui-tests/` 的纯组件夹具检查窄屏、长文本、弹窗焦点/关闭、键盘面板调整与 reduced-motion；夹具不进入产品路由或生产构建，不伪装真实 API。此入口不能替代 `test:e2e` / `test:integration` 的真实服务验证。主题对比度由 `tokens.test.ts` 校验正文 ≥4.5:1、控件边界/焦点 ≥3:1。
+
+Naive UI 仅作为旧业务迁移依赖：App 的主题适配，账号页，模型连接/配置/检查/用量页面，Skill 页面，工作区编辑/测试/日志/保留/历史/命令/退出，以及 Copilot 控件仍使用它；可用 `rg -l "from 'naive-ui'" frontend/src` 核对准确入口。重构 08 删除最后入口后再移除依赖及 `legacyTheme.ts`，不提前删除既有业务测试。
+
 ### 前端安全覆盖与维护
 
 Monaco 0.57.0 自身固定 DOMPurify 3.4.15，测试工具的间接依赖也尚未使用修复范围。正式 `package.json` 必须保留以下 overrides，并提交由 npm 11.6.0 生成的锁文件；不能只固定顶层库然后丢弃覆盖：

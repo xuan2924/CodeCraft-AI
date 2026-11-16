@@ -316,8 +316,8 @@ async function submitPassword() {
 .account-form h2 { margin: 16px 0 0; font-size: 22px; }
 .account-form p { margin: 0 0 8px; }
 .account-form label { margin-top: 8px; font-weight: 600; }
-input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; font: inherit; color: inherit; background: white; }
-input:disabled { background: #edf2f6; }
+input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; font: inherit; color: inherit; background: var(--background); }
+input:disabled { background: var(--selected); }
 small { color: var(--muted); line-height: 1.6; }
 .account-identity { font-size: 22px; overflow-wrap: anywhere; }
 .account-identity span { color: var(--muted); font-size: 14px; margin-left: 12px; }
