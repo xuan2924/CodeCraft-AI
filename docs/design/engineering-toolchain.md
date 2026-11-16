@@ -86,7 +86,7 @@ Go 官方要求 Windows race 使用 mingw-w64 runtime 8+。本机 GCC 8.1.0 配�
 
 1. 根目录 `.env.example` 仅提供变量名及非敏感默认值；开发者建立 `.env`，提供数据库凭证、端口及工作区路径。Compose 的 `.env` 不会自动注入本机 Java/Go，启动脚本必须显式读取并传递白名单变量，不打印凭证。
 2. `docker compose up -d --wait postgres`：检查数据库健康，具名卷持久化；不自动执行 `down -v` 或删除开发数据。
-3. 运行双端生成脚本；`node scripts/dev.mjs sandbox` 交叉编译 Linux 静态 Go 二进制，在仅含构建产物的临时上下文构建镜像，再由 Compose 启动。Go 非 root、只读根文件系统、持久化私有具名卷，端口只发布到宿主 loopback。原生 Go 入口仅保留状态链路兼容性，不提供 Windows 工作区保证。Docker SDK/socket 已用于受控执行，Go 是可信执行协调服务；题目容器不得获得 socket。不将 Docker CLI context 选择隐式当成 SDK 配置。
+3. 运行双端生成脚本；`node scripts/dev.mjs sandbox` 交叉编译 Linux 静态 Go 二进制，在仅含构建产物的临时上下文构建镜像，再由 Compose 启动。Go 非 root、只读根文件系统、持久化私有具名卷，端口只发布到宿主 loopback。非 Linux Go 桩只支持本机编译/静态检查，不作为产品运行入口。Docker SDK/socket 已用于受控执行，Go 是可信执行协调服务；题目容器不得获得 socket。不将 Docker CLI context 选择隐式当成 SDK 配置。
 4. `node scripts/dev.mjs java` 先执行 Maven package，将可复现的 jar 放入独立最小构建上下文，按内容复用或构建 Java 镜像；Java/Go 的题目发布产物独立生成受控快照，在启动时只读挂载，不因发布验证时间变化重建程序镜像，再由 Compose 启动非 root、只读根文件系统容器。容器内 HTTP 监听 `0.0.0.0:8080`，宿主仅 loopback 映射，Java 默认本机绑定仍为 `127.0.0.1`；显式传递配置白名单，不挂载开发 `.env`、源代码、Go 工作区或 Docker socket。修改代码后重新执行该入口；单独 `spring-boot:run` 不作为跨端入口。Flyway 执行 `src/main/resources/db/migration/V<版本>__<说明>.sql` 并校验，失败阻止启动。已发布迁移不可修改，不自动 baseline、clean 或忽略校验。
 5. `frontend/` 中 `npm ci`、`npm run dev`；Vite 将浏览器 API 请求代理给 Java，浏览器不直连 Go 或数据库。具体端口、健康检查及 Cookie/CSRF 配置由实际配置和任务 02/06 提供。
 

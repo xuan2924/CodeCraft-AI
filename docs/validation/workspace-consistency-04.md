@@ -47,7 +47,7 @@
 - `go test -c` 后在上述 Linux 容器执行 `/probe -test.v -test.timeout=60s`：全套通过；15 个行为测试 + 1 个子进程 helper 顶层测试，包含 11 个子案例。
 - 仓库现有回归 `node --test scripts/*.test.mjs`：8/8 通过；包含真实 Docker 初始解失败、参考解通过、日志预算、截止停止和清理失败阻止发布的检查。
 
-复现命令见 [探针 README](../../backend/prototypes/workspace-consistency/README.md)。未改动 Java Agent 一次性 PoC，本次未执行其 Maven 测试；仓库尚无正式 Java/Vue 测试套件。
+历史复现命令可用 `git show c185c65:backend/prototypes/workspace-consistency/README.md` 查看；一次性探针已从当前树移除。未改动 Java Agent 一次性 PoC，本次未执行其 Maven 测试；仓库尚无正式 Java/Vue 测试套件。
 
 ## 独立审查与修正
 
