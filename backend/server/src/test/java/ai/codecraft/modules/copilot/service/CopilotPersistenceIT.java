@@ -1,5 +1,7 @@
 package ai.codecraft.modules.copilot.service;
 
+import ai.codecraft.modules.platformagent.service.PlatformBindingService;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -386,7 +388,7 @@ class CopilotPersistenceIT {
             sql.getMapper(CommandTaskRepository.class), executionProblems, capacityStore, json, clock, data, history), CommandTaskStore.class);
         commandLifecycle = proxy(new CopilotCommandLifecycle(sql.getMapper(CopilotCommandRepository.class), childCommands, clock), CopilotCommandLifecycle.class);
         var lifecycle = proxy(new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock, secrets, coordination,
-            new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, selection), ExerciseTransactionService.class);
+            new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, selection, mock(PlatformBindingService.class)), ExerciseTransactionService.class);
         var operations = proxy(new WorkspaceAiOperationService(identity, exercises, writes, capacityStore, clock), WorkspaceAiOperationService.class);
         conversations = proxy(new CopilotConversationStore(sql.getMapper(CopilotConversationRepository.class), identity,
             lifecycle, coordination, operations, clock), CopilotConversationStore.class);

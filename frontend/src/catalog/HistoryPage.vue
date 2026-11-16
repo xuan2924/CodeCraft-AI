@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+import { useIntervalFn, useTimestamp } from '@vueuse/core';
 import { useQuery } from '@tanstack/vue-query';
 import { RouterLink, useRouter } from 'vue-router';
 import { session } from '../auth/api';
@@ -9,8 +10,12 @@ import { confirmExerciseDeletion } from '../workspace/drafts';
 import { routes } from '../routes';
 const account = useQuery({ queryKey: ['identity-session'], queryFn: ({ signal }) => session(signal), retry: false });
 const owner = computed(() => account.data.value?.id ?? '');
+const now = useTimestamp({ scheduler: callback => useIntervalFn(callback, 1000) });
+const allowed = computed(() => account.isFetchedAfterMount.value && !!owner.value && account.data.value?.role === 'USER'
+  && !account.data.value.passwordChangeRequired && !account.isError.value && Date.parse(account.data.value.expiresAt) > now.value);
 const router = useRouter();
 const error = ref('');
+watch(owner, () => { error.value = ''; });
 async function deleted(id: string, user: string) {
   if (user !== owner.value) return;
   try { await confirmExerciseDeletion(user, id); }
@@ -21,13 +26,13 @@ async function deleted(id: string, user: string) {
   <main class="history-page">
     <header><p>CODECRAFT / HISTORY</p><h1>历史演练</h1><p>查看已结束的练习、冻结结果及真实保留状态。</p><RouterLink :to="{ name: routes.catalog.name }">返回题库</RouterLink></header>
     <StatePanel
-      v-if="account.isPending.value"
+      v-if="account.isPending.value || !account.isFetchedAfterMount.value"
       kind="loading"
       title="正在确认身份"
       description="请稍候。"
     />
     <StatePanel
-      v-else-if="!owner || account.isError.value || account.data.value?.passwordChangeRequired"
+      v-else-if="!allowed"
       kind="error"
       title="需要有效登录"
       description="请前往账号页登录或完成改密。"

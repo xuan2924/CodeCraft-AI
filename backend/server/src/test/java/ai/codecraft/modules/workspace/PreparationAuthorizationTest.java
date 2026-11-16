@@ -1,5 +1,7 @@
 package ai.codecraft.modules.workspace;
 
+import ai.codecraft.modules.platformagent.service.PlatformBindingService;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
@@ -39,7 +41,7 @@ class PreparationAuthorizationTest {
         var repository = mock(ExerciseRepository.class);
         var identity = mock(IdentityTransactionService.class);
         var service = new ExerciseTransactionService(repository, identity, mock(ProblemTransactionService.class), clock,
-            mock(IdentitySecrets.class), mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), mock(ExerciseModelService.class));
+            mock(IdentitySecrets.class), mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), mock(ExerciseModelService.class), mock(PlatformBindingService.class));
         Instant deadline = clock.instant().plusSeconds(30);
         var operation = new WorkspaceOperationEntity("operation", "owner", "exercise", "workspace", "PREPARE", "owner", "key", "fingerprint", "PENDING", clock.instant());
         var authority = new PreparationAuthorizationDTO("session", deadline);
@@ -61,7 +63,7 @@ class PreparationAuthorizationTest {
         var repository = mock(ExerciseRepository.class);
         var identity = mock(IdentityTransactionService.class);
         var service = new ExerciseTransactionService(repository, identity, mock(ProblemTransactionService.class), clock,
-            mock(IdentitySecrets.class), mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), mock(ExerciseModelService.class));
+            mock(IdentitySecrets.class), mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), mock(ExerciseModelService.class), mock(PlatformBindingService.class));
         var operation = new WorkspaceOperationEntity("operation", "owner", "exercise", "workspace", "PREPARE", "owner", "key", "fingerprint", "PENDING", clock.instant());
         assertThat(service.preparationAuthorization(operation)).isNull();
         Instant deadline = clock.instant().plusSeconds(30);

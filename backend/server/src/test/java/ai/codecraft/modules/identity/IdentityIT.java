@@ -25,6 +25,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.List;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -47,11 +48,27 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import ai.codecraft.modules.modelaccess.gateway.ModelCallDriver;
+import ai.codecraft.modules.modelaccess.model.dto.ModelCallResultDTO;
+import ai.codecraft.modules.platformagent.model.PlatformRole;
+import ai.codecraft.modules.platformagent.model.dto.PlatformActionRequest;
+import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.modules.platformagent.service.PlatformBindingService;
+import ai.codecraft.modules.platformagent.service.PlatformAgentStore;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.awaitility.Awaitility.await;
 
 // scripts/test-identity.mjs supplies a fresh disposable PostgreSQL; never use the development database.
 @EnabledIfEnvironmentVariable(named = "IDENTITY_IT_RUN", matches = "disposable")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = "identity.public-origin=http://localhost:5173")
+    properties = {"identity.public-origin=http://localhost:5173", "model.security.active-key-id=fixture",
+        "model.security.keys=fixture:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="})
 @Import({IdentityIT.TimeFixture.class, CaptchaFixture.class})
 class IdentityIT {
     private static final Instant START = Instant.parse("2026-01-01T00:00:00Z");
@@ -65,6 +82,9 @@ class IdentityIT {
     @Autowired private MutableClock clock;
     @Autowired private RevocationProbe notifications;
     @Autowired private CaptchaService captchas;
+    @MockitoBean private ModelCallDriver platformDriver;
+    @Autowired private PlatformBindingService platformBindings;
+    @Autowired private PlatformAgentStore platformAgents;
 
     @TestConfiguration
     static class TimeFixture {
@@ -92,7 +112,8 @@ class IdentityIT {
         clock.at(START);
         notifications.events.clear();
         notifications.fail = false;
-        jdbc.execute("TRUNCATE problem_favorite, identity_captcha, workspace_task_event, workspace_task_stream, workspace_test_stop, workspace_test_task, workspace_mutation, workspace_transition, workspace_control, workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
+        jdbc.execute("TRUNCATE platform_exercise_binding, platform_agent_check, platform_agent_command, platform_agent_version, problem_favorite, identity_captcha, workspace_task_event, workspace_task_stream, workspace_test_stop, workspace_test_task, workspace_mutation, workspace_transition, workspace_control, workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
+        jdbc.execute("UPDATE platform_agent_role SET current_version=NULL,revision=0");
         store.bootstrap("admin_test", secrets.hash(PASSWORD));
     }
 
@@ -155,6 +176,7 @@ class IdentityIT {
             other.password(temporary, NEW_PASSWORD);
             other.login("favorite_other", NEW_PASSWORD, 200);
             other.csrf();
+            other.get("/api/admin/platform-agents", 403);
             other.get("/api/problem-favorites", 200);
             assertThat(other.body.path("data")).isEmpty();
             other.post("/api/problem-favorites/" + problem, Map.of("favorite", true), null, 200);
@@ -175,6 +197,70 @@ class IdentityIT {
             first.post("/api/problem-favorites/capacity-1", Map.of("favorite", false), null, 200);
             first.post("/api/problem-favorites/" + problem, Map.of("favorite", true), null, 200);
         } finally { jdbc.update("DELETE FROM problem_version WHERE id = ?::uuid", version); }
+    }
+
+    @Test
+    void platformPublishingBindsImmutableVersionsAndRotatesOnlyCredentials() throws Exception {
+        when(platformDriver.call(any(), any(), any(), anyInt(), any())).thenAnswer(invocation -> {
+            var request = invocation.getArgument(1, ChatRequest.class);
+            String role = request.messages().toString().contains("INTERVIEWER") ? "INTERVIEWER" : "EVALUATOR";
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(
+                "{\"role\":\"" + role + "\",\"message\":\"Cannot bypass Java authority\",\"evidenceIds\":[\"fixture\"]}")).build(), 128);
+        });
+        try (Browser admin = administrator()) {
+            String first = platformDraft(admin, "INTERVIEWER", "first");
+            assertThat(admin.body.toString()).doesNotContain("fixture-platform-secret", "apiKey", "credentialCiphertext");
+            admin.post("/api/admin/platform-agents/" + first + "/publish", Map.of("expectedRevision", "1", "expectedRoleRevision", "0"), "publish-first", 409);
+            platformCheck(admin, first, "check-first");
+            admin.post("/api/admin/platform-agents/" + first + "/publish", Map.of("expectedRevision", "1", "expectedRoleRevision", "0"), "publish-first", 200);
+            String evaluator = platformDraft(admin, "EVALUATOR", "evaluator");
+            platformCheck(admin, evaluator, "check-evaluator");
+            admin.post("/api/admin/platform-agents/" + evaluator + "/publish", Map.of("expectedRevision", "1", "expectedRoleRevision", "0"), "publish-evaluator", 200);
+            String oldExercise = UUID.randomUUID().toString();
+            platformBindings.bind(oldExercise);
+            String newer = platformDraft(admin, "INTERVIEWER", "newer");
+            platformCheck(admin, newer, "check-newer");
+            admin.post("/api/admin/platform-agents/" + newer + "/publish", Map.of("expectedRevision", "1", "expectedRoleRevision", "0"), "publish-newer", 409);
+            String sessionHash = jdbc.queryForObject("SELECT token_hash FROM identity_session WHERE NOT revoked LIMIT 1", String.class);
+            var publications = IntStream.range(0, 2).mapToObj(index -> CompletableFuture.supplyAsync(() -> {
+                try {
+                    platformAgents.change(sessionHash, newer, "PUBLISH", "competing-publish-" + index, new PlatformActionRequest("1", "1", null, null));
+                    return true;
+                } catch (BusinessException conflict) {
+                    assertThat(conflict.errorCode().code()).isEqualTo("PLATFORM_VERSION_CONFLICT"); return false;
+                }
+            })).toList();
+            assertThat(publications.stream().map(CompletableFuture::join).toList()).containsExactlyInAnyOrder(true, false);
+            platformBindings.bind(oldExercise);
+            assertThat(platformBindings.version(oldExercise, PlatformRole.INTERVIEWER).id()).isEqualTo(first);
+            String nextExercise = UUID.randomUUID().toString(); platformBindings.bind(nextExercise);
+            assertThat(platformBindings.version(nextExercise, PlatformRole.INTERVIEWER).id()).isEqualTo(newer);
+            admin.post("/api/admin/platform-agents/" + first + "/credential", Map.of("expectedRevision", "2", "apiKey", "replacement-fixture-key"), "rotate", 200);
+            var bound = platformBindings.version(oldExercise, PlatformRole.INTERVIEWER);
+            assertThat(bound.credentialRevision()).isEqualTo(2);
+            assertThat(platformBindings.invocation(bound).credential()).isEqualTo("replacement-fixture-key");
+            assertThat(jdbc.queryForObject("SELECT definition::text FROM platform_agent_version WHERE id=?::uuid", String.class, first))
+                .doesNotContain("replacement-fixture-key", "fixture-platform-secret");
+            admin.post("/api/admin/platform-agents/" + first + "/retire", Map.of("expectedRevision", "3"), "retire", 200);
+            platformAgents.reclaimCredentials();
+            assertThat(platformBindings.invocation(platformBindings.version(oldExercise, PlatformRole.INTERVIEWER)).credential()).isEqualTo("replacement-fixture-key");
+            platformBindings.erase(oldExercise); platformAgents.reclaimCredentials();
+            assertThat(jdbc.queryForObject("SELECT credential_ciphertext FROM platform_agent_version WHERE id=?::uuid", String.class, first)).isNull();
+        }
+    }
+
+    private String platformDraft(Browser admin, String role, String key) throws Exception {
+        admin.post("/api/admin/platform-agents", Map.of("role", role, "instructions", "Explain published requirements; do not change lifecycle.", "skills", List.of(),
+            "connection", Map.of("name", "Platform", "baseUrl", "https://api.deepseek.com", "protocol", "OPENAI_CHAT", "preset", "DEEPSEEK", "apiKey", "fixture-platform-secret"),
+            "model", Map.of("name", "Platform", "modelId", "deepseek-chat", "contextWindow", 32768, "maxOutputTokens", 4096, "thinkingMode", "OFF")), key, 200);
+        return admin.body.path("data").path("id").asText();
+    }
+
+    private void platformCheck(Browser admin, String id, String key) throws Exception {
+        admin.post("/api/admin/platform-agents/" + id + "/checks", Map.of("expectedRevision", "1", "feeAcknowledged", true), key, 202);
+        String check = admin.body.path("data").path("id").asText();
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> assertThat(
+            jdbc.queryForObject("SELECT state FROM platform_agent_check WHERE id=?::uuid", String.class, check)).isEqualTo("SUCCEEDED"));
     }
 
     @Test

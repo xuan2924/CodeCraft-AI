@@ -1,6 +1,7 @@
 package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.modules.platformagent.service.PlatformBindingService;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.model.exception.IdentityFailure;
@@ -31,9 +32,10 @@ public class ExerciseTransactionService {
     private final RetentionProperties retention;
     private final StorageCapacityStore capacity;
     private final ExerciseModelService models;
+    private final PlatformBindingService platform;
 
     public ExerciseTransactionService(ExerciseRepository repository, IdentityTransactionService identity,
-                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination, RetentionProperties retention, StorageCapacityStore capacity, ExerciseModelService models) {
+                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination, RetentionProperties retention, StorageCapacityStore capacity, ExerciseModelService models, PlatformBindingService platform) {
         this.repository = repository;
         this.identity = identity;
         this.problems = problems;
@@ -43,6 +45,7 @@ public class ExerciseTransactionService {
         this.retention = retention;
         this.capacity = capacity;
         this.models = models;
+        this.platform = platform;
     }
 
     @Transactional
@@ -67,6 +70,7 @@ public class ExerciseTransactionService {
         String operation = UUID.randomUUID().toString();
         repository.insert(new ExerciseEntity(exercise, user, version, instance, operation, "PREPARING", null, "[]",
             1, clock.instant(), null, null, null, null, null));
+        platform.bind(exercise);
         repository.retention(exercise, Math.multiplyExact((long) retention.days(), 86400));
         repository.bindPreparationSession(exercise, session, authorization.expiresAt());
         WorkspaceOperationEntity accepted = new WorkspaceOperationEntity(operation, user, exercise, instance,

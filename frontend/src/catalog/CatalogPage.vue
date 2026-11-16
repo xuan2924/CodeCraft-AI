@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useIntervalFn, useTimestamp } from '@vueuse/core';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { RouterLink, useRouter } from 'vue-router';
 import { Star, ArrowRight } from '@lucide/vue';
@@ -17,10 +18,18 @@ const client = useQueryClient();
 const router = useRouter();
 const account = useQuery({ queryKey: ['identity-session'], queryFn: ({ signal }) => session(signal), retry: false });
 const owner = computed(() => account.data.value?.id ?? '');
-const allowed = computed(() => !!owner.value && !account.data.value?.passwordChangeRequired && !account.isError.value);
+const now = useTimestamp({ scheduler: callback => useIntervalFn(callback, 1000) });
+const allowed = computed(() => account.isFetchedAfterMount.value && !!owner.value && account.data.value?.role === 'USER'
+  && !account.data.value.passwordChangeRequired && !account.isError.value && Date.parse(account.data.value.expiresAt) > now.value);
 const catalogue = useQuery({ queryKey: ['catalog', owner], queryFn: ({ signal }) => workspace.problems(signal), enabled: allowed, retry: false });
 const favorites = useQuery({ queryKey: ['favorites', owner], queryFn: ({ signal }) => api.favorites(owner.value, signal), enabled: allowed, retry: false });
 const current = useQuery({ queryKey: ['workspace', owner, 'current'], queryFn: ({ signal }) => workspace.current(signal, undefined, owner.value), enabled: allowed, retry: false, refetchInterval: 5000 });
+watch([favorites.error, current.error], (errors) => {
+  if (errors.some(error => error instanceof ApiError && [401, 403].includes(error.status))) {
+    client.setQueryData(['identity-session'], null);
+    void account.refetch();
+  }
+});
 const search = ref('');
 const onlyFavorites = ref(false);
 const selected = ref('');
@@ -65,7 +74,7 @@ function start() {
       </div><RouterLink :to="{ name: routes.history.name }">历史演练 <ArrowRight :size="16" /></RouterLink>
     </header>
     <StatePanel
-      v-if="account.isPending.value"
+      v-if="account.isPending.value || !account.isFetchedAfterMount.value"
       kind="loading"
       title="正在确认身份"
       description="请稍候。"
@@ -98,7 +107,7 @@ function start() {
           </p>
         </div>
         <RouterLink
-          v-if="current.data.value"
+          v-if="current.data.value && !current.isError.value"
           :to="{ name: routes.workspace.name, query: { exercise: current.data.value.exerciseId } }"
         >继续演练 →</RouterLink>
         <Button

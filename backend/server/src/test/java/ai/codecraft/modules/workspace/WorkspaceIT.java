@@ -627,6 +627,7 @@ class WorkspaceIT {
         JsonNode accepted = request("POST", "/api/exercises", Map.of("problemVersionId", version), "create-workspace-key", 202).path("data");
         String exercise = accepted.path("exerciseId").asText();
         assertThat(exercise).isNotBlank();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform_exercise_binding WHERE exercise_id=?::uuid", Integer.class, exercise)).isEqualTo(2);
         assertThat(accepted.path("operationId").asText()).isNotBlank();
         JsonNode snapshot = null;
         long deadline = System.nanoTime() + Duration.ofSeconds(15).toNanos();
@@ -643,6 +644,20 @@ class WorkspaceIT {
         JsonNode replay = request("POST", "/api/exercises", Map.of("problemVersionId", version), "create-workspace-key", 202).path("data");
         assertThat(replay.path("exerciseId").asText()).isEqualTo(exercise);
         request("POST", "/api/exercises", Map.of("problemVersionId", version), "different-create-key", 409);
+    }
+
+    @Test
+    void missingPlatformPublicationDoesNotReserveAnExerciseOrWorkspace() throws Exception {
+        var pointers = jdbc.queryForList("SELECT role,current_version FROM platform_agent_role");
+        int before = jdbc.queryForObject("SELECT count(*) FROM workspace_exercise", Integer.class);
+        try {
+            jdbc.update("UPDATE platform_agent_role SET current_version=NULL");
+            String version = request("GET", "/api/problems", null, null, 200).path("data").get(0).path("problemVersionId").asText();
+            request("POST", "/api/exercises", Map.of("problemVersionId", version), "missing-platform", 503);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_exercise", Integer.class)).isEqualTo(before);
+        } finally {
+            for (var pointer : pointers) jdbc.update("UPDATE platform_agent_role SET current_version=?::uuid WHERE role=?", pointer.get("current_version"), pointer.get("role"));
+        }
     }
 
     @Test

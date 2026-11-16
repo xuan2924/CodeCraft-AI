@@ -11,7 +11,7 @@ export interface Connection {
 export interface Model {
   id: string; connectionId: string; name: string; modelId: string; contextWindow: number; maxOutputTokens: number;
   thinkingMode: 'OFF' | 'ON'; reasoningEffort: string | null; thinkingBudgetTokens: number | null; temperature: number | null;
-  version: string; configurationVersion: string; windowSource: 'USER_PROVIDED'; deleted: boolean;
+  version: string; configurationVersion: string; windowSource: 'USER_PROVIDED' | 'ADMIN_CONFIGURED'; deleted: boolean;
 }
 export interface ConnectionInput {
   name: string; baseUrl: string; protocol: Protocol; preset: Preset; apiKey: string | null; expectedVersion: string | null;
@@ -52,19 +52,19 @@ function choice<T extends string>(value: unknown, options: readonly T[]): T {
 function nullable<T>(value: unknown, parse: (value: unknown) => T): T | null { return value === null ? null : parse(value); }
 function date(value: unknown): string { const result = text(value, 64); if (!Number.isFinite(Date.parse(result))) return invalid(); return result; }
 function finite(value: unknown): number { if (typeof value !== 'number' || !Number.isFinite(value)) return invalid(); return value; }
-function connection(value: unknown): Connection {
+export function connection(value: unknown): Connection {
   const item = record(value);
   return { id: uuid(item.id), name: text(item.name, 128), baseUrl: text(item.baseUrl), protocol: choice(item.protocol, protocols),
     preset: choice(item.preset, presets), version: version(item.version), configurationVersion: version(item.configurationVersion),
     keyConfigured: bool(item.keyConfigured), deleted: bool(item.deleted) };
 }
-function model(value: unknown): Model {
+export function model(value: unknown): Model {
   const item = record(value);
   const result: Model = { id: uuid(item.id), connectionId: uuid(item.connectionId), name: text(item.name, 128), modelId: text(item.modelId, 256),
     contextWindow: integer(item.contextWindow), maxOutputTokens: integer(item.maxOutputTokens, 16384), thinkingMode: choice(item.thinkingMode, ['OFF', 'ON']),
     reasoningEffort: nullable(item.reasoningEffort, (value) => text(value, 32)), thinkingBudgetTokens: nullable(item.thinkingBudgetTokens, integer),
     temperature: nullable(item.temperature, finite), version: version(item.version), configurationVersion: version(item.configurationVersion),
-    windowSource: choice(item.windowSource, ['USER_PROVIDED']), deleted: bool(item.deleted) };
+    windowSource: choice(item.windowSource, ['USER_PROVIDED', 'ADMIN_CONFIGURED']), deleted: bool(item.deleted) };
   if (result.maxOutputTokens >= result.contextWindow || result.temperature !== null && (result.temperature < 0 || result.temperature > 2)) return invalid();
   return result;
 }

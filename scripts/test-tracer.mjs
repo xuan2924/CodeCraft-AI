@@ -88,7 +88,7 @@ async function configureBrowserModels() {
   if (!copilotBrowser && !workspaceBrowser) return;
   const support = join(directory, 'model-budget');
   await mkdir(join(support, 'ai/codecraft/fixture'), { recursive: true });
-  const classes = copilotBrowser ? ['CopilotBrowserBudget', 'CopilotBrowserFixtureController'] : ['WorkspaceBrowserModelFixture'];
+  const classes = ['PlatformFixture', ...(copilotBrowser ? ['CopilotBrowserBudget', 'CopilotBrowserFixtureController'] : ['WorkspaceBrowserModelFixture'])];
   for (const name of classes) {
     await copyFile(join(root, `backend/server/target/test-classes/ai/codecraft/fixture/${name}.class`), join(support, `ai/codecraft/fixture/${name}.class`));
   }

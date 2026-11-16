@@ -8,13 +8,15 @@ import { installTokens } from '../src/components/ui/tokens';
 import AccountPage from '../src/auth/AccountPage.vue';
 import CatalogPage from '../src/catalog/CatalogPage.vue';
 import HistoryPage from '../src/catalog/HistoryPage.vue';
+import PlatformAgentsPage from '../src/platformagent/PlatformAgentsPage.vue';
 import '../src/style.css';
 import '../src/components/ui/ui.css';
 installTokens(document.documentElement);
 const selectedPage = new URLSearchParams(location.search).get('page');
 const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'account', component: AccountPage },
   { path: '/practice', name: 'catalog', component: CatalogPage }, { path: '/history', name: 'history', component: HistoryPage },
+  { path: '/admin/platform-agents', name: 'platform-agents', component: PlatformAgentsPage },
   { path: '/workspace', name: 'workspace', component: { template: '<p>工作区展示边界</p>' } }] });
-await router.push(selectedPage === 'catalog' ? '/practice' : selectedPage === 'history' ? '/history' : '/');
+await router.push(selectedPage === 'catalog' ? '/practice' : selectedPage === 'history' ? '/history' : selectedPage === 'platform' ? '/admin/platform-agents' : '/');
 createApp({ render: () => h(NConfigProvider, { theme: darkTheme, themeOverrides: legacyTheme, class: selectedPage ? '' : 'legacy-content' }, { default: () => h(RouterView) }) })
   .use(router).use(VueQueryPlugin, { queryClient: new QueryClient() }).mount('#app');

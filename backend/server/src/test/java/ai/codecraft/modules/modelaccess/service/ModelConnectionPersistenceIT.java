@@ -1,5 +1,7 @@
 package ai.codecraft.modules.modelaccess.service;
 
+import ai.codecraft.modules.platformagent.service.PlatformBindingService;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -170,7 +172,7 @@ class ModelConnectionPersistenceIT {
         exerciseModels = transactional(new ExerciseModelService(sql.getMapper(ExerciseModelRepository.class), sql.getMapper(ExerciseRepository.class), identity,
             mock(WorkspaceCoordinationStore.class), invocations, checks, clock, secrets), ExerciseModelService.class);
         exerciseLifecycle = transactional(new ExerciseTransactionService(sql.getMapper(ExerciseRepository.class), identity, mock(ProblemTransactionService.class), clock, secrets,
-            mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), exerciseModels), ExerciseTransactionService.class);
+            mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), exerciseModels, mock(PlatformBindingService.class)), ExerciseTransactionService.class);
         dispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
             new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
             new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), clock,

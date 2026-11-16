@@ -6,5 +6,6 @@ export const routes = {
   history: { name: 'history', path: '/history' },
   workspace: { name: 'workspace', path: '/workspace' },
   models: { name: 'models', path: '/models' },
+  platformAgents: { name: 'platform-agents', path: '/admin/platform-agents' },
   skills: { name: 'skills', path: '/skills' },
 } as const;

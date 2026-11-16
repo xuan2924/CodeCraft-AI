@@ -10,6 +10,7 @@ export const router = createRouter({ history: createWebHistory(), routes: [
   { ...routes.workspace, component: WorkspacePage },
   { ...routes.catalog, component: () => import('./catalog/CatalogPage.vue'), meta: { modern: true } },
   { ...routes.history, component: () => import('./catalog/HistoryPage.vue'), meta: { modern: true } },
+  { ...routes.platformAgents, component: () => import('./platformagent/PlatformAgentsPage.vue'), meta: { modern: true } },
   { ...routes.models, component: () => import('./modelaccess/ModelSettingsPage.vue') },
   { ...routes.skills, component: () => import('./skills/SkillPage.vue') },
 ] });

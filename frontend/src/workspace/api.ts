@@ -109,6 +109,7 @@ export async function operation(id: string, signal: AbortSignal): Promise<Mutati
 export function message(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401 || error.code === 'PASSWORD_CHANGE_REQUIRED') return '登录已失效或需要改密，请前往账号页面。';
+    if (error.code === 'PLATFORM_CONFIGURATION_UNAVAILABLE' || error.code === 'PLATFORM_CHECK_REQUIRED') return '平台面试官/评测者尚未配置或验证，请联系管理员完成发布后创建演练。';
     if (error.code === 'FAVORITE_LIMIT_REACHED') return '收藏已达到 1000 道题目的上限，请先取消部分收藏。';
     if (error.code === 'MODEL_SELECTION_REQUIRED') return '请先显式选择本次演练使用的模型。';
     if (error.code === 'MODEL_CHECK_REQUIRED') return '所选版本的基础连接与工具闭环检查尚未通过或已过期，请确认费用后重新检查；尚未开始计时。';
