@@ -32,7 +32,7 @@ class CopilotProjectInstructionsTest {
     }
     private void snapshot(String revision, List<String> paths) {
         when(exercises.find("session", "exercise")).thenReturn(new ExerciseResponse("exercise", "problem", "instance", "prepare", "ACTIVE", revision, "1",
-            paths, null, null, "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
+            paths, null, null, "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, null));
     }
     private void file(String path, String revision, String text) {
         when(exercises.read("session", "exercise", path)).thenReturn(new WorkspaceFileResponse("instance", revision, path, text));

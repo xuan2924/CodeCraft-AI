@@ -117,6 +117,13 @@ public class WorkspaceCoordinationStore {
             writes.phase(id, "SUCCEEDED");
             writes.activate(control.exerciseId(), null);
             writes.fence(control.exerciseId(), null);
+        } else if (transition.kind().equals("PAUSE") || (!transition.kind().equals("RESUME")
+            && List.of("PAUSING", "PAUSED", "RESUMING").contains(exercises.find(control.exerciseId()).state()))) {
+            // Reconciliation and ownership changes must not undo a lifecycle pause.
+            writes.phase(id, "SUCCEEDED");
+            writes.activate(control.exerciseId(), null);
+            if (List.of("ACQUIRE", "TAKEOVER", "RELEASE").contains(transition.kind())) writes.holder(control.exerciseId(), transition.targetHash());
+            if (!transition.kind().equals("PAUSE")) exercises.operationState(id, "SUCCEEDED");
         } else writes.phase(id, "OPENING");
     }
 
@@ -129,7 +136,8 @@ public class WorkspaceCoordinationStore {
         if (List.of("ACQUIRE", "TAKEOVER", "RELEASE").contains(transition.kind())) writes.holder(control.exerciseId(), transition.targetHash());
         writes.phase(id, "SUCCEEDED");
         writes.activate(control.exerciseId(), null);
-        exercises.operationState(id, "SUCCEEDED");
+        // Resume is complete only when its new authoritative deadline is committed.
+        if (!transition.kind().equals("RESUME")) exercises.operationState(id, "SUCCEEDED");
     }
 
     @Transactional

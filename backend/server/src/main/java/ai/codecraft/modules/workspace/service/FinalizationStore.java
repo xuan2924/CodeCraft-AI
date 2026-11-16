@@ -88,7 +88,7 @@ public class FinalizationStore {
     public void expire(String exerciseId) {
         writes.lock(exerciseId);
         ExerciseEntity exercise = exercises.find(exerciseId);
-        if (exercise == null || !exercise.state().equals("ACTIVE") || exercise.deadlineAt() == null || clock.instant().isBefore(exercise.deadlineAt())) return;
+        if (exercise == null || !Set.of("ACTIVE", "PAUSING").contains(exercise.state()) || exercise.deadlineAt() == null || clock.instant().isBefore(exercise.deadlineAt())) return;
         begin(exerciseId, "DEADLINE_EXPIRED", "deadline");
     }
 

@@ -38,6 +38,20 @@ public class ExerciseController {
         return ApiResponse.success(exercises.start(IdentityHttp.sessionHash(request), id.toString(), key, credential));
     }
 
+    @PostMapping("/api/exercises/{id}/pause")
+    public ResponseEntity<ApiResponse<WorkspaceOperationResponse>> pause(@PathVariable UUID id,
+        @RequestHeader(value = "Idempotency-Key", required = false) String key,
+        @RequestHeader(value = "X-Operation-Credential", required = false) String credential, HttpServletRequest request) {
+        return ResponseEntity.accepted().body(ApiResponse.success(exercises.pause(IdentityHttp.sessionHash(request), id.toString(), key, credential, false)));
+    }
+
+    @PostMapping("/api/exercises/{id}/resume")
+    public ResponseEntity<ApiResponse<WorkspaceOperationResponse>> resume(@PathVariable UUID id,
+        @RequestHeader(value = "Idempotency-Key", required = false) String key,
+        @RequestHeader(value = "X-Operation-Credential", required = false) String credential, HttpServletRequest request) {
+        return ResponseEntity.accepted().body(ApiResponse.success(exercises.pause(IdentityHttp.sessionHash(request), id.toString(), key, credential, true)));
+    }
+
     @PostMapping("/api/exercises/{id}/end")
     public ResponseEntity<ApiResponse<ExerciseResponse>> end(@PathVariable UUID id,
         @RequestHeader(value = "Idempotency-Key", required = false) String key,

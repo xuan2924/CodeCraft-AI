@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface CopilotRetentionRepository {
@@ -39,6 +40,9 @@ public interface CopilotRetentionRepository {
 
     @Select("SELECT NOT EXISTS (SELECT 1 FROM copilot_task WHERE exercise_id=#{exercise}::uuid AND state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','WAITING_CHILD','STOPPING')) AND NOT EXISTS (SELECT 1 FROM copilot_turn WHERE exercise_id=#{exercise}::uuid AND state IN ('DISPATCHED','TOOLS')) AND NOT EXISTS (SELECT 1 FROM copilot_tool WHERE exercise_id=#{exercise}::uuid AND state IN ('RUNNING','WAITING_APPROVAL','APPLYING','WAITING_TEST','WAITING_COMMAND','WAITING_CHILD')) AND NOT EXISTS(SELECT 1 FROM copilot_proposal WHERE exercise_id=#{exercise}::uuid AND state IN ('PENDING','APPLYING')) AND NOT EXISTS(SELECT 1 FROM copilot_test_run WHERE exercise_id=#{exercise}::uuid AND state='WAITING') AND NOT EXISTS(SELECT 1 FROM copilot_command WHERE exercise_id=#{exercise}::uuid AND state IN ('PENDING','WAITING')) AND NOT EXISTS(SELECT 1 FROM copilot_delegation WHERE exercise_id=#{exercise}::uuid AND state='WAITING') AND NOT EXISTS(SELECT 1 FROM copilot_steer WHERE exercise_id=#{exercise}::uuid AND state='RECEIVED') AND NOT EXISTS(SELECT 1 FROM copilot_compaction WHERE exercise_id=#{exercise}::uuid AND state IN ('WAITING','RUNNING')) AND NOT EXISTS(SELECT 1 FROM copilot_compaction_call WHERE exercise_id=#{exercise}::uuid AND state='DISPATCHED')")
     boolean quiescent(String exercise);
+
+    @Update("UPDATE copilot_followup SET state='PAUSED',reason='EXERCISE_PAUSED' WHERE exercise_id=#{exercise}::uuid AND state='WAITING'")
+    void pause(String exercise);
 
     @Select("SELECT test_task_id::text FROM copilot_test_run WHERE exercise_id=#{exercise}::uuid AND state='WAITING'")
     Set<String> protectedTestRecords(String exercise);

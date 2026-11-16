@@ -56,6 +56,6 @@ class CopilotProposalPreparationTest {
     }
     private ExerciseResponse snapshot(String revision) {
         return new ExerciseResponse("exercise", "problem", "instance", "prepare", "ACTIVE", revision, "1", List.of("src/main/java/Before.java"),
-            null, null, "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null);
+            null, null, "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, null);
     }
 }

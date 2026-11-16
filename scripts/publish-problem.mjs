@@ -21,14 +21,17 @@ try {
     const receipt = JSON.parse(await readFile(join(evidenceDirectory, 'receipt.json'), 'utf8'));
     const docker = (args) => execFileSync('docker', args, { encoding: 'utf8', timeout: 15000, maxBuffer: 1048576 }).trim();
     const image = JSON.parse(docker(['image', 'inspect', '--format', '{{json .}}', receipt.imageId]));
+    const challengeImage = receipt.challenge ? JSON.parse(docker(['image', 'inspect', '--format', '{{json .}}', receipt.challenge.imageId])) : null;
     const publication = await publicationFromSnapshot(snapshot, receipt, {
         daemonId: docker(['info', '--format', '{{.ID}}']), imageId: image.Id, platform: `${image.Os}/${image.Architecture}`,
+        ...(challengeImage ? { challenge: { imageId: challengeImage.Id, platform: `${challengeImage.Os}/${challengeImage.Architecture}` } } : {}),
     });
     let existing;
     try { existing = JSON.parse(await readFile(destination, 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (existing) {
         assert.deepEqual(existing.identity, publication.identity, 'Published id/version is immutable; use a new version');
+        assert.equal(existing.receipt?.challenge?.imageId, publication.receipt?.challenge?.imageId, 'Published challenge image is immutable; use a new version');
         // Keep the original immutable artifact; the fresh receipt remains in .validation.
     } else {
         await writeFile(destination, JSON.stringify(publication, null, 2) + '\n', { flag: 'wx' });

@@ -39,6 +39,25 @@ func TestCommandContainerUsesNetworkAndOnlyItsMutableCopy(t *testing.T) {
 	}
 }
 
+func TestChallengeTargetUsesControlledOfflineExecution(t *testing.T) {
+	input := commandInput()
+	input.Purpose, input.Target, input.Command = "MANUAL", "challenge", nil
+	input.Subpath = input.WorkspaceID + "/copy-" + input.ExecutionID + "/tree"
+	input.Suite, input.Tests = "interview.CartTotalTest", []string{"appliesDiscountInBasisPoints"}
+	if err := validateInput(input); err != nil {
+		t.Fatal(err)
+	}
+	runner := &Runner{volume: "managed-workspaces", inputPrefix: "instances/", owner: "fixture"}
+	config, host := runner.containerConfig(input)
+	if !config.NetworkDisabled || host.NetworkMode != "none" || !host.ReadonlyRootfs || config.Image != input.Image {
+		t.Fatalf("challenge must use the selected immutable image without network: %+v %+v", config, host)
+	}
+	input.Target = "arbitrary-command"
+	if validateInput(input) == nil {
+		t.Fatal("unpublished execution target accepted")
+	}
+}
+
 func TestCommandCannotMasqueradeAsAuthorityOrEscapeItsCopy(t *testing.T) {
 	for _, mutate := range []func(*Input){
 		func(input *Input) { input.Purpose = "MANUAL" },

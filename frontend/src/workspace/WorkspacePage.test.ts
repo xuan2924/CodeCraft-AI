@@ -7,9 +7,9 @@ import * as drafts from './drafts';
 vi.mock('./drafts', async (original) => ({ ...await original<typeof drafts>(), listAccountDrafts: vi.fn(async () => []), confirmExerciseDeletion: vi.fn(async () => {}) }));
 
 const endPreparation = vi.hoisted(() => vi.fn<(choice: 'save' | 'discard' | 'retain') => Promise<boolean>>());
-vi.mock('./WorkspaceEditor.vue', () => ({ __esModule: true, default: { props: ['credential'], data: () => ({ draft: '' }),
+vi.mock('./WorkspaceEditor.vue', () => ({ __esModule: true, default: { props: ['credential', 'answeringClosed', 'locked'], data: () => ({ draft: '' }),
   methods: { prepareEnd: (choice: 'save' | 'discard' | 'retain') => endPreparation(choice) },
-  template: '<textarea aria-label="草稿夹具" v-model="draft" :data-can-write="!!credential" />' } }));
+  template: '<textarea aria-label="草稿夹具" v-model="draft" :data-can-write="!!credential" :readonly="answeringClosed || locked" />' } }));
 
 const ok = (data: unknown) => new Response(JSON.stringify({ code: 'OK', data }), { status: 200 });
 const rejected = (status: number) => new Response(JSON.stringify({ code: 'RESOURCE_NOT_FOUND', data: null }), { status });
@@ -319,6 +319,61 @@ it('reopens an ended result and its draft backups even when another exercise is 
   await flushPromises();
   expect(view.text()).toContain('正在准备，结果未确认');
   expect(view.find('[aria-label="结束后的本地草稿"]').exists()).toBe(false);
+});
+
+it('waits for confirmed pause, retains a read-only draft, and resumes only on explicit request', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+  vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+  endPreparation.mockResolvedValue(true);
+  let state = 'ACTIVE';
+  let held = false;
+  let resumed = false;
+  const fetcher = vi.fn<typeof fetch>(async (input, options) => {
+    const path = String(input);
+    if (path === '/api/auth/session') return ok({ id: 'owner', username: 'invited', role: 'USER', passwordChangeRequired: false, expiresAt: '2030-01-01T00:00:00Z' });
+    if (path === '/api/auth/csrf') return ok({ token: 'fixture' });
+    if (path === '/api/problems') return ok([]);
+    if (path === '/api/exercises/current' || path === '/api/exercises/ex1') return ok({ exerciseId: 'ex1', problemVersionId: 'v1', workspaceInstanceId: 'ws1', state, revision: '0', paths: [],
+      deadlineAt: ['PAUSED', 'RESUMING'].includes(state) ? null : resumed ? new Date(Date.now() + 42000).toISOString() : '2026-01-01T00:01:00Z',
+      serverTime: new Date().toISOString(), preparationFailureReason: null, cleanupState: null,
+      pause: state === 'ACTIVE' ? null : { pauseOperationId: 'pause', resumeOperationId: resumed ? 'resume' : null,
+        remainingMillis: state === 'PAUSING' ? null : 42000, confirmedAt: state === 'PAUSING' ? null : '2026-01-01T00:00:18Z' } });
+    if (path.endsWith('/control/acquire')) { held = true; return ok({ exerciseId: 'ex1', operationId: 'control', state: 'SUCCEEDED', generation: '1', held, credential: 'c'.repeat(43) }); }
+    if (path.endsWith('/control')) return ok({ exerciseId: 'ex1', operationId: null, state: 'SUCCEEDED', generation: held ? '1' : '0', held, credential: null });
+    if (path.endsWith('/pause') || path.endsWith('/resume')) {
+      expect(new Headers(options?.headers).get('X-Codecraft-Owner')).toBe('owner');
+      expect(new Headers(options?.headers).get('X-Operation-Credential')).toBe('c'.repeat(43));
+      resumed = path.endsWith('/resume'); state = resumed ? 'RESUMING' : 'PAUSING';
+      return ok({ exerciseId: 'ex1', state: 'PENDING' });
+    }
+    return rejected(404);
+  });
+  const view = await render(fetcher);
+  await view.findAll('button').find((button) => button.text() === '申请操作权')!.trigger('click');
+  await flushPromises();
+  await view.get('textarea[aria-label="草稿夹具"]').setValue('keep my draft');
+  await view.get('[data-testid="pause-exercise"]').trigger('click');
+  await flushPromises();
+  expect(endPreparation).toHaveBeenCalledWith('retain');
+  expect(view.text()).toContain('仍在计时');
+  expect(view.get('textarea[aria-label="草稿夹具"]').attributes('readonly')).toBeDefined();
+  state = 'PAUSED';
+  await client!.invalidateQueries({ queryKey: ['workspace', 'owner', 'current'] });
+  await flushPromises();
+  expect(view.text()).toContain('剩余时间 00:42');
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(view.text()).toContain('剩余时间 00:42');
+  expect(view.get<HTMLTextAreaElement>('textarea[aria-label="草稿夹具"]').element.value).toBe('keep my draft');
+  expect(fetcher.mock.calls.filter(([input]) => String(input).endsWith('/resume'))).toHaveLength(0);
+  await view.get('[data-testid="resume-exercise"]').trigger('click');
+  await flushPromises();
+  expect(view.text()).toContain('正在恢复');
+  expect(view.get('textarea[aria-label="草稿夹具"]').attributes('readonly')).toBeDefined();
+  state = 'ACTIVE';
+  await client!.invalidateQueries({ queryKey: ['workspace', 'owner', 'current'] });
+  await flushPromises();
+  expect(view.get('textarea[aria-label="草稿夹具"]').attributes('readonly')).toBeUndefined();
+  expect(view.get<HTMLTextAreaElement>('textarea[aria-label="草稿夹具"]').element.value).toBe('keep my draft');
 });
 
 it('counts down without resetting and does not submit drafts at expiry', async () => {

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Maintainer-side v1 package gate, not a runtime workspace authorization API.
-export async function validatePackage(directory) {
+export async function validatePackage(directory, nested = false) {
     const root = directory instanceof URL ? fileURLToPath(directory) : directory;
     const hash = createHash('sha256');
     const files = new Set();
@@ -40,6 +40,19 @@ export async function validatePackage(directory) {
     await visit('');
     const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8'));
     assert.equal(manifest.schemaVersion, 1);
+    if (manifest.challenge !== undefined) {
+        assert(!nested, 'Nested challenge is forbidden');
+        assert.equal(manifest.challenge, 'challenge', 'Challenge package must use the fixed challenge directory');
+        const child = await validatePackage(join(root, 'challenge'), true);
+        const basePaths = [...files].filter((path) => path.startsWith('initial/')).sort();
+        const challengePaths = [...files].filter((path) => path.startsWith('challenge/initial/')).map((path) => path.slice('challenge/'.length)).sort();
+        assert.deepEqual(challengePaths, basePaths, 'Challenge initial files must match the base workspace');
+        for (const path of basePaths) {
+            assert.deepEqual(await readFile(join(root, path)), await readFile(join(root, 'challenge', path)),
+                `Challenge initial files must match the base workspace: ${path}`);
+        }
+        assert(manifest.execution && child.manifest.execution, 'Challenge requires verified execution targets for both stages');
+    }
     assert.match(manifest.id, /^[a-z][a-z0-9-]*$/);
     assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
     assert(typeof manifest.title === 'string' && manifest.title.trim());

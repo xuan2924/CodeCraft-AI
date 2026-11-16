@@ -27,7 +27,7 @@ class CopilotWebToolsTest {
     private final CopilotWebTools tools = new CopilotWebTools(gateway, exercises, Clock.fixed(now, ZoneOffset.UTC), json);
     private void active() {
         when(exercises.find("session", "exercise")).thenReturn(new ExerciseResponse("exercise", "problem", "instance", "prepare", "ACTIVE", "7", "1",
-            List.of(), now, now.plusSeconds(60), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
+            List.of(), now, now.plusSeconds(60), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, now));
     }
     @Test void distinguishesSearchSnippetsFromFetchedBodiesAndPreservesSourcesAndCredits() throws Exception {
         active();

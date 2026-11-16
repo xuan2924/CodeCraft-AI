@@ -20,7 +20,7 @@ class CopilotReadToolsTest {
     void searchesLiteralTextAndMatchesOnlyPublishedPathsWithBoundedResults() {
         var exercises = mock(ExerciseService.class);
         when(exercises.find("session", "exercise")).thenReturn(new ExerciseResponse("exercise", "problem", "instance", "prepare", "ACTIVE", "7", "1",
-            List.of("src/Main.java", "src/Other.java"), null, null, "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
+            List.of("src/Main.java", "src/Other.java"), null, null, "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, null));
         when(exercises.read("session", "exercise", "src/Main.java")).thenReturn(new WorkspaceFileResponse("instance", "7", "src/Main.java", "a.*b\nother"));
         when(exercises.read("session", "exercise", "src/Other.java")).thenReturn(new WorkspaceFileResponse("instance", "7", "src/Other.java", "axxb"));
         var tools = new CopilotReadTools(exercises, new ObjectMapper());
@@ -38,7 +38,7 @@ class CopilotReadToolsTest {
         }
         verify(exercises, never()).find(anyString(), anyString());
         when(exercises.find("session", "exercise")).thenReturn(new ExerciseResponse("exercise", "problem", "instance", "prepare", "ACTIVE", "7", "1",
-            List.of("a"), null, null, "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
+            List.of("a"), null, null, "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, null));
         when(exercises.read("session", "exercise", "a")).thenReturn(new WorkspaceFileResponse("instance", "7", "a", "大".repeat(30000)));
         var truncated = tools.execute("session", "exercise", "view_file", "{\"path\":\"a\"}");
         assertThat(truncated.truncated()).isTrue();
@@ -51,7 +51,7 @@ class CopilotReadToolsTest {
     void readsNumberedSavedLinesAndRejectsPathsOutsideThePublishedWorkspace() {
         var exercises = mock(ExerciseService.class);
         when(exercises.find("session", "exercise")).thenReturn(new ExerciseResponse("exercise", "problem", "instance", "prepare", "ACTIVE", "7", "1",
-            List.of("src/Main.java"), null, null, "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
+            List.of("src/Main.java"), null, null, "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, null));
         when(exercises.read("session", "exercise", "src/Main.java")).thenReturn(new WorkspaceFileResponse("instance", "7", "src/Main.java", "first\nsecond\nthird"));
         var tools = new CopilotReadTools(exercises, new ObjectMapper());
         var result = tools.execute("session", "exercise", "view_file", "{\"path\":\"src/Main.java\",\"start_line\":2,\"end_line\":2}");

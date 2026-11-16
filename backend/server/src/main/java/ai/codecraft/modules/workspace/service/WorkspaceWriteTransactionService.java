@@ -143,7 +143,7 @@ public class WorkspaceWriteTransactionService {
         WorkspaceControlEntity control = writes.control(exerciseId);
         String state = control == null || (control.transitionId() == null && control.fenceId() == null) ? "SUCCEEDED" : "PENDING";
         boolean delivered = candidate != null && control != null && state.equals("SUCCEEDED")
-            && List.of("READY", "ACTIVE").contains(exercise.state())
+            && List.of("READY", "ACTIVE", "PAUSED").contains(exercise.state())
             && Objects.equals(control.credentialHash(), IdentitySecrets.digest(candidate));
         return new ControlResponse(exerciseId, operationId, state, control == null ? "0" : Long.toString(control.generation()),
             control != null && control.credentialHash() != null, delivered, delivered ? candidate : null);
@@ -176,7 +176,7 @@ public class WorkspaceWriteTransactionService {
     }
 
     private void writable(ExerciseEntity exercise, boolean activeOnly) {
-        if (!exercise.state().equals("ACTIVE") && (activeOnly || !exercise.state().equals("READY"))) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
+        if (!exercise.state().equals("ACTIVE") && (activeOnly || !List.of("READY", "PAUSED").contains(exercise.state()))) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
         if (exercise.deadlineAt() != null && !clock.instant().isBefore(exercise.deadlineAt())) throw new BusinessException(WorkspaceErrorCode.EXERCISE_EXPIRED);
     }
 

@@ -15,7 +15,14 @@ const MaxBatchRequestBytes = 12 * 1024 * 1024
 type Publication struct {
 	Identity     *rpc.ProblemIdentity
 	InitialFiles map[string]string
-	Execution    *ExecutionPolicy `json:"execution,omitempty"`
+	Execution    *ExecutionPolicy      `json:"execution,omitempty"`
+	Challenge    *ChallengePublication `json:"challenge,omitempty"`
+}
+
+// ChallengePublication is an independently verified image; it is never used for developer Bash.
+type ChallengePublication struct {
+	Identity  *rpc.ProblemIdentity `json:"identity"`
+	Execution *ExecutionPolicy     `json:"execution"`
 }
 
 // ExecutionPolicy comes from the validated publication, never a browser command.

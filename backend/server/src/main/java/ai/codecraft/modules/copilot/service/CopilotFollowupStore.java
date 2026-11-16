@@ -137,6 +137,10 @@ public class CopilotFollowupStore {
     private boolean eligible(CopilotFollowupEntity item) {
         if (item == null || !Set.of("WAITING", "PAUSED").contains(item.state())) return false;
         var exercise = workspace.exercise(item.exerciseId());
+        if (exercise != null && (Set.of("PAUSED", "RESUMING").contains(exercise.state())
+            || "PAUSING".equals(exercise.state()) && exercise.deadlineAt() != null && clock.instant().isBefore(exercise.deadlineAt()))) {
+            queue.pauseExercise(item.exerciseId()); return false;
+        }
         if (exercise == null || !"ACTIVE".equals(exercise.state()) || exercise.deadlineAt() == null || !clock.instant().isBefore(exercise.deadlineAt())) {
             queue.cancelExercise(item.exerciseId(), "EXERCISE_ENDED", clock.instant()); return false;
         }

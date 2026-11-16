@@ -35,7 +35,7 @@ class CopilotReferencesTest {
         var secrets = mock(IdentitySecrets.class);
         when(secrets.fingerprint(anyString())).thenAnswer(call -> HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(call.<String>getArgument(0).getBytes(StandardCharsets.UTF_8))));
         references = new CopilotReferences(files, tests, mock(CommandTaskService.class), mock(WorkspaceCoordinationStore.class), secrets, json);
-        when(files.find("session", "exercise")).thenReturn(new ExerciseResponse("exercise", "problem", "workspace", "preparation", "ACTIVE", "7", "1", List.of("src/Main.java"), Instant.EPOCH, Instant.EPOCH.plusSeconds(100), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
+        when(files.find("session", "exercise")).thenReturn(new ExerciseResponse("exercise", "problem", "workspace", "preparation", "ACTIVE", "7", "1", List.of("src/Main.java"), Instant.EPOCH, Instant.EPOCH.plusSeconds(100), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, Instant.EPOCH));
         when(files.read("session", "exercise", "src/Main.java")).thenReturn(new WorkspaceFileResponse("workspace", "7", "src/Main.java", "中文abc"));
     }
     @Test void utf8PagesAndFixedSelectionsDoNotSubstituteCurrentContent() {

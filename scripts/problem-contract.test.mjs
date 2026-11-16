@@ -75,6 +75,28 @@ test('rejects an initial workspace beyond 10 MiB without truncating its files', 
     assert.equal((await readFile(join(directory, 'initial', 'src', 'main', 'java', 'interview', 'Large0.java'))).length, 1024 * 1024);
 });
 
+test('challenge cannot silently replace initial code or dependencies', async (t) => {
+    const directory = await fixture(t);
+    await cp(source, join(directory, 'challenge'), { recursive: true });
+    const file = join(directory, 'manifest.json');
+    const manifest = JSON.parse(await readFile(file, 'utf8'));
+    manifest.challenge = 'challenge';
+    await writeFile(file, JSON.stringify(manifest));
+    await writeFile(join(directory, 'challenge', 'initial', 'pom.xml'), 'different dependencies');
+    await assert.rejects(validatePackage(directory), /Challenge initial files/);
+});
+
+test('challenge package is bounded to exactly one round', async (t) => {
+    const directory = await fixture(t);
+    await cp(source, join(directory, 'challenge'), { recursive: true });
+    const file = join(directory, 'manifest.json');
+    const manifest = JSON.parse(await readFile(file, 'utf8'));
+    manifest.challenge = 'challenge';
+    await writeFile(file, JSON.stringify(manifest));
+    await writeFile(join(directory, 'challenge', 'manifest.json'), JSON.stringify(manifest));
+    await assert.rejects(validatePackage(directory), /Nested challenge/);
+});
+
 test('content changes alter package identity without changing the semantic version', async (t) => {
     const directory = await fixture(t);
     const before = await validatePackage(directory);

@@ -8,7 +8,20 @@ export interface Exercise {
   exerciseId: string; problemVersionId: string; workspaceInstanceId: string; state: string;
   revision: string | null; paths: string[]; deadlineAt: string | null;
   preparationFailureReason: string | null; cleanupState: string | null;
-  finalization?: Finalization | null;
+  finalization?: Finalization | null; pause?: ExercisePause | null; serverTime?: string;
+}
+export interface ExercisePause {
+  pauseOperationId: string; resumeOperationId: string | null; remainingMillis: number | null; confirmedAt: string | null;
+}
+function pause(value: unknown): ExercisePause | null {
+  if (value === undefined || value === null) return null;
+  if (!object(value) || typeof value.pauseOperationId !== 'string'
+    || (value.resumeOperationId !== null && typeof value.resumeOperationId !== 'string')
+    || (value.remainingMillis !== null && (typeof value.remainingMillis !== 'number' || !Number.isSafeInteger(value.remainingMillis) || value.remainingMillis <= 0))
+    || (value.confirmedAt !== null && (typeof value.confirmedAt !== 'string' || !Number.isFinite(Date.parse(value.confirmedAt))))
+    || (value.remainingMillis === null) !== (value.confirmedAt === null)) return invalid();
+  return { pauseOperationId: value.pauseOperationId, resumeOperationId: value.resumeOperationId,
+    remainingMillis: value.remainingMillis, confirmedAt: value.confirmedAt };
 }
 export interface Finalization {
   operationId: string; finalRevision: string | null; verification: string; resultTaskId: string | null;
@@ -59,15 +72,18 @@ export async function current(signal: AbortSignal, selectedExercise?: string, ow
   }
   if (!object(value) || typeof value.exerciseId !== 'string' || typeof value.problemVersionId !== 'string'
     || typeof value.workspaceInstanceId !== 'string' || typeof value.state !== 'string'
-    || !['PREPARING', 'READY', 'PREPARATION_FAILED', 'ACTIVE', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(value.state)
+    || !['PREPARING', 'READY', 'PREPARATION_FAILED', 'ACTIVE', 'PAUSING', 'PAUSED', 'RESUMING', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(value.state)
     || (value.revision !== null && (typeof value.revision !== 'string' || !/^\d+$/.test(value.revision)))
     || (value.preparationFailureReason !== null && typeof value.preparationFailureReason !== 'string')
     || (value.cleanupState !== null && !['PENDING', 'SUCCEEDED', 'FAILED'].includes(String(value.cleanupState)))
     || !strings(value.paths) || (value.deadlineAt !== null && (typeof value.deadlineAt !== 'string' || !Number.isFinite(Date.parse(value.deadlineAt))))) return invalid();
+  const suspension = pause(value.pause);
+  if ((value.serverTime !== undefined && (typeof value.serverTime !== 'string' || !Number.isFinite(Date.parse(value.serverTime))))
+    || (['PAUSED', 'RESUMING'].includes(value.state) && (!suspension?.remainingMillis || value.deadlineAt !== null))) return invalid();
   return { exerciseId: value.exerciseId, problemVersionId: value.problemVersionId, workspaceInstanceId: value.workspaceInstanceId,
     state: value.state, revision: value.revision, paths: value.paths, deadlineAt: value.deadlineAt,
     preparationFailureReason: value.preparationFailureReason, cleanupState: value.cleanupState === null ? null : String(value.cleanupState),
-    finalization: finalization(value.finalization) };
+    finalization: finalization(value.finalization), pause: suspension, serverTime: typeof value.serverTime === 'string' ? value.serverTime : undefined };
 }
 export async function file(exercise: Exercise, path: string, signal: AbortSignal): Promise<WorkspaceFile> {
   const value = await request(`/api/exercises/${encodeURIComponent(exercise.exerciseId)}/files?path=${encodeURIComponent(path)}`, signal);

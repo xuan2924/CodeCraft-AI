@@ -10,6 +10,8 @@ public interface ExerciseDataContributor {
     long retainedBytes(String exerciseId);
     boolean quiescent(String exerciseId);
     void erase(String exerciseId);
+    /** Persist suspension of automatic work under the owner lock, without external IO. */
+    default void pause(String exerciseId) {}
     default Set<String> protectedTestRecords(String exerciseId) { return Set.of(); }
     default Set<String> protectedCommandRecords(String exerciseId) { return Set.of(); }
     default WorkspaceChangeContext changeContext(String exerciseId, String operationId) { return null; }

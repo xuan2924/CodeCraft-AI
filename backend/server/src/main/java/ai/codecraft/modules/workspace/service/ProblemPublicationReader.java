@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -62,10 +63,37 @@ public class ProblemPublicationReader {
             artifact.path("acceptanceFiles").properties().forEach(entry -> acceptance.put(entry.getKey(), entry.getValue().asText()));
             return new ProblemResponse(version.id(), version.problemId(), version.version(), manifest.path("title").asText(),
                 artifact.path("requirements").asText(), manifest.path("durationSeconds").asInt(), List.copyOf(roots),
-                Map.copyOf(acceptance), version.packageSha256(), version.executionImageDigest(), version.platform(), "LOCAL_DOCKER_IMAGE_ID", manifest.path("execution").isObject());
+                Map.copyOf(acceptance), version.packageSha256(), version.executionImageDigest(), version.platform(), "LOCAL_DOCKER_IMAGE_ID", manifest.path("execution").isObject(), manifest.has("challenge"));
         } catch (IOException error) {
             throw new IllegalStateException("Stored publication is invalid", error);
         }
+    }
+
+    /** Hidden companion projection. The caller must establish that this exercise entered its challenge. */
+    public ProblemResponse challenge(ProblemVersionEntity version) {
+        try {
+            JsonNode artifact = json.readTree(version.artifact());
+            validate(artifact);
+            if (!artifact.has("challenge")) return null;
+            JsonNode companion = challengeArtifact(artifact);
+            JsonNode identity = companion.path("identity");
+            return describe(new ProblemVersionEntity(version.id(), identity.path("problem_id").asText(), identity.path("version").asText(),
+                identity.path("package_sha256").asText(), identity.path("execution_image_digest").asText(), identity.path("platform").asText(), companion.toString()));
+        } catch (IOException error) { throw new IllegalStateException("Stored challenge is invalid", error); }
+    }
+
+    private ObjectNode challengeArtifact(JsonNode artifact) {
+        ObjectNode companion = artifact.path("challenge").deepCopy();
+        companion.put("schemaVersion", 1);
+        companion.set("receipt", artifact.path("receipt").path("challenge"));
+        ObjectNode identity = json.createObjectNode();
+        identity.set("problem_id", companion.path("manifest").path("id"));
+        identity.set("version", companion.path("manifest").path("version"));
+        identity.set("package_sha256", companion.path("receipt").path("packageSha256"));
+        identity.set("execution_image_digest", companion.path("receipt").path("imageId"));
+        identity.set("platform", companion.path("receipt").path("platform"));
+        companion.set("identity", identity);
+        return companion;
     }
 
     private void validate(JsonNode artifact) {
@@ -77,6 +105,7 @@ public class ProblemPublicationReader {
             for (String field : List.of("manifest", "requirements", "initialFiles", "acceptanceFiles")) {
                 inputs.put(field, json.convertValue(artifact.path(field), Object.class));
             }
+            if (artifact.has("challenge")) inputs.put("challenge", json.convertValue(artifact.path("challenge"), Object.class));
             byte[] canonical = json.writer().with(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).writeValueAsBytes(inputs);
             String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
             require(digest.equals(receipt.path("publicationInputsSha256").asText()));
@@ -120,6 +149,15 @@ public class ProblemPublicationReader {
                 names.add(name.asText());
             }
         }
+        if (manifest.has("challenge")) {
+            require("challenge".equals(manifest.path("challenge").asText()) && artifact.path("challenge").isObject());
+            require(!artifact.path("challenge").path("manifest").has("challenge"));
+            require(manifest.path("execution").isObject() && artifact.path("challenge").path("manifest").path("execution").isObject());
+            require(artifact.path("initialFiles").equals(artifact.path("challenge").path("initialFiles")));
+            require(receipt.path("challenge").path("environment").path("daemonId").equals(receipt.path("environment").path("daemonId")));
+            require(!receipt.path("challenge").path("imageId").equals(receipt.path("imageId")));
+            validate(challengeArtifact(artifact));
+        } else require(!artifact.has("challenge") && !receipt.has("challenge"));
         require(artifact.path("initialFiles").has("pom.xml") && artifact.path("acceptanceFiles").has("CartTotalTest.java"));
         for (String section : List.of("initialFiles", "acceptanceFiles")) {
             require(artifact.path(section).isObject());

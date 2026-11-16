@@ -25,7 +25,7 @@ func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) 
 		return nil, err
 	}
 	defer release()
-	if !validTaskIdentity(request.ExerciseId, request.TaskId, request.ExecutionInstanceId, request.WorkspaceInstanceId) || !validTestPurpose(request) || request.Target != "base" || request.NotAfterUnixMillis <= 0 {
+	if !validTaskIdentity(request.ExerciseId, request.TaskId, request.ExecutionInstanceId, request.WorkspaceInstanceId) || !validTestPurpose(request) || (request.Target != "base" && request.Target != "challenge") || request.NotAfterUnixMillis <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "invalid test authority")
 	}
 	if s.executor == nil {
@@ -68,16 +68,22 @@ func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) 
 		return nil, storageError(readErr)
 	}
 	var policy *ExecutionPolicy
+	identity := current.Snapshot.Problem
 	for _, publication := range s.publications {
 		if proto.Equal(publication.Identity, current.Snapshot.Problem) {
 			policy = publication.Execution
+			if request.Target == "challenge" {
+				if publication.Challenge == nil {
+					return nil, status.Error(codes.FailedPrecondition, "publication has no challenge")
+				}
+				identity, policy = publication.Challenge.Identity, publication.Challenge.Execution
+			}
 			break
 		}
 	}
 	if policy == nil {
 		return nil, status.Error(codes.FailedPrecondition, "publication has no verified execution policy")
 	}
-	identity := current.Snapshot.Problem
 	input := execution.Input{HostEpoch: request.HostEpoch, ExerciseID: request.ExerciseId, TaskID: request.TaskId, ExecutionID: request.ExecutionInstanceId, WorkspaceID: request.WorkspaceInstanceId,
 		ProblemID: identity.ProblemId, ProblemVersion: identity.Version, Revision: request.ExpectedRevision, GateEpoch: request.GateEpoch,
 		Image: identity.ExecutionImageDigest, PackageSHA256: identity.PackageSha256, Platform: identity.Platform,

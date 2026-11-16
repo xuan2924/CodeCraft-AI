@@ -42,6 +42,10 @@ public class ExerciseDataService {
         return matches.isEmpty() ? null : matches.getFirst();
     }
 
+    public void pause(String exerciseId) {
+        for (var contributor : contributors) contributor.pause(exerciseId);
+    }
+
     public boolean quiescent(String exerciseId) {
         return contributors.stream().allMatch(contributor -> contributor.quiescent(exerciseId));
     }

@@ -19,13 +19,13 @@ public interface FinalizationRepository {
     FinalizationEntity find(String exercise);
     @Select("SELECT " + COLUMNS + " FROM workspace_finalization WHERE ended_at IS NULL OR cancellation_pending ORDER BY last_attempt_at, id LIMIT 16")
     List<FinalizationEntity> pending();
-    @Select("SELECT id::text FROM workspace_exercise WHERE state = 'ACTIVE' AND deadline_at <= #{now} ORDER BY deadline_at, id LIMIT 16")
+    @Select("SELECT id::text FROM workspace_exercise WHERE state IN ('ACTIVE','PAUSING') AND deadline_at <= #{now} ORDER BY deadline_at, id LIMIT 16")
     List<String> expired(Instant now);
     @Insert("INSERT INTO workspace_finalization(id, exercise_id, max_attempts, budget_seconds, first_retry_seconds, second_retry_seconds) VALUES (#{id}::uuid, #{exerciseId}::uuid, #{maxAttempts}, #{budgetSeconds}, #{firstRetrySeconds}, #{secondRetrySeconds})")
     void insert(FinalizationEntity value);
     @Update("UPDATE workspace_finalization SET last_attempt_at = #{now} WHERE exercise_id = #{exercise}::uuid")
     void attempted(@Param("exercise") String exercise, @Param("now") Instant now);
-    @Update("UPDATE workspace_exercise SET state = 'CLOSING', end_reason = #{reason}, state_version = state_version + 1 WHERE id = #{exercise}::uuid AND state = 'ACTIVE'")
+    @Update("UPDATE workspace_exercise SET state = 'CLOSING', end_reason = #{reason}, state_version = state_version + 1 WHERE id = #{exercise}::uuid AND state IN ('ACTIVE','PAUSING','PAUSED','RESUMING')")
     int closing(@Param("exercise") String exercise, @Param("reason") String reason);
     @Update("UPDATE workspace_finalization SET frozen_epoch = #{epoch}, final_revision = #{revision}, started_at = #{now}, deadline_at = #{deadline} WHERE exercise_id = #{exercise}::uuid AND frozen_epoch IS NULL")
     int frozen(@Param("exercise") String exercise, @Param("epoch") long epoch, @Param("revision") long revision, @Param("now") Instant now, @Param("deadline") Instant deadline);

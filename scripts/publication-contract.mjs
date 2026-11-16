@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readPublicationInputs, verifyPublicationInputs } from './publication-inputs.mjs';
 import { validatePackage } from './problem-contract.mjs';
+import { join } from 'node:path';
 
 // Input is a private maintainer snapshot, never an active user workspace.
 export async function publicationFromSnapshot(directory, receipt, host) {
@@ -17,6 +18,14 @@ export async function publicationFromSnapshot(directory, receipt, host) {
         assert.deepEqual(receipt.results.find((item) => item.name === variant)?.testSummary,
             manifest[variant === 'initial' ? 'expectedInitial' : 'expectedReference']);
     }
+    if (manifest.challenge) {
+        assert(receipt.challenge, 'Challenge requires its own successful offline validation receipt');
+        assert(host.challenge, 'Challenge image must be present on the publication host');
+        assert.notEqual(receipt.challenge.imageId, receipt.imageId, 'Challenge must use an independent image');
+        await publicationFromSnapshot(join(directory, 'challenge'), receipt.challenge, {
+            ...host.challenge, daemonId: host.daemonId,
+        });
+    } else assert.equal(receipt.challenge, undefined, 'Unexpected challenge receipt');
     const inputs = await readPublicationInputs(directory);
     verifyPublicationInputs({ ...inputs, receipt });
     return {

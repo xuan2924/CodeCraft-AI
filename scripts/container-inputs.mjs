@@ -9,9 +9,19 @@ export function containerInputs(publication) {
   const { globalConcurrency: _globalConcurrency, platform: _platform, ...limits } = publication?.manifest.runtime ?? {};
   const execution = publication?.manifest.execution
     ? { limits, suite: publication.manifest.execution.suite, tests: publication.manifest.execution.tests } : undefined;
+  let challenge;
+  if (publication?.challenge) {
+    const child = publication.challenge;
+    const receipt = publication.receipt.challenge;
+    verifyPublicationInputs({ ...child, receipt });
+    const { globalConcurrency: _childConcurrency, platform: _childPlatform, ...childLimits } = child.manifest.runtime;
+    challenge = { identity: { problem_id: child.manifest.id, version: child.manifest.version,
+      package_sha256: receipt.packageSha256, execution_image_digest: receipt.imageId, platform: receipt.platform },
+    execution: { limits: childLimits, suite: child.manifest.execution.suite, tests: child.manifest.execution.tests } };
+  }
   return {
     'publication.json': JSON.stringify(publication ?? {}),
-    'publications.json': JSON.stringify(publication ? [{ identity: publication.identity, initialFiles: publication.initialFiles, execution }] : []),
+    'publications.json': JSON.stringify(publication ? [{ identity: publication.identity, initialFiles: publication.initialFiles, execution, ...(challenge ? { challenge } : {}) }] : []),
   };
 }
 

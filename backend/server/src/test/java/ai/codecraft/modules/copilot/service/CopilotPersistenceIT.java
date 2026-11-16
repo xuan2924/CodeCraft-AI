@@ -150,6 +150,17 @@ import ai.codecraft.modules.workspace.service.StorageCapacityService;
 import ai.codecraft.modules.workspace.service.StorageCapacityStore;
 import ai.codecraft.modules.workspace.service.WorkspaceAiOperationService;
 import ai.codecraft.modules.workspace.service.WorkspaceCoordinationStore;
+import ai.codecraft.modules.workspace.service.ExercisePauseStore;
+import ai.codecraft.modules.workspace.service.InterviewerStore;
+import ai.codecraft.modules.workspace.service.InterviewerExerciseData;
+import ai.codecraft.modules.workspace.repository.InterviewerRepository;
+import ai.codecraft.modules.platformagent.service.PlatformBindingService;
+import ai.codecraft.modules.platformagent.model.PlatformRole;
+import ai.codecraft.modules.platformagent.model.entity.PlatformVersionEntity;
+import ai.codecraft.modules.workspace.service.FinalizationStore;
+import ai.codecraft.modules.workspace.service.FinalVerificationPolicy;
+import ai.codecraft.modules.workspace.config.FinalizationProperties;
+import ai.codecraft.modules.workspace.repository.ExercisePauseRepository;
 import ai.codecraft.modules.workspace.service.WorkspaceHistoryLedger;
 import ai.codecraft.modules.workspace.service.WorkspaceHistoryData;
 import ai.codecraft.modules.workspace.repository.WorkspaceHistoryRepository;
@@ -271,6 +282,10 @@ class CopilotPersistenceIT {
     private CopilotProposalService proposalViews;
     private SandboxWorkspaceGateway sandbox;
     private WorkspaceWriteCoordinator writeCoordinator;
+    private WorkspaceWriteTransactionService workspaceWrites;
+    private ExercisePauseStore exercisePauses;
+    private InterviewerStore interviewer;
+    private FinalizationStore exerciseFinalization;
     private StorageCapacityService capacity;
     private CopilotToolExecutor executor;
     private CopilotWebTools webTools;
@@ -310,7 +325,7 @@ class CopilotPersistenceIT {
         Flyway.configure().dataSource(source).locations("classpath:db/migration").load().migrate();
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
-            ExerciseRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
+            ExerciseRepository.class, ExercisePauseRepository.class, InterviewerRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
             CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotFollowupRepository.class, CopilotBtwRepository.class, CopilotDelegationRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
@@ -359,7 +374,8 @@ class CopilotPersistenceIT {
         jdbc.update("INSERT INTO workspace_control(exercise_id,gate_epoch,gate_state,credential_hash) VALUES(?::uuid,1,'OPEN',?)", exercise, IdentitySecrets.digest(CONTROL));
         var writes = sql.getMapper(WorkspaceWriteRepository.class);
         var historyRepository = sql.getMapper(WorkspaceHistoryRepository.class);
-        data = new ExerciseDataService(List.of(new CopilotExerciseData(sql.getMapper(CopilotRetentionRepository.class)), new SkillExerciseData(sql.getMapper(SkillSnapshotRepository.class)), new WorkspaceHistoryData(historyRepository)));
+        data = new ExerciseDataService(List.of(new CopilotExerciseData(sql.getMapper(CopilotRetentionRepository.class)), new SkillExerciseData(sql.getMapper(SkillSnapshotRepository.class)), new WorkspaceHistoryData(historyRepository), new InterviewerExerciseData(sql.getMapper(InterviewerRepository.class), exercises, clock)));
+        exercisePauses = proxy(new ExercisePauseStore(sql.getMapper(ExercisePauseRepository.class), exercises, writes, identity, secrets, data, clock), ExercisePauseStore.class);
         var history = new WorkspaceHistoryLedger(historyRepository, data, clock);
         var coordination = proxy(new WorkspaceCoordinationStore(writes, exercises, json, history), WorkspaceCoordinationStore.class);
         var invocations = proxy(new ModelInvocationService(identity, connectionRepository, modelRepository, cipher), ModelInvocationService.class);
@@ -373,6 +389,11 @@ class CopilotPersistenceIT {
         var capacityRepository = sql.getMapper(StorageCapacityRepository.class);
         capacityRepository.initialize(exercise);
         var capacityStore = proxy(new StorageCapacityStore(capacityRepository, exercises, writes, identity, budget, clock, data), StorageCapacityStore.class);
+        var platformBindings = mock(PlatformBindingService.class);
+        when(platformBindings.version(exercise, PlatformRole.INTERVIEWER)).thenReturn(new PlatformVersionEntity(UUID.randomUUID().toString(), PlatformRole.INTERVIEWER,
+            "{}", "PUBLISHED", 1, 1, "fixture", "fixture", "fixture", clock.instant(), clock.instant()));
+        interviewer = proxy(new InterviewerStore(sql.getMapper(InterviewerRepository.class), exercises, identity, coordination, platformBindings,
+            mock(ExerciseModelService.class), capacityStore, secrets, clock), InterviewerStore.class);
         maintenance = proxy(new WorkspaceMaintenanceStore(sql.getMapper(WorkspaceMaintenanceRepository.class), exercises,
             sql.getMapper(DeletionRepository.class), identity, clock, budget, data, historyRepository), WorkspaceMaintenanceStore.class);
         var executionProblems = mock(ProblemRepository.class);
@@ -380,6 +401,9 @@ class CopilotPersistenceIT {
         when(executionProblems.find(problemId)).thenReturn(new ProblemVersionEntity(problemId, "fixture", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", "{}"));
         when(executionProblems.executionAvailable(problemId)).thenReturn(true);
         var streams = sql.getMapper(TaskStreamRepository.class);
+        exerciseFinalization = proxy(new FinalizationStore(sql.getMapper(FinalizationRepository.class), exercises, writes,
+            sql.getMapper(TestTaskRepository.class), streams, executionProblems, identity, secrets, clock,
+            new FinalizationProperties(3, 600, 5, 30), new FinalVerificationPolicy(clock), json, capacityStore), FinalizationStore.class);
         var publisher = proxy(new TaskStreamPublisher(streams, json, clock), TaskStreamPublisher.class);
         childExecutions = proxy(new TestTaskStore(identity, secrets, exercises, writes, sql.getMapper(TestTaskRepository.class), executionProblems, clock, json,
             streams, publisher, sql.getMapper(FinalizationRepository.class), budget, maintenance, capacityStore), TestTaskStore.class);
@@ -427,7 +451,7 @@ class CopilotPersistenceIT {
             sql.getMapper(CopilotConversationRepository.class), tasks, execution, delegationLifecycle, identity, coordination, operations, json, clock), CopilotDelegationStore.class), capacity, json);
         approvalModes = new CopilotApprovalModeService(proxy(new CopilotApprovalModeStore(sql.getMapper(CopilotApprovalModeRepository.class),
             identity, secrets, lifecycle, coordination, operations, clock), CopilotApprovalModeStore.class), capacity);
-        when(files.find(SESSION, exercise)).thenReturn(new ExerciseResponse(exercise, "problem", instance, preparation, "ACTIVE", "1", "1", List.of("src/Main.java"), clock.instant(), clock.instant().plusSeconds(1800), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null));
+        when(files.find(SESSION, exercise)).thenReturn(new ExerciseResponse(exercise, "problem", instance, preparation, "ACTIVE", "1", "1", List.of("src/Main.java"), clock.instant(), clock.instant().plusSeconds(1800), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, clock.instant()));
         when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(new WorkspaceFileResponse(instance, "1", "src/Main.java", "class Main {}"));
         driver = mock(ModelCallDriver.class);
         // Keep non-streaming scenarios focused on completed responses; streaming cases replace this bridge explicitly.
@@ -440,6 +464,7 @@ class CopilotPersistenceIT {
         contexts = new CopilotContextService(execution, contextPreparation, contextRepository, compactions, summaryRunner, capacity);
         var codec = new WorkspaceBatchCodec(json);
         var writeStore = proxy(new WorkspaceWriteTransactionService(identity, secrets, exercises, writes, clock, capacityStore), WorkspaceWriteTransactionService.class);
+        workspaceWrites = writeStore;
         writeCoordinator = new WorkspaceWriteCoordinator(coordination, sandbox, codec);
         testCoordinator = new TestTaskCoordinator(childExecutions, sandbox, coordination, writeCoordinator);
         proposals = proxy(new CopilotProposalStore(sql.getMapper(CopilotProposalRepository.class), repository, tasks, execution, identity, secrets,
@@ -1847,6 +1872,168 @@ class CopilotPersistenceIT {
         jdbc.update("UPDATE copilot_task SET state='FAILED',completed_at=? WHERE id=?::uuid", java.sql.Timestamp.from(clock.instant()), fresh.id());
         followupService.dispatch(later.id());
         assertThat(followups.recent(SESSION, exercise, exercise).getLast().state()).isEqualTo("PAUSED");
+    }
+
+    @Test
+    void pauseWaitsForFenceAndCopilotThenPersistsRemainingTimeUntilExplicitResume() {
+        var exercises = sql.getMapper(ExerciseRepository.class);
+        var writes = sql.getMapper(WorkspaceWriteRepository.class);
+        String instance = exercises.find(exercise).workspaceInstanceId();
+        when(sandbox.gate(instance)).thenAnswer(call -> GateResponse.newBuilder().setWorkspaceInstanceId(instance)
+            .setEpoch(writes.control(exercise).gateEpoch()).setState(writes.control(exercise).gateState()).build());
+        when(sandbox.closeGate(eq(instance), anyString(), anyLong())).thenAnswer(call -> GateResponse.newBuilder()
+            .setWorkspaceInstanceId(instance).setTransitionId(call.getArgument(1)).setEpoch(call.<Long>getArgument(2) + 1).setState("CLOSED").build());
+        when(sandbox.openGate(eq(instance), anyString(), anyLong())).thenAnswer(call -> GateResponse.newBuilder()
+            .setWorkspaceInstanceId(instance).setTransitionId(call.getArgument(1)).setEpoch(call.<Long>getArgument(2) + 1).setState("OPEN").build());
+        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        followups.accept(SESSION, exercise, exercise, CONTROL, "queued", new CopilotFollowupRequest("after resume", true), measurement);
+        var pause = exercisePauses.request(SESSION, exercise, "pause", CONTROL, false);
+        assertThat(exercises.find(exercise).state()).isEqualTo("PAUSING");
+        assertThat(followups.recent(SESSION, exercise, exercise).getFirst().state()).isEqualTo("PAUSED");
+        clock.now = clock.instant().plusSeconds(10);
+        assertThat(exercisePauses.confirmPause(exercise)).isFalse();
+        writeCoordinator.drive(pause.id());
+        assertThat(exercisePauses.confirmPause(exercise)).isFalse();
+        execution.recover(anchor.id());
+        assertThat(exercisePauses.confirmPause(exercise)).isTrue();
+        assertThat(exercises.find(exercise).state()).isEqualTo("PAUSED");
+        assertThat(exercises.find(exercise).deadlineAt()).isNull();
+        assertThat(exercisePauses.find(exercise).remainingMillis()).isEqualTo(1_790_000);
+        String newControl = "d".repeat(43);
+        var takeover = workspaceWrites.control(SESSION, exercise, "TAKEOVER", "paused-takeover", null, IdentitySecrets.digest(newControl), measurement);
+        writeCoordinator.drive(takeover.id());
+        assertThat(writes.control(exercise).gateState()).isEqualTo("CLOSED");
+        assertThat(workspaceWrites.view(SESSION, exercise, takeover.id(), newControl).credential()).isEqualTo(newControl);
+        assertCode(() -> exercisePauses.request(SESSION, exercise, "old-page-resume", CONTROL, true), "STALE_CONTROL");
+        clock.now = clock.instant().plusSeconds(600);
+        assertThat(exercisePauses.find(exercise).remainingMillis()).isEqualTo(1_790_000);
+        var resume = exercisePauses.request(SESSION, exercise, "resume", newControl, true);
+        writeCoordinator.drive(resume.id());
+        assertThat(exercises.operation(resume.id()).state()).isEqualTo("PENDING");
+        exercisePauses.confirmResume(exercise);
+        assertThat(exercises.find(exercise).state()).isEqualTo("ACTIVE");
+        assertThat(exercises.find(exercise).deadlineAt()).isEqualTo(Instant.parse("2026-01-01T00:40:00Z"));
+        assertThat(exercises.operation(resume.id()).state()).isEqualTo("SUCCEEDED");
+        clock.now = clock.instant().plusSeconds(5);
+        exercisePauses.confirmResume(exercise);
+        assertThat(exercisePauses.request(SESSION, exercise, "pause", CONTROL, false).id()).isEqualTo(pause.id());
+        assertThat(exercises.find(exercise).state()).isEqualTo("ACTIVE");
+        assertThat(exercises.find(exercise).deadlineAt()).isEqualTo(Instant.parse("2026-01-01T00:40:00Z"));
+        assertThat(followups.recent(SESSION, exercise, exercise).getFirst().state()).isEqualTo("PAUSED");
+    }
+
+    @Test
+    void interviewerUsesDurableIndependentTasksAndCannotPublishAfterPause() {
+        var accepted = interviewer.accept(SESSION, exercise, "ask", CONTROL, "What are the requirements?", measurement);
+        assertThat(accepted.state()).isEqualTo("QUEUED");
+        assertThat(interviewer.history(SESSION, exercise, null)).extracting(item -> item.id()).containsExactly(accepted.id());
+        var dispatch = interviewer.claim(accepted.id());
+        assertThat(dispatch).isNotNull();
+        assertThat(interviewer.claim(accepted.id())).isNull();
+        assertThat(interviewer.recordPrice(accepted.id(), "{}")).isTrue();
+        assertThat(interviewer.recordPrice(accepted.id(), "{}")).isFalse();
+        var pause = exercisePauses.request(SESSION, exercise, "pause", CONTROL, false);
+        assertThat(exercisePauses.confirmPause(exercise)).isFalse();
+        interviewer.finish(accepted.id(), "Late answer must not become visible", null, "{}");
+        assertThat(interviewer.find(SESSION, exercise, accepted.id()).answer()).isNull();
+        assertThat(interviewer.find(SESSION, exercise, accepted.id()).reason()).isEqualTo("INTERVIEWER_INTERRUPTED");
+        assertThat(interviewer.accept(SESSION, exercise, "ask", "stale", "What are the requirements?", measurement).id()).isEqualTo(accepted.id());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM copilot_task WHERE exercise_id=?::uuid", Integer.class, exercise)).isZero();
+        assertThat(sql.getMapper(InterviewerRepository.class).active(exercise)).isFalse();
+        assertThat(sql.getMapper(ExerciseRepository.class).operation(pause.id()).state()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void queuedInterviewerIsCancelledByPauseAndUnknownDispatchIsNeverRepeated() {
+        var first = interviewer.accept(SESSION, exercise, "first", CONTROL, "First question", measurement);
+        assertThat(interviewer.claim(first.id())).isNotNull();
+        clock.now = clock.instant().plusSeconds(120);
+        assertThat(interviewer.claim(first.id())).isNull();
+        assertThat(interviewer.find(SESSION, exercise, first.id()).reason()).isEqualTo("INTERVIEWER_RESULT_UNKNOWN");
+        assertThat(interviewer.claim(first.id())).isNull();
+        var queued = interviewer.accept(SESSION, exercise, "queued", CONTROL, "Second question", measurement);
+        exercisePauses.request(SESSION, exercise, "pause", CONTROL, false);
+        assertThat(interviewer.find(SESSION, exercise, queued.id()).state()).isEqualTo("FAILED");
+        assertThat(sql.getMapper(ExerciseRepository.class).operation(queued.id()).state()).isEqualTo("REJECTED");
+        assertThat(interviewer.claim(queued.id())).isNull();
+        assertThat(interviewer.history(SESSION, exercise, queued.id())).extracting(item -> item.id()).containsExactly(first.id());
+    }
+
+    @Test
+    void revokedResumeReturnsToPausedWithoutGrantingAnsweringTime() {
+        var exercises = sql.getMapper(ExerciseRepository.class);
+        var writes = sql.getMapper(WorkspaceWriteRepository.class);
+        var pause = exercisePauses.request(SESSION, exercise, "pause", CONTROL, false);
+        // Observe the durable closed fence; no process clock or network timing is required.
+        jdbc.update("UPDATE workspace_transition SET phase='SUCCEEDED',expected_epoch=1 WHERE id=?::uuid", pause.id());
+        jdbc.update("UPDATE workspace_control SET transition_id=NULL,gate_state='CLOSED',gate_epoch=2 WHERE exercise_id=?::uuid", exercise);
+        assertThat(exercisePauses.confirmPause(exercise)).isTrue();
+        var resume = exercisePauses.request(SESSION, exercise, "resume", CONTROL, true);
+        jdbc.update("UPDATE workspace_transition SET phase='SUCCEEDED',expected_epoch=2 WHERE id=?::uuid", resume.id());
+        // Resume's OPEN receipt was followed by a newer authorization revocation.
+        jdbc.update("UPDATE workspace_control SET transition_id=NULL,gate_state='CLOSED',gate_epoch=5 WHERE exercise_id=?::uuid", exercise);
+        clock.now = clock.instant().plusSeconds(600);
+        exercisePauses.confirmResume(exercise);
+        assertThat(exercises.find(exercise).state()).isEqualTo("PAUSED");
+        assertThat(exercises.find(exercise).deadlineAt()).isNull();
+        assertThat(exercisePauses.find(exercise).remainingMillis()).isEqualTo(1_800_000);
+        assertThat(exercises.operation(resume.id()).state()).isEqualTo("REJECTED");
+        assertThat(writes.control(exercise).gateState()).isEqualTo("CLOSED");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"PAUSING", "PAUSED", "RESUMING"})
+    void suspendedExerciseRejectsEveryNewCopilotDispatchEvenWithCurrentCredential(String state) {
+        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        jdbc.update("UPDATE workspace_exercise SET state=? WHERE id=?::uuid", state, exercise);
+        assertCode(() -> followups.accept(SESSION, exercise, exercise, CONTROL, "new-followup", new CopilotFollowupRequest("must not queue", true), measurement), "INVALID_STATE");
+        execution.recover(anchor.id());
+        assertThat(repository.find(anchor.id()).state()).isEqualTo("INTERRUPTED");
+        assertCode(() -> tasks.accept(SESSION, exercise, CONTROL, "new-task", "must not call", true, measurement), "INVALID_STATE");
+        assertThat(sql.getMapper(CopilotRetentionRepository.class).quiescent(exercise)).isTrue();
+    }
+
+    @Test
+    void deadlineWinsWhilePauseIsStillReconcilingAndCannotLaterConfirmPause() {
+        var exercises = sql.getMapper(ExerciseRepository.class);
+        assertCode(() -> exercisePauses.request(SESSION, exercise, "wrong-control", "wrong", false), "STALE_CONTROL");
+        jdbc.update("UPDATE workspace_exercise SET deadline_at=? WHERE id=?::uuid", Timestamp.from(clock.instant().plusSeconds(1)), exercise);
+        var pause = exercisePauses.request(SESSION, exercise, "pause", CONTROL, false);
+        clock.now = clock.instant().plusSeconds(1);
+        assertThat(exercisePauses.confirmPause(exercise)).isFalse();
+        assertThat(sql.getMapper(FinalizationRepository.class).expired(clock.instant())).contains(exercise);
+        exerciseFinalization.expire(exercise);
+        assertThat(exercises.find(exercise).state()).isEqualTo("CLOSING");
+        assertThat(exercises.find(exercise).endReason()).isEqualTo("DEADLINE_EXPIRED");
+        assertThat(exercisePauses.confirmPause(exercise)).isFalse();
+        assertThat(exercisePauses.find(exercise).remainingMillis()).isNull();
+        exercisePauses.superseded(exercise);
+        assertThat(exercises.operation(pause.id()).state()).isEqualTo("REJECTED");
+        assertCode(() -> exercisePauses.request(SESSION, exercise, "resume", CONTROL, true), "CONTROL_TRANSITION_PENDING");
+    }
+
+    @Test
+    void exercisePauseRetainsAllFollowupsAndResumeStillRequiresExplicitReauthorization() {
+        var anchor = tasks.accept(SESSION, exercise, CONTROL, "anchor", "original", true, measurement);
+        var first = followups.accept(SESSION, exercise, exercise, CONTROL, "first", new CopilotFollowupRequest("first", true), measurement);
+        var second = followups.accept(SESSION, exercise, exercise, CONTROL, "second", new CopilotFollowupRequest("second", true), measurement);
+        jdbc.update("UPDATE workspace_exercise SET state='PAUSING' WHERE id=?::uuid", exercise);
+        followupService.dispatch(first.id());
+        assertThat(followups.recent(SESSION, exercise, exercise)).extracting(item -> item.state()).containsExactly("PAUSED", "PAUSED");
+        for (String state : List.of("PAUSED", "RESUMING")) {
+            jdbc.update("UPDATE workspace_exercise SET state=?,deadline_at=NULL WHERE id=?::uuid", state, exercise);
+            followupService.dispatch(first.id()); followupService.dispatch(second.id());
+            assertThat(followups.recent(SESSION, exercise, exercise)).extracting(item -> item.state()).containsExactly("PAUSED", "PAUSED");
+            assertThat(followupService.pending()).doesNotContain(first.id(), second.id());
+        }
+        jdbc.update("UPDATE copilot_task SET state='STOPPED',completed_at=? WHERE id=?::uuid", java.sql.Timestamp.from(clock.instant()), anchor.id());
+        jdbc.update("UPDATE workspace_exercise SET state='ACTIVE',deadline_at=? WHERE id=?::uuid", java.sql.Timestamp.from(clock.instant().plusSeconds(600)), exercise);
+        followupService.dispatch(first.id()); followupService.dispatch(second.id());
+        assertThat(repository.latest(exercise).id()).isEqualTo(anchor.id());
+        assertThat(followups.recent(SESSION, exercise, exercise)).extracting(item -> item.state()).containsExactly("PAUSED", "PAUSED");
+        followupService.resume(SESSION, exercise, exercise, CONTROL, "explicit-queue-resume", true);
+        followupService.dispatch(first.id());
+        assertThat(followups.recent(SESSION, exercise, exercise)).extracting(item -> item.state()).containsExactly("DISPATCHED", "WAITING");
     }
 
     @Test
@@ -3355,7 +3542,7 @@ class CopilotPersistenceIT {
             when(files.find(SESSION, exercise)).thenAnswer(call -> {
                 var value = sql.getMapper(ExerciseRepository.class).find(exercise);
                 return new ExerciseResponse(exercise, value.problemVersionId(), instance, value.preparationOperationId(), value.state(), value.revision().toString(), "1",
-                    List.of(PATH), value.startedAt(), value.deadlineAt(), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null);
+                    List.of(PATH), value.startedAt(), value.deadlineAt(), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, clock.instant());
             });
             when(files.read(SESSION, exercise, PATH)).thenAnswer(call -> file());
             when(sandbox.apply(any())).thenAnswer(call -> apply(call.getArgument(0)));

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -159,7 +159,15 @@ exit "$status"`, source);
     assert(deadline.timedOut && deadline.exitCode === 137 && !deadline.oomKilled);
     assert.equal(docker(['ps', '-aq', '--filter', `label=codecraft.validation=${runId}`]), '');
     assert.equal((await validatePackage(snapshot)).packageSha256, packageSha256, 'Validation snapshot changed');
+    let challenge;
+    if (manifest.challenge) {
+        const challengeEvidence = join(output, 'challenge');
+        execFileSync(process.execPath, [fileURLToPath(import.meta.url), join(snapshot, 'challenge'), challengeEvidence],
+            { stdio: 'inherit', timeout: 600000 });
+        challenge = JSON.parse(await readFile(join(challengeEvidence, 'receipt.json'), 'utf8'));
+    }
     receipt = {
+        ...(challenge ? { challenge } : {}),
         publicationInputsSha256: publicationInputsSha256(await readPublicationInputs(snapshot)),
         validatedAt: new Date().toISOString(), packageSha256, imageId,
         platform: limits.platform, limits,

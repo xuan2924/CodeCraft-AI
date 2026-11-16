@@ -12,7 +12,8 @@ function canonical(value) {
 }
 export function publicationInputsSha256(value) {
     return createHash('sha256').update(JSON.stringify(canonical({ manifest: value.manifest, requirements: value.requirements,
-        initialFiles: value.initialFiles, acceptanceFiles: value.acceptanceFiles }))).digest('hex');
+        initialFiles: value.initialFiles, acceptanceFiles: value.acceptanceFiles,
+        ...(value.challenge ? { challenge: value.challenge } : {}) }))).digest('hex');
 }
 export function verifyPublicationInputs(value) {
     assert.equal(publicationInputsSha256(value), value.receipt?.publicationInputsSha256,
@@ -32,6 +33,9 @@ export async function readPublicationInputs(directory) {
         await visit('');
         return Object.fromEntries(pairs);
     }
-    return { manifest: JSON.parse(await text('manifest.json')), requirements: await text('README.md'),
-        initialFiles: await files('initial'), acceptanceFiles: await files('acceptance') };
+    const manifest = JSON.parse(await text('manifest.json'));
+    return { manifest, requirements: await text('README.md'),
+        initialFiles: await files('initial'), acceptanceFiles: await files('acceptance'),
+        ...(manifest.challenge ? { challenge: await readPublicationInputs(join(directory, 'challenge')) } : {}) };
+
 }

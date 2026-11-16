@@ -5,6 +5,8 @@ import ai.codecraft.modules.identity.model.entity.RevocationIntentEntity;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.modules.workspace.model.dto.ExerciseResponse;
+import ai.codecraft.modules.workspace.model.dto.ExercisePauseResponse;
+import java.time.Clock;
 import ai.codecraft.modules.workspace.model.dto.FinalizationResponse;
 import ai.codecraft.modules.workspace.model.entity.FinalizationEntity;
 import ai.codecraft.modules.workspace.model.dto.WorkspaceFileResponse;
@@ -32,8 +34,10 @@ public class ExerciseService {
     private final FinalizationStore finals;
     private final FinalizationCoordinator finalization;
     private final StorageCapacityService capacity;
+    private final ExercisePauseStore pauses;
+    private final Clock clock;
 
-    public ExerciseService(ExerciseTransactionService store, SandboxWorkspaceGateway sandbox, @Qualifier("workspaceJson") ObjectMapper json, ProblemService problems, IdentityTransactionService identity, WorkspaceWriteTransactionService writes, FinalizationStore finals, FinalizationCoordinator finalization, StorageCapacityService capacity) {
+    public ExerciseService(ExerciseTransactionService store, SandboxWorkspaceGateway sandbox, @Qualifier("workspaceJson") ObjectMapper json, ProblemService problems, IdentityTransactionService identity, WorkspaceWriteTransactionService writes, FinalizationStore finals, FinalizationCoordinator finalization, StorageCapacityService capacity, ExercisePauseStore pauses, Clock clock) {
         this.store = store;
         this.sandbox = sandbox;
         this.json = json;
@@ -42,6 +46,11 @@ public class ExerciseService {
         this.writes = writes;
         this.finals = finals;
         this.finalization = finalization; this.capacity = capacity;
+        this.pauses = pauses; this.clock = clock;
+    }
+
+    public WorkspaceOperationResponse pause(String session, String id, String key, String credential, boolean resume) {
+        return describe(pauses.request(session, id, key, credential, resume));
     }
 
     public WorkspaceOperationResponse create(String session, String version, String key) {
@@ -138,10 +147,13 @@ public class ExerciseService {
             FinalizationResponse result = value == null ? null : new FinalizationResponse(value.id(),
                 value.finalRevision() == null ? null : value.finalRevision().toString(), value.verification(), value.resultTaskId(), value.attempts(),
                 value.maxAttempts(), value.deadlineAt(), value.endedAt(), value.frozenEpoch() == null ? "RECONCILIATION_REQUIRED" : value.endedAt() == null ? "FINAL_TESTING" : "ENDED");
+            var pause = pauses.find(exercise.id());
+            var pauseResponse = pause == null ? null : new ExercisePauseResponse(pause.pauseOperationId(), pause.resumeOperationId(),
+                pause.remainingMillis(), pause.confirmedAt());
             return new ExerciseResponse(exercise.id(), exercise.problemVersionId(), exercise.workspaceInstanceId(),
                 exercise.preparationOperationId(), exercise.state(), exercise.revision() == null ? null : exercise.revision().toString(),
                 Long.toString(exercise.stateVersion()), List.copyOf(paths), exercise.startedAt(), exercise.deadlineAt(), "UNAVAILABLE_NOT_IMPLEMENTED",
-                exercise.preparationFailureReason(), exercise.endReason(), exercise.cleanupState(), result);
+                exercise.preparationFailureReason(), exercise.endReason(), exercise.cleanupState(), result, pauseResponse, clock.instant());
         } catch (IOException error) {
             throw new IllegalStateException("Stored workspace paths are invalid", error);
         }

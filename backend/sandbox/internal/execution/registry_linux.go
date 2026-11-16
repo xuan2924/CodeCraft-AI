@@ -426,7 +426,7 @@ func validateInput(input Input) error {
 	if !uuid.MatchString(input.ExecutionID) || !uuid.MatchString(input.WorkspaceID) || !strings.HasPrefix(input.Image, "sha256:") || !sha256.MatchString(strings.TrimPrefix(input.Image, "sha256:")) || !sha256.MatchString(input.PackageSHA256) || input.Platform != "linux/amd64" || input.NotAfter.IsZero() {
 		return errors.New("invalid fixed execution input")
 	}
-	if input.Command == nil && input.Purpose != "COMMAND" && (input.Target != "base" || input.Subpath != input.WorkspaceID+"/copy-"+input.ExecutionID+"/tree") {
+	if input.Command == nil && input.Purpose != "COMMAND" && ((input.Target != "base" && input.Target != "challenge") || input.Subpath != input.WorkspaceID+"/copy-"+input.ExecutionID+"/tree") {
 		return errors.New("input must identify exactly one stable copy")
 	}
 	if limits.CPUs < 1 || limits.CPUs > 16 || limits.MemoryMiB < 64 || limits.MemoryMiB > 8192 || limits.PIDs < 16 || limits.PIDs > 1024 || limits.WorkMiB < 1 || limits.WorkMiB > 1024 || limits.TmpMiB < 1 || limits.TmpMiB > 1024 || limits.ShmMiB < 1 || limits.ShmMiB > 128 || limits.TimeoutSeconds < 1 || limits.TimeoutSeconds > 600 || limits.LogBytes < 1 || limits.LogBytes > 1048576 {

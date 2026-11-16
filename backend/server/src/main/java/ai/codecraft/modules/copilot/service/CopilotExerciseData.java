@@ -13,6 +13,7 @@ public class CopilotExerciseData implements ExerciseDataContributor {
     public CopilotExerciseData(CopilotRetentionRepository repository) { this.repository = repository; }
     @Override public long retainedBytes(String exerciseId) { return repository.bytes(exerciseId); }
     @Override public boolean quiescent(String exerciseId) { return repository.quiescent(exerciseId); }
+    @Override public void pause(String exerciseId) { repository.pause(exerciseId); }
     @Override public Set<String> protectedTestRecords(String exerciseId) { return repository.protectedTestRecords(exerciseId); }
     @Override public Set<String> protectedCommandRecords(String exerciseId) { return repository.protectedCommandRecords(exerciseId); }
     @Override public WorkspaceChangeContext changeContext(String exerciseId, String operationId) { return repository.changeContext(exerciseId, operationId); }

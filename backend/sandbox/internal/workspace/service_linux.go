@@ -94,6 +94,15 @@ func NewService(root string, publications []Publication, key string, runtime *Ex
 			policy.Tests = append([]string(nil), policy.Tests...)
 			copy.Execution = &policy
 		}
+		if publication.Challenge != nil {
+			child := publication.Challenge
+			if child.Identity == nil || child.Execution == nil || child.Identity.ExecutionImageDigest == publication.Identity.ExecutionImageDigest {
+				return nil, fmt.Errorf("challenge requires an independent verified image and execution policy")
+			}
+			policy := *child.Execution
+			policy.Tests = append([]string(nil), policy.Tests...)
+			copy.Challenge = &ChallengePublication{Identity: proto.Clone(child.Identity).(*rpc.ProblemIdentity), Execution: &policy}
+		}
 		for path, content := range publication.InitialFiles {
 			if !validPath(path) || !(path == "pom.xml" || strings.HasPrefix(path, "src/main/java/") || strings.HasPrefix(path, "src/test/java/")) ||
 				len(content) > fileLimit || !utf8.ValidString(content) || strings.ContainsRune(content, 0) {

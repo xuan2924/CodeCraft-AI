@@ -13,6 +13,7 @@ import WorkspaceHistory from './WorkspaceHistory.vue';
 import WorkspaceStorage from './WorkspaceStorage.vue';
 import ExerciseModelPicker from '../modelaccess/ExerciseModelPicker.vue';
 import CopilotPanel from '../copilot/CopilotConversations.vue';
+import InterviewerPanel from './InterviewerPanel.vue';
 import ClosedDrafts from './ClosedDrafts.vue';
 import WorkspaceRetention from './WorkspaceRetention.vue';
 import { cancelSaveLogout, saveLogoutOwner } from './logoutIntent';
@@ -29,7 +30,7 @@ const catalogue = useQuery({ queryKey: ['workspace', owner, 'problems'], queryFn
 const route = useRoute();
 const router = useRouter();
 const lastExercise = ref(typeof route.query.exercise === 'string' ? route.query.exercise : undefined);
-const active = useQuery({ queryKey: ['workspace', owner, 'current', lastExercise], queryFn: ({ signal }) => api.current(signal, lastExercise.value),
+const active = useQuery({ queryKey: ['workspace', owner, 'current', lastExercise], queryFn: ({ signal }) => api.current(signal, lastExercise.value, owner.value),
   enabled: allowed, retry: false, refetchInterval: 2000 });
 watch(() => route.query.exercise, (id) => {
   lastExercise.value = typeof id === 'string' ? id : undefined;
@@ -42,10 +43,17 @@ const selected = ref('');
 const editorView = ref<{ saveForLogout: () => Promise<boolean>; prepareEnd: (choice: 'save' | 'discard' | 'retain') => Promise<boolean> }>();
 const now = ref(Date.now());
 const tick = globalThis.setInterval(() => { now.value = Date.now(); }, 1000);
-const expired = computed(() => exercise.value?.state === 'ACTIVE' && !!exercise.value.deadlineAt && now.value >= Date.parse(exercise.value.deadlineAt));
+const implementingStates = ['ACTIVE', 'PAUSING', 'PAUSED', 'RESUMING'];
+const historyStates = [...implementingStates, 'CLOSING', 'FINAL_TESTING', 'ENDED'];
+const serverOffset = ref(0);
+watch(() => exercise.value?.serverTime, (value) => { serverOffset.value = value ? Date.parse(value) - Date.now() : 0; });
+const expired = computed(() => !!exercise.value && ['ACTIVE', 'PAUSING'].includes(exercise.value.state) && !!exercise.value.deadlineAt && now.value + serverOffset.value >= Date.parse(exercise.value.deadlineAt));
+const canEnd = computed(() => !!exercise.value && implementingStates.includes(exercise.value.state) && !expired.value);
 const answeringClosed = computed(() => expired.value || exercise.value?.state !== 'ACTIVE');
 const remaining = computed(() => {
-  const seconds = Math.max(0, Math.ceil((Date.parse(exercise.value?.deadlineAt ?? '') - now.value) / 1000));
+  const millis = exercise.value && ['PAUSED', 'RESUMING'].includes(exercise.value.state)
+    ? exercise.value.pause?.remainingMillis ?? Number.NaN : Date.parse(exercise.value?.deadlineAt ?? '') - now.value - serverOffset.value;
+  const seconds = Math.max(0, Math.ceil(millis / 1000));
   return Number.isFinite(seconds) ? `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}` : '';
 });
 const endPrompt = ref(false);
@@ -56,10 +64,10 @@ watch(() => exercise.value?.exerciseId, (id) => {
     lastExercise.value = id;
     if (route.query.exercise !== id) void router.replace({ query: { ...route.query, exercise: id } });
   }
-  hasEditor.value = exercise.value?.state === 'ACTIVE';
+  hasEditor.value = !!exercise.value && implementingStates.includes(exercise.value.state);
   endPrompt.value = false;
 });
-watch(() => exercise.value?.state, (state) => { if (state === 'ACTIVE') hasEditor.value = true; });
+watch(() => exercise.value?.state, (state) => { if (state && implementingStates.includes(state)) hasEditor.value = true; });
 watch(expired, (value) => { if (value) { endPrompt.value = false; void active.refetch(); } });
 const logoutBusy = ref(false);
 const testView = ref<{ start: (revision: string) => void; inspect: (taskId: string) => void }>();
@@ -91,7 +99,7 @@ const credential = ref('');
 const credentialGeneration = ref('');
 const controlState = useQuery({ queryKey: ['workspace', owner, 'control', computed(() => exercise.value?.exerciseId)],
   queryFn: ({ signal }) => api.control(exercise.value!.exerciseId, null, signal),
-  enabled: computed(() => allowed.value && !!exercise.value && ['READY', 'ACTIVE'].includes(exercise.value.state)), retry: false, refetchInterval: 2000 });
+  enabled: computed(() => allowed.value && !!exercise.value && ['READY', ...implementingStates].includes(exercise.value.state)), retry: false, refetchInterval: 2000 });
 watch(() => controlState.data.value?.generation, (value) => {
   if (value && credential.value && value !== credentialGeneration.value) credential.value = '';
 });
@@ -179,7 +187,7 @@ async function perform(action: api.Action) {
   error.value = '';
   unresolved.value = action;
   try {
-    const result = await api.act(action, controller.signal, credential.value || undefined);
+    const result = await api.act(action, controller.signal, credential.value || undefined, startedOwner);
     if (disposed || generation !== startedGeneration) return;
     if (action.path === '/api/exercises') {
       lastExercise.value = result.exerciseId;
@@ -196,7 +204,7 @@ async function perform(action: api.Action) {
   } finally { if (!disposed && generation === startedGeneration) pending.value = false; }
 }
 async function endExercise(choice: 'save' | 'discard' | 'retain') {
-  if (ending.value || pending.value || unresolved.value || answeringClosed.value || (choice === 'retain' ? !canRecover.value : !writable.value || !credential.value)) return;
+  if (ending.value || pending.value || unresolved.value || !canEnd.value || (choice === 'retain' ? !canRecover.value : answeringClosed.value || !writable.value || !credential.value)) return;
   const started = generation;
   const id = exercise.value?.exerciseId;
   ending.value = true;
@@ -207,13 +215,28 @@ async function endExercise(choice: 'save' | 'discard' | 'retain') {
       if (started === generation) error.value = '请先处理草稿或未确认的保存，再结束演练。';
       return;
     }
-    if (disposed || started !== generation || id !== exercise.value?.exerciseId || answeringClosed.value) return;
+    if (disposed || started !== generation || id !== exercise.value?.exerciseId || !canEnd.value) return;
     endPrompt.value = false;
     await perform({ path: `/api/exercises/${encodeURIComponent(id!)}/${choice === 'retain' ? 'recovery-end' : 'end'}`, body: {}, key: globalThis.crypto.randomUUID() });
   } finally { if (started === generation) ending.value = false; }
 }
+async function pauseExercise() {
+  if (ending.value || pending.value || unresolved.value || answeringClosed.value || !writable.value || !credential.value) return;
+  const started = generation;
+  const id = exercise.value?.exerciseId;
+  ending.value = true;
+  try {
+    if (editorView.value && !await editorView.value.prepareEnd('retain')) {
+      if (started === generation) error.value = '草稿备份未确认，请先保留草稿后再暂停。';
+      return;
+    }
+    if (!disposed && started === generation && exercise.value?.exerciseId === id && !answeringClosed.value) change('pause');
+  } catch {
+    if (!disposed && started === generation) error.value = '草稿备份失败，本次未请求暂停，请先复制草稿。';
+  } finally { if (started === generation) ending.value = false; }
+}
 function create(version: string) { void perform({ path: '/api/exercises', body: { problemVersionId: version }, key: globalThis.crypto.randomUUID() }); }
-function change(kind: 'start' | 'preparation-retry' | 'abandon') {
+function change(kind: 'start' | 'preparation-retry' | 'abandon' | 'pause' | 'resume') {
   if (exercise.value) void perform({ path: `/api/exercises/${encodeURIComponent(exercise.value.exerciseId)}/${kind}`, body: {}, key: globalThis.crypto.randomUUID() });
 }
 async function takeControl(kind: 'acquire' | 'takeover') {
@@ -242,7 +265,7 @@ const failureReasons: Record<string, string> = {
   AUTHORIZATION_REVOKED: '发起准备的登录已撤销，请重新登录后重试。',
 };
 const labels: Record<string, string> = { PREPARING: '正在准备，结果未确认', READY: '已准备，仅可浏览', PREPARATION_FAILED: '准备失败，旧实例已封存',
-  ACTIVE: '已开始，请显式保存修改', CLOSING: '正在收尾', FINAL_TESTING: '正在最终验收', ENDED: '已结束' };
+  ACTIVE: '已开始，请显式保存修改', PAUSING: '正在暂停：核对在途操作，仍在计时', PAUSED: '已暂停：工作区只读', RESUMING: '正在恢复：等待服务器重新开放作答', CLOSING: '正在收尾', FINAL_TESTING: '正在最终验收', ENDED: '已结束' };
 </script>
 
 <template>
@@ -386,13 +409,32 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               服务器截止时间：{{ new Date(exercise.deadlineAt).toLocaleString() }}
             </p>
             <p
-              v-if="exercise.state === 'ACTIVE'"
+              v-if="implementingStates.includes(exercise.state)"
               role="status"
             >
               {{ expired ? '作答已到期，等待服务器确认；本地草稿不会自动提交。' : `剩余时间 ${remaining}` }}
             </p>
+            <p v-if="['PAUSING', 'PAUSED', 'RESUMING'].includes(exercise.state)">
+              本地草稿保留，禁止新的作答和收费请求；已提交修改不回滚。恢复演练后，保留的 Copilot 队列仍须显式重新授权。
+            </p>
             <NButton
               v-if="exercise.state === 'ACTIVE' && !expired"
+              data-testid="pause-exercise"
+              :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy"
+              @click="pauseExercise"
+            >
+              暂停演练
+            </NButton>
+            <NButton
+              v-if="exercise.state === 'PAUSED'"
+              data-testid="resume-exercise"
+              :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy"
+              @click="change('resume')"
+            >
+              恢复演练
+            </NButton>
+            <NButton
+              v-if="canEnd"
               data-testid="end-exercise"
               :disabled="pending || ending || !!unresolved || !canRecover || logoutBusy"
               @click="endPrompt = true"
@@ -400,7 +442,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               结束演练
             </NButton>
             <section
-              v-if="endPrompt && !answeringClosed"
+              v-if="endPrompt && canEnd"
               role="dialog"
               aria-modal="true"
               aria-label="结束演练确认"
@@ -410,13 +452,13 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                 仍有测试运行或状态待核对，结束后将由服务器停止并核对，不会把未知结果视为已停止。
               </p>
               <NButton
-                :disabled="ending || pending || !credential || !writable"
+                :disabled="ending || pending || answeringClosed || !credential || !writable"
                 @click="endExercise('save')"
               >
                 保存后结束
               </NButton>
               <NButton
-                :disabled="ending || pending || !credential || !writable"
+                :disabled="ending || pending || answeringClosed || !credential || !writable"
                 @click="endExercise('discard')"
               >
                 丢弃并结束
@@ -449,13 +491,13 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               后台正在核对准备结果。结果未知时不能另开重试或放弃请求。
             </p>
             <p
-              v-if="['READY', 'ACTIVE'].includes(exercise.state)"
+              v-if="['READY', ...implementingStates].includes(exercise.state)"
               role="status"
             >
               {{ credential ? '当前页面持有操作权' : '当前页面只读，可保留本地草稿' }}
             </p>
             <NButton
-              v-if="!credential && ['READY', 'ACTIVE'].includes(exercise.state)"
+              v-if="!credential && ['READY', 'ACTIVE', 'PAUSED'].includes(exercise.state)"
               :disabled="pending || controlState.data.value?.state === 'PENDING'"
               @click="takeControl(controlState.data.value?.held ? 'takeover' : 'acquire')"
             >
@@ -499,8 +541,18 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :disabled="!writable || expired || pending || !!unresolved"
             @unauthorized="credential = ''; account.refetch()"
           />
+          <InterviewerPanel
+            v-if="['READY', ...historyStates].includes(exercise.state)"
+            :key="`interviewer:${owner}:${exercise.exerciseId}`"
+            :owner="owner"
+            :exercise-id="exercise.exerciseId"
+            :credential="credential"
+            :phase="exercise.state"
+            :disabled="!writable || !['READY', 'ACTIVE'].includes(exercise.state) || expired || pending || !!unresolved || ending || endPrompt || logoutBusy"
+            @unauthorized="credential = ''; account.refetch()"
+          />
           <CopilotPanel
-            v-if="['ACTIVE', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
+            v-if="historyStates.includes(exercise.state)"
             :key="owner + exercise.exerciseId"
             :owner="owner"
             :exercise-id="exercise.exerciseId"
@@ -513,7 +565,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             @unauthorized="credential = ''; account.refetch()"
           />
           <WorkspaceCommands
-            v-if="['ACTIVE', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
+            v-if="historyStates.includes(exercise.state)"
             :key="owner + exercise.workspaceInstanceId"
             :owner="owner"
             :exercise="exercise"
@@ -525,7 +577,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             @unauthorized="credential = ''; account.refetch()"
           />
           <WorkspaceHistory
-            v-if="['ACTIVE', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
+            v-if="historyStates.includes(exercise.state)"
             :key="owner + exercise.workspaceInstanceId"
             :owner="owner"
             :exercise="exercise"
@@ -542,7 +594,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             @deleted="acceptedDeletion"
           />
           <WorkspaceTests
-            v-if="['ACTIVE', 'CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
+            v-if="historyStates.includes(exercise.state)"
             :key="owner + exercise.workspaceInstanceId"
             ref="testView"
             :owner="owner"
@@ -612,7 +664,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               v-if="hasEditor"
               :key="owner + exercise.workspaceInstanceId + editorGeneration"
               ref="editorView"
-              :locked="logoutBusy || ending || historyBusy"
+              :locked="logoutBusy || ending || historyBusy || pending || !!unresolved"
               :answering-closed="answeringClosed"
               :test-busy="testBusy || commandBusy || historyBusy || !problem?.executionAvailable"
               :owner="owner"

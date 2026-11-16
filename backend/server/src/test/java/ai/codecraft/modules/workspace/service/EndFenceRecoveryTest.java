@@ -8,6 +8,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
@@ -23,6 +25,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class EndFenceRecoveryTest {
     @Test
@@ -84,6 +88,24 @@ class EndFenceRecoveryTest {
         assertEquals(null, store.control("exercise").credentialHash());
         assertEquals("end", store.control("exercise").fenceId());
         assertEquals("SUCCEEDED", store.transition("end").phase());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"PAUSING", "PAUSED", "RESUMING"})
+    void reconciliationNeverReopensAnExerciseSuspendedByItsOwner(String state) {
+        var writes = mock(WorkspaceWriteRepository.class);
+        var exercises = mock(ExerciseRepository.class);
+        when(writes.transition("reconcile")).thenReturn(new WorkspaceTransitionEntity("reconcile", "exercise", "RECONCILE", 2L, "CLOSING", null));
+        when(writes.lock("exercise")).thenReturn(new WorkspaceControlEntity("exercise", 1, 2L, "OPEN", "holder", "reconcile", null));
+        when(writes.unresolved("exercise")).thenReturn(List.of());
+        when(exercises.find("exercise")).thenReturn(new ExerciseEntity("exercise", "user", "problem", "workspace", "prepare", state, 7L, "[]", 1,
+            Instant.EPOCH, Instant.EPOCH, null, null, null, null));
+        var store = new WorkspaceCoordinationStore(writes, exercises, new ObjectMapper(), mock(WorkspaceHistoryLedger.class));
+        store.closed("reconcile");
+        verify(writes).gate("exercise", 3L, "CLOSED");
+        verify(writes).phase("reconcile", "SUCCEEDED");
+        verify(writes, never()).phase("reconcile", "OPENING");
+        verify(writes).activate("exercise", null);
     }
 
     private static GateResponse gate(String transition, long epoch, String state) {
