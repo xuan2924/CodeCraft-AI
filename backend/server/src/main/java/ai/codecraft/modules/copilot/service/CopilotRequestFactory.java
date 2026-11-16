@@ -39,9 +39,9 @@ public class CopilotRequestFactory {
                     .addStringProperty("content", "Complete UTF-8 file text for CREATE/UPDATE; omit for DELETE")
                     .required("path", "kind").additionalProperties(false).build()).build())
                 .required("expected_revision", "changes").additionalProperties(false).build()).build(),
-        ToolSpecification.builder().name("run_tests").description("Run the published base tests on a stable copy of the exact saved revision. No shell or custom command. Wait for the confirmed result; failures are normal tool results. The same goal/revision/target reuses its previous confirmed result; a busy slot does not queue a test.")
+        ToolSpecification.builder().name("run_tests").description("Run published tests on a stable copy of the exact saved revision. Use base for the base stage; challenge is available only after explicit challenge entry and includes base regression. No shell or custom command. Wait for the confirmed result; failures are normal tool results. The same goal/revision/target reuses its previous confirmed result; a busy slot does not queue a test.")
             .parameters(JsonObjectSchema.builder().addStringProperty("expected_revision", "Exact saved revision as a decimal string")
-                .addEnumProperty("target", List.of("base")).required("expected_revision", "target").additionalProperties(false).build()).build(),
+                .addEnumProperty("target", List.of("base", "challenge")).required("expected_revision", "target").additionalProperties(false).build()).build(),
         ToolSpecification.builder().name("bash").description("Propose a Docker-only development command on the exact saved revision. ASK waits for command approval; AUTO uses the recorded mode. Network and dependency downloads are allowed within sandbox limits. Approval does not preapprove unknown file changes: inspect synchronization and exit results. Nonzero exit is normal; output never proves authority tests passed. Busy does not queue work; do not repeat rejected commands or replay uncertain execution.")
             .parameters(JsonObjectSchema.builder().addStringProperty("expected_revision", "Exact saved revision as a decimal string")
                 .addStringProperty("command", "Exact Bash text, at most 4096 UTF-8 bytes")

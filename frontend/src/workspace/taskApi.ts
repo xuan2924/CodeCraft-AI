@@ -24,7 +24,7 @@ function timestamp(value: unknown): value is string | null { return value === nu
 function parse(value: unknown, exercise: string, workspace: string): TestTask {
   if (!object(value) || value.exerciseId !== exercise || value.workspaceInstanceId !== workspace
     || typeof value.taskId !== 'string' || typeof value.executionInstanceId !== 'string'
-    || typeof value.revision !== 'string' || !/^(0|[1-9]\d*)$/.test(value.revision) || value.target !== 'base'
+    || typeof value.revision !== 'string' || !/^(0|[1-9]\d*)$/.test(value.revision) || (value.target !== 'base' && value.target !== 'challenge')
     || typeof value.state !== 'string' || !states.includes(value.state) || typeof value.reason !== 'string'
     || !timestamp(value.startedAt) || !timestamp(value.finishedAt)
     || (value.exitCode !== null && (typeof value.exitCode !== 'number' || !Number.isInteger(value.exitCode) || value.exitCode < 0 || value.exitCode > 255))
@@ -95,8 +95,8 @@ export function watchTask(task: TestTask, receive: (event: TaskEvent) => void, r
       } catch { reset(); }
     }, reset, signal);
 }
-export async function startTest(exercise: string, workspace: string, revision: string, key: string, credential: string, signal: AbortSignal): Promise<TestTask> {
-  const result = parse(await post(`/api/exercises/${encodeURIComponent(exercise)}/tests`, { expectedRevision: revision, target: 'base' }, signal, key, credential), exercise, workspace);
+export async function startTest(exercise: string, workspace: string, revision: string, key: string, credential: string, signal: AbortSignal, target: 'base' | 'challenge' = 'base'): Promise<TestTask> {
+  const result = parse(await post(`/api/exercises/${encodeURIComponent(exercise)}/tests`, { expectedRevision: revision, target }, signal, key, credential), exercise, workspace);
   if (result.revision !== revision) return invalid();
   return result;
 }

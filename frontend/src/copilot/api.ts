@@ -175,7 +175,7 @@ export async function cancelCompaction(owner: string, exercise: string, id: stri
 }
 const testResults = ['PASSED', 'FAILED', 'TIMED_OUT', 'STOPPED', 'ENVIRONMENT_ERROR', 'INTERRUPTED'] as const;
 export interface TestRun {
-  toolId: string; taskId: string; testTaskId: string; revision: string; target: 'base'; state: 'WAITING' | 'RESOLVED';
+  toolId: string; taskId: string; testTaskId: string; revision: string; target: 'base' | 'challenge'; state: 'WAITING' | 'RESOLVED';
   resultState: typeof testResults[number] | null; createdAt: string; completedAt: string | null;
 }
 export async function tests(owner: string, taskId: string, signal: AbortSignal): Promise<TestRun[]> {
@@ -183,12 +183,12 @@ export async function tests(owner: string, taskId: string, signal: AbortSignal):
   if (!Array.isArray(value) || value.length > 20) return invalid();
   const ids = new Set<string>();
   return value.map((entry: unknown): TestRun => {
-    if (!object(entry) || entry.taskId !== taskId || entry.target !== 'base' || entry.state !== 'WAITING' && entry.state !== 'RESOLVED') return invalid();
+    if (!object(entry) || entry.taskId !== taskId || (entry.target !== 'base' && entry.target !== 'challenge') || entry.state !== 'WAITING' && entry.state !== 'RESOLVED') return invalid();
     const resultState = testResults.find((state) => state === entry.resultState) ?? null;
     if (entry.state === 'WAITING' ? entry.resultState !== null || entry.completedAt !== null : !resultState || entry.completedAt === null) return invalid();
     const testTaskId = uuid(entry.testTaskId);
     if (ids.has(testTaskId)) return invalid(); ids.add(testTaskId);
-    return { toolId: uuid(entry.toolId), taskId: uuid(entry.taskId), testTaskId, revision: sequence(entry.revision), target: 'base', state: entry.state,
+    return { toolId: uuid(entry.toolId), taskId: uuid(entry.taskId), testTaskId, revision: sequence(entry.revision), target: entry.target, state: entry.state,
       resultState, createdAt: date(entry.createdAt), completedAt: entry.completedAt === null ? null : date(entry.completedAt) };
   });
 }

@@ -22,8 +22,6 @@ import ai.codecraft.modules.platformagent.model.entity.PlatformVersionEntity;
 import ai.codecraft.modules.platformagent.service.PlatformBindingService;
 import ai.codecraft.modules.platformagent.service.PlatformDefinitions;
 import ai.codecraft.modules.workspace.model.dto.InterviewerDispatchDTO;
-import ai.codecraft.modules.workspace.model.dto.ProblemResponse;
-import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessageSerializer;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -33,7 +31,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -45,8 +42,7 @@ class InterviewerWorkerTest {
         var definitions = mock(PlatformDefinitions.class);
         var driver = mock(ModelCallDriver.class);
         var usage = mock(ModelUsageAccounting.class);
-        var problems = mock(ProblemService.class);
-        var workspace = mock(WorkspaceCoordinationStore.class);
+        var requirements = mock(ExerciseRequirementsService.class);
         Instant now = Instant.parse("2026-01-01T00:00:00Z");
         var model = new ModelConfigurationResponse("m", "c", "Platform", "model", 8192, 2048, ModelThinkingMode.OFF, null, null, null, "1", "1", "USER_CONFIGURATION", false);
         var target = new ModelInvocationDTO(null, model, "platform-secret");
@@ -56,12 +52,11 @@ class InterviewerWorkerTest {
         when(bindings.invocation(version)).thenReturn(target);
         when(definitions.decode("definition")).thenReturn(definition);
         when(definitions.instructions(PlatformRole.INTERVIEWER, definition)).thenReturn("Bound platform instruction");
-        when(workspace.exercise("exercise")).thenReturn(new ExerciseEntity("exercise", "owner", "problem", "instance", "prepare", "READY", 1L, "[]", 1, now, null, null, null, null, null));
-        when(problems.describe("problem")).thenReturn(new ProblemResponse("problem", "cart", "1.0.0", "Cart", "Public base requirements", 2700, List.of(), Map.of(), "digest", "image", "linux/amd64", "LOCAL", true, false));
+        when(requirements.published("exercise")).thenReturn("Public base requirements");
         when(usage.price(target, now)).thenReturn("{\"price\":null}");
         when(store.recordPrice("task", "{\"price\":null}")).thenReturn(true);
         when(driver.call(eq(target), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Implement the published requirements.")).build(), 64));
-        var worker = new InterviewerWorker(store, bindings, definitions, driver, usage, problems, workspace, Clock.fixed(now, ZoneOffset.UTC),
+        var worker = new InterviewerWorker(store, bindings, definitions, driver, usage, requirements, Clock.fixed(now, ZoneOffset.UTC),
             new PlatformAgentProperties(1, 120, 300, 3, 300, 1800, 30));
         try {
             worker.run("task");

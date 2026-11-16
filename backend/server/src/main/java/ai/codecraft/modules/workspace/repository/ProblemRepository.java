@@ -14,6 +14,9 @@ public interface ProblemRepository {
     @Select("SELECT id::text, problem_id, version, package_sha256, execution_image_digest, platform, artifact::text FROM problem_version WHERE id = #{id}::uuid")
     ProblemVersionEntity find(String id);
 
+    @Select("SELECT id::text, artifact->'challenge'->'manifest'->>'id' AS problem_id, artifact->'challenge'->'manifest'->>'version' AS version, artifact->'receipt'->'challenge'->>'packageSha256' AS package_sha256, artifact->'receipt'->'challenge'->>'imageId' AS execution_image_digest, artifact->'receipt'->'challenge'->>'platform' AS platform, artifact::text FROM problem_version WHERE id=#{id}::uuid AND jsonb_typeof(artifact->'challenge')='object'")
+    ProblemVersionEntity challenge(String id);
+
     @Select("SELECT available FROM problem_version WHERE id = #{id}::uuid FOR SHARE")
     Boolean availableForStart(String id);
 

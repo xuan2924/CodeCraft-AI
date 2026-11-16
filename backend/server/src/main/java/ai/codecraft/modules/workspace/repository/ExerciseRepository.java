@@ -13,6 +13,9 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface ExerciseRepository {
+    @Select("SELECT EXISTS(SELECT 1 FROM workspace_challenge WHERE exercise_id=#{id}::uuid)")
+    boolean challengeEntered(String id);
+
     String EXERCISE_COLUMNS = "id::text, user_id::text, problem_version_id::text, workspace_instance_id::text, preparation_operation_id::text, state, revision, paths::text, state_version, created_at, started_at, deadline_at, preparation_failure_reason, end_reason, cleanup_state";
     @Select("SELECT EXISTS (SELECT 1 FROM workspace_deletion WHERE exercise_id = #{id}::uuid)")
     boolean deleted(String id);

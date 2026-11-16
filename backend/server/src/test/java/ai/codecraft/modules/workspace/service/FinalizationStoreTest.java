@@ -199,6 +199,19 @@ class FinalizationStoreTest {
         @Override public Clock withZone(ZoneId zone) { return Clock.fixed(now, zone); }
     }
 
+    @Test
+    void enteredChallengeNeverReusesBasePassAndAllocatesTheChallengeTarget() throws Exception {
+        var fixture = new Fixture(0, null);
+        when(fixture.exercises.challengeEntered("exercise")).thenReturn(true);
+        when(fixture.problems.challenge("problem")).thenReturn(new ProblemVersionEntity("problem", "cart-challenge", "1", "c".repeat(64), "sha256:" + "d".repeat(64), "linux/amd64", "{}"));
+        when(fixture.finals.reusable("exercise", "workspace", 7)).thenReturn(fixture.task("base-pass", "PASSED", true, 7));
+        var allocated = fixture.service().advance("exercise");
+        assertEquals("challenge", allocated.target());
+        assertEquals(7, allocated.revision());
+        assertEquals("PENDING", fixture.value.verification());
+        assertNull(fixture.value.endedAt());
+    }
+
     /** Storage substitute retains rows across service recreation; no RPC is mocked as business success. */
     private static final class Fixture {
         final MutableClock clock = new MutableClock();

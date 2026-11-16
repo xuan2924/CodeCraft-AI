@@ -8,7 +8,7 @@ import * as api from './taskApi';
 import { useTaskStream } from './useTaskStream';
 import ReadOnlyTestLog from './ReadOnlyTestLog.vue';
 
-const props = defineProps<{ owner: string; exercise: Exercise; credential: string; recoveryAllowed?: boolean }>();
+const props = defineProps<{ owner: string; exercise: Exercise; credential: string; recoveryAllowed?: boolean; target?: 'base' | 'challenge' }>();
 const emit = defineEmits<{ locked: [value: boolean]; 'stale-control': [] }>();
 const client = useQueryClient();
 const scope = ['workspace', props.owner, 'tests', props.exercise.workspaceInstanceId];
@@ -31,17 +31,17 @@ const sending = ref(false);
 const stopping = ref(false);
 const stopUnknown = ref<{ task: string; key: string; ownerRecovery: boolean } | null>(null);
 const error = ref('');
-const unknown = ref<{ key: string; revision: string } | null>(null);
+const unknown = ref<{ key: string; revision: string; target: 'base' | 'challenge' } | null>(null);
 const locked = computed(() => sending.value || !!unknown.value || recent.isPending.value || recent.isError.value ||
   recent.data.value?.tasks.some((task) => !task.quiescent) === true);
 watch(locked, (value) => emit('locked', value), { immediate: true });
 const controller = new globalThis.AbortController();
 let disposed = false;
-async function dispatch(input: { key: string; revision: string }) {
+async function dispatch(input: { key: string; revision: string; target: 'base' | 'challenge' }) {
   if (disposed || sending.value || !props.credential || props.exercise.state !== 'ACTIVE') return;
   sending.value = true; error.value = ''; unknown.value = input;
   try {
-    const result = await api.startTest(exerciseId, workspaceId, input.revision, input.key, props.credential, controller.signal);
+    const result = await api.startTest(exerciseId, workspaceId, input.revision, input.key, props.credential, controller.signal, input.target);
     if (disposed) return;
     unknown.value = null;
     chosen.value = result.taskId;
@@ -76,7 +76,7 @@ async function stop(input = stopUnknown.value ?? { task: chosen.value, key: glob
 }
 function recoverStop() { void stop({ task: chosen.value, key: globalThis.crypto.randomUUID(), ownerRecovery: true }); }
 function start(revision: string) {
-  if (!locked.value) void dispatch({ revision, key: globalThis.crypto.randomUUID() });
+  if (!locked.value) void dispatch({ revision, key: globalThis.crypto.randomUUID(), target: props.target ?? 'base' });
 }
 function inspect(taskId: string) { if (!disposed) chosen.value = taskId; }
 defineExpose({ start, inspect });

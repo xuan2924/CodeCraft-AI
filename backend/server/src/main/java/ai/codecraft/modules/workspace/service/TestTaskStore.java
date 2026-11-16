@@ -116,6 +116,9 @@ public class TestTaskStore {
         long revision = Long.parseLong(input.expectedRevision());
         if (exercise.revision() == null || exercise.revision() != revision) throw new BusinessException(WorkspaceErrorCode.REVISION_CONFLICT);
         if (!problems.executionAvailable(exercise.problemVersionId())) throw new BusinessException(WorkspaceErrorCode.TEST_TARGET_UNAVAILABLE);
+        if ("challenge".equals(input.target()) && (!exercises.challengeEntered(exerciseId) || problems.challenge(exercise.problemVersionId()) == null)) {
+            throw new BusinessException(WorkspaceErrorCode.TEST_TARGET_UNAVAILABLE);
+        }
         tasks.lockAdmission();
         if (tasks.occupied() != 0) throw new BusinessException(WorkspaceErrorCode.TEST_SLOT_BUSY);
         Instant notAfter = authorization.expiresAt().isBefore(exercise.deadlineAt()) ? authorization.expiresAt() : exercise.deadlineAt();
@@ -306,7 +309,10 @@ public class TestTaskStore {
 
     @Transactional(readOnly = true)
     public ProblemVersionEntity problem(TestTaskEntity task) {
-        return problems.find(exercises.find(task.exerciseId()).problemVersionId());
+        String version = exercises.find(task.exerciseId()).problemVersionId();
+        var problem = "challenge".equals(task.target()) ? problems.challenge(version) : problems.find(version);
+        if (problem == null) throw new IllegalStateException("Task publication is unavailable");
+        return problem;
     }
 
     @Transactional
@@ -393,7 +399,7 @@ public class TestTaskStore {
     }
 
     private TestProblemResponse provenance(TestTaskEntity task) {
-        return TestTaskMapper.problem(problems.find(exercises.find(task.exerciseId()).problemVersionId()));
+        return TestTaskMapper.problem(problem(task));
     }
 
     private TestTaskResponse response(TestTaskEntity task) { return response(task, null); }
@@ -413,7 +419,7 @@ public class TestTaskStore {
     }
 
     private String fingerprint(String key, StartTestRequest input) {
-        if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}") || input == null || !"base".equals(input.target())
+        if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}") || input == null || !Set.of("base", "challenge").contains(input.target() == null ? "" : input.target())
             || input.expectedRevision() == null || !input.expectedRevision().matches("0|[1-9][0-9]{0,18}")) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
         try { Long.parseLong(input.expectedRevision()); }
         catch (NumberFormatException error) { throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST); }

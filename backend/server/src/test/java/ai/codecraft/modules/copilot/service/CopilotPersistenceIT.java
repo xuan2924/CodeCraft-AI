@@ -152,6 +152,11 @@ import ai.codecraft.modules.workspace.service.WorkspaceAiOperationService;
 import ai.codecraft.modules.workspace.service.WorkspaceCoordinationStore;
 import ai.codecraft.modules.workspace.service.ExercisePauseStore;
 import ai.codecraft.modules.workspace.service.InterviewerStore;
+import ai.codecraft.modules.workspace.service.ExerciseRequirementsService;
+import ai.codecraft.modules.workspace.service.ExerciseChallengeStore;
+import ai.codecraft.modules.workspace.service.ExerciseChallengeData;
+import ai.codecraft.modules.workspace.service.ProblemPublicationReader;
+import ai.codecraft.modules.workspace.repository.ExerciseChallengeRepository;
 import ai.codecraft.modules.workspace.service.InterviewerExerciseData;
 import ai.codecraft.modules.workspace.repository.InterviewerRepository;
 import ai.codecraft.modules.platformagent.service.PlatformBindingService;
@@ -285,6 +290,7 @@ class CopilotPersistenceIT {
     private WorkspaceWriteTransactionService workspaceWrites;
     private ExercisePauseStore exercisePauses;
     private InterviewerStore interviewer;
+    private ExerciseChallengeStore challengeStore;
     private FinalizationStore exerciseFinalization;
     private StorageCapacityService capacity;
     private CopilotToolExecutor executor;
@@ -325,7 +331,7 @@ class CopilotPersistenceIT {
         Flyway.configure().dataSource(source).locations("classpath:db/migration").load().migrate();
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
-            ExerciseRepository.class, ExercisePauseRepository.class, InterviewerRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
+            ExerciseRepository.class, ExercisePauseRepository.class, ExerciseChallengeRepository.class, InterviewerRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
             CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotFollowupRepository.class, CopilotBtwRepository.class, CopilotDelegationRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
@@ -374,7 +380,7 @@ class CopilotPersistenceIT {
         jdbc.update("INSERT INTO workspace_control(exercise_id,gate_epoch,gate_state,credential_hash) VALUES(?::uuid,1,'OPEN',?)", exercise, IdentitySecrets.digest(CONTROL));
         var writes = sql.getMapper(WorkspaceWriteRepository.class);
         var historyRepository = sql.getMapper(WorkspaceHistoryRepository.class);
-        data = new ExerciseDataService(List.of(new CopilotExerciseData(sql.getMapper(CopilotRetentionRepository.class)), new SkillExerciseData(sql.getMapper(SkillSnapshotRepository.class)), new WorkspaceHistoryData(historyRepository), new InterviewerExerciseData(sql.getMapper(InterviewerRepository.class), exercises, clock)));
+        data = new ExerciseDataService(List.of(new CopilotExerciseData(sql.getMapper(CopilotRetentionRepository.class)), new SkillExerciseData(sql.getMapper(SkillSnapshotRepository.class)), new WorkspaceHistoryData(historyRepository), new InterviewerExerciseData(sql.getMapper(InterviewerRepository.class), exercises, clock), new ExerciseChallengeData(sql.getMapper(ExerciseChallengeRepository.class))));
         exercisePauses = proxy(new ExercisePauseStore(sql.getMapper(ExercisePauseRepository.class), exercises, writes, identity, secrets, data, clock), ExercisePauseStore.class);
         var history = new WorkspaceHistoryLedger(historyRepository, data, clock);
         var coordination = proxy(new WorkspaceCoordinationStore(writes, exercises, json, history), WorkspaceCoordinationStore.class);
@@ -400,6 +406,9 @@ class CopilotPersistenceIT {
         String problemId = exercises.find(exercise).problemVersionId();
         when(executionProblems.find(problemId)).thenReturn(new ProblemVersionEntity(problemId, "fixture", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", "{}"));
         when(executionProblems.executionAvailable(problemId)).thenReturn(true);
+        when(executionProblems.challenge(problemId)).thenReturn(new ProblemVersionEntity(problemId, "fixture-challenge", "1", "c".repeat(64), "sha256:" + "d".repeat(64), "linux/amd64", "{}"));
+        challengeStore = proxy(new ExerciseChallengeStore(sql.getMapper(ExerciseChallengeRepository.class), exercises, executionProblems,
+            mock(ProblemPublicationReader.class), identity, coordination, data, capacityStore, secrets, clock), ExerciseChallengeStore.class);
         var streams = sql.getMapper(TaskStreamRepository.class);
         exerciseFinalization = proxy(new FinalizationStore(sql.getMapper(FinalizationRepository.class), exercises, writes,
             sql.getMapper(TestTaskRepository.class), streams, executionProblems, identity, secrets, clock,
@@ -436,7 +445,7 @@ class CopilotPersistenceIT {
         var requestFactory = new CopilotRequestFactory();
         var planner = new CopilotContextPlanner(requestFactory, contextLimits, json, limits);
         contextPreparation = proxy(new CopilotContextPreparation(contextRepository, sql.getMapper(CopilotSteerRepository.class),
-            planner, callEvidence, contextLimits, limits, skillContext, mock(CopilotProjectInstructions.class), repository), CopilotContextPreparation.class);
+            planner, callEvidence, contextLimits, limits, skillContext, mock(CopilotProjectInstructions.class), repository, mock(ExerciseRequirementsService.class)), CopilotContextPreparation.class);
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 1, 0);
         sandbox = mock(SandboxWorkspaceGateway.class);
         when(sandbox.measureStorage(any())).thenAnswer(call -> measurement);
@@ -732,7 +741,7 @@ class CopilotPersistenceIT {
         var small = new CopilotContextProperties(80, 4, 8192, 4096, 8192, 32, 2048);
         var requests = new CopilotRequestFactory(); var evidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
         var planner = new CopilotContextPlanner(requests, small, json, limits);
-        var preparation = proxy(new CopilotContextPreparation(repository, sql.getMapper(CopilotSteerRepository.class), planner, evidence, small, limits, skillContext, mock(CopilotProjectInstructions.class), this.repository), CopilotContextPreparation.class);
+        var preparation = proxy(new CopilotContextPreparation(repository, sql.getMapper(CopilotSteerRepository.class), planner, evidence, small, limits, skillContext, mock(CopilotProjectInstructions.class), this.repository, mock(ExerciseRequirementsService.class)), CopilotContextPreparation.class);
         var summaryWorker = new CopilotCompactionRunner(summaryExecution, preparation, planner, new CopilotSummaryCodec(json), evidence,
             requests, capacity, driver, limits, calls, json);
         var context = new CopilotContextService(execution, preparation, repository, compactions, summaryWorker, capacity);
@@ -1920,6 +1929,33 @@ class CopilotPersistenceIT {
         assertThat(exercises.find(exercise).state()).isEqualTo("ACTIVE");
         assertThat(exercises.find(exercise).deadlineAt()).isEqualTo(Instant.parse("2026-01-01T00:40:00Z"));
         assertThat(followups.recent(SESSION, exercise, exercise).getFirst().state()).isEqualTo("PAUSED");
+    }
+
+    @Test
+    void challengeEntryRequiresCurrentSavedBasePassAndPublishesExactlyOnceWithoutChangingDeadline() {
+        var exercises = sql.getMapper(ExerciseRepository.class);
+        var before = exercises.find(exercise);
+        assertCode(() -> childExecutions.accept(SESSION, exercise, "hidden-target", CONTROL, new StartTestRequest("1", "challenge"), measurement), "TEST_TARGET_UNAVAILABLE");
+        var base = childExecutions.accept(SESSION, exercise, "base-test", CONTROL, new StartTestRequest("1", "base"), measurement);
+        jdbc.update("UPDATE workspace_test_task SET state='PASSED',quiescent=true,snapshot=?::jsonb WHERE id=?::uuid",
+            "{\"state\":\"PASSED\",\"evidence\":{\"kind\":\"SUREFIRE_XML\"}}", base.id());
+        assertThat(challengeStore.find(SESSION, exercise).eligible()).isTrue();
+        jdbc.update("UPDATE workspace_exercise SET revision=2 WHERE id=?::uuid", exercise);
+        assertCode(() -> challengeStore.enter(SESSION, exercise, "stale", CONTROL, measurement), "REVISION_CONFLICT");
+        assertThat(challengeStore.find(SESSION, exercise).publishedChallenge()).isNull();
+        jdbc.update("UPDATE workspace_exercise SET revision=1 WHERE id=?::uuid", exercise);
+        var entered = challengeStore.enter(SESSION, exercise, "enter", CONTROL, measurement);
+        assertThat(entered.entered()).isTrue();
+        assertThat(entered.baseTestId()).isEqualTo(base.id());
+        assertThat(challengeStore.enter(SESSION, exercise, "enter", "stale-control", measurement).entered()).isTrue();
+        assertThat(exercises.find(exercise).deadlineAt()).isEqualTo(before.deadlineAt());
+        assertThat(exercises.find(exercise).revision()).isEqualTo(before.revision());
+        assertThat(data.protectedTestRecords(exercise)).contains(base.id());
+        var challenge = childExecutions.accept(SESSION, exercise, "challenge-test", CONTROL, new StartTestRequest("1", "challenge"), measurement);
+        assertThat(challenge.target()).isEqualTo("challenge");
+        assertThat(childExecutions.problem(challenge).executionImageDigest()).isEqualTo("sha256:" + "d".repeat(64));
+        assertThat(childExecutions.problem(base).executionImageDigest()).isEqualTo("sha256:" + "b".repeat(64));
+        assertThat(sql.getMapper(FinalizationRepository.class).reusable(exercise, before.workspaceInstanceId(), 1)).isNull();
     }
 
     @Test

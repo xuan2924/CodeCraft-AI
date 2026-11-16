@@ -14,6 +14,8 @@ import WorkspaceStorage from './WorkspaceStorage.vue';
 import ExerciseModelPicker from '../modelaccess/ExerciseModelPicker.vue';
 import CopilotPanel from '../copilot/CopilotConversations.vue';
 import InterviewerPanel from './InterviewerPanel.vue';
+import ChallengePanel from './ChallengePanel.vue';
+import * as challengeApi from './challengeApi';
 import ClosedDrafts from './ClosedDrafts.vue';
 import WorkspaceRetention from './WorkspaceRetention.vue';
 import { cancelSaveLogout, saveLogoutOwner } from './logoutIntent';
@@ -39,6 +41,11 @@ watch(() => route.query.exercise, (id) => {
 const deletedExercise = ref('');
 const exercise = computed(() => active.data.value?.exerciseId === deletedExercise.value ? null : active.data.value);
 const problem = computed(() => catalogue.data.value?.find((item) => item.problemVersionId === exercise.value?.problemVersionId));
+const challenge = useQuery({ queryKey: ['workspace', owner, 'challenge', computed(() => exercise.value?.exerciseId)],
+  queryFn: ({ signal }) => challengeApi.read(owner.value, exercise.value!.exerciseId, signal),
+  enabled: computed(() => allowed.value && !!exercise.value?.revision), retry: false, refetchInterval: 2000 });
+const challengeBlocked = computed(() => (!problem.value || problem.value.hasChallenge) && (challenge.isPending.value || challenge.isError.value));
+const testTarget = computed(() => challenge.data.value?.entered ? 'challenge' as const : 'base' as const);
 const selected = ref('');
 const editorView = ref<{ saveForLogout: () => Promise<boolean>; prepareEnd: (choice: 'save' | 'discard' | 'retain') => Promise<boolean> }>();
 const now = ref(Date.now());
@@ -541,6 +548,20 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :disabled="!writable || expired || pending || !!unresolved"
             @unauthorized="credential = ''; account.refetch()"
           />
+          <p
+            v-if="challengeBlocked"
+            role="alert"
+          >
+            挑战阶段尚未确认，暂不启动新的 AI 或测试请求；请刷新核对。
+          </p>
+          <ChallengePanel
+            v-if="challenge.data.value?.available"
+            :owner="owner"
+            :exercise-id="exercise.exerciseId"
+            :credential="credential"
+            :state="challenge.data.value"
+            :disabled="!writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
+          />
           <InterviewerPanel
             v-if="['READY', ...historyStates].includes(exercise.state)"
             :key="`interviewer:${owner}:${exercise.exerciseId}`"
@@ -548,7 +569,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :exercise-id="exercise.exerciseId"
             :credential="credential"
             :phase="exercise.state"
-            :disabled="!writable || !['READY', 'ACTIVE'].includes(exercise.state) || expired || pending || !!unresolved || ending || endPrompt || logoutBusy"
+            :disabled="challengeBlocked || !writable || !['READY', 'ACTIVE'].includes(exercise.state) || expired || pending || !!unresolved || ending || endPrompt || logoutBusy"
             @unauthorized="credential = ''; account.refetch()"
           />
           <CopilotPanel
@@ -557,7 +578,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :owner="owner"
             :exercise-id="exercise.exerciseId"
             :credential="credential"
-            :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
+            :disabled="challengeBlocked || !editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
             :paths="exercise.paths"
             :prepare="prepareCopilot"
             @inspect-test="testView?.inspect($event)"
@@ -600,6 +621,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :owner="owner"
             :exercise="exercise"
             :credential="writable && !logoutBusy && !answeringClosed && !ending ? credential : ''"
+            :target="testTarget"
             :recovery-allowed="canRecover && !logoutBusy && !answeringClosed && !ending"
             @locked="testBusy = $event"
             @stale-control="credential = ''"
@@ -666,7 +688,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               ref="editorView"
               :locked="logoutBusy || ending || historyBusy || pending || !!unresolved"
               :answering-closed="answeringClosed"
-              :test-busy="testBusy || commandBusy || historyBusy || !problem?.executionAvailable"
+              :test-busy="challengeBlocked || testBusy || commandBusy || historyBusy || !problem?.executionAvailable"
               :owner="owner"
               :exercise="exercise"
               :file="source.data.value"
@@ -674,7 +696,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               :credential="writable && !historyBusy ? credential : ''"
               @saved="refreshWorkspace"
               @write-busy="editorWriteBusy = $event"
-              @run-test="!commandBusy && !historyBusy && testView?.start($event)"
+              @run-test="!challengeBlocked && !commandBusy && !historyBusy && testView?.start($event)"
               @select="selected = $event"
               @stale-control="credential = ''"
             />

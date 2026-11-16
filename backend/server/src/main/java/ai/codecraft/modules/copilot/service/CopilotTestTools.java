@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
@@ -79,9 +80,9 @@ public class CopilotTestTools {
             JsonNode value = input.readValue(arguments);
             if (!value.isObject() || value.size() != 2 || !value.path("expected_revision").isTextual() || !value.path("target").isTextual()) throw invalid();
             String revision = value.get("expected_revision").textValue();
-            if (!revision.matches("0|[1-9][0-9]{0,18}") || !"base".equals(value.get("target").textValue())) throw invalid();
+            if (!revision.matches("0|[1-9][0-9]{0,18}") || !Set.of("base", "challenge").contains(value.get("target").textValue())) throw invalid();
             Long.parseLong(revision);
-            return new CopilotTestInputDTO(revision, "base");
+            return new CopilotTestInputDTO(revision, value.get("target").textValue());
         } catch (JsonProcessingException | NumberFormatException rejected) { throw invalid(); }
     }
 

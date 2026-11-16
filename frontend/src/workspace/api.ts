@@ -2,7 +2,7 @@ import { ApiError, object, ownerHeaders, post, request } from '../api/request';
 
 export interface Problem {
   problemVersionId: string; problemId?: string; title: string; version: string; requirements: string;
-  durationSeconds: number; editableRoots: string[]; acceptanceFiles: Record<string, string>; executionAvailable?: boolean;
+  durationSeconds: number; editableRoots: string[]; acceptanceFiles: Record<string, string>; executionAvailable?: boolean; hasChallenge?: boolean;
 }
 export interface Exercise {
   exerciseId: string; problemVersionId: string; workspaceInstanceId: string; state: string;
@@ -52,6 +52,7 @@ export async function problems(signal: AbortSignal): Promise<Problem[]> {
     if (!object(value) || typeof value.problemVersionId !== 'string' || typeof value.title !== 'string'
       || typeof value.version !== 'string' || typeof value.requirements !== 'string' || typeof value.durationSeconds !== 'number'
       || (value.executionAvailable !== undefined && typeof value.executionAvailable !== 'boolean')
+      || (value.hasChallenge !== undefined && typeof value.hasChallenge !== 'boolean')
       || !strings(value.editableRoots) || !object(value.acceptanceFiles)) return invalid();
     const acceptanceFiles: Record<string, string> = {};
     for (const [path, content] of Object.entries(value.acceptanceFiles)) {
@@ -60,7 +61,7 @@ export async function problems(signal: AbortSignal): Promise<Problem[]> {
     }
     return { problemVersionId: value.problemVersionId, problemId: typeof value.problemId === 'string' ? value.problemId : undefined,
       title: value.title, version: value.version, requirements: value.requirements,
-      durationSeconds: value.durationSeconds, editableRoots: value.editableRoots, acceptanceFiles, executionAvailable: value.executionAvailable === true };
+      durationSeconds: value.durationSeconds, editableRoots: value.editableRoots, acceptanceFiles, executionAvailable: value.executionAvailable === true, hasChallenge: value.hasChallenge === true };
   });
 }
 export async function current(signal: AbortSignal, selectedExercise?: string, owner?: string): Promise<Exercise | null> {
