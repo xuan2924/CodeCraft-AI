@@ -1,5 +1,7 @@
 # 模型供应商与协议验证矩阵
 
+当前适配仅保留 DEEPSEEK/CUSTOM；历史清理已删除 GLM/Kimi/OpenAI 预设及其模型家族拒绝分支。下文关于这三家的目录、工厂拒绝和测试描述是 **2026-11-15 的历史研究证据**，不是当前运行时行为，也不作为继续开发待办。当前契约见 [模型接入](../design/model-access.md)。
+
 核验日期：2026-11-15。正式 SDK：LangChain4j **1.23.0**（core / open-ai / anthropic / JDK HTTP）。应用自管 Loop、单次订阅、无隐式协议/模式回退；统一入口是 `ModelCallDriver` / `ModelSdkClientFactory`，不是业务模块各自创建客户端。
 
 **协议存在、SDK 夹具通过、真实供应商通过是三种不同证据。** 用户已明确取消 OpenAI、GLM、Kimi 三家供应商的第二阶段目标；三协议保留，以 DeepSeek Chat OFF/ON、Responses OFF、Anthropic Messages OFF 和自定义连接契约验收。该范围已有完整证据，阶段验收见 P2-22。本页不宣布四家供应商完整支持：只有 DeepSeek 有真实验证，其他供应商没有实测身份、用量或费用。既有配置入口不等于兼容承诺；DeepSeek Messages ON 未验证、Responses ON 不支持，仍不列入支持组合。

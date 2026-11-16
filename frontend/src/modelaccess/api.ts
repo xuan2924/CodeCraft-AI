@@ -1,7 +1,7 @@
 import { ApiError, object, ownerHeaders, post, put, remove, request } from '../api/request';
 
 export const protocols = ['OPENAI_CHAT', 'OPENAI_RESPONSES', 'ANTHROPIC'] as const;
-export const presets = ['DEEPSEEK', 'GLM', 'KIMI', 'OPENAI', 'CUSTOM'] as const;
+export const presets = ['DEEPSEEK', 'CUSTOM'] as const;
 export type Protocol = typeof protocols[number];
 export type Preset = typeof presets[number];
 export interface Connection {
