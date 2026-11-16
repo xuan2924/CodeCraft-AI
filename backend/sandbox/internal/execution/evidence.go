@@ -18,10 +18,6 @@ const compilationReportLimit = 16 * 1024
 var compilationCode = regexp.MustCompile(`^compiler\.err\.[a-zA-Z0-9_.]{1,100}$`)
 
 func validCompilationReport(data []byte) bool {
-	// Previously persisted fixed-image v1 evidence remains readable.
-	if bytes.Equal(data, []byte("compiler-failure-v1\ncompile\n")) || bytes.Equal(data, []byte("compiler-failure-v1\ntestCompile\n")) {
-		return true
-	}
 	if len(data) > compilationReportLimit || !bytes.HasSuffix(data, []byte("\n")) {
 		return false
 	}

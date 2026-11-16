@@ -28,7 +28,7 @@ test('save and run a solution, then recover the durable result after refresh @sm
   await page.goto('/workspace');
   await page.getByRole('button', { name: '接管操作权', exact: true }).click();
   await page.getByRole('button', { name: sourcePath, exact: true }).click();
-  const reference = readFileSync(resolve('..', 'problems/cart-total/1.0.1/reference', sourcePath), 'utf8');
+  const reference = readFileSync(resolve('..', 'problems/cart-total/1.1.0/reference', sourcePath), 'utf8');
   const editor = page.getByRole('textbox', { name: '文件编辑器', exact: false });
   await editor.focus();
   await page.keyboard.press('ControlOrMeta+a');

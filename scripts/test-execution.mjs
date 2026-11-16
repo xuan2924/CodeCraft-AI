@@ -12,7 +12,7 @@ await mkdir(join(root, '.runtime'), { recursive: true });
 const directory = await mkdtemp(join(root, '.runtime', 'execution-tests-'));
 const volume = `cc-execution-test-${randomUUID()}`;
 const owner = `cc-execution-fixture-${randomUUID()}`;
-const fixture = join(root, 'problems/cart-total/1.0.1');
+const fixture = join(root, 'problems/cart-total/1.1.0');
 let volumeCreated = false;
 let failure;
 try {

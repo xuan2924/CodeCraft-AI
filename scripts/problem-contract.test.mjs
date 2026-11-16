@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validatePackage } from './problem-contract.mjs';
 
-const source = new URL('../problems/cart-total/1.0.0/', import.meta.url);
+const source = new URL('../problems/cart-total/1.1.0/', import.meta.url);
 
 async function fixture(t) {
     const directory = await mkdtemp(join(tmpdir(), 'cart-contract-'));
@@ -16,7 +16,9 @@ async function fixture(t) {
 
 test('published cart package has a fixed version and protected edit boundaries', async () => {
     const result = await validatePackage(source);
-    assert.equal(result.manifest.version, '1.0.0');
+    assert.equal(result.manifest.version, '1.1.0');
+    assert(result.manifest.execution, 'default package supports controlled tests');
+    assert.equal(result.manifest.challenge, 'challenge');
     assert.match(result.packageSha256, /^[a-f0-9]{64}$/);
 });
 
@@ -77,22 +79,14 @@ test('rejects an initial workspace beyond 10 MiB without truncating its files', 
 
 test('challenge cannot silently replace initial code or dependencies', async (t) => {
     const directory = await fixture(t);
-    await cp(source, join(directory, 'challenge'), { recursive: true });
-    const file = join(directory, 'manifest.json');
-    const manifest = JSON.parse(await readFile(file, 'utf8'));
-    manifest.challenge = 'challenge';
-    await writeFile(file, JSON.stringify(manifest));
     await writeFile(join(directory, 'challenge', 'initial', 'pom.xml'), 'different dependencies');
     await assert.rejects(validatePackage(directory), /Challenge initial files/);
 });
 
 test('challenge package is bounded to exactly one round', async (t) => {
     const directory = await fixture(t);
-    await cp(source, join(directory, 'challenge'), { recursive: true });
-    const file = join(directory, 'manifest.json');
-    const manifest = JSON.parse(await readFile(file, 'utf8'));
+    const manifest = JSON.parse(await readFile(join(directory, 'challenge', 'manifest.json'), 'utf8'));
     manifest.challenge = 'challenge';
-    await writeFile(file, JSON.stringify(manifest));
     await writeFile(join(directory, 'challenge', 'manifest.json'), JSON.stringify(manifest));
     await assert.rejects(validatePackage(directory), /Nested challenge/);
 });

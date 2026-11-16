@@ -251,7 +251,7 @@ let failure;
 try {
   run('docker', ['info'], { stdio: 'ignore' });
   await configureBrowserModels();
-  if (workspaceMode) run(process.execPath, ['scripts/publish-problem.mjs', 'problems/cart-total/1.0.1',
+  if (workspaceMode) run(process.execPath, ['scripts/publish-problem.mjs', 'problems/cart-total/1.1.0',
     join(directory, 'publication-evidence'), values.PROBLEM_PUBLICATION_FILE]);
   Object.assign(composeEnv, await prepareContainerInputs(values.PROBLEM_PUBLICATION_FILE));
   composeEnv.SANDBOX_IMAGE = await buildSandboxImage();

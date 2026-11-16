@@ -12,7 +12,7 @@ test('cleanup failure prevents a successful publication receipt', async (t) => {
     const originalRemove = fs.rm;
     const originalArguments = process.argv;
     const evidence = await fs.mkdtemp(join(tmpdir(), 'publication-cleanup-test-'));
-    process.argv = [process.execPath, 'validate-problem.mjs', fileURLToPath(new URL('../problems/cart-total/1.0.0/', import.meta.url)), evidence];
+    process.argv = [process.execPath, 'validate-problem.mjs', fileURLToPath(new URL('../problems/cart-total/1.1.0/', import.meta.url)), evidence];
     let failedDirectory;
     t.after(async () => {
         fs.rm = originalRemove;

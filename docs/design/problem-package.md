@@ -4,7 +4,7 @@
 
 ## 最小包与身份
 
-首包在 `problems/cart-total/1.0.0/`，购物车金额计算，Java 21/Maven，45 分钟，无挑战。`manifest.json` 是 v1 格式；维护者入口 `scripts/problem-contract.mjs` 验证其约束。此版本只支持这个 Java 源码题型，不提供任意命令、可执行脚本或用户构建插件。
+当前包在 `problems/cart-total/1.1.0/`，购物车金额计算，Java 21/Maven，45 分钟，含一轮隔离发布的可选挑战；旧题包已从当前树移除。`manifest.json` 是 v1 格式；维护者入口 `scripts/problem-contract.mjs` 验证其约束。此版本只支持这个 Java 源码题型，不提供任意命令、可执行脚本或用户构建插件。
 
 | 字段/路径 | 契约 |
 |---|---|

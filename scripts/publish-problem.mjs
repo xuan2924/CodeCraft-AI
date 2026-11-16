@@ -8,7 +8,7 @@ import { publicationFromSnapshot } from './publication-contract.mjs';
 if (process.argv.length !== 2 && process.argv.length !== 5) {
     throw new Error('Usage: node scripts/publish-problem.mjs [package-directory evidence-directory publication-file]');
 }
-const packageDirectory = process.argv[2] ? resolve(process.argv[2]) : join(root, 'problems/cart-total/1.0.0');
+const packageDirectory = process.argv[2] ? resolve(process.argv[2]) : join(root, 'problems/cart-total/1.1.0');
 const evidenceDirectory = process.argv[3] ? resolve(process.argv[3]) : join(root, 'problems/.validation');
 const destination = process.argv[4] ? resolve(process.argv[4]) : join(root, '.runtime', 'problem-publication.json');
 // Revalidation is mandatory; an old receipt or mutable tag is never publication authority.

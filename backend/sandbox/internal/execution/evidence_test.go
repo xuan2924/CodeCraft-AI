@@ -55,7 +55,8 @@ func TestEvidenceDistinguishesSourceCompilationFromInfrastructureFailure(t *test
 		valid  bool
 	}{
 		{"compiler-source-errors-v2\ncompiler.err.cant.resolve\n", true},
-		{"compiler-failure-v1\ncompile\n", true},
+		{"compiler-failure-v1\ncompile\n", false},
+		{"compiler-failure-v1\ntestCompile\n", false},
 		{"compiler-source-errors-v2\ncompiler.err.class.cant.write\n", false},
 		{"compiler-source-errors-v2\ncompiler.err.locn.bad.module-info\n", false},
 		{"compiler-source-errors-v2\ncompiler.err.cant.resolve\ncompiler.err.cant.resolve\n", false},
