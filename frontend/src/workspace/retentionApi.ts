@@ -1,12 +1,12 @@
-import { ApiError, object, post, remove, request } from '../api/request';
+import { ApiError, object, ownerHeaders, post, remove, request } from '../api/request';
 
 export interface HistoryEntry { exerciseId: string; endedAt: string; retainUntil: string; deletionState: string | null }
 export interface Deletion { exerciseId: string; state: string; requestedAt: string; completedAt: string | null; nextAttemptAt: string; failureCode: string | null; interventionRequired: boolean }
 const states = ['PENDING', 'RUNNING', 'FAILED', 'SUCCEEDED'];
 function timestamp(value: unknown): value is string { return typeof value === 'string' && Number.isFinite(Date.parse(value)); }
 function invalid(): never { throw new ApiError(502, 'INVALID_RESPONSE'); }
-export async function history(signal: AbortSignal, after?: string): Promise<HistoryEntry[]> {
-  const value = await request(`/api/exercises${after ? `?after=${encodeURIComponent(after)}` : ''}`, signal);
+export async function history(signal: AbortSignal, after?: string, owner?: string): Promise<HistoryEntry[]> {
+  const value = await request(`/api/exercises${after ? `?after=${encodeURIComponent(after)}` : ''}`, signal, { headers: ownerHeaders(owner) });
   if (!Array.isArray(value) || value.length > 50) return invalid();
   return value.map((item: unknown) => {
     if (!object(item) || typeof item.exerciseId !== 'string' || !timestamp(item.endedAt) || !timestamp(item.retainUntil)

@@ -61,7 +61,7 @@ public class ExerciseTransactionService {
         }
         if (repository.current(user) != null) throw new BusinessException(WorkspaceErrorCode.ACTIVE_EXERCISE_EXISTS);
         if (repository.retainedHistory(user) >= retention.historyLimit()) throw new BusinessException(WorkspaceErrorCode.HISTORY_LIMIT_REACHED);
-        problems.find(version);
+        problems.requireAvailable(version);
         String exercise = UUID.randomUUID().toString();
         String instance = UUID.randomUUID().toString();
         String operation = UUID.randomUUID().toString();

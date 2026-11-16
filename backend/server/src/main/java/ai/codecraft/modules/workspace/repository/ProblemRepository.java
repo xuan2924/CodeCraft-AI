@@ -8,11 +8,14 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface ProblemRepository {
-    @Select("SELECT id::text, problem_id, version, package_sha256, execution_image_digest, platform, artifact::text FROM problem_version ORDER BY problem_id, version")
+    @Select("SELECT id::text, problem_id, version, package_sha256, execution_image_digest, platform, artifact::text FROM problem_version WHERE available ORDER BY problem_id, version")
     List<ProblemVersionEntity> list();
 
     @Select("SELECT id::text, problem_id, version, package_sha256, execution_image_digest, platform, artifact::text FROM problem_version WHERE id = #{id}::uuid")
     ProblemVersionEntity find(String id);
+
+    @Select("SELECT available FROM problem_version WHERE id = #{id}::uuid FOR SHARE")
+    Boolean availableForStart(String id);
 
     @Select("SELECT coalesce(jsonb_typeof(artifact->'manifest'->'execution') = 'object', false) FROM problem_version WHERE id = #{id}::uuid")
     boolean executionAvailable(String id);

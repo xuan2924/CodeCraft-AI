@@ -2,6 +2,8 @@
 export const routes = {
   status: { name: 'status', path: '/' },
   account: { name: 'account', path: '/account' },
+  catalog: { name: 'catalog', path: '/practice' },
+  history: { name: 'history', path: '/history' },
   workspace: { name: 'workspace', path: '/workspace' },
   models: { name: 'models', path: '/models' },
   skills: { name: 'skills', path: '/skills' },

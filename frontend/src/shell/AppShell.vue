@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, useTemplateRef, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
-import { Activity, BookOpen, Braces, Menu, Settings2, ShieldCheck, Terminal, UserRound } from '@lucide/vue';
+import { Activity, BookOpen, Braces, History, Library, Menu, Settings2, ShieldCheck, Terminal, UserRound } from '@lucide/vue';
 import type { Identity } from '../auth/api';
 import Button from '../components/ui/Button.vue';
 import { routes } from '../routes';
@@ -16,7 +16,9 @@ const content = useTemplateRef<globalThis.HTMLElement>('content');
 const ready = computed(() => !props.pending && !props.failed && props.identity && !props.identity.passwordChangeRequired);
 const links = computed(() => [
   ...(ready.value && props.identity?.role === 'USER' ? [
+    { ...routes.catalog, label: '题库首页', icon: Library },
     { ...routes.workspace, label: '演练工作区', icon: Braces },
+    { ...routes.history, label: '历史演练', icon: History },
     { ...routes.models, label: '个人模型', icon: Settings2 },
     { ...routes.skills, label: '个人 Skill', icon: BookOpen },
   ] : []),
@@ -47,7 +49,7 @@ watch(() => route.fullPath, async () => {
     >
       <div class="app-brand-row">
         <RouterLink
-          :to="{ name: identity?.role === 'USER' && ready ? routes.workspace.name : routes.account.name }"
+          :to="{ name: identity?.role === 'USER' && ready ? routes.catalog.name : routes.account.name }"
           class="app-brand"
           aria-label="CodeCraft 首页"
         >

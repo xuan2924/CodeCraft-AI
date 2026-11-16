@@ -92,7 +92,7 @@ class IdentityIT {
         clock.at(START);
         notifications.events.clear();
         notifications.fail = false;
-        jdbc.execute("TRUNCATE identity_captcha, workspace_task_event, workspace_task_stream, workspace_test_stop, workspace_test_task, workspace_mutation, workspace_transition, workspace_control, workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
+        jdbc.execute("TRUNCATE problem_favorite, identity_captcha, workspace_task_event, workspace_task_stream, workspace_test_stop, workspace_test_task, workspace_mutation, workspace_transition, workspace_control, workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
         store.bootstrap("admin_test", secrets.hash(PASSWORD));
     }
 
@@ -132,6 +132,49 @@ class IdentityIT {
             }
             browser.post("/api/auth/login", Map.of("username", "admin_test", "password", PASSWORD), null, 429);
         }
+    }
+
+    @Test
+    void favoritesAreAccountScopedIdempotentAndRetainedWhenWithdrawn() throws Exception {
+        String version = UUID.randomUUID().toString();
+        String problem = "favorite-fixture-" + version;
+        jdbc.update("INSERT INTO problem_version(id, problem_id, version, package_sha256, execution_image_digest, platform, artifact) "
+            + "VALUES (?::uuid, ?, '1', ?, ?, 'linux/amd64', ?::jsonb)", version, problem, "a".repeat(64),
+            "sha256:" + "b".repeat(64), "{\"manifest\":{\"title\":\"收藏测试题\"}}");
+        try (Browser first = administrator(); Browser other = new Browser()) {
+            first.post("/api/problem-favorites/missing-problem", Map.of("favorite", true), null, 404);
+            first.post("/api/problem-favorites/" + problem, Map.of("favorite", true), null, 200);
+            first.post("/api/problem-favorites/" + problem, Map.of("favorite", true), null, 200);
+            first.get("/api/problem-favorites", 200);
+            assertThat(first.body.path("data")).hasSize(1);
+            assertThat(first.body.path("data").get(0).path("available").asBoolean()).isTrue();
+            other.get("/api/problem-favorites", 401);
+            first.post("/api/admin/users", Map.of("username", "favorite_other"), "favorite-user", 201);
+            String temporary = first.body.path("data").path("temporaryPassword").asText();
+            other.login("favorite_other", temporary, 200);
+            other.password(temporary, NEW_PASSWORD);
+            other.login("favorite_other", NEW_PASSWORD, 200);
+            other.csrf();
+            other.get("/api/problem-favorites", 200);
+            assertThat(other.body.path("data")).isEmpty();
+            other.post("/api/problem-favorites/" + problem, Map.of("favorite", true), null, 200);
+            jdbc.update("UPDATE problem_version SET available = false WHERE id = ?::uuid", version);
+            first.get("/api/problem-favorites", 200);
+            assertThat(first.body.path("data").get(0).path("available").asBoolean()).isFalse();
+            first.post("/api/exercises", Map.of("problemVersionId", version), "withdrawn", 404);
+            first.post("/api/problem-favorites/" + problem, Map.of("favorite", false), null, 200);
+            first.post("/api/problem-favorites/" + problem, Map.of("favorite", false), null, 200);
+            first.get("/api/problem-favorites", 200);
+            assertThat(first.body.path("data")).isEmpty();
+            other.get("/api/problem-favorites", 200);
+            assertThat(other.body.path("data")).hasSize(1);
+            jdbc.update("INSERT INTO problem_favorite(user_id, problem_id, title) "
+                + "SELECT id, 'capacity-' || n, 'capacity' FROM identity_user CROSS JOIN generate_series(1,1000) n WHERE username = 'admin_test'");
+            first.post("/api/problem-favorites/" + problem, Map.of("favorite", true), null, 409);
+            assertThat(first.body.path("code").asText()).isEqualTo("FAVORITE_LIMIT_REACHED");
+            first.post("/api/problem-favorites/capacity-1", Map.of("favorite", false), null, 200);
+            first.post("/api/problem-favorites/" + problem, Map.of("favorite", true), null, 200);
+        } finally { jdbc.update("DELETE FROM problem_version WHERE id = ?::uuid", version); }
     }
 
     @Test

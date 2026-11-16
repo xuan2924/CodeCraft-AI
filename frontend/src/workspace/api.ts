@@ -1,7 +1,7 @@
-import { ApiError, object, post, request } from '../api/request';
+import { ApiError, object, ownerHeaders, post, request } from '../api/request';
 
 export interface Problem {
-  problemVersionId: string; title: string; version: string; requirements: string;
+  problemVersionId: string; problemId?: string; title: string; version: string; requirements: string;
   durationSeconds: number; editableRoots: string[]; acceptanceFiles: Record<string, string>; executionAvailable?: boolean;
 }
 export interface Exercise {
@@ -45,13 +45,14 @@ export async function problems(signal: AbortSignal): Promise<Problem[]> {
       if (typeof content !== 'string') return invalid();
       acceptanceFiles[path] = content;
     }
-    return { problemVersionId: value.problemVersionId, title: value.title, version: value.version, requirements: value.requirements,
+    return { problemVersionId: value.problemVersionId, problemId: typeof value.problemId === 'string' ? value.problemId : undefined,
+      title: value.title, version: value.version, requirements: value.requirements,
       durationSeconds: value.durationSeconds, editableRoots: value.editableRoots, acceptanceFiles, executionAvailable: value.executionAvailable === true };
   });
 }
-export async function current(signal: AbortSignal, selectedExercise?: string): Promise<Exercise | null> {
+export async function current(signal: AbortSignal, selectedExercise?: string, owner?: string): Promise<Exercise | null> {
   let value: unknown;
-  try { value = await request(selectedExercise ? `/api/exercises/${encodeURIComponent(selectedExercise)}` : '/api/exercises/current', signal); }
+  try { value = await request(selectedExercise ? `/api/exercises/${encodeURIComponent(selectedExercise)}` : '/api/exercises/current', signal, { headers: ownerHeaders(owner) }); }
   catch (error) {
     if (!(error instanceof ApiError && error.status === 404) || selectedExercise) throw error;
     return null;
@@ -75,8 +76,8 @@ export async function file(exercise: Exercise, path: string, signal: AbortSignal
   return { workspaceInstanceId: exercise.workspaceInstanceId, revision: String(value.revision), path, content: value.content };
 }
 export interface Action { path: string; body: Record<string, string>; key: string }
-export async function act(action: Action, signal: AbortSignal, credential?: string): Promise<{ exerciseId: string; state: string }> {
-  const value = await post(action.path, action.body, signal, action.key, credential);
+export async function act(action: Action, signal: AbortSignal, credential?: string, owner?: string): Promise<{ exerciseId: string; state: string }> {
+  const value = await post(action.path, action.body, signal, action.key, credential, owner);
   if (!object(value) || typeof value.exerciseId !== 'string' || typeof value.state !== 'string') return invalid();
   return { exerciseId: value.exerciseId, state: value.state };
 }
@@ -108,6 +109,7 @@ export async function operation(id: string, signal: AbortSignal): Promise<Mutati
 export function message(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401 || error.code === 'PASSWORD_CHANGE_REQUIRED') return '登录已失效或需要改密，请前往账号页面。';
+    if (error.code === 'FAVORITE_LIMIT_REACHED') return '收藏已达到 1000 道题目的上限，请先取消部分收藏。';
     if (error.code === 'MODEL_SELECTION_REQUIRED') return '请先显式选择本次演练使用的模型。';
     if (error.code === 'MODEL_CHECK_REQUIRED') return '所选版本的基础连接与工具闭环检查尚未通过或已过期，请确认费用后重新检查；尚未开始计时。';
     if (error.code === 'MODEL_VERSION_CONFLICT') return '所选配置已更新，请显式应用更新版本并在开始计时前完成检查。';

@@ -22,6 +22,13 @@ public class ProblemTransactionService {
     @Transactional(readOnly = true)
     public List<ProblemVersionEntity> list() { return repository.list(); }
 
+    @Transactional
+    public void requireAvailable(String id) {
+        if (!Boolean.TRUE.equals(repository.availableForStart(id))) {
+            throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        }
+    }
+
     @Transactional(readOnly = true)
     public ProblemVersionEntity find(String id) {
         ProblemVersionEntity version = repository.find(id);

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { darkTheme, NConfigProvider } from 'naive-ui';
-import { RouterView } from 'vue-router';
+import { RouterView, useRoute } from 'vue-router';
 import { useAccount } from './auth/useAccount';
 import { legacyTheme } from './components/ui/legacyTheme';
 import AppShell from './shell/AppShell.vue';
 
 const { query, identity } = useAccount();
+const route = useRoute();
 </script>
 
 <template>
@@ -19,7 +20,7 @@ const { query, identity } = useAccount();
       :failed="query.isError.value"
       @retry="query.refetch()"
     >
-      <div class="legacy-content">
+      <div :class="{ 'legacy-content': !route.meta.modern }">
         <RouterView />
       </div>
     </AppShell>
