@@ -160,6 +160,10 @@ import ai.codecraft.modules.workspace.repository.ExerciseChallengeRepository;
 import ai.codecraft.modules.workspace.service.InterviewerExerciseData;
 import ai.codecraft.modules.workspace.repository.InterviewerRepository;
 import ai.codecraft.modules.workspace.repository.ExerciseReportRepository;
+import ai.codecraft.modules.workspace.repository.FeedbackRepository;
+import ai.codecraft.modules.workspace.service.FeedbackStore;
+import ai.codecraft.modules.workspace.service.FeedbackExerciseData;
+import ai.codecraft.modules.workspace.model.dto.FeedbackRequest;
 import ai.codecraft.modules.workspace.service.ExerciseReportStore;
 import ai.codecraft.modules.workspace.service.ReportExerciseData;
 import ai.codecraft.modules.workspace.model.dto.ReportReviewRequest;
@@ -295,6 +299,7 @@ class CopilotPersistenceIT {
     private ExercisePauseStore exercisePauses;
     private InterviewerStore interviewer;
     private ExerciseReportStore reports;
+    private FeedbackStore feedback;
     private ExerciseChallengeStore challengeStore;
     private FinalizationStore exerciseFinalization;
     private StorageCapacityService capacity;
@@ -336,7 +341,7 @@ class CopilotPersistenceIT {
         Flyway.configure().dataSource(source).locations("classpath:db/migration").load().migrate();
         var config = new Configuration(); config.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(IdentityRepository.class, ModelConnectionRepository.class, ModelConfigurationRepository.class,
-            ExerciseRepository.class, ExercisePauseRepository.class, ExerciseChallengeRepository.class, InterviewerRepository.class, ExerciseReportRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
+            ExerciseRepository.class, ExercisePauseRepository.class, ExerciseChallengeRepository.class, InterviewerRepository.class, ExerciseReportRepository.class, FeedbackRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
             CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotFollowupRepository.class, CopilotBtwRepository.class, CopilotDelegationRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class)) config.addMapper(mapper);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
@@ -385,7 +390,7 @@ class CopilotPersistenceIT {
         jdbc.update("INSERT INTO workspace_control(exercise_id,gate_epoch,gate_state,credential_hash) VALUES(?::uuid,1,'OPEN',?)", exercise, IdentitySecrets.digest(CONTROL));
         var writes = sql.getMapper(WorkspaceWriteRepository.class);
         var historyRepository = sql.getMapper(WorkspaceHistoryRepository.class);
-        data = new ExerciseDataService(List.of(new CopilotExerciseData(sql.getMapper(CopilotRetentionRepository.class)), new SkillExerciseData(sql.getMapper(SkillSnapshotRepository.class)), new WorkspaceHistoryData(historyRepository), new InterviewerExerciseData(sql.getMapper(InterviewerRepository.class), exercises, clock), new ExerciseChallengeData(sql.getMapper(ExerciseChallengeRepository.class)), new ReportExerciseData(sql.getMapper(ExerciseReportRepository.class))));
+        data = new ExerciseDataService(List.of(new CopilotExerciseData(sql.getMapper(CopilotRetentionRepository.class)), new SkillExerciseData(sql.getMapper(SkillSnapshotRepository.class)), new WorkspaceHistoryData(historyRepository), new InterviewerExerciseData(sql.getMapper(InterviewerRepository.class), exercises, clock), new ExerciseChallengeData(sql.getMapper(ExerciseChallengeRepository.class)), new ReportExerciseData(sql.getMapper(ExerciseReportRepository.class)), new FeedbackExerciseData(sql.getMapper(FeedbackRepository.class))));
         exercisePauses = proxy(new ExercisePauseStore(sql.getMapper(ExercisePauseRepository.class), exercises, writes, identity, secrets, data, clock), ExercisePauseStore.class);
         var history = new WorkspaceHistoryLedger(historyRepository, data, clock);
         var coordination = proxy(new WorkspaceCoordinationStore(writes, exercises, json, history), WorkspaceCoordinationStore.class);
@@ -409,6 +414,7 @@ class CopilotPersistenceIT {
             "{}", "PUBLISHED", 1, 1, "fixture", "fixture", "fixture", clock.instant(), clock.instant()));
         interviewer = proxy(new InterviewerStore(sql.getMapper(InterviewerRepository.class), exercises, identity, coordination, platformBindings,
             mock(ExerciseModelService.class), capacityStore, secrets, clock), InterviewerStore.class);
+        feedback = proxy(new FeedbackStore(sql.getMapper(FeedbackRepository.class), exercises, reports, interviewer, identity, secrets, capacityStore, clock), FeedbackStore.class);
         maintenance = proxy(new WorkspaceMaintenanceStore(sql.getMapper(WorkspaceMaintenanceRepository.class), exercises,
             sql.getMapper(DeletionRepository.class), identity, clock, budget, data, historyRepository), WorkspaceMaintenanceStore.class);
         var executionProblems = mock(ProblemRepository.class);
@@ -2012,12 +2018,47 @@ class CopilotPersistenceIT {
         clock.now = clock.instant().plusSeconds(121);
         assertThat(reports.prepare(exercise)).isNull();
         assertThat(reports.view(SESSION, exercise).state()).isEqualTo("UNKNOWN");
+        reports.complete(dispatched, null, null, "{\"tokens\":1}", "EVALUATION_RESULT_UNKNOWN", false);
+        assertThat(jdbc.queryForObject("SELECT usage_receipt FROM workspace_report_attempt WHERE exercise_id=?::uuid AND generation=2", String.class, exercise)).isEqualTo("{\"tokens\":1}");
+        assertThat(reports.view(SESSION, exercise).state()).isEqualTo("UNKNOWN");
         assertThat(reports.prepare(exercise)).isNull();
         var retained = new ReportExerciseData(sql.getMapper(ExerciseReportRepository.class));
         assertThat(retained.retainedBytes(exercise)).isPositive();
         assertThat(retained.quiescent(exercise)).isTrue();
+        jdbc.update("UPDATE workspace_exercise SET retain_until=? WHERE id=?::uuid", Timestamp.from(clock.instant().minusSeconds(1)), exercise);
+        assertThatThrownBy(() -> reports.view(SESSION, exercise)).hasMessage("RESOURCE_NOT_FOUND");
         new TransactionTemplate(transactions).executeWithoutResult(status -> retained.erase(exercise));
         assertThat(retained.retainedBytes(exercise)).isZero();
+    }
+
+    @Test
+    void authorizedFeedbackPersistsOnlyPreviewedSnapshotAndExpiresWithExercise() {
+        var question = interviewer.accept(SESSION, exercise, "feedback-question", CONTROL, "边界条件是什么？", measurement);
+        var input = new FeedbackRequest("INTERVIEWER", question.id(), 0, "请检查这条提问的处理", List.of(), null);
+        var preview = feedback.preview(SESSION, exercise, input);
+        assertThat(preview.snapshot()).contains("边界条件是什么", "与原演练同保留期限").doesNotContain("apiKey", "credential", "Skill");
+        var authorized = new FeedbackRequest(input.targetType(), input.targetId(), 0, input.description(), List.of(), preview.fingerprint());
+        var submitted = feedback.submit(SESSION, exercise, "feedback-submit", authorized, measurement);
+        assertThat(feedback.submit(SESSION, exercise, "feedback-submit", authorized, measurement).id()).isEqualTo(submitted.id());
+        assertThat(feedback.list(SESSION, false, null)).hasSize(1);
+        assertThat(feedback.list(SESSION, false, submitted.id())).isEmpty();
+        assertThatThrownBy(() -> feedback.list(SESSION, true, null)).hasMessage("FORBIDDEN");
+        assertThatThrownBy(() -> feedback.submit(SESSION, exercise, "feedback-submit", input, measurement)).hasMessage("IDEMPOTENCY_CONFLICT");
+        assertThatThrownBy(() -> feedback.submit(SESSION, exercise, "different-key", input, measurement)).hasMessage("REVISION_CONFLICT");
+        var administrator = new SessionAuthorizationDTO(UUID.randomUUID().toString(), "ADMIN", false, 1, clock.instant().plusSeconds(300));
+        when(identity.authorizeMutation("admin-session")).thenReturn(administrator);
+        when(identity.authorizePrivateDelivery("admin-session")).thenReturn(administrator);
+        assertThat(feedback.list("admin-session", true, null)).hasSize(1);
+        assertThat(feedback.reply("admin-session", submitted.id(), "reply", "已核对授权范围").state()).isEqualTo("HANDLED");
+        assertThat(feedback.reply("admin-session", submitted.id(), "reply", "已核对授权范围").reply()).isEqualTo("已核对授权范围");
+        assertThat(new FeedbackExerciseData(sql.getMapper(FeedbackRepository.class)).retainedBytes(exercise)).isPositive();
+        jdbc.update("UPDATE workspace_exercise SET retain_until=? WHERE id=?::uuid", Timestamp.from(clock.instant().minusSeconds(1)), exercise);
+        assertThat(feedback.list(SESSION, false, null)).isEmpty();
+        assertThat(feedback.list("admin-session", true, null)).isEmpty();
+        assertThatThrownBy(() -> feedback.reply("admin-session", submitted.id(), "reply", "已核对授权范围")).hasMessage("RESOURCE_NOT_FOUND");
+        assertThatThrownBy(() -> feedback.preview(SESSION, exercise, input)).hasMessage("RESOURCE_NOT_FOUND");
+        new TransactionTemplate(transactions).executeWithoutResult(status -> new FeedbackExerciseData(sql.getMapper(FeedbackRepository.class)).erase(exercise));
+        assertThat(sql.getMapper(FeedbackRepository.class).bytes(exercise)).isZero();
     }
 
     @Test

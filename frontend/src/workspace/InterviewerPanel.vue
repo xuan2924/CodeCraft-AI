@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import Button from '../components/ui/Button.vue';
+import FeedbackComposer from './FeedbackComposer.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
 import { message } from './api';
@@ -86,6 +87,16 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
         <p v-if="task.state === 'FAILED'">
           {{ task.reason === 'INTERVIEWER_RESULT_UNKNOWN' ? '调用结果未知，不会自动重新调用。' : '本次回答未完成或授权已改变。已保存提问，可核对状态后重新提问。' }}
         </p>
+        <details>
+          <summary>对此问答授权反馈</summary><FeedbackComposer
+            :key="`${owner}/${exerciseId}/${task.id}`"
+            :owner="owner"
+            :exercise-id="exerciseId"
+            target-type="INTERVIEWER"
+            :target-id="task.id"
+            :generation="0"
+          />
+        </details>
       </li>
     </ol>
     <div class="interviewer-pagination">

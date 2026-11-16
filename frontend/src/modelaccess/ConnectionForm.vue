@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import * as api from './api';
 import { useModelCommand } from './useModelCommand';
 
@@ -145,8 +145,8 @@ async function save() {
       </NButton>
       <NButton
         v-else
-        attr-type="submit"
-        type="primary"
+        type="submit"
+        variant="primary"
         :loading="command.pending.value"
         :disabled="command.pending.value"
       >

@@ -185,7 +185,7 @@ public class ExerciseReportStore {
         var auth = identity.tryAuthorizeMutation(report.sessionHash());
         var current = exercises.find(report.exerciseId());
         var frozen = finals.find(report.exerciseId());
-        return auth != null && auth.userId().equals(report.userId()) && current != null && !exercises.deleted(report.exerciseId())
+        return auth != null && auth.userId().equals(report.userId()) && current != null && !exercises.deleted(report.exerciseId()) && !reports.expired(report.exerciseId(), clock.instant())
             && "ENDED".equals(current.state()) && frozen != null && frozen.finalRevision() != null && frozen.finalRevision() == report.finalRevision()
             && platform.version(report.exerciseId(), PlatformRole.EVALUATOR).id().equals(report.platformVersionId());
     }
@@ -216,6 +216,7 @@ public class ExerciseReportStore {
         var current = exercises.find(exercise);
         if (current == null || !current.userId().equals(user)) fail(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         if (exercises.deleted(exercise)) fail(WorkspaceErrorCode.EXERCISE_DELETED);
+        if (reports.expired(exercise, clock.instant())) fail(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         return current;
     }
     private void key(String key) { if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}")) fail(WorkspaceErrorCode.INVALID_REQUEST); }

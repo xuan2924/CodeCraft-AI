@@ -23,6 +23,11 @@
   --line: var(--border);
   --radius-control: 6px;
   --radius-panel: 10px;
+  --radius-lg: var(--radius-panel);
+  --radius-md: var(--radius-control);
+  --radius: var(--radius-control);
+  --muted-foreground: var(--muted);
+  --ring: var(--accent);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { NButton, useThemeVars } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
 import * as execution from '../workspace/commandApi';
@@ -14,7 +14,7 @@ import * as api from './commandApi';
 const props = defineProps<{ owner: string; exerciseId: string; task: Task; credential: string; disabled: boolean }>();
 const emit = defineEmits<{ unauthorized: []; changed: [] }>();
 const client = useQueryClient();
-const theme = useThemeVars();
+const theme = { borderColor: 'var(--border)' };
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.task.id}`);
 const root = computed(() => ['copilot-commands', props.owner, props.exerciseId, props.task.id]);
 const selected = ref('');

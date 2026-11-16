@@ -22,6 +22,14 @@ function render(owner = 'owner') {
   view = mount(WorkspaceEditor, { props: { owner, exercise, file, selected: file.path, credential: 'credential' } });
   return view;
 }
+it('labels the server-confirmed challenge target without changing saved revision or saving implicitly', async () => {
+  const page = render(); await flushPromises();
+  await page.setProps({ testTarget: 'challenge' });
+  await page.findAll('button').find(button => button.text() === '运行挑战与基础回归')!.trigger('click');
+  expect(page.emitted('run-test')).toContainEqual(['0']);
+  expect(api.save).not.toHaveBeenCalled();
+  expect(page.get('textarea').element.value).toBe('base');
+});
 it('removes a clean buffer when a newer workspace revision deletes its file', async () => {
   const page = render(); await flushPromises();
   await page.setProps({ exercise: { ...exercise, revision: '1', paths: [] }, file: undefined });

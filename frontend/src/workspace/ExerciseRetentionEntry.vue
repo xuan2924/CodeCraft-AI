@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onScopeDispose, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import * as api from './retentionApi';
 import { message } from './api';

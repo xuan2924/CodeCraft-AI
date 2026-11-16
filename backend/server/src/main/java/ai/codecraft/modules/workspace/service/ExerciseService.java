@@ -152,7 +152,7 @@ public class ExerciseService {
                 pause.remainingMillis(), pause.confirmedAt());
             return new ExerciseResponse(exercise.id(), exercise.problemVersionId(), exercise.workspaceInstanceId(),
                 exercise.preparationOperationId(), exercise.state(), exercise.revision() == null ? null : exercise.revision().toString(),
-                Long.toString(exercise.stateVersion()), List.copyOf(paths), exercise.startedAt(), exercise.deadlineAt(), "UNAVAILABLE_NOT_IMPLEMENTED",
+                Long.toString(exercise.stateVersion()), List.copyOf(paths), exercise.startedAt(), exercise.deadlineAt(), "ENDED".equals(exercise.state()) && value != null && value.finalRevision() != null && value.endedAt() != null ? "AVAILABLE" : "NOT_READY",
                 exercise.preparationFailureReason(), exercise.endReason(), exercise.cleanupState(), result, pauseResponse, clock.instant());
         } catch (IOException error) {
             throw new IllegalStateException("Stored workspace paths are invalid", error);

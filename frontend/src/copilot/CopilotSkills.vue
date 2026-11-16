@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { listSkills, skillError } from '../skills/api';
 import { snapshotPackage, taskSkills } from './skillApi';
 import { commandPolicy } from './errors';

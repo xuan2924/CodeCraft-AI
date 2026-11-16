@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { NButton, useThemeVars } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { RouterLink, useRouter } from 'vue-router';
 import { requestSaveLogout } from '../workspace/logoutIntent';
 import { validPassword, validUsername } from './api';
 import { useAccount } from './useAccount';
 import CaptchaField from './CaptchaField.vue';
 
-const theme = useThemeVars();
+const theme = { primaryColor: 'var(--accent)' };
 const router = useRouter();
 const { query, identity, pending, error, notice, temporaryPassword, createdUsername, createdUserId, unresolvedCreate,
   unresolvedReset, signIn, signOut, password, create, reset } = useAccount();
@@ -146,8 +146,8 @@ async function submitPassword() {
           @change="updateCaptcha"
         />
         <NButton
-          attr-type="submit"
-          type="primary"
+          type="submit"
+          variant="primary"
           :disabled="!loginValid || pending"
           :loading="pending"
         >
@@ -185,8 +185,8 @@ async function submitPassword() {
           >
           <small id="new-password-help">8–128 个 Unicode 码点，不要求字符组合，不去除空格。</small>
           <NButton
-            attr-type="submit"
-            type="primary"
+            type="submit"
+            variant="primary"
             :disabled="!passwordValid || pending"
             :loading="pending"
           >
@@ -216,8 +216,8 @@ async function submitPassword() {
               :disabled="pending || unresolvedCreate"
             >
             <NButton
-              attr-type="submit"
-              type="primary"
+              type="submit"
+              variant="primary"
               :disabled="pending || (!unresolvedCreate && !validUsername(invitedUsername))"
               :loading="pending"
             >
@@ -246,8 +246,8 @@ async function submitPassword() {
               :disabled="pending || unresolvedReset"
             >
             <NButton
-              attr-type="submit"
-              type="warning"
+              type="submit"
+              variant="danger"
               :disabled="pending || (!unresolvedReset && !resetValid)"
               :loading="pending"
             >

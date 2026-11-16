@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import * as api from './api';
 import { useModelCommand } from './useModelCommand';
 const props = defineProps<{ owner: string; connection: api.Connection; model: api.Model | null }>();
@@ -135,8 +135,8 @@ function save() {
       </NButton>
       <NButton
         v-else
-        attr-type="submit"
-        type="primary"
+        type="submit"
+        variant="primary"
         :disabled="command.pending.value"
         :loading="command.pending.value"
       >

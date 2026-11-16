@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import * as api from './api';
 import { errorMessage, identityFailure } from './errors';
 import ConnectionForm from './ConnectionForm.vue';
@@ -37,7 +37,7 @@ function deleted() { selected.value = null; form.value = null; notice.value = '�
       <h2>连接目录</h2>
       <div class="toolbar">
         <NButton
-          type="primary"
+          variant="primary"
           @click="form = 'new'"
         >
           新建连接

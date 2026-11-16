@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { object } from '../api/request';
 const props = defineProps<{ text: string; scope: string }>();
 interface Source { url: string; title: string; content: string; retainedTruncated: boolean }

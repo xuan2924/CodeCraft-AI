@@ -29,6 +29,7 @@ async function render(fetcher: typeof fetch, initial = '/') {
     { path: '/', name: 'workspace', component: WorkspacePage },
     { path: '/account', name: 'account', component: { template: '<div />' } },
     { path: '/models', name: 'models', component: { template: '<div />' } },
+    { path: '/report', name: 'report', component: { template: '<div />' } },
   ] });
   await router.push(initial);
   page = mount(WorkspacePage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
@@ -184,7 +185,7 @@ it('selects a published version and displays only confirmed workspace files', as
   await router.push('/');
   page = mount(WorkspacePage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
   await flushPromises();
-  expect(page.text()).toContain('第二阶段工程练习');
+  expect(page.text()).toContain('面试官和评测者使用本场绑定的平台版本');
   await page.get('[data-testid="create-workspace"]').trigger('click');
   await flushPromises();
   expect(page.text()).toContain('已准备，仅可浏览');
@@ -261,7 +262,7 @@ it('requires draft handling before ending and retains the ended result by exerci
   await flushPromises();
   expect(ends).toBe(1);
   expect(view.text()).toContain('最终验收结果不可用');
-  expect(view.text()).toContain('AI 报告尚未接入');
+  expect(view.text()).toContain('进入回顾与评价报告');
   expect(view.find('[data-testid="end-exercise"]').exists()).toBe(false);
 });
 

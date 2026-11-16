@@ -11,6 +11,8 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface ExerciseReportRepository {
+    @Select("SELECT EXISTS(SELECT 1 FROM workspace_exercise WHERE id=#{exercise}::uuid AND retain_until<=#{now})")
+    boolean expired(String exercise, Instant now);
     String COLUMNS = "exercise_id::text,id::text,user_id::text,session_hash,platform_version_id::text,final_revision,verification,final_test_id::text,review_skipped,review_text,operation_id::text,generation,state,attempts,attempt_id::text,deadline_at,evidence::text,evaluation::text,reason,created_at,updated_at";
     @Select("SELECT " + COLUMNS + " FROM workspace_report WHERE exercise_id=#{exercise}::uuid")
     ExerciseReportEntity find(String exercise);

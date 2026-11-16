@@ -1,6 +1,6 @@
 # 面试、题目与评测设计
 
-状态：本文件主要记录第三阶段已确认的产品目标，不表示面试官、挑战、回顾或 AI 报告已实现。当前第二阶段工程练习已验收，见 [阶段记录](../../.scratch/copilot-loop/issues/22-stage-acceptance.md)；最终面试 FSM、评价维度和报告存储契约仍待设计。面试官和评测官是 Java 内部职责，不是用户可管理的 Copilot。
+状态：第三阶段面试官、暂停/挑战、回顾评测、私有 PDF 与授权反馈已接入，契约如下；实现和实际验证见 [05](../../.scratch/front-refactor/issues/05-interview-lifecycle-pause.md)、[06](../../.scratch/front-refactor/issues/06-evaluation-report-pdf.md)、[07](../../.scratch/front-refactor/issues/07-authorized-feedback.md)。第二阶段基线仍见 [阶段记录](../../.scratch/copilot-loop/issues/22-stage-acceptance.md)。面试官和评测官是 Java 内部职责，不是用户可管理的 Copilot。
 
 ## 题目与发布
 
@@ -136,10 +136,21 @@ AI 报告发布前校验结构、等级、证据引用实际存在、各维度�
 - 默认不附 Copilot 对话、Skill、凭证或完整代码。管理员仅查看提交包与相关配置版本，不能由反馈跳转浏览整场私有演练。
 - 用户可查看自己的反馈及管理员回复；状态为待处理/已处理，不扩展为客服聊天或完整工单系统。
 - 反馈可促使管理员验证、发布新配置，不能悄悄改当前演练或承诺必然修改。
+- 反馈与原演练共用保留期限及容量；用户删除或到期即撤销双方读取，物理擦除由现有整场清理重试完成，附件和回复不独立永久保留。每演练最多 20 条，快照最多 64 KiB，描述及单次回复各最多 4 KiB；提交时预先计入回复预算。
+- 目标仅 `INTERVIEWER` 的具体问答或 `REPORT` 的报告 ID + generation。默认只包含目标、描述、必要平台版本身份及保留声明；额外证据至多 4 项，服务端验证只能来自该目标报告的已冻结证据。提交前服务端返回完整快照及指纹；确认时重新检查来源/归属/保留期与指纹，任何变化要求重新预览。用户文字和选择不是越权读取的授权。
+- 管理员列表只投影授权快照和处理状态，无扩展私有源码/Skill/对话的后台读取接口。处理为一次性幂等回复，不能无限增补会话；提交/处理均校验 Session、CSRF 与原请求键。
 
-## 待决与实现验证
+## 报告与反馈 HTTP 契约
 
-第三阶段仍需设计完整面试 FSM、各维度判级规则、平台角色的证据标识/访问范围、回顾与报告调度、AI 评测持续失败处置、平台配置版本绑定及跳过回顾后的报告补充机制。仓库题目发布与 Java 持久化、准备失败、任务状态、截止栅栏及有限最终验收已在工程底座实现，不重复列为未建设。跨宿主镜像发布/复验属于改变部署边界时的工作，不是当前本机阶段欠账；这些边界均不能由 UI 示例擅自扩展。
+- `GET /api/exercises/{exercise}/report`：只读，不触发评价；返回冻结事实、报告 generation、评价状态、四维评价及不含原文的证据目录。
+- `POST .../report/review` 接收 `{skip,text}`；`POST .../report/retry` 接收 `{expectedGeneration}`；均需要 `Idempotency-Key`，不需要作答操作凭证。未知请求核对原键。
+- `GET .../report/evidence?generation=...&id=...`：按本人/保留期和当前 generation 读取冻结原文。`GET .../report/pdf?generation=...` 返回私有 PDF attachment，`no-store`，导出后复核同一可见快照。未完成报告可以导出，但不虚构分数。
+- `POST .../feedback/preview` 接收 `{targetType,targetId,generation,description,evidenceIds}`，返回 `{snapshot,fingerprint}`；`POST .../feedback` 用同一内容加 `previewFingerprint` 与幂等键确认授权。
+- `GET /api/feedback?after=...` 为本人反馈；`GET /api/admin/feedback?after=...` 为管理员授权收件列表，各页最多 20 条。`POST /api/admin/feedback/{id}/reply` 接收 `{reply}` 和幂等键。管理员权限不授予源演练读取权。
+
+## 实现边界与验证
+
+FSM、证据/回顾调度、平台版本绑定、持续失败与显式重试按本文件实施契约执行。跳过回顾是不可变选择，不另增事后补写机制。结构与确定性事实校验不宣称可以证明所有模型自由文本主观判断正确；错误评价可走最小授权反馈，不自动改分。跨宿主镜像发布/复验属于改变部署边界时的工作，不是当前本机阶段欠账。
 
 ## 验收要求
 

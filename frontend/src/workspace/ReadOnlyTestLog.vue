@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue';
 import type { Terminal } from '@xterm/xterm';
-import { useThemeVars } from 'naive-ui';
+import { colors } from '../components/ui/tokens';
 import '@xterm/xterm/css/xterm.css';
 
 const props = withDefaults(defineProps<{ logs: { channel: string; text: string }[]; label?: string }>(), { label: '测试' });
-const themeVars = useThemeVars();
-const terminalTheme = computed(() => ({ background: themeVars.value.baseColor,
-  foreground: themeVars.value.textColorBase, selectionBackground: themeVars.value.primaryColorHover }));
+const terminalTheme = computed(() => ({ background: colors.background,
+  foreground: colors.foreground, selectionBackground: colors.selected }));
 const host = ref<globalThis.HTMLDivElement>();
 const unavailable = ref(false);
 // Local rendering is capped separately from the server's retained log window.
@@ -68,12 +67,30 @@ onScopeDispose(() => { disposed = true; globalThis.clearTimeout(timer); resize?.
 
 <template>
   <div class="readonly-log">
-    <p v-if="clipped" role="status">显示缓冲已截断，仅渲染末尾 64K 字符；终端最多保留 2000 行，结果不受影响。</p>
-    <p v-if="unavailable" role="status">终端显示不可用，下面仍可查看只读文本。</p>
-    <div ref="host" class="terminal-host" :aria-label="`只读${label}终端，无输入功能`" />
+    <p
+      v-if="clipped"
+      role="status"
+    >
+      显示缓冲已截断，仅渲染末尾 64K 字符；终端最多保留 2000 行，结果不受影响。
+    </p>
+    <p
+      v-if="unavailable"
+      role="status"
+    >
+      终端显示不可用，下面仍可查看只读文本。
+    </p>
+    <div
+      ref="host"
+      class="terminal-host"
+      :aria-label="`只读${label}终端，无输入功能`"
+    />
     <details :open="unavailable">
       <summary>查看日志文本（可复制，stdout / stderr 分别标记）</summary>
-      <pre class="test-output" tabindex="0" :aria-label="`只读${label}日志文本`">{{ text }}</pre>
+      <pre
+        class="test-output"
+        tabindex="0"
+        :aria-label="`只读${label}日志文本`"
+      >{{ text }}</pre>
     </details>
   </div>
 </template>

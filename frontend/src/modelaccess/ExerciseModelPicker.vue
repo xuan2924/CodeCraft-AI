@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { RouterLink } from 'vue-router';
 import * as api from './api';
 import ModelCheckView from './ModelCheckView.vue';
@@ -48,7 +48,7 @@ const availability = computed(() => {
 <template>
   <section aria-label="演练模型选择">
     <h3>本次工程练习使用的模型</h3>
-    <p>无面试官、挑战或 AI 报告。个人配置编辑不自动应用到演练；不自动回退其他模型。</p>
+    <p>此选择仅用于个人 Copilot，不影响平台面试官与评测者。配置编辑不自动应用到演练；不自动回退其他模型。</p>
     <RouterLink :to="{ name: 'models' }">管理个人模型连接</RouterLink>
     <p role="status">
       {{ availability }}

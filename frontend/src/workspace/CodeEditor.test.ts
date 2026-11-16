@@ -15,6 +15,7 @@ const resources = vi.hoisted(() => {
 vi.mock('monaco-editor/editor', () => ({
   Uri: { parse: (value: string) => value },
   editor: {
+    defineTheme: vi.fn(),
     create: () => resources.instance,
     createModel: (initial: string) => {
       let value = initial;

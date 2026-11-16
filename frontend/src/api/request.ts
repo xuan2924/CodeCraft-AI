@@ -13,6 +13,17 @@ export async function request(path: string, signal: AbortSignal, options: Reques
   if (!object(body) || body.code !== 'OK' || !('data' in body)) throw new ApiError(502, 'INVALID_RESPONSE');
   return body.data;
 }
+/** Private binary delivery uses the same session/owner boundary and never persists a public URL. */
+export async function download(path: string, signal: AbortSignal, owner: string, mediaType: string): Promise<Blob> {
+  const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', headers: ownerHeaders(owner),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) });
+  if (!response.ok) {
+    const body: unknown = await response.json();
+    throw new ApiError(response.status, object(body) && typeof body.code === 'string' ? body.code : 'REQUEST_FAILED');
+  }
+  if (response.headers.get('Content-Type')?.split(';')[0] !== mediaType) throw new ApiError(502, 'INVALID_RESPONSE');
+  return response.blob();
+}
 /** Same-origin read-only transport; callers own protocol validation and recovery. */
 export function events(path: string, types: readonly string[], receive: (type: string, data: string, id: string) => void,
   failed: () => void, signal: AbortSignal): () => void {

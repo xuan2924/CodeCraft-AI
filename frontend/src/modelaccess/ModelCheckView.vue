@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import * as api from './api';
 import { errorMessage, identityFailure } from './errors';
@@ -135,7 +135,7 @@ function start() {
       </NButton>
       <NButton
         v-else
-        type="primary"
+        variant="primary"
         :disabled="!fee || active || bothValid || result.isPending.value || result.isError.value || command.pending.value"
         :loading="command.pending.value"
         @click="start"

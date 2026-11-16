@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onScopeDispose, ref, watch } from 'vue';
 import { editor, Uri } from 'monaco-editor/editor';
+import { installEditorTheme } from '../components/ui/editorTheme';
 import 'monaco-editor/languages/definitions/java/register';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 
@@ -43,7 +44,7 @@ function shortcut(event: globalThis.KeyboardEvent) {
 }
 onMounted(() => {
   if (!host.value) return;
-  instance = editor.create(host.value, { model: null, minimap: { enabled: false }, ariaLabel: '文件编辑器',
+  instance = editor.create(host.value, { theme: installEditorTheme(editor), model: null, minimap: { enabled: false }, ariaLabel: '文件编辑器',
     scrollBeyondLastLine: false, fontSize: 14, wordWrap: 'on', tabSize: 4, automaticLayout: false });
   change = instance.onDidChangeModelContent(() => { if (!applying) emit('update:modelValue', instance!.getValue()); });
   resize = new globalThis.ResizeObserver(() => instance?.layout());

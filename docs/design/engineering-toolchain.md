@@ -45,7 +45,7 @@
 
 `npm run test:ui` 使用独立 `playwright.ui.config.ts` 启动 loopback Vite，在 `ui-tests/` 的纯组件夹具检查窄屏、长文本、弹窗焦点/关闭、键盘面板调整与 reduced-motion；夹具不进入产品路由或生产构建，不伪装真实 API。此入口不能替代 `test:e2e` / `test:integration` 的真实服务验证。主题对比度由 `tokens.test.ts` 校验正文 ≥4.5:1、控件边界/焦点 ≥3:1。
 
-Naive UI 仅作为旧业务迁移依赖：App 的主题适配，账号页，模型连接/配置/检查/用量页面，Skill 页面，工作区编辑/测试/日志/保留/历史/命令/退出，以及 Copilot 控件仍使用它；可用 `rg -l "from 'naive-ui'" frontend/src` 核对准确入口。重构 08 删除最后入口后再移除依赖及 `legacyTheme.ts`，不提前删除既有业务测试。
+前端重构 08 已移除 Naive UI、`legacyTheme.ts` 和迁移期全局包装样式；账号、模型、Skill、工作台及 Copilot 复用 `components/ui/Button.vue` 等源码组件，原业务测试保留。`tokens.ts` 同时供 Monaco/Diff 官方主题和 xterm 使用。依赖/锁文件已同步；Java 报告使用 PDFBox 3.0.8 与随包 Apache-2.0 中文静态字体，不依赖宿主字体或远端资源。
 
 ### 前端安全覆盖与维护
 

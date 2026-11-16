@@ -11,7 +11,7 @@ afterEach(() => {
 
 function render() {
   const client = new QueryClient();
-  const wrapper = mount(StatusPage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
+  const wrapper = mount(StatusPage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }]], stubs: { RouterLink: true } } });
   cleanups.push(() => { wrapper.unmount(); client.clear(); });
   return wrapper;
 }
@@ -25,7 +25,7 @@ test('shows unavailable dependency from a real-shaped 503 response, not a generi
   await flushPromises();
   expect(page.get('[data-testid="database"]').text()).toContain('可用');
   expect(page.get('[data-testid="sandbox"]').text()).toContain('不可用');
-  expect(page.text()).toContain('AI 与完整演练尚未接入');
+  expect(page.text()).toContain('此页只检查底层依赖');
 });
 
 test('hides stale success when a refresh cannot reach Java and allows retry', async () => {

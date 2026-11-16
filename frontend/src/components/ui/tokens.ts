@@ -1,4 +1,4 @@
-/** Single color source for the application and the temporary Naive UI bridge. */
+/** Single color source for application controls, Monaco and the terminal. */
 export const colors = {
   background: '#111612', surface: '#191e19', selected: '#303730',
   border: '#3c443c', controlBorder: '#788574', foreground: '#eeeee5', muted: '#aab2a7',

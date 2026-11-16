@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onScopeDispose, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { NButton, useThemeVars } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { session } from '../auth/api';
+import { routes } from '../routes';
 import { ApiError } from '../api/request';
 import * as api from './api';
 import WorkspaceLogout from './WorkspaceLogout.vue';
+import WorkbenchLayout from './WorkbenchLayout.vue';
 import WorkspaceTests from './WorkspaceTests.vue';
 import WorkspaceCommands from './WorkspaceCommands.vue';
 import WorkspaceHistory from './WorkspaceHistory.vue';
@@ -22,7 +24,7 @@ import { cancelSaveLogout, saveLogoutOwner } from './logoutIntent';
 import { confirmExerciseDeletion } from './drafts';
 
 const WorkspaceEditor = defineAsyncComponent(() => import('./WorkspaceEditor.vue'));
-const theme = useThemeVars();
+const theme = { primaryColor: 'var(--accent)' };
 const client = useQueryClient();
 const account = useQuery({ queryKey: ['identity-session'], queryFn: ({ signal }) => session(signal), retry: false, gcTime: 0 });
 const allowed = computed(() => !!account.data.value && !account.data.value.passwordChangeRequired &&
@@ -283,7 +285,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
     <header>
       <RouterLink :to="{ name: 'account' }">账号与登录</RouterLink>
       <h1>题目与工作区</h1>
-      <p>第二阶段工程练习：支持编辑、显式保存与稳定版本测试。开始前需选择并检查个人模型；无面试官、挑战或 AI 报告，不代表完整面试流程。</p>
+      <p>显式保存、稳定版本测试与 AI 结对编程。开始前选择并检查个人 Copilot 模型；面试官和评测者使用本场绑定的平台版本。结束后回顾冻结结果与证据报告。</p>
     </header>
     <p
       v-if="account.isPending.value"
@@ -385,7 +387,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             <p>允许编辑范围：{{ item.editableRoots.join('、') }}。开始计时后可保存。</p>
             <p>开始后时长 {{ item.durationSeconds / 60 }} 分钟；准备阶段不计时。</p>
             <NButton
-              type="primary"
+              variant="primary"
               data-testid="create-workspace"
               :disabled="pending || !!unresolved"
               @click="create(item.problemVersionId)"
@@ -489,7 +491,11 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             >
               <p>最终冻结修订：{{ exercise.finalization.finalRevision ?? '尚未确认，正在核对' }}</p>
               <p>{{ ({ PENDING: '最终验收待核对', PASSED: '最终验收通过', FAILED: '最终验收失败', TIMED_OUT: '最终验收超时', UNAVAILABLE: '最终验收结果不可用' })[exercise.finalization.verification] }}</p>
-              <p>系统验收尝试 {{ exercise.finalization.attempts }} / {{ exercise.finalization.maxAttempts }}；报告状态 UNAVAILABLE_NOT_IMPLEMENTED，AI 报告尚未接入。</p>
+              <p>系统验收尝试 {{ exercise.finalization.attempts }} / {{ exercise.finalization.maxAttempts }}。</p>
+              <RouterLink
+                v-if="exercise.state === 'ENDED'"
+                :to="{ name: routes.report.name, query: { exercise: exercise.exerciseId } }"
+              >进入回顾与评价报告</RouterLink>
               <p v-if="exercise.finalization.status === 'RECONCILIATION_REQUIRED'">
                 冻结事实未确认，不能虚构最终版本，请稍后刷新。
               </p>
@@ -562,171 +568,180 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             :state="challenge.data.value"
             :disabled="!writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
           />
-          <InterviewerPanel
-            v-if="['READY', ...historyStates].includes(exercise.state)"
-            :key="`interviewer:${owner}:${exercise.exerciseId}`"
-            :owner="owner"
-            :exercise-id="exercise.exerciseId"
-            :credential="credential"
-            :phase="exercise.state"
-            :disabled="challengeBlocked || !writable || !['READY', 'ACTIVE'].includes(exercise.state) || expired || pending || !!unresolved || ending || endPrompt || logoutBusy"
-            @unauthorized="credential = ''; account.refetch()"
-          />
-          <CopilotPanel
-            v-if="historyStates.includes(exercise.state)"
-            :key="owner + exercise.exerciseId"
-            :owner="owner"
-            :exercise-id="exercise.exerciseId"
-            :credential="credential"
-            :disabled="challengeBlocked || !editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
-            :paths="exercise.paths"
-            :prepare="prepareCopilot"
-            @inspect-test="testView?.inspect($event)"
-            @changed="refreshWorkspace"
-            @unauthorized="credential = ''; account.refetch()"
-          />
-          <WorkspaceCommands
-            v-if="historyStates.includes(exercise.state)"
-            :key="owner + exercise.workspaceInstanceId"
-            :owner="owner"
-            :exercise="exercise"
-            :credential="credential"
-            :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || testBusy || historyBusy"
-            :prepare="prepareCommand"
-            @locked="commandBusy = $event"
-            @changed="refreshWorkspace"
-            @unauthorized="credential = ''; account.refetch()"
-          />
-          <WorkspaceHistory
-            v-if="historyStates.includes(exercise.state)"
-            :key="owner + exercise.workspaceInstanceId"
-            :owner="owner"
-            :exercise="exercise"
-            :credential="credential"
-            :disabled="!writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || commandBusy || editorWriteBusy"
-            @locked="historyBusy = $event"
-            @changed="refreshWorkspace"
-            @unauthorized="credential = ''; account.refetch()"
-          />
-          <WorkspaceStorage
-            :key="owner + exercise.exerciseId"
-            :owner="owner"
-            :exercise-id="exercise.exerciseId"
-            @deleted="acceptedDeletion"
-          />
-          <WorkspaceTests
-            v-if="historyStates.includes(exercise.state)"
-            :key="owner + exercise.workspaceInstanceId"
-            ref="testView"
-            :owner="owner"
-            :exercise="exercise"
-            :credential="writable && !logoutBusy && !answeringClosed && !ending ? credential : ''"
-            :target="testTarget"
-            :recovery-allowed="canRecover && !logoutBusy && !answeringClosed && !ending"
-            @locked="testBusy = $event"
-            @stale-control="credential = ''"
-          />
-          <ClosedDrafts
-            v-if="answeringClosed && ['CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
-            :key="owner + exercise.exerciseId"
-            :owner="owner"
-            :exercise-id="exercise.exerciseId"
-          />
-          <div class="workspace-panels">
-            <section aria-label="题目与文件">
-              <h2>题目要求</h2>
-              <pre class="requirements">{{ problem?.requirements }}</pre>
-              <p>允许编辑范围：{{ problem?.editableRoots.join('、') }}；pom.xml 与验收测试受保护。</p>
-              <h2>工作区文件</h2>
-              <p v-if="!exercise.paths.length">
-                尚无已确认文件。
-              </p>
-              <ul class="file-list">
-                <li
-                  v-for="path in exercise.paths"
+          <WorkbenchLayout>
+            <template #assistant>
+              <InterviewerPanel
+                v-if="['READY', ...historyStates].includes(exercise.state)"
+                :key="`interviewer:${owner}:${exercise.exerciseId}`"
+                :owner="owner"
+                :exercise-id="exercise.exerciseId"
+                :credential="credential"
+                :phase="exercise.state"
+                :disabled="challengeBlocked || !writable || !['READY', 'ACTIVE'].includes(exercise.state) || expired || pending || !!unresolved || ending || endPrompt || logoutBusy"
+                @unauthorized="credential = ''; account.refetch()"
+              />
+              <CopilotPanel
+                v-if="historyStates.includes(exercise.state)"
+                :key="owner + exercise.exerciseId"
+                :owner="owner"
+                :exercise-id="exercise.exerciseId"
+                :credential="credential"
+                :disabled="challengeBlocked || !editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
+                :paths="exercise.paths"
+                :prepare="prepareCopilot"
+                @inspect-test="testView?.inspect($event)"
+                @changed="refreshWorkspace"
+                @unauthorized="credential = ''; account.refetch()"
+              />
+            </template>
+            <template #tools>
+              <WorkspaceCommands
+                v-if="historyStates.includes(exercise.state)"
+                :key="owner + exercise.workspaceInstanceId"
+                :owner="owner"
+                :exercise="exercise"
+                :credential="credential"
+                :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || testBusy || historyBusy"
+                :prepare="prepareCommand"
+                @locked="commandBusy = $event"
+                @changed="refreshWorkspace"
+                @unauthorized="credential = ''; account.refetch()"
+              />
+              <WorkspaceHistory
+                v-if="historyStates.includes(exercise.state)"
+                :key="owner + exercise.workspaceInstanceId"
+                :owner="owner"
+                :exercise="exercise"
+                :credential="credential"
+                :disabled="!writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || commandBusy || editorWriteBusy"
+                @locked="historyBusy = $event"
+                @changed="refreshWorkspace"
+                @unauthorized="credential = ''; account.refetch()"
+              />
+              <WorkspaceStorage
+                :key="owner + exercise.exerciseId"
+                :owner="owner"
+                :exercise-id="exercise.exerciseId"
+                @deleted="acceptedDeletion"
+              />
+              <WorkspaceTests
+                v-if="historyStates.includes(exercise.state)"
+                :key="owner + exercise.workspaceInstanceId"
+                ref="testView"
+                :owner="owner"
+                :exercise="exercise"
+                :credential="writable && !logoutBusy && !answeringClosed && !ending ? credential : ''"
+                :target="testTarget"
+                :recovery-allowed="canRecover && !logoutBusy && !answeringClosed && !ending"
+                @locked="testBusy = $event"
+                @stale-control="credential = ''"
+              />
+              <ClosedDrafts
+                v-if="answeringClosed && ['CLOSING', 'FINAL_TESTING', 'ENDED'].includes(exercise.state)"
+                :key="owner + exercise.exerciseId"
+                :owner="owner"
+                :exercise-id="exercise.exerciseId"
+              />
+            </template>
+            <template #files>
+              <section aria-label="题目与文件">
+                <h2>题目要求</h2>
+                <pre class="requirements">{{ problem?.requirements }}</pre>
+                <p>允许编辑范围：{{ problem?.editableRoots.join('、') }}；pom.xml 与验收测试受保护。</p>
+                <h2>工作区文件</h2>
+                <p v-if="!exercise.paths.length">
+                  尚无已确认文件。
+                </p>
+                <ul class="file-list">
+                  <li
+                    v-for="path in exercise.paths"
+                    :key="path"
+                  >
+                    <button
+                      type="button"
+                      data-testid="workspace-file"
+                      :aria-pressed="selected === path"
+                      @click="selected = path"
+                    >
+                      {{ path }}
+                    </button>
+                  </li>
+                </ul>
+                <details
+                  v-for="(content, path) in problem?.acceptanceFiles"
                   :key="path"
                 >
-                  <button
-                    type="button"
-                    data-testid="workspace-file"
-                    :aria-pressed="selected === path"
-                    @click="selected = path"
-                  >
-                    {{ path }}
-                  </button>
-                </li>
-              </ul>
-              <details
-                v-for="(content, path) in problem?.acceptanceFiles"
-                :key="path"
-              >
-                <summary>受保护验收测试：{{ path }}</summary>
-                <pre class="requirements">{{ content }}</pre>
-              </details>
-            </section>
-            <p
-              v-if="source.isFetching.value"
-              role="status"
-            >
-              正在读取文件…
-            </p>
-            <p
-              v-if="source.isError.value"
-              role="alert"
-            >
-              {{ api.message(source.error.value) }}
-            </p>
-            <NButton
-              v-if="source.isError.value"
-              @click="source.refetch()"
-            >
-              重试文件读取
-            </NButton>
-            <WorkspaceEditor
-              v-if="hasEditor"
-              :key="owner + exercise.workspaceInstanceId + editorGeneration"
-              ref="editorView"
-              :locked="logoutBusy || ending || historyBusy || pending || !!unresolved"
-              :answering-closed="answeringClosed"
-              :test-busy="challengeBlocked || testBusy || commandBusy || historyBusy || !problem?.executionAvailable"
-              :owner="owner"
-              :exercise="exercise"
-              :file="source.data.value"
-              :selected="selected"
-              :credential="writable && !historyBusy ? credential : ''"
-              @saved="refreshWorkspace"
-              @write-busy="editorWriteBusy = $event"
-              @run-test="!challengeBlocked && !commandBusy && !historyBusy && testView?.start($event)"
-              @select="selected = $event"
-              @stale-control="credential = ''"
-            />
-            <section
-              v-if="!hasEditor || answeringClosed"
-              aria-label="只读源码"
-            >
-              <h2>{{ selected || '选择文件查看源码' }}</h2>
+                  <summary>受保护验收测试：{{ path }}</summary>
+                  <pre class="requirements">{{ content }}</pre>
+                </details>
+              </section>
+            </template>
+            <template #editor>
               <p
-                v-if="selected && source.isPending.value"
+                v-if="source.isFetching.value"
                 role="status"
               >
-                正在读取已提交文件…
+                正在读取文件…
               </p>
               <p
-                v-else-if="source.isError.value"
+                v-if="source.isError.value"
                 role="alert"
               >
                 {{ api.message(source.error.value) }}
               </p>
-              <pre
-                v-else-if="selected && source.data.value"
-                data-testid="source"
-                tabindex="0"
-              >{{ source.data.value.content }}</pre>
-              <p v-else>
-                这里不会显示准备中的半成品文件。
-              </p>
-            </section>
-          </div>
+              <NButton
+                v-if="source.isError.value"
+                @click="source.refetch()"
+              >
+                重试文件读取
+              </NButton>
+              <WorkspaceEditor
+                v-if="hasEditor"
+                :key="owner + exercise.workspaceInstanceId + editorGeneration"
+                ref="editorView"
+                :locked="logoutBusy || ending || historyBusy || pending || !!unresolved"
+                :answering-closed="answeringClosed"
+                :test-busy="challengeBlocked || testBusy || commandBusy || historyBusy || !problem?.executionAvailable"
+                :test-target="testTarget"
+                :owner="owner"
+                :exercise="exercise"
+                :file="source.data.value"
+                :selected="selected"
+                :credential="writable && !historyBusy ? credential : ''"
+                @saved="refreshWorkspace"
+                @write-busy="editorWriteBusy = $event"
+                @run-test="!challengeBlocked && !commandBusy && !historyBusy && testView?.start($event)"
+                @select="selected = $event"
+                @stale-control="credential = ''"
+              />
+              <section
+                v-if="!hasEditor || answeringClosed"
+                aria-label="只读源码"
+              >
+                <h2>{{ selected || '选择文件查看源码' }}</h2>
+                <p
+                  v-if="selected && source.isPending.value"
+                  role="status"
+                >
+                  正在读取已提交文件…
+                </p>
+                <p
+                  v-else-if="source.isError.value"
+                  role="alert"
+                >
+                  {{ api.message(source.error.value) }}
+                </p>
+                <pre
+                  v-else-if="selected && source.data.value"
+                  data-testid="source"
+                  tabindex="0"
+                >{{ source.data.value.content }}</pre>
+                <p v-else>
+                  这里不会显示准备中的半成品文件。
+                </p>
+              </section>
+            </template>
+          </WorkbenchLayout>
         </template>
       </template>
     </template>
@@ -734,15 +749,14 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
 </template>
 
 <style scoped>
-.workspace-page { max-width: 1440px; margin: 32px auto; padding: 0 24px; }
+.workspace-page { max-width: 1920px; margin: 24px auto; padding: 0 20px; }
 .workspace-page header { max-width: 75ch; }
 .workspace-page h2 { font-size: 20px; overflow-wrap: anywhere; }
 .workspace-page section { margin-top: 20px; min-width: 0; }
-.workspace-panels { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr); gap: 20px; }
 pre { font-family: Consolas, "Cascadia Code", monospace; font-size: 14px; line-height: 1.65; overflow: auto; max-height: 65vh; }
 .requirements { white-space: pre-wrap; overflow-wrap: anywhere; }
 .file-list { list-style: none; padding: 0; }
 .file-list button { width: 100%; padding: 10px 0; text-align: left; border: 0; background: transparent; color: var(--primary); overflow-wrap: anywhere; cursor: pointer; }
 .file-list button[aria-pressed="true"] { font-weight: 700; text-decoration: underline; }
-@media (max-width: 760px) { .workspace-panels { grid-template-columns: 1fr; } .workspace-page { padding: 0 16px; } }
+@media (max-width: 760px) { .workspace-page { padding: 0 16px; } }
 </style>

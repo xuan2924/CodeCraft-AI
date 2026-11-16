@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { NButton, useThemeVars } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand, type CommandFailurePolicy } from '../api/useCommand';
 import { message, type Exercise } from './api';
@@ -10,7 +10,7 @@ import CommandOutput from './CommandOutput.vue';
 import { stateLabels } from './commandPresentation';
 const props = defineProps<{ owner: string; exercise: Exercise; credential: string; disabled: boolean; prepare: () => Promise<string | null> }>();
 const emit = defineEmits<{ changed: []; unauthorized: []; locked: [value: boolean] }>();
-const theme = useThemeVars();
+const theme = { borderColor: 'var(--border)' };
 const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exercise.exerciseId}/${props.exercise.workspaceInstanceId}`);
 const root = computed(() => ['workspace-commands', props.owner, props.exercise.exerciseId, props.exercise.workspaceInstanceId]);
@@ -127,7 +127,7 @@ function requestStop() {
       /></label>
       <small>{{ commandBytes }} / 4096 字节 · 将在 /project/{{ directory }} 执行</small>
       <NButton
-        attr-type="submit"
+        type="submit"
         :disabled="!mayStart"
       >
         {{ preparing || start.pending.value ? '正在受理…' : '执行 Bash' }}

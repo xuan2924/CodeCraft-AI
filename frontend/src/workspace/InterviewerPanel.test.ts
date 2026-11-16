@@ -40,7 +40,7 @@ it('pause leaves history readable but prevents new requests', async () => {
   const wrapper = render(); await wrapper.setProps({ phase: 'PAUSED', disabled: true }); await flushPromises();
   expect(wrapper.text()).toContain('<script>not executable</script>');
   expect(wrapper.find('script').exists()).toBe(false);
-  expect(wrapper.get('textarea').attributes('readonly')).toBeDefined();
+  expect(wrapper.get('#interviewer-question').attributes('readonly')).toBeDefined();
   await wrapper.get('form').trigger('submit');
   expect(api.ask).not.toHaveBeenCalled();
 });

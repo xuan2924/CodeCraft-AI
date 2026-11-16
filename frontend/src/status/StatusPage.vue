@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query';
-import { NButton, useThemeVars } from 'naive-ui';
+import { RouterLink } from 'vue-router';
+import { routes } from '../routes';
+import NButton from '../components/ui/Button.vue';
 import { fetchStatus } from './api';
 
-const themeVars = useThemeVars();
 const { data, isFetching, isError, refetch } = useQuery({
   queryKey: ['internal-dependency-status'],
   queryFn: ({ signal }) => fetchStatus(signal),
@@ -17,7 +18,6 @@ const { data, isFetching, isError, refetch } = useQuery({
 <template>
   <main
     class="status-page"
-    :style="{ '--primary': themeVars.primaryColor }"
   >
     <header>
       <p class="project-name">
@@ -80,7 +80,7 @@ const { data, isFetching, isError, refetch } = useQuery({
         依赖不可用，请检查对应服务后重新检查。
       </p>
       <NButton
-        type="primary"
+        variant="primary"
         :disabled="isFetching"
         :loading="isFetching"
         @click="refetch()"
@@ -90,7 +90,7 @@ const { data, isFetching, isError, refetch } = useQuery({
     </section>
     <footer>
       <p>Go 在线仅表示 gRPC 可响应，不代表 Docker 或沙箱执行已就绪。</p>
-      <p>AI 与完整演练尚未接入。<a href="/account">受邀账号登录</a></p>
+      <p>请从题库进入演练；此页只检查底层依赖。<RouterLink :to="{ name: routes.account.name }">受邀账号登录</RouterLink></p>
     </footer>
   </main>
 </template>

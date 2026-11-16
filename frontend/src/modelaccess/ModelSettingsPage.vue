@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { NButton, useThemeVars } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { RouterLink } from 'vue-router';
 import { session } from '../auth/api';
 import ModelSettingsPanel from './ModelSettingsPanel.vue';
-const theme = useThemeVars();
+const theme = { primaryColor: 'var(--accent)' };
 const client = useQueryClient();
 const account = useQuery({ queryKey: ['identity-session'], queryFn: ({ signal }) => session(signal), retry: false, gcTime: 0, staleTime: 0, refetchInterval: 30000 });
 const now = ref(Date.now());

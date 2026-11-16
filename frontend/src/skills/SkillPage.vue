@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { RouterLink } from 'vue-router';
 import { session } from '../auth/api';
 import SkillPanel from './SkillPanel.vue';

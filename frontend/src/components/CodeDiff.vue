@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onScopeDispose, ref, watch } from 'vue';
 import { editor, Uri } from 'monaco-editor/editor';
+import { installEditorTheme } from './ui/editorTheme';
 import 'monaco-editor/languages/definitions/java/register';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 
@@ -22,7 +23,7 @@ function sync() {
 }
 onMounted(() => {
   if (!host.value) return;
-  instance = editor.createDiffEditor(host.value, { readOnly: true, originalEditable: false, originalAriaLabel: '提案修改前', modifiedAriaLabel: '提案修改后',
+  instance = editor.createDiffEditor(host.value, { theme: installEditorTheme(editor), readOnly: true, originalEditable: false, originalAriaLabel: '提案修改前', modifiedAriaLabel: '提案修改后',
     minimap: { enabled: false }, scrollBeyondLastLine: false, maxComputationTime: 1000, automaticLayout: false });
   resize = new globalThis.ResizeObserver(() => instance?.layout()); resize.observe(host.value); sync();
 });

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onScopeDispose, ref } from 'vue';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useAccount } from '../auth/useAccount';
 import { listAccountDrafts, readDraftEpoch, removeDraft, releaseDraftLogout, sealDraftsForLogout, type Draft } from './drafts';

@@ -4,6 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.codecraft.modules.identity.service.IdentitySecrets;
+import ai.codecraft.modules.modelaccess.service.ModelConnectionService;
+import ai.codecraft.modules.modelaccess.service.ModelConfigurationService;
+import ai.codecraft.modules.modelaccess.model.dto.ModelConnectionRequest;
+import ai.codecraft.modules.modelaccess.model.dto.ModelConfigurationRequest;
+import ai.codecraft.modules.modelaccess.model.ModelProtocol;
+import ai.codecraft.modules.modelaccess.model.ModelProviderPreset;
+import ai.codecraft.modules.modelaccess.model.ModelThinkingMode;
 import ai.codecraft.modules.workspace.config.WorkspaceProperties;
 import ai.codecraft.modules.workspace.service.ProblemService;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
@@ -46,7 +53,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 // Real REST + disposable PostgreSQL + authenticated Linux Go service. No mocked RPC/storage.
 @EnabledIfEnvironmentVariable(named = "WORKSPACE_IT_RUN", matches = "disposable")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = "identity.public-origin=http://localhost:5173")
+    properties = { "identity.public-origin=http://localhost:5173", "model.security.active-key-id=workspace-test",
+        "model.security.keys=workspace-test:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" })
 class WorkspaceIT {
     @LocalServerPort private int port;
     @Autowired private JdbcTemplate jdbc;
@@ -56,6 +64,8 @@ class WorkspaceIT {
     @Autowired private ProblemService publications;
     @Autowired private WorkspaceProperties workspaceProperties;
     @Autowired private SandboxWorkspaceGateway sandboxGateway;
+    @Autowired private ModelConnectionService connections;
+    @Autowired private ModelConfigurationService models;
     private String token;
     private String csrf;
 
@@ -598,7 +608,27 @@ class WorkspaceIT {
         String version = request("GET", "/api/problems", null, null, 200).path("data").get(0).path("problemVersionId").asText();
         String exercise = request("POST", "/api/exercises", Map.of("problemVersionId", version), key, 202).path("data").path("exerciseId").asText();
         waitForState(exercise, "READY");
+        seedCheckedPersonalModel(exercise);
         return exercise;
+    }
+
+    /** Model readiness is a declared persisted fixture; these tests exercise real REST/Go/storage, not a live provider probe. */
+    private void seedCheckedPersonalModel(String exercise) {
+        String session = IdentitySecrets.digest(token);
+        var connection = connections.create(session, "fixture-connection-" + exercise,
+            new ModelConnectionRequest("Fixture " + exercise.substring(0, 8), "https://example.test",
+                ModelProtocol.OPENAI_CHAT, ModelProviderPreset.CUSTOM, "fixture-not-a-real-key", null));
+        var model = models.create(session, connection.id(), "fixture-model-" + exercise,
+            new ModelConfigurationRequest("Fixture", "fixture", 8192, 2048,
+                ModelThinkingMode.OFF, null, null, null, null));
+        String owner = jdbc.queryForObject("SELECT user_id::text FROM workspace_exercise WHERE id=?::uuid", String.class, exercise);
+        String check = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO personal_model_check(id,user_id,connection_id,model_configuration_id,connection_configuration_version,model_configuration_version,status,started_at,completed_at) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,1,1,'SUCCEEDED',now(),now())", check, owner, connection.id(), model.id());
+        for (int ordinal : new int[] { 1, 3 }) {
+            jdbc.update("INSERT INTO personal_model_check_request(id,check_id,ordinal,worker_id,status,dispatched_at,not_after,completed_at) VALUES(?::uuid,?::uuid,?,?::uuid,'SUCCEEDED',now(),now()+interval '120 seconds',now())",
+                UUID.randomUUID().toString(), check, ordinal, UUID.randomUUID().toString());
+        }
+        jdbc.update("UPDATE workspace_exercise SET selected_connection_id=?::uuid,selected_model_id=?::uuid,selected_connection_version=1,selected_model_version=1 WHERE id=?::uuid", connection.id(), model.id(), exercise);
     }
 
     @Test
@@ -668,6 +698,7 @@ class WorkspaceIT {
         long waitUntil = System.nanoTime() + Duration.ofSeconds(15).toNanos();
         while (!"READY".equals(request("GET", "/api/exercises/" + exercise, null, null, 200).path("data").path("state").asText())
             && System.nanoTime() < waitUntil) Thread.sleep(100);
+        seedCheckedPersonalModel(exercise);
         String credential = request("POST", "/api/exercises/" + exercise + "/control/acquire", Map.of(), "control-start", 200).path("data").path("credential").asText();
         JsonNode started = request("POST", "/api/exercises/" + exercise + "/start", Map.of(), "start-once", 200, credential).path("data");
         assertThat(started.path("state").asText()).isEqualTo("ACTIVE");

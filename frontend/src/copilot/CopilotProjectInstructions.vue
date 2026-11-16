@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { projectInstructions } from './projectInstructionsApi';
 const props = defineProps<{ owner: string; exerciseId: string; taskId: string | null; running: boolean }>();

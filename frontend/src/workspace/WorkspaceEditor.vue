@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
-import { NButton, useThemeVars } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import * as api from './api';
 import { buffer, committed, dirty as contentDirty, observe, useLatestBaseline, type Buffer } from './editorBuffer';
@@ -9,9 +9,9 @@ import { listDrafts, putDraft, readDraftEpoch, removeDraft, type Draft } from '.
 import CodeEditor from './CodeEditor.vue';
 import ClosedDrafts from './ClosedDrafts.vue';
 
-const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean; testBusy?: boolean; answeringClosed?: boolean }>();
+const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean; testBusy?: boolean; testTarget?: 'base' | 'challenge'; answeringClosed?: boolean }>();
 const emit = defineEmits<{ saved: []; select: [path: string]; 'stale-control': []; 'run-test': [revision: string]; 'write-busy': [value: boolean] }>();
-const theme = useThemeVars();
+const theme = { borderColor: 'var(--border)' };
 const buffers = reactive(new Map<string, Buffer>());
 const deleted = reactive(new Map<string, string>());
 function dirty(value: Buffer): boolean { return contentDirty(value) || deleted.has(value.path); }
@@ -301,7 +301,10 @@ onScopeDispose(() => {
     :style="{ '--editor-border': theme.borderColor }"
   >
     <h2>{{ selected || '选择或创建文件' }}</h2>
-    <p v-if="answeringClosed || props.exercise.state !== 'ACTIVE'" role="status">
+    <p
+      v-if="answeringClosed || props.exercise.state !== 'ACTIVE'"
+      role="status"
+    >
       作答已关闭。这里保留本地内容供查看或复制，不会自动保存，也不是最终冻结代码；备份内容可展开查看。
     </p>
     <p role="status">
@@ -316,14 +319,28 @@ onScopeDispose(() => {
     >
       {{ error }}
     </p>
-    <div v-if="testPrompt" role="group" aria-label="运行前保存确认">
+    <div
+      v-if="testPrompt"
+      role="group"
+      aria-label="运行前保存确认"
+    >
       <p>有未保存修改，测试不会使用这些草稿。保存所有已打开文件后运行，或返回编辑。</p>
-      <NButton :disabled="busy || !!unresolved || testBusy || !canWrite" @click="saveAndTest">保存后运行</NButton>
-      <NButton @click="testPrompt = false">返回编辑</NButton>
+      <NButton
+        :disabled="busy || !!unresolved || testBusy || !canWrite"
+        @click="saveAndTest"
+      >
+        保存后运行
+      </NButton>
+      <NButton @click="testPrompt = false">
+        返回编辑
+      </NButton>
     </div>
     <div class="editor-actions">
-      <NButton :disabled="!canWrite || busy || !!unresolved || testBusy || testPrompt" @click="requestTest">
-        运行基础测试
+      <NButton
+        :disabled="!canWrite || busy || !!unresolved || testBusy || testPrompt"
+        @click="requestTest"
+      >
+        {{ testTarget === 'challenge' ? '运行挑战与基础回归' : '运行基础测试' }}
       </NButton>
       <NButton
         :disabled="!current || !canWrite || busy || !!unresolved"

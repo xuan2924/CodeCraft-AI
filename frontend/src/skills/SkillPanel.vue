@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { NButton } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { changeSkill, importSkill, listSkills, saveSkill, skillError, skillPackage, type Skill, type SkillFile } from './api';
 const props = defineProps<{ owner: string }>();
@@ -206,7 +206,7 @@ function addFile() {
       </fieldset>
       <div class="actions">
         <NButton
-          attr-type="submit"
+          type="submit"
           :loading="busy"
           :disabled="busy"
         >

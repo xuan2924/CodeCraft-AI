@@ -1,20 +1,21 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { NButton, useThemeVars } from 'naive-ui';
+import NButton from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
 import { message, type Exercise, type Mutation } from './api';
 import * as api from './historyApi';
 import WorkspaceFileDiff from './WorkspaceFileDiff.vue';
-const props = defineProps<{ owner: string; exercise: Exercise; credential: string; disabled: boolean }>();
+const props = defineProps<{ owner: string; exercise: Exercise; credential: string; disabled: boolean; initialChange?: string }>();
 const emit = defineEmits<{ changed: []; unauthorized: []; locked: [value: boolean] }>();
-const theme = useThemeVars();
+const theme = { borderColor: 'var(--border)' };
 const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exercise.exerciseId}/${props.exercise.workspaceInstanceId}`);
 const root = computed(() => ['code-history', scope.value]);
 const cursor = ref<string | null>(null);
-const selected = ref('');
+const selected = ref(props.initialChange ?? '');
+watch(() => props.initialChange, value => { if (value) selected.value = value; });
 const selection = ref<{ change: api.CodeChange; input: api.PreviewInput } | null>(null);
 const accepted = ref<{ id: string; revision: string } | null>(null);
 const acknowledged = ref(false);
@@ -59,6 +60,9 @@ function inspect(mode: api.HistoryMode, targetRevision: string | null = null) {
   selection.value = { change: change.value, input: { mode, targetRevision, expectedRevision: props.exercise.revision } };
   void nextTick(() => { if (selection.value && !preview.isFetching.value) void preview.refetch(); });
 }
+watch([change, () => props.initialChange], ([value, initial]) => {
+  if (initial && value?.id === initial && value.retained) inspect('DIFF');
+}, { flush: 'post' });
 const mayRestore = computed(() => !props.disabled && !!props.credential && props.exercise.state === 'ACTIVE' && !busy.value && !stale.value
   && acknowledged.value && !!preview.data.value && preview.data.value.mode !== 'DIFF' && preview.data.value.conflicts.length === 0);
 function restore() {

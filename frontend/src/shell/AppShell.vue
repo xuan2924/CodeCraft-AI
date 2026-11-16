@@ -23,6 +23,7 @@ const links = computed(() => [
     { ...routes.skills, label: '个人 Skill', icon: BookOpen },
   ] : []),
   ...(ready.value && props.identity?.role === 'ADMIN' ? [{ ...routes.platformAgents, label: '平台角色配置', icon: Settings2 }] : []),
+  ...(ready.value ? [{ ...routes.feedback, label: props.identity?.role === 'ADMIN' ? '授权反馈处理' : '授权反馈', icon: ShieldCheck }] : []),
   { ...routes.account, label: ready.value && props.identity?.role === 'ADMIN' ? '账号管理' : props.identity ? '账号设置' : '受邀登录', icon: ready.value && props.identity?.role === 'ADMIN' ? ShieldCheck : UserRound },
   { ...routes.status, label: '服务状态', icon: Activity },
 ]);

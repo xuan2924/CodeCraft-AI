@@ -29,6 +29,14 @@ beforeEach(() => {
   vi.mocked(api.preview).mockImplementation(async (_owner, _exercise, selected, input) => ({ ...input, exerciseId: 'exercise', changeId: selected.id, fingerprint: 'fingerprint', conflicts: [], changes: [] }));
 });
 afterEach(() => { view?.unmount(); client?.clear(); });
+it('opens report-referenced changes as a frozen read-only Diff without restoring or replaying tools', async () => {
+  panel(); await flushPromises();
+  await view!.setProps({ initialChange: 'change', exercise: { ...exercise, state: 'ENDED' }, credential: '', disabled: true });
+  await flushPromises();
+  expect(api.preview).toHaveBeenCalledWith('owner', 'exercise', change, { mode: 'DIFF', targetRevision: null, expectedRevision: '2' }, expect.any(AbortSignal));
+  expect(api.restore).not.toHaveBeenCalled();
+  expect(view!.get('select').element.value).toBe('change');
+});
 it('reads history without writes, binds explicit preview to revision, and rejects stale confirmation', async () => {
   panel(); await inspect();
   expect(api.restore).not.toHaveBeenCalled();
