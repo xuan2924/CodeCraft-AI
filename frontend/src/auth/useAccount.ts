@@ -45,9 +45,9 @@ export function useAccount() {
       }
     } finally { if (!disposed) pending.value = false; }
   }
-  async function signIn(username: string, password: string) {
+  async function signIn(username: string, password: string, captchaId: string, captchaAnswer: string) {
     await action(async () => {
-      const result = await api.login(username, password, controller.signal);
+      const result = await api.login(username, password, controller.signal, captchaId, captchaAnswer);
       if (disposed) return;
       await client.cancelQueries({ queryKey: sessionKey });
       try { await resumeDrafts(result.id); }

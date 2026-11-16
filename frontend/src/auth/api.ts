@@ -28,8 +28,19 @@ export async function session(signal: AbortSignal): Promise<Identity | null> {
   try { return identity(await request('/api/auth/session', signal)); }
   catch (error) { if (error instanceof ApiError && error.status === 401) return null; throw error; }
 }
-export async function login(username: string, password: string, signal: AbortSignal): Promise<Identity> {
-  return identity(await post('/api/auth/login', { username, password }, signal));
+export interface Captcha { id: string; image: string; expiresAt: string }
+export async function captcha(signal: AbortSignal): Promise<Captcha> {
+  const value = await post('/api/auth/captcha', {}, signal);
+  if (!object(value) || typeof value.id !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value.id)
+    || typeof value.image !== 'string' || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(value.image)
+    || value.image.length > 100_000 || typeof value.expiresAt !== 'string' || !Number.isFinite(Date.parse(value.expiresAt))) {
+    throw new ApiError(502, 'INVALID_RESPONSE');
+  }
+  return { id: value.id, image: value.image, expiresAt: value.expiresAt };
+}
+export async function login(username: string, password: string, signal: AbortSignal,
+  captchaId: string, captchaAnswer: string): Promise<Identity> {
+  return identity(await post('/api/auth/login', { username, password, captchaId, captchaAnswer }, signal));
 }
 function requireCompleted(value: unknown): void {
   if (object(value) && value.state === 'PENDING') throw new ApiError(202, 'REVOCATION_PENDING');
@@ -65,6 +76,7 @@ export function validPassword(value: string): boolean {
 export function errorMessage(error: unknown): string {
   if (!(error instanceof ApiError)) return '连接中断，操作结果尚未确认。请检查网络后手动重试；改密请先尝试用新密码登录。';
   const messages: Record<string, string> = {
+    CAPTCHA_INVALID: '验证码错误、已过期或已使用，请刷新图片后重试。',
     INVALID_CREDENTIALS: '账号或密码不正确。', INVALID_CURRENT_PASSWORD: '当前密码不正确。',
     INVALID_USERNAME: '账号名需为 3–32 位字母、数字、下划线或连字符。',
     INVALID_PASSWORD: '密码需为 8–128 个 Unicode 码点，不去除空格。',

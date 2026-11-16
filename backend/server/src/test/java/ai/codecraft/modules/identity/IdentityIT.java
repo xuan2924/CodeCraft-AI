@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.codecraft.modules.identity.config.IdentityBootstrap;
+import ai.codecraft.fixture.CaptchaFixture;
+import ai.codecraft.modules.identity.service.CaptchaService;
 import ai.codecraft.modules.identity.config.IdentitySettings;
 import ai.codecraft.modules.identity.model.dto.CreatedAccountResponse;
 import ai.codecraft.modules.identity.model.dto.PasswordResetResponse;
@@ -29,6 +31,7 @@ import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
@@ -49,7 +52,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 @EnabledIfEnvironmentVariable(named = "IDENTITY_IT_RUN", matches = "disposable")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = "identity.public-origin=http://localhost:5173")
-@Import(IdentityIT.TimeFixture.class)
+@Import({IdentityIT.TimeFixture.class, CaptchaFixture.class})
 class IdentityIT {
     private static final Instant START = Instant.parse("2026-01-01T00:00:00Z");
     private static final String PASSWORD = "test-password-only";
@@ -61,6 +64,7 @@ class IdentityIT {
     @Autowired private IdentitySecrets secrets;
     @Autowired private MutableClock clock;
     @Autowired private RevocationProbe notifications;
+    @Autowired private CaptchaService captchas;
 
     @TestConfiguration
     static class TimeFixture {
@@ -88,8 +92,46 @@ class IdentityIT {
         clock.at(START);
         notifications.events.clear();
         notifications.fail = false;
-        jdbc.execute("TRUNCATE workspace_task_event, workspace_task_stream, workspace_test_stop, workspace_test_task, workspace_mutation, workspace_transition, workspace_control, workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
+        jdbc.execute("TRUNCATE identity_captcha, workspace_task_event, workspace_task_stream, workspace_test_stop, workspace_test_task, workspace_mutation, workspace_transition, workspace_control, workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
         store.bootstrap("admin_test", secrets.hash(PASSWORD));
+    }
+
+    @Test
+    void captchaRefreshExpiryIsolationAndReplayAreAuthoritative() {
+        var first = captchas.issue("context-a", "address-a");
+        var latest = captchas.issue("context-a", "address-a");
+        assertThatThrownBy(() -> captchas.verify("context-a", first.id(), "ABCDE")).isInstanceOf(IdentityFailure.class);
+        assertThatThrownBy(() -> captchas.verify("context-b", latest.id(), "ABCDE")).isInstanceOf(IdentityFailure.class);
+        assertThatThrownBy(() -> captchas.verify("context-a", latest.id(), "WRONG")).isInstanceOf(IdentityFailure.class);
+        assertThatThrownBy(() -> captchas.verify("context-a", latest.id(), "ABCDE")).isInstanceOf(IdentityFailure.class);
+        var expired = captchas.issue("context-a", "address-a");
+        clock.at(START.plusSeconds(120));
+        assertThatThrownBy(() -> captchas.verify("context-a", expired.id(), "ABCDE")).isInstanceOf(IdentityFailure.class);
+        var valid = captchas.issue("context-a", "address-a");
+        captchas.verify("context-a", valid.id(), "abcde");
+        assertThatThrownBy(() -> captchas.verify("context-a", valid.id(), "ABCDE")).isInstanceOf(IdentityFailure.class);
+    }
+
+    @Test
+    void concurrentCaptchaConsumptionHasExactlyOneWinner() {
+        var challenge = captchas.issue("context", "address");
+        var attempts = IntStream.range(0, 8).mapToObj(index -> CompletableFuture.supplyAsync(() -> {
+            try { captchas.verify("context", challenge.id(), "ABCDE"); return true; }
+            catch (IdentityFailure rejected) { return false; }
+        })).toList();
+        assertThat(attempts.stream().map(CompletableFuture::join).filter(Boolean::booleanValue).count()).isEqualTo(1);
+    }
+
+    @Test
+    void missingCaptchaStillConsumesPasswordAdmissionBudget() throws Exception {
+        try (Browser browser = new Browser()) {
+            browser.csrf();
+            for (int index = 0; index < 5; index++) {
+                browser.post("/api/auth/login", Map.of("username", "admin_test", "password", PASSWORD), null, 400);
+                assertThat(browser.body.path("code").asText()).isEqualTo("CAPTCHA_INVALID");
+            }
+            browser.post("/api/auth/login", Map.of("username", "admin_test", "password", PASSWORD), null, 429);
+        }
     }
 
     @Test
@@ -172,8 +214,7 @@ class IdentityIT {
         try (Browser browser = new Browser()) {
             browser.csrf();
             for (int index = 0; index < 5; index++) {
-                browser.post("/api/auth/login", Map.of("username", index == 0 ? "admin_test" : "unknown_" + index,
-                    "password", "incorrect-password"), null, 401);
+                browser.login(index == 0 ? "admin_test" : "unknown_" + index, "incorrect-password", 401);
                 assertThat(browser.body.path("code").asText()).isEqualTo("INVALID_CREDENTIALS");
             }
             browser.post("/api/auth/login", Map.of("username", "admin_test", "password", PASSWORD), null, 429);
@@ -418,7 +459,10 @@ class IdentityIT {
         }
         void login(String username, String password, int status) throws Exception {
             csrf();
-            post("/api/auth/login", Map.of("username", username, "password", password), null, status);
+            post("/api/auth/captcha", Map.of(), null, 200);
+            String challenge = body.path("data").path("id").asText();
+            post("/api/auth/login", Map.of("username", username, "password", password,
+                "captchaId", challenge, "captchaAnswer", "ABCDE"), null, status);
         }
         void password(String oldPassword, String newPassword) throws Exception {
             csrf();

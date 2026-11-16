@@ -1,6 +1,7 @@
 package ai.codecraft.testfixture;
 
 import ai.codecraft.ServerApplication;
+import ai.codecraft.fixture.CaptchaFixture;
 import ai.codecraft.modules.workspace.config.WorkspaceProperties;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.workspace.v1.ApplyBatchRequest;
@@ -30,7 +31,7 @@ public final class WorkspaceCrashApplication {
         mode = args[0];
         crash = mode.equals("crash");
         evidence = Path.of(args[1]);
-        SpringApplication application = new SpringApplication(ServerApplication.class, FaultConfiguration.class);
+        SpringApplication application = new SpringApplication(ServerApplication.class, FaultConfiguration.class, CaptchaFixture.class);
         application.run("--server.port=" + args[2], "--server.address=127.0.0.1",
             "--identity.public-origin=http://localhost:5173");
     }

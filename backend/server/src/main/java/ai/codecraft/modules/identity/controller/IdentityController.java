@@ -3,6 +3,8 @@ package ai.codecraft.modules.identity.controller;
 import ai.codecraft.common.model.ApiResponse;
 import ai.codecraft.modules.identity.config.IdentitySettings;
 import ai.codecraft.modules.identity.model.dto.CreateAccountRequest;
+import ai.codecraft.modules.identity.model.dto.CaptchaResponse;
+import ai.codecraft.modules.identity.service.CaptchaService;
 import ai.codecraft.modules.identity.model.dto.CreatedAccountResponse;
 import ai.codecraft.modules.identity.model.dto.CsrfResponse;
 import ai.codecraft.modules.identity.model.dto.LoginRequest;
@@ -33,12 +35,15 @@ public class IdentityController {
     private final IdentityService service;
     private final IdentitySettings settings;
     private final Clock clock;
+    private final CaptchaService captcha;
 
-    public IdentityController(IdentityTransactionService store, IdentityService service, IdentitySettings settings, Clock clock) {
+    public IdentityController(IdentityTransactionService store, IdentityService service, IdentitySettings settings, Clock clock,
+                              CaptchaService captcha) {
         this.store = store;
         this.service = service;
         this.settings = settings;
         this.clock = clock;
+        this.captcha = captcha;
     }
 
     @GetMapping("/api/auth/csrf")
@@ -52,10 +57,16 @@ public class IdentityController {
         return ApiResponse.success(store.authenticate(IdentityHttp.sessionHash(request)).identity());
     }
 
+    @PostMapping("/api/auth/captcha")
+    public ApiResponse<CaptchaResponse> captcha(HttpServletRequest request) {
+        return ApiResponse.success(captcha.issue(request.getHeader(IdentityHttp.CSRF_HEADER), request.getRemoteAddr()));
+    }
+
     @PostMapping("/api/auth/login")
     public ApiResponse<SessionResponse> login(@RequestBody LoginRequest input, HttpServletRequest request, HttpServletResponse response) {
         LoginResultDTO login = service.login(input.username(), input.password(), request.getRemoteAddr(),
-            IdentityHttp.anonymousHash(request), request.getHeader(IdentityHttp.CSRF_HEADER), IdentityHttp.sessionHash(request));
+            IdentityHttp.anonymousHash(request), request.getHeader(IdentityHttp.CSRF_HEADER), IdentityHttp.sessionHash(request),
+            input.captchaId(), input.captchaAnswer());
         IdentityHttp.sessionCookie(response, settings, login.token(), clock.instant(), login.identity().expiresAt());
         IdentityHttp.cookie(response, settings, IdentityHttp.ANONYMOUS_COOKIE, "", 0);
         return ApiResponse.success(login.identity());

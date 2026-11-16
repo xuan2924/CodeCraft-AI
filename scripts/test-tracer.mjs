@@ -288,8 +288,8 @@ try {
       await linuxJavaTests({ directory, project, values, database: 'workspace_recovery', mode: 'recovery', test: 'WorkspaceCrashRecoveryIT' });
     }
   }
-  if (workspaceMode) fixtures = await browserFixtures({ project, composeArgs, env: composeEnv,
-    username: values.POSTGRES_USER, database: values.POSTGRES_DB });
+  if (workspaceMode || identityMode) fixtures = await browserFixtures({ project, composeArgs, env: composeEnv,
+    username: values.POSTGRES_USER, database: values.POSTGRES_DB, fingerprintKey: values.IDENTITY_FINGERPRINT_KEY });
   if (copilotBrowser) {
     inspectSandbox();
     run(process.execPath, [join(root, 'frontend/node_modules/vite/bin/vite.js'), 'build', join(root, 'frontend'), '--config', join(root, 'frontend/vite.config.ts')]);

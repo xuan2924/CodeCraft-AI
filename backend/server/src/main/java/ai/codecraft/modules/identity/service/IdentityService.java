@@ -16,15 +16,18 @@ public final class IdentityService {
     private final IdentityTransactionService store;
     private final IdentitySecrets secrets;
     private final IdentityRevocationCoordinator revocations;
+    private final CaptchaService captcha;
 
-    public IdentityService(IdentityTransactionService store, IdentitySecrets secrets, IdentityRevocationCoordinator revocations) {
+    public IdentityService(IdentityTransactionService store, IdentitySecrets secrets, IdentityRevocationCoordinator revocations,
+                           CaptchaService captcha) {
         this.store = store;
         this.secrets = secrets;
         this.revocations = revocations;
+        this.captcha = captcha;
     }
 
     public LoginResultDTO login(String usernameInput, String password, String address, String anonymousHash,
-                       String expectedCsrf, String previousSessionHash) {
+                       String expectedCsrf, String previousSessionHash, String captchaId, String captchaAnswer) {
         String username;
         try { username = IdentityPolicy.username(usernameInput); }
         catch (IdentityFailure failure) {
@@ -32,6 +35,7 @@ public final class IdentityService {
             throw failure;
         }
         rate("login", username, address);
+        captcha.verify(expectedCsrf, captchaId, captchaAnswer);
         IdentityPolicy.password(password);
         UserEntity user = store.findUser(username);
         boolean matches = secrets.matches(password, user == null ? null : user.passwordHash());

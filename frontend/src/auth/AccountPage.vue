@@ -5,6 +5,7 @@ import { RouterLink, useRouter } from 'vue-router';
 import { requestSaveLogout } from '../workspace/logoutIntent';
 import { validPassword, validUsername } from './api';
 import { useAccount } from './useAccount';
+import CaptchaField from './CaptchaField.vue';
 
 const theme = useThemeVars();
 const router = useRouter();
@@ -12,6 +13,10 @@ const { query, identity, pending, error, notice, temporaryPassword, createdUsern
   unresolvedReset, signIn, signOut, password, create, reset } = useAccount();
 const username = ref('');
 const loginPassword = ref('');
+const captchaId = ref('');
+const captchaAnswer = ref('');
+const captchaEpoch = ref(0);
+function updateCaptcha(id: string, answer: string) { captchaId.value = id; captchaAnswer.value = answer; }
 const currentPassword = ref('');
 const newPassword = ref('');
 const invitedUsername = ref('');
@@ -20,7 +25,8 @@ const logoutRequested = ref(false);
 const resetTarget = ref('');
 const resetValid = computed(() => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resetTarget.value));
 const showPasswordForm = computed(() => identity.value?.passwordChangeRequired || changingPassword.value);
-const loginValid = computed(() => validUsername(username.value) && validPassword(loginPassword.value));
+const loginValid = computed(() => validUsername(username.value) && validPassword(loginPassword.value)
+  && !!captchaId.value && captchaAnswer.value.trim().length === 5);
 const passwordValid = computed(() => validPassword(currentPassword.value) && validPassword(newPassword.value));
 watch(() => identity.value?.id, () => {
   loginPassword.value = '';
@@ -37,7 +43,8 @@ async function saveThenLogout() {
 }
 async function submitLogin() {
   if (!loginValid.value || pending.value) return;
-  try { await signIn(username.value, loginPassword.value); } finally { loginPassword.value = ''; }
+  try { await signIn(username.value, loginPassword.value, captchaId.value, captchaAnswer.value); }
+  finally { loginPassword.value = ''; updateCaptcha('', ''); captchaEpoch.value++; }
 }
 async function submitPassword() {
   if (!passwordValid.value || pending.value) return;
@@ -49,14 +56,15 @@ async function submitPassword() {
 <template>
   <main
     class="account-page"
+    :class="{ 'login-layout': !identity }"
     :style="{ '--primary': theme.primaryColor }"
   >
     <header>
       <p class="project-name">
-        CodeCraft / 工程底座
+        CodeCraft / 工程演练
       </p>
       <h1>{{ identity ? '账号' : '受邀账号登录' }}</h1>
-      <p>第二阶段工程练习：个人模型连接、Skill 与演练内 Copilot；不含面试官、挑战或 AI 报告。</p>
+      <p>在真实工作区中练习分析、编码与验证，保留每一次工程决策。</p>
       <RouterLink to="/">查看服务链路</RouterLink>
       <RouterLink
         v-if="identity && !identity.passwordChangeRequired"
@@ -132,6 +140,11 @@ async function submitPassword() {
           :disabled="pending"
         >
         <small id="password-help">8–128 个 Unicode 码点。空格计入密码。</small>
+        <CaptchaField
+          :key="captchaEpoch"
+          :disabled="pending"
+          @change="updateCaptcha"
+        />
         <NButton
           attr-type="submit"
           type="primary"
@@ -312,6 +325,12 @@ async function submitPassword() {
 
 <style scoped>
 .account-page { max-width: 760px; margin: 5vh auto; padding: 0 24px; }
+.login-layout { max-width: 1080px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 48px; padding: 40px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-panel); }
+.login-layout > header { display: flex; flex-direction: column; justify-content: center; border-right: 1px solid var(--border); padding-right: 40px; }
+.login-layout > header h1 { font-size: clamp(1.8rem, 3vw, 2.7rem); line-height: 1.2; }
+.login-layout > header p { color: var(--muted-foreground); line-height: 1.7; }
+.login-layout > section { min-width: 0; }
+@media (max-width: 860px) { .login-layout { grid-template-columns: minmax(0, 1fr); gap: 24px; padding: 24px; } .login-layout > header { border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 20px; } }
 .account-form { display: grid; gap: 12px; max-width: 480px; }
 .account-form h2 { margin: 16px 0 0; font-size: 22px; }
 .account-form p { margin: 0 0 8px; }

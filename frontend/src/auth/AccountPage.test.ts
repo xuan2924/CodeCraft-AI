@@ -7,6 +7,9 @@ import { validPassword, validUsername } from './api';
 import { clearDrafts } from '../workspace/drafts';
 import { cancelSaveLogout, saveLogoutOwner } from '../workspace/logoutIntent';
 vi.mock('../workspace/drafts', () => ({ clearDrafts: vi.fn(async () => {}), resumeDrafts: vi.fn(async () => {}) }));
+vi.mock('./api', async (original) => ({ ...await original<typeof import('./api')>(),
+  captcha: vi.fn(async () => ({ id: 'a'.repeat(43), image: 'data:image/png;base64,AAAA', expiresAt: new Date(Date.now() + 120000).toISOString() })),
+}));
 
 const fixtures = {
   user: { id: 'fixture-user', username: 'invited', role: 'USER', passwordChangeRequired: false, expiresAt: '2026-12-01T00:00:00Z' },
@@ -53,7 +56,7 @@ it('shows model and Skill entries without claiming the later interview stage exi
   const { page } = await render(vi.fn<typeof fetch>(async () => ok(fixtures.user)));
   expect(page.get('a[href="/models"]').text()).toBe('个人模型连接');
   expect(page.get('a[href="/skills"]').text()).toBe('个人 Skill');
-  expect(page.text()).toContain('不含面试官、挑战或 AI 报告');
+  expect(page.text()).toContain('在真实工作区中练习分析、编码与验证');
 });
 
 it('clears account drafts only after confirmed logout', async () => {
@@ -105,6 +108,7 @@ describe('identity form boundaries', () => {
     const { page, client } = await render(fetcher);
     await page.get('#login-username').setValue('invited');
     await page.get('#login-password').setValue('test-password');
+    await page.get('#login-captcha').setValue('ABCDE');
     await page.get('form').trigger('submit');
     await flushPromises();
     await page.get('form').trigger('submit');
@@ -212,6 +216,7 @@ describe('identity form boundaries', () => {
     const { page, client } = await render(fetcher);
     await page.get('#login-username').setValue('invited');
     await page.get('#login-password').setValue('test-password');
+    await page.get('#login-captcha').setValue('ABCDE');
     await page.get('form').trigger('submit');
     await flushPromises();
     page.unmount();

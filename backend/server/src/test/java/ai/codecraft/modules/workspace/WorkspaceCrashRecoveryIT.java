@@ -115,7 +115,9 @@ class WorkspaceCrashRecoveryIT {
 
     private void login(String username, String password) throws Exception {
         csrf = request("GET", "/api/auth/csrf", null, null, null, 200).path("data").path("token").asText();
-        request("POST", "/api/auth/login", Map.of("username", username, "password", password), null, null, 200);
+        String captcha = request("POST", "/api/auth/captcha", Map.of(), null, null, 200).path("data").path("id").asText();
+        request("POST", "/api/auth/login", Map.of("username", username, "password", password,
+            "captchaId", captcha, "captchaAnswer", "ABCDE"), null, null, 200);
         csrf = request("GET", "/api/auth/csrf", null, null, null, 200).path("data").path("token").asText();
     }
 

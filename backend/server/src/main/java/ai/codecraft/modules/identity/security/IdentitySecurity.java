@@ -63,7 +63,7 @@ public class IdentitySecurity {
                 .accessDeniedHandler((request, response, error) -> ApiErrorWriter.write(response, json,
                     error instanceof CsrfException ? IdentityErrorCode.CSRF_REJECTED : IdentityErrorCode.FORBIDDEN)))
             .authorizeHttpRequests(routes -> routes
-                .requestMatchers("/api/internal/status", "/api/auth/csrf", "/api/auth/login", "/api/auth/logout", "/error").permitAll()
+                .requestMatchers("/api/internal/status", "/api/auth/csrf", "/api/auth/captcha", "/api/auth/login", "/api/auth/logout", "/error").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().denyAll());
@@ -107,7 +107,7 @@ public class IdentitySecurity {
             protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
                 throws ServletException, IOException {
                 String path = request.getServletPath();
-                if (!List.of("/api/internal/status", "/api/auth/csrf", "/api/auth/login", "/api/auth/logout", "/error").contains(path)) {
+                if (!List.of("/api/internal/status", "/api/auth/csrf", "/api/auth/captcha", "/api/auth/login", "/api/auth/logout", "/error").contains(path)) {
                     AuthenticatedIdentityDTO auth = store.authenticate(IdentityHttp.sessionHash(request));
                     // Optional client ownership condition: a stale tab must not read or submit secrets under a newly switched cookie.
                     String expectedOwner = request.getHeader(IdentityHttp.EXPECTED_OWNER_HEADER);
