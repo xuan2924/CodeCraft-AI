@@ -1,13 +1,11 @@
 # 任务分诊标签
 
-本地任务通过 `Status:` 使用以下取值：
+本地任务 `Status:` 取值如下：
 
 | 标签 | 含义 |
 |---|---|
-| needs-triage | 等待维护者评估 |
-| needs-info | 等待补充信息 |
-| ready-for-agent | 规格充分，可交给 Agent 实现 |
-| ready-for-human | 需要人工执行 |
-| wontfix | 不处理 |
-
-技能提到相应分诊角色时，使用上述原样标签。
+| `needs-triage` | 待评估 |
+| `needs-info` | 待补充信息 |
+| `ready-for-agent` | 规格明确，可执行 |
+| `ready-for-human` | 需人工处理 |
+| `wontfix` | 不处理 |

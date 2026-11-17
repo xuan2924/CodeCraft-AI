@@ -2,17 +2,24 @@
 status: accepted
 ---
 
-# Java 与 Go 开发及验收链路统一到同一 Linux 时钟域
+# ADR-0002：Java 与 Go 统一部署在同一 Linux 时钟域
 
-用户确认：Java 后端与 Go 服务在同一 Linux VM/宿主时钟域运行，作为日常开发及真实链路验收的目标布局；Windows 可以继续运行编辑器、Vite 和浏览器。此决策替代原先“Windows 本机 Java + Docker Desktop Linux Go”的日常开发路线，不改变 Java/Go 职责、首期同机部署或题目容器隔离约束。
+## 背景
 
-原因是固定绝对截止时间跨 Windows/VM 时钟传递时，已实际出现 Java 派发时过期 624 ms、Go 接收时仍余 119 ms，导致过期准备被发布。将两端移入同一 Linux VM 后，原用例 10 次通过，其中 8 次过期请求到达 Go 并被拒绝。详细证据与限制见 [时钟诊断与复验](../validation/workspace-write-browser-10-12.md)。
+演练准备、文件写入与测试执行涉及跨 Java 和 Go 传递绝对截止时间戳。早期开发采用“Windows 宿主机运行 Java JVM + Docker Desktop Linux VM 运行 Go 沙箱”，实测出现严重的时钟偏差：Java 派发时请求已过期 `624 ms`，Go 接收时仍显示剩余 `119 ms`，导致本应拒绝的过期任务被放行。
 
-## 取舍与后续实施
+## 备选方案
 
-- 接受 Java 启动、调试、网络配置与集成测试入口迁移的成本，换取截止判断所需的一致时钟前提；Windows 本地编译、静态检查和不涉及跨端截止的单元测试不因此禁用。
-- 不再将 Windows JVM + Linux VM 混合模式作为截止时间敏感的业务开发或验收基线。不能通过增加 sleep、延长授权或反复重跑关闭该问题；若未来重新支持混合/跨时钟部署，须另行设计并验证授权时间协议。
-- 同一 Linux 时钟域不代表系统时间永不跳变。本决策获批时保留了专门的时钟异常保护要求；用户后续通过 [ADR 0003](0003-accept-shared-system-clock-risk.md) 接受首期共享系统时钟调整风险，不再建设该专项保护。固定授权期限及正常过期拒绝规则仍保留。
-- 本次确认的是运行边界，不指定正式 Java 镜像、容器网络或调试方案。本决策获批时启动/验收脚本迁移及完整链路回归尚未完成，后续实施进度见 [工具链设计](../design/engineering-toolchain.md)与 [验证记录](../validation/workspace-write-browser-10-12.md)；诊断用的共享网络、Docker socket 和临时脚本不是正式部署方案，Java 应用与用户题目容器不得照搬诊断 socket 权限。
+- **维持 Windows JVM + Linux VM 混合开发**：需自行设计跨宿主时钟同步或相对租约补偿协议，复杂度高且与生产部署脱节。
+- **Java 与 Go 统一运行在同一 Linux Docker daemon / VM 内**：两端直接共享同一个 Linux 系统 UTC 时钟；Windows 宿主机继续运行 IDE、Vite 前端和浏览器。
 
-有效方案入口：[架构](../design/architecture.md)、[工程工具链](../design/engineering-toolchain.md)、[任务与恢复](../design/task-event-recovery.md)。
+## 决策与代价
+
+选择 **Java 与 Go 运行在同一 Linux Docker 时钟域**。
+
+- **收益**：彻底消除双端 OS 时钟漂移导致的截止判定分歧（迁移后原复现用例 10 次全部通过）。
+- **代价**：增加了 Java 容器化构建与启动步骤（通过 `scripts/dev.mjs java` 封装）；Windows 本地仍可做静态检查和纯单测，但跨端截止验收必须在同一 Linux 域进行。
+
+## 关键源码
+
+- `compose.yaml`、`scripts/dev.mjs`、`PreparationReceiptValidator.java`

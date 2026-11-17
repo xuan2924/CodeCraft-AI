@@ -1,69 +1,45 @@
-# 架构与首期范围
+# 系统整体架构与职责边界
 
-状态：工程底座、Copilot 编码体验与完整面试流程已交付。第三阶段实现及实际验证见 [工作台收口](../../.scratch/front-refactor/issues/08-workbench-settings-closeout.md)，第二阶段证据见 [阶段验收](../../.scratch/copilot-loop/issues/22-stage-acceptance.md)。历史验证记录不构成今天的待办或生产保证。运行见 [README](../../README.md)，开发入口见 [导航](../README.md)。
+## 解决什么问题
 
-## 技术路线与职责
+CodeCraft-AI 是一个面向 AI 结对编程面试的工程演练与评估平台：候选人在受限的 Web IDE 中配合个人 Copilot 完成真实 Java/Maven 项目开发，同时由平台内置的面试官（澄清/提示/代码追问）与评测官完成闭环评估。系统核心矛盾在于**既要像真实 IDE 一样流畅协作，又要保证代码安全隔离、计费隔离和结果可核验**。
 
-- 产品面向 AI 结对编程面试中的真实工程演练与评估；首期仅限可信受邀用户。
-- Java 主后端 + Go 执行服务 + Vue Web IDE。Copilot、Interviewer、Evaluator 是 Java 内部职责，不拆为三个服务。
-- Java 21、Spring Boot 3、Maven、LangChain4j；PostgreSQL + MyBatis + Flyway。
-- Go 使用 Docker SDK，通过 gRPC + Protobuf 与 Java 通信。
-- Vue 3、TypeScript、Vite、shadcn-vue 源码式组件 + Reka UI、Tailwind CSS、Vue Router、Pinia、TanStack Vue Query、Monaco Editor、xterm.js。前端重构 08 已移除 Naive UI，旧业务控件复用统一源码组件；图标使用官方替代包 `@lucide/vue`。
-- 浏览器通过 REST + SSE 访问 Java；测试日志经 Go gRPC 服务端流、Java SSE 转发。首期无 WebSocket 或交互式 shell。
-- Java 拥有题目、演练、身份、审批、事件和报告业务数据；Go 管理工作区、文件工具、执行、日志及资源回收，不访问业务数据库。
-- 浏览器不直连 Go、Docker 或模型供应商；模型凭证由用户/管理员提交给 Java 后安全保管，不回显完整值、不下发沙箱。Go RPC 仅供受信任内部调用方使用。
-- 前端 Router 管理路由（`src/routes.ts` 集中定义），Pinia 仅保存导航展开等共享客户端布局，Vue Query 管理身份及其他服务端缓存；不在 store 持久化凭证或复制服务端实体。`src/components/ui/` 提供基础控件、Reka 弹窗/可调整面板及主题，`tokens.ts` 是颜色唯一来源，Monaco/Diff 通过官方主题 API、xterm 通过 theme 选项复用同一色值，不覆盖其内部布局。Tailwind 用于布局和轻量样式；不启用 Preflight，避免重置编辑器/终端和业务元素。
+## 架构全景与技术选型
 
-## 演练边界
+```text
+Browser (Vue 3 + Monaco + xterm + IndexedDB 草稿)
+   │  REST + SSE（HttpOnly Cookie + CSRF + X-Operation-Credential）
+   ▼
+Java 主后端 (Spring Boot 3 + MyBatis + Flyway + LangChain4j) ──▶ PostgreSQL 17
+   │  gRPC / Protobuf（SANDBOX_RPC_KEY 内部鉴权，同 Linux 时钟域）
+   ▼
+Go 执行服务 (Docker SDK) ──▶ 受限题目 / 开发容器（Linux cgroup + 禁网/开发隔离）
+```
 
-一次演练是一个用户对一个固定题目版本的独立尝试，拥有独立工作区、对话、测试记录及报告。题目后续发布不改变已有演练。
+### 核心设计取舍
 
-每个用户最多一场未结束演练。离开页面后可以回来；结束后只读，再练从题目初始工程创建新演练，不覆盖旧记录，不提供旧代码分叉继续或自动成绩对比。生命周期与计时见 [面试与评测](interview-evaluation.md)。
+1. **Java 与 Go 职责严格切分，不共享数据库**：
+   - **Java 拥有业务状态**：用户身份、演练生命周期、授权锁、任务调度、模型调用与评测逻辑。
+   - **Go 拥有文件与容器执行**：工作区磁盘目录、原子版本提交、测试副本、Docker 容器启停与回收。Go 不连 PostgreSQL，浏览器也绝不直连 Go 或 Docker。
+2. **三个 AI 角色收敛在 Java 单体内，不拆微服务**：
+   - **Copilot**：用用户自己的模型 Key 与预算，拥有受控代码工具和审批流。
+   - **面试官（Interviewer）与评测官（Evaluator）**：用管理员发布的平台模型 Key 与预算，绝对禁止改代码；这样做可以共用演练状态锁、存储预算账本与事件流设施。
+3. **前端状态单一事实来源**：
+   - TanStack Vue Query 管理全部服务端状态；Pinia（`layoutStore`）只管面板布局等客户端 UI 状态；UI 组件库采用 shadcn-vue + Reka UI，主题色统一由 `tokens.ts` 同步到 Monaco 和 xterm。
+4. **当前部署前提**：面向可信受邀用户的本机 Linux Docker 部署，不引入 Redis 强制依赖（仅作可选限流后端）、消息队列、向量库或容器预热池；同一用户同时最多只有 **1 场未结束演练**。
 
-首期仅运行平台维护的 Java/Maven 题目，不接受任意仓库上传或运行时安装外部依赖。题目以版本化文件维护、验证后发布，暂不建设可视化出题后台。
+## 权限、隐私与费用隔离
 
-## 配置权、隐私与费用
+| AI 角色 | 配置入口 | 凭证与计费方 | 数据访问边界 |
+|---|---|---|---|
+| Copilot / 上下文摘要 | 普通用户个人中心 | 用户 Key，用户承担 | 读写当前演练可编辑文件、个人 Skill 快照 |
+| 面试官（Interviewer） | 管理员平台配置 | 平台 Key，平台承担 | 只读公开题面、最近 8 轮问答、`DEFENSE` 模式读有界源码 |
+| 评测官（Evaluator） | 管理员平台配置 | 平台 Key，平台承担 | 只读冻结代码证据、受控测试结果、时间轴与上下文轨迹 |
 
-| 职责 | 配置者 | 凭证与费用 |
-|---|---|---|
-| Copilot 及上下文摘要 | 用户 | 用户 Key，用户承担 |
-| 面试官 | 管理员 | 平台 Key，平台承担 |
-| 评测官 | 管理员 | 平台 Key，平台承担 |
+> 管理员后台不提供偷看普通用户私有演练代码、对话或模型 Key 明文的入口；仅在用户主动提交授权反馈包时导出受控快照。
 
-用户不能配置面试官/评测官；管理员后台不提供用户 Copilot 私有配置、Skill、对话、代码或报告的查看和修改入口，也不回显凭证明文。后台管理账号及必要运行状态；用户主动授权的反馈包是有限例外，见 [面试与评测](interview-evaluation.md#反馈)。
+## 关键源码入口
 
-这不是对服务器管理员的端到端加密隔离承诺。Evaluator 按职责读取必要证据，也不等于管理员可以浏览整场演练。平台安全与资源约束始终生效，任何 Agent 配置都不能覆盖。
-
-## 实现顺序与范围
-
-1. Java/Maven 题目、演练工作区、编辑与测试。
-2. Copilot 工具循环、审批、Diff、steer、上下文压缩与用户 Skill。
-3. 确定性面试流程、平台 Agent 配置与基于证据的评测。
-
-第二阶段已按 [规格](../../.scratch/copilot-loop/spec.md)与 [验收记录](../../.scratch/copilot-loop/issues/22-stage-acceptance.md)收口：DeepSeek 非思考/思考真实链路、运行控制、压缩、用户 Skill、用量费用、三协议声明组合及数据删除联动。用户已取消 OpenAI/GLM/Kimi 三家供应商的本阶段目标；保留三协议和自定义连接契约，不推定任意组合兼容，也不重新选型。当前已接入面试官、暂停/恢复、预设挑战、回顾评测、平台角色版本发布和授权反馈，复用底座授权、计量和恢复边界。开始实现前仍须完成个人模型检查；平台角色在演练创建时固定。具体状态及证据契约见 [面试与评测](interview-evaluation.md)。
-
-账号管理、个人模型配置/检查及用户显式授权的反馈已交付。暂不引入 Redis、消息队列、向量数据库、AST 索引、容器预热池、多语言执行、企业组织或多人协作体系。
-
-本阶段允许同机部署，仅限可信受邀用户，安全与剩余风险见 [工作区与执行](workspace-execution.md#部署与隔离)。独立机器/VM 不作为当前前提，扩大试用范围前重新评审。
-
-## 按专题实现
-
-- 工程目录、依赖、生成、迁移、启动与验证：读 [工程工具链](engineering-toolchain.md)。
-- 身份、页面操作权、REST/gRPC/SSE 与恢复：读 [接口与事件](api-events.md)。
-- 工具循环、停止、steer、压缩：读 [Copilot Loop](copilot-loop.md)。
-- 模型协议、Key、连接测试、用量与费用：读 [模型接入](model-access.md)。
-- Skill 编辑、启停、加载与发布：读 [Skill 配置](skills.md)。
-- 提案审批与模式切换：读 [审批](approval.md)。
-- 文件版本、写入、测试容器、保留与删除：读 [工作区与执行](workspace-execution.md)。
-- 题目、计时、挑战、报告与反馈：读 [面试与评测](interview-evaluation.md)。
-- 草稿、编辑器、日志及用户操作呈现：读 [Web IDE](web-ide.md)。
-
-## 待决与实现验证
-
-- 工程目录已随任务 06 初始化为 `backend/server/`、`backend/sandbox/`、`backend/proto/` 和 `frontend/`。状态、身份、工作区与执行模块按功能建立；后续业务模块与 feature 边界仍按功能扩展，不提前搭建无用途框架。
-- 已确认 Maven Wrapper、npm + package-lock.json、Vitest + Vue Test Utils、Playwright；暂不引入 MapStruct、不启用虚拟线程，按实际需求再评估。
-- 日常开发与真实链路验收已改为 Java/Go 同处一个 Linux VM/宿主时钟域；Windows 可保留编辑器、Vite 和浏览器，不再以 Windows JVM + Linux VM 混合模式作为截止时间敏感的业务基线。变更原因与取舍见 [ADR 0002](../adr/0002-java-go-shared-linux-clock.md)。PostgreSQL 继续由 Docker 提供，Go 工作区使用持久化具名卷，题目仍在独立受限容器执行。启动/验收脚本已迁移到 Linux Java 容器（含集成测试 JVM），证据见 [#10–#12 验证](../validation/workspace-write-browser-10-12.md)；首期按 [ADR 0003](../adr/0003-accept-shared-system-clock-risk.md) 接受共享系统时间调整的风险，不建设专项时钟异常保护；正常截止与重启恢复仍须实现并覆盖 L1，额外真实验证按需安排。
-- 工具链决定票已验收：前端以精确依赖覆盖清除本次审计告警，Windows Go race 显式使用兼容 C 工具链。任务 06 已交付正式清单/脚本与 Linux CI 配置；公开 GitHub 仓库已运行轻量 quick 和非收费 nightly smoke；Linux 隔离及业务链路证据按对应功能记录，不生成默认全套验证待办。精确版本、覆盖策略与证据见 [工程工具链](engineering-toolchain.md)。
-- Monaco 封装与 Vite worker 已有 #10–#12 证据；xterm 与 SSE 客户端已在 #14 按约定边界收口。后续客户端继续遵循 Cookie 身份和恢复契约，不因草案 POST 示例锁定库。
-- 依赖选择兼容版本并锁定，以实际清单和脚本为准。一次性 PoC 已从当前树移除，选型结论保留于 ADR 0001。
-- 第一阶段 #16 与第二阶段 #21 已完成保留、计量/预留、引用回收及删除验收，见 [工作区与执行](workspace-execution.md#保留与删除)：已结束演练默认保留 30 天，每用户最多 20 场历史；AI 记录进入同一 512 MiB 预算，个人连接/Skill 原件独立。不新增固定全局磁盘预算/水位或灾难备份；正常重启对账与磁盘不足失败安全已有 L1 证据，不等于验证了任意部署容量或断电恢复。
+- 启动与配置：`ServerApplication.java`、`compose.yaml`
+- 跨端契约：`backend/proto/workspace.proto`、`backend/sandbox/internal/workspace/service_linux.go`
+- 前端总入口：`frontend/src/routes.ts`、`frontend/src/shell/AppShell.vue`、`frontend/src/shell/layoutStore.ts`
