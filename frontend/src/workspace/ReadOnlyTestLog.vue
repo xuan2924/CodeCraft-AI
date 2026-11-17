@@ -101,10 +101,10 @@ onScopeDispose(() => { disposed = true; globalThis.clearTimeout(timer); resize?.
 .terminal-host {
   max-width: 100%;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--oc-border);
   padding: 8px;
-  background: #111612;
+  background: var(--oc-bg);
 }
 details summary { cursor: pointer; font-size: 12.5px; color: var(--oc-fg-muted); }
 .test-output {

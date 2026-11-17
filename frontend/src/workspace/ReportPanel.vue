@@ -140,9 +140,25 @@ const verification: Record<string, string> = { PASSED: '最终验收通过', FAI
       </section>
       <template v-if="report.data.value.evaluation">
         <section class="conclusion">
-          <h3>评价摘要</h3><p class="total">
-            {{ report.data.value.evaluation.total ?? '暂无' }}<span> / 100</span>
-          </p><p>{{ report.data.value.evaluation.conclusion }}</p>
+          <div class="conclusion-score-col">
+            <span class="conclusion-label">综合评价总分</span>
+            <p class="total">
+              {{ report.data.value.evaluation.total ?? '暂无' }}<span> / 100</span>
+            </p>
+            <div
+              class="score-bar score-bar-lg"
+              aria-hidden="true"
+            >
+              <div
+                class="score-bar-fill"
+                :style="{ width: `${report.data.value.evaluation.total !== null ? Math.min(100, Math.max(0, report.data.value.evaluation.total)) : 0}%` }"
+              />
+            </div>
+          </div>
+          <div class="conclusion-text-col">
+            <h3>评价摘要</h3>
+            <p>{{ report.data.value.evaluation.conclusion }}</p>
+          </div>
         </section>
         <div class="dimensions">
           <section
@@ -150,13 +166,30 @@ const verification: Record<string, string> = { PASSED: '最终验收通过', FAI
             :key="dimension.key"
             class="dimension"
           >
-            <h3>{{ dimensionNames[dimension.key] }}</h3><p class="score">
-              {{ dimension.score ?? '暂无' }} <span>/ {{ weights[dimension.key] }}</span>
-            </p><p>{{ dimension.feedback }}</p><div class="evidence-links">
+            <div class="dimension-top">
+              <h3>{{ dimensionNames[dimension.key] }}</h3>
+              <p class="score">
+                {{ dimension.score ?? '暂无' }} <span>/ {{ weights[dimension.key] }}</span>
+              </p>
+            </div>
+            <div
+              class="score-bar"
+              aria-hidden="true"
+            >
+              <div
+                class="score-bar-fill"
+                :style="{ width: `${dimension.score !== null && weights[dimension.key] ? Math.min(100, Math.max(0, (dimension.score / weights[dimension.key]!) * 100)) : 0}%` }"
+              />
+            </div>
+            <p class="dimension-feedback">
+              {{ dimension.feedback }}
+            </p>
+            <div class="evidence-links">
               <Button
                 v-for="id in dimension.evidenceIds"
                 :key="id"
                 variant="ghost"
+                size="small"
                 @click="selected = id"
               >
                 证据 {{ id }}
@@ -344,19 +377,40 @@ p {
 }
 
 .conclusion {
-  background:
-    radial-gradient(circle at 0% 0%, rgba(160, 196, 165, 0.08), transparent 55%),
-    var(--oc-surface);
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.5fr);
+  gap: 20px;
+  align-items: center;
+  background: var(--oc-surface);
+}
+
+.conclusion-score-col {
+  display: grid;
+  gap: 6px;
+  padding-right: 20px;
+  border-right: 1px solid var(--oc-border);
+}
+
+.conclusion-label {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--oc-fg-muted);
+}
+
+.conclusion-text-col {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
 }
 
 .conclusion h3,
 .review-form h3 {
-  margin: 0 0 8px;
-  font-size: 15px;
+  margin: 0;
+  font-size: 14.5px;
   font-weight: 600;
 }
 
-.conclusion p:last-child,
+.conclusion-text-col p,
 .review-form p {
   margin: 0;
   font-size: 13.5px;
@@ -380,7 +434,7 @@ textarea {
   background: var(--oc-bg-input);
   border: 1px solid var(--oc-border-input);
   border-radius: var(--radius-control);
-  padding: 12px;
+  padding: 10px 12px;
   font: inherit;
 }
 
@@ -390,10 +444,11 @@ textarea:focus-visible {
 }
 
 .total {
-  font-size: 44px;
-  margin: 8px 0 10px;
+  font-size: 36px;
+  margin: 0;
   font-weight: 700;
   letter-spacing: -0.03em;
+  font-family: var(--oc-font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--oc-fg);
 }
@@ -401,53 +456,81 @@ textarea:focus-visible {
 .total span,
 .score span {
   color: var(--oc-fg-muted);
-  font-size: 15px;
+  font-size: 13.5px;
   font-weight: 450;
 }
 
-/* 2x2 Bento Grid Dimensions */
+.score-bar {
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  overflow: hidden;
+}
+
+.score-bar-lg {
+  height: 7px;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--oc-accent);
+  transition: width 260ms var(--oc-ease);
+}
+
+/* 2x2 Dimensions Dashboard */
 .dimensions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
 }
 
 .dimension {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 20px;
+  gap: 10px;
+  padding: 18px;
   background: var(--oc-surface);
   border: 1px solid var(--oc-border);
   border-radius: var(--radius-panel);
   box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
-  transition: border-color 180ms var(--oc-ease), transform 180ms var(--oc-ease);
+  transition: border-color 150ms var(--oc-ease);
 }
 
 .dimension:hover {
   border-color: var(--oc-border-strong);
-  transform: translateY(-1px);
+}
+
+.dimension-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .dimension h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--oc-fg-muted);
 }
 
 .score {
   margin: 0;
-  font-size: 30px;
+  font-size: 22px;
   font-weight: 650;
+  font-family: var(--oc-font-mono);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
 }
 
-.dimension p:not(.score) {
+.dimension-feedback {
   margin: 0;
-  font-size: 13.5px;
-  color: rgba(243, 244, 242, 0.85);
+  font-size: 13px;
+  color: var(--oc-fg);
+  line-height: 1.55;
 }
 
 .evidence-links {
@@ -565,6 +648,16 @@ h3 {
 }
 
 @media (max-width: 560px) {
+  .conclusion {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .conclusion-score-col {
+    padding-right: 0;
+    padding-bottom: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--oc-border);
+  }
   .dimensions {
     grid-template-columns: 1fr;
   }

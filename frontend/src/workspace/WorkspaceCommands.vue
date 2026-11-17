@@ -103,49 +103,67 @@ function requestStop() {
 <template>
   <section
     class="commands"
-    :style="{ borderColor: 'var(--border)' }"
     aria-label="联网 Bash"
   >
-    <h3>Bash · 联网开发命令</h3>
-    <p>命令只在 Docker 内执行，不是平台权威测试。依赖请放在 <code>/cache</code>；<code>target</code>、<code>node_modules</code> 为可删除的临时构建目录，执行收敛后清理。</p>
-    <p>命令受题目版本固定的超时、CPU、内存和进程数限制；可写副本巡检上限 128 MiB / 20,000 目录项。不是交互式终端，执行前会确认保存当前草稿。</p>
-    <form @submit.prevent="execute">
-      <label>项目内工作目录（项目根为 .）<input
-        v-model="directory"
-        aria-label="Bash 工作目录"
-        maxlength="1024"
-        :disabled="start.pending.value || start.uncertain.value || preparing"
-      ></label>
-      <label>要执行的 Bash 命令<textarea
+    <header class="cmd-header">
+      <div class="cmd-title">
+        <h3>Bash · 联网开发命令</h3>
+        <details class="cmd-rules">
+          <summary>执行限制说明</summary>
+          <p>只在 Docker 内执行，非平台权威测试。依赖请放 <code>/cache</code>；<code>target</code>、<code>node_modules</code> 执行后清理。受版本超时、CPU、内存与进程数限制；可写副本上限 128 MiB / 20,000 目录项；执行前先保存当前草稿。</p>
+        </details>
+      </div>
+      <span class="cmd-bytes">{{ commandBytes }} / 4096 B</span>
+    </header>
+    <form
+      class="cmd-form"
+      @submit.prevent="execute"
+    >
+      <div class="cmd-cwd-row">
+        <span class="cmd-cwd-prefix">/project/</span>
+        <input
+          v-model="directory"
+          aria-label="Bash 工作目录"
+          maxlength="1024"
+          placeholder="."
+          :disabled="start.pending.value || start.uncertain.value || preparing"
+        >
+        <Button
+          type="submit"
+          variant="primary"
+          size="small"
+          :disabled="!mayStart"
+        >
+          {{ preparing || start.pending.value ? '正在受理…' : '执行 Bash' }}
+        </Button>
+      </div>
+      <textarea
         v-model="command"
         aria-label="Bash 命令"
-        rows="4"
+        rows="3"
         maxlength="4096"
         spellcheck="false"
+        placeholder="输入要执行的 Bash 命令…"
         :disabled="start.pending.value || start.uncertain.value || preparing"
-      /></label>
-      <small>{{ commandBytes }} / 4096 字节 · 将在 /project/{{ directory }} 执行</small>
-      <Button
-        type="submit"
-        :disabled="!mayStart"
-      >
-        {{ preparing || start.pending.value ? '正在受理…' : '执行 Bash' }}
-      </Button>
+      />
     </form>
     <p
       v-if="notice"
       role="status"
+      class="cmd-status"
     >
       {{ notice }}
     </p>
     <p
       v-if="start.error.value"
       role="alert"
+      class="cmd-alert"
     >
       {{ start.error.value }}
     </p>
     <Button
       v-if="start.uncertain.value"
+      size="small"
       :disabled="start.pending.value"
       @click="start.retry()"
     >
@@ -154,72 +172,101 @@ function requestStop() {
     <p
       v-if="head.isPending.value"
       role="status"
+      class="cmd-status"
     >
       正在读取命令记录…
     </p>
     <p
       v-if="head.isError.value"
       role="alert"
+      class="cmd-alert"
     >
-      {{ message(head.error.value) }} <Button @click="head.refetch()">
+      {{ message(head.error.value) }}
+      <Button
+        size="small"
+        @click="head.refetch()"
+      >
         重新读取记录
       </Button>
     </p>
-    <p v-if="head.data.value?.commands.length === 0">
+    <p
+      v-if="head.data.value?.commands.length === 0"
+      class="cmd-empty"
+    >
       还没有开发命令。
     </p>
-    <label v-if="options.length">执行记录
-      <select
-        v-model="selected"
-        aria-label="选择 Bash 执行记录"
-        :disabled="start.pending.value"
-      >
-        <option
-          v-for="task in options"
-          :key="task.id"
-          :value="task.id"
-        >{{ new Date(task.createdAt).toLocaleTimeString() }} · {{ stateLabels[task.state] }} · {{ task.id.slice(0, 8) }}</option>
-      </select>
-    </label>
-    <div class="actions">
-      <Button
-        v-if="page?.nextCursor"
-        @click="cursor = page.nextCursor"
-      >
-        更早的记录
-      </Button>
-      <Button
-        v-if="cursor"
-        @click="cursor = null"
-      >
-        返回最近记录
-      </Button>
+    <div
+      v-if="options.length"
+      class="cmd-history-bar"
+    >
+      <label class="cmd-select-label">
+        <span>执行记录</span>
+        <select
+          v-model="selected"
+          aria-label="选择 Bash 执行记录"
+          :disabled="start.pending.value"
+        >
+          <option
+            v-for="task in options"
+            :key="task.id"
+            :value="task.id"
+          >{{ new Date(task.createdAt).toLocaleTimeString() }} · {{ stateLabels[task.state] }} · {{ task.id.slice(0, 8) }}</option>
+        </select>
+      </label>
+      <div class="actions">
+        <Button
+          v-if="page?.nextCursor"
+          size="small"
+          @click="cursor = page.nextCursor"
+        >
+          更早的记录
+        </Button>
+        <Button
+          v-if="cursor"
+          size="small"
+          @click="cursor = null"
+        >
+          返回最近记录
+        </Button>
+      </div>
     </div>
     <p
       v-if="cursor && older.isPending.value"
       role="status"
+      class="cmd-status"
     >
       正在读取更早的记录…
     </p>
     <p
       v-if="cursor && older.isError.value"
       role="alert"
+      class="cmd-alert"
     >
-      {{ message(older.error.value) }} <Button @click="older.refetch()">
+      {{ message(older.error.value) }}
+      <Button
+        size="small"
+        @click="older.refetch()"
+      >
         重试读取历史
       </Button>
     </p>
     <p
       v-if="selected && detail.isPending.value"
       role="status"
+      class="cmd-status"
     >
       正在读取命令输出…
     </p>
     <p
       v-if="detail.isError.value"
       role="alert"
+      class="cmd-alert"
     >
-      {{ message(detail.error.value) }} <Button @click="detail.refetch()">
+      {{ message(detail.error.value) }}
+      <Button
+        size="small"
+        @click="detail.refetch()"
+      >
         重新核对记录
       </Button>
     </p>
@@ -232,6 +279,8 @@ function requestStop() {
       <template #controls>
         <Button
           v-if="!detail.data.value.quiescent"
+          variant="danger"
+          size="small"
           :disabled="detail.data.value.stopRequested || stop.pending.value || stop.uncertain.value || (exercise.state === 'ACTIVE' && !credential)"
           @click="requestStop"
         >
@@ -240,11 +289,13 @@ function requestStop() {
         <p
           v-if="stop.error.value"
           role="alert"
+          class="cmd-alert"
         >
           {{ stop.error.value }}
         </p>
         <Button
           v-if="stop.uncertain.value"
+          size="small"
           :disabled="stop.pending.value"
           @click="stop.retry()"
         >
@@ -252,42 +303,163 @@ function requestStop() {
         </Button>
       </template>
     </CommandOutput>
-    <small>最多保留最近 20 条可清理的已完成输出，容量不足时可提前精简；未知执行、同步冲突和被拒绝的候选变化不会被普通历史淘汰。刷新只读取原执行身份。</small>
+    <small class="cmd-footnote">保留最近 20 条可清理已完成输出；刷新仅读取原执行身份。</small>
   </section>
 </template>
 
 <style scoped>
 .commands {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  border: 1px solid var(--oc-border) !important;
-  border-radius: 10px;
-  padding: 16px;
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-panel);
+  padding: 14px;
   background: var(--oc-surface);
-  box-shadow: var(--oc-hairline-top);
 }
-h3 { margin: 0; font-size: 14.5px; font-weight: 600; }
-p { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.55; }
-small { font-size: 12px; color: var(--oc-fg-muted); line-height: 1.5; }
-form, label { display: grid; gap: 6px; font-size: 12.5px; font-weight: 550; }
-input, textarea, select {
-  box-sizing: border-box;
+
+.cmd-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cmd-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.cmd-rules {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.cmd-rules summary {
+  cursor: pointer;
+}
+
+.cmd-rules p {
+  margin: 6px 0 0;
+  line-height: 1.5;
+}
+
+.cmd-bytes {
+  font-family: var(--oc-font-mono);
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cmd-form {
+  display: grid;
+  gap: 8px;
+}
+
+.cmd-cwd-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cmd-cwd-prefix {
+  font-family: var(--oc-font-mono);
+  font-size: 12px;
+  color: var(--oc-accent);
+  padding: 6px 8px;
+  border-radius: var(--radius-control);
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+}
+
+.cmd-cwd-row input {
+  flex: 1 1 140px;
+  min-width: 0;
+  padding: 6px 10px;
+  font-family: var(--oc-font-mono);
+  font-size: 12.5px;
+}
+
+textarea {
   width: 100%;
+  font-family: var(--oc-font-mono);
+  font-size: 12.5px;
+  resize: vertical;
+}
+
+.cmd-history-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cmd-select-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.cmd-select-label span {
+  white-space: nowrap;
+  color: var(--oc-fg-muted);
+}
+
+.cmd-select-label select {
+  flex: 1 1 0%;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+.cmd-status,
+.cmd-empty,
+.cmd-footnote {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+  line-height: 1.5;
+}
+
+.cmd-alert {
+  margin: 0;
   padding: 8px 10px;
-  font: inherit;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: 8px;
-  transition: border-color 180ms var(--oc-ease), box-shadow 180ms var(--oc-ease);
+  border-radius: var(--radius-control);
+  background: var(--oc-danger-bg);
+  border: 1px solid var(--oc-danger-border);
+  color: var(--oc-danger);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-input:focus-visible, textarea:focus-visible, select:focus-visible {
-  border-color: var(--oc-accent);
-  box-shadow: 0 0 0 3px var(--oc-accent-glow);
+
+code {
+  overflow-wrap: anywhere;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--oc-surface-2);
 }
-textarea, .command-preview { font-family: var(--oc-font-mono); font-size: 12.5px; }
-.command-preview { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto; }
-code { overflow-wrap: anywhere; padding: 2px 5px; border-radius: 4px; background: var(--oc-surface-2); }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 </style>

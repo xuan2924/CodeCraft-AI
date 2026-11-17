@@ -28,6 +28,7 @@ import { confirmExerciseDeletion } from './drafts';
 import { useExerciseTimer } from './useExerciseTimer';
 
 const modelOpen = ref(false);
+const assistantTab = ref<'copilot' | 'interviewer'>('copilot');
 
 const WorkspaceEditor = defineAsyncComponent(() => import('./WorkspaceEditor.vue'));
 const client = useQueryClient();
@@ -71,7 +72,11 @@ watch(() => exercise.value?.exerciseId, (id) => {
   hasEditor.value = !!exercise.value && implementingStates.includes(exercise.value.state);
   endPrompt.value = false;
 });
-watch(() => exercise.value?.state, (state) => { if (state && implementingStates.includes(state)) hasEditor.value = true; });
+watch(() => exercise.value?.state, (state, previous) => {
+  if (state && implementingStates.includes(state)) hasEditor.value = true;
+  if (state === 'READY') assistantTab.value = 'interviewer';
+  else if (state && historyStates.includes(state) && (!previous || previous === 'READY')) assistantTab.value = 'copilot';
+}, { immediate: true });
 watch(expired, (value) => { if (value) { endPrompt.value = false; void active.refetch(); } });
 const logoutBusy = ref(false);
 const testView = ref<{ start: (revision: string) => void; inspect: (taskId: string) => void }>();
@@ -266,29 +271,18 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
 </script>
 
 <template>
-  <main
-    class="workspace-page"
-  >
-    <header class="workspace-header">
-      <h1>{{ exercise ? '演练工作区' : '当前演练' }}</h1>
+  <main class="workspace-page">
+    <header
+      v-if="!exercise"
+      class="workspace-header"
+    >
+      <h1>当前演练</h1>
       <div class="header-actions">
-        <Button
-          v-if="exercise && ['READY', 'ACTIVE'].includes(exercise.state)"
-          variant="secondary"
-          size="small"
-          @click="modelOpen = true"
-        >
-          <Cpu
-            :size="14"
-            aria-hidden="true"
-          />
-          <span>Copilot 模型与检查</span>
-        </Button>
         <Button
           variant="ghost"
           size="small"
           :disabled="pending || active.isFetching.value"
-          @click="catalogue.refetch(); active.refetch(); exercise && controlState.refetch()"
+          @click="catalogue.refetch(); active.refetch()"
         >
           <RefreshCw
             :size="14"
@@ -336,14 +330,18 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
       >
         {{ error }}
       </p>
-      <Button
+      <div
         v-if="unresolved"
-        size="small"
-        :disabled="pending"
-        @click="perform(unresolved)"
+        class="ws-banner-action"
       >
-        核对并重试原操作
-      </Button>
+        <Button
+          size="small"
+          :disabled="pending"
+          @click="perform(unresolved)"
+        >
+          核对并重试原操作
+        </Button>
+      </div>
       <p
         v-if="cleanupFailed"
         role="alert"
@@ -402,132 +400,162 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             class="exercise-summary"
             aria-label="演练状态"
           >
-            <div class="summary-primary">
-              <h2>{{ problem?.title ?? '固定版本演练' }}</h2>
-              <p
-                role="status"
-                class="status-pill"
-              >
-                {{ labels[exercise.state] }} · 修订 {{ exercise.revision ?? '尚未确认' }}
-              </p>
-              <p
-                v-if="['READY', ...implementingStates].includes(exercise.state)"
-                role="status"
-                class="control-pill"
-                :data-held="!!credential"
-              >
-                <ShieldCheck
-                  :size="13"
-                  aria-hidden="true"
-                />
-                <span>{{ credential ? '当前页面持有操作权' : '当前页面只读，可保留本地草稿' }}</span>
-              </p>
-            </div>
-            <div class="summary-controls">
-              <p
-                v-if="implementingStates.includes(exercise.state)"
-                role="status"
-                class="timer-pill"
-              >
-                <Clock
-                  :size="13"
-                  aria-hidden="true"
-                />
-                <span>{{ expired ? '作答已到期，等待服务器确认；本地草稿不会自动提交。' : `剩余时间 ${remaining}` }}</span>
-              </p>
-              <Button
-                v-if="!credential && ['READY', 'ACTIVE', 'PAUSED'].includes(exercise.state)"
-                variant="secondary"
-                size="small"
-                :disabled="pending || controlState.data.value?.state === 'PENDING'"
-                @click="takeControl(controlState.data.value?.held ? 'takeover' : 'acquire')"
-              >
-                {{ controlState.data.value?.held ? '接管操作权' : '申请操作权' }}
-              </Button>
-              <Button
-                v-if="exercise.state === 'READY'"
-                variant="primary"
-                size="small"
-                :disabled="pending || !!unresolved || !credential"
-                @click="change('start')"
-              >
-                确认开始计时
-              </Button>
-              <Button
-                v-if="exercise.state === 'ACTIVE' && !expired"
-                data-testid="pause-exercise"
-                size="small"
-                :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy"
-                @click="pauseExercise"
-              >
-                暂停演练
-              </Button>
-              <Button
-                v-if="exercise.state === 'PAUSED'"
-                data-testid="resume-exercise"
-                variant="primary"
-                size="small"
-                :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy"
-                @click="change('resume')"
-              >
-                恢复演练
-              </Button>
-              <Button
-                v-if="canEnd"
-                data-testid="end-exercise"
-                variant="danger"
-                size="small"
-                :disabled="pending || ending || !!unresolved || !canRecover || logoutBusy"
-                @click="endPrompt = true"
-              >
-                结束演练
-              </Button>
-              <Button
-                v-if="exercise.state === 'PREPARATION_FAILED'"
-                size="small"
-                :disabled="pending || !!unresolved"
-                @click="change('preparation-retry')"
-              >
-                使用新实例重试准备
-              </Button>
-              <Button
-                v-if="['READY', 'PREPARATION_FAILED'].includes(exercise.state)"
-                variant="danger"
-                size="small"
-                :disabled="pending || !!unresolved"
-                @click="change('abandon')"
-              >
-                放弃本次演练
-              </Button>
-            </div>
-            <details class="exercise-metadata">
-              <summary>版本与执行详情</summary>
-              <div class="metadata-grid">
-                <p
-                  v-if="exercise.preparationFailureReason"
+            <div class="hud-row">
+              <div class="summary-primary">
+                <h1 class="hud-title">
+                  {{ problem?.title ?? '固定版本演练' }}
+                </h1>
+                <span
                   role="status"
+                  class="status-pill"
                 >
-                  {{ failureReasons[exercise.preparationFailureReason] ?? '准备失败，请联系维护者核对。' }}
-                </p>
-                <p v-if="exercise.cleanupState">
-                  旧实例清理：{{ exercise.cleanupState === 'SUCCEEDED' ? '已确认' : '等待确认' }}
-                </p>
-                <p v-if="exercise.deadlineAt">
-                  服务器截止时间：{{ new Date(exercise.deadlineAt).toLocaleString() }}
-                </p>
+                  {{ labels[exercise.state] }} · 修订 {{ exercise.revision ?? '尚未确认' }}
+                </span>
+                <span
+                  v-if="['READY', ...implementingStates].includes(exercise.state)"
+                  role="status"
+                  class="control-pill"
+                  :data-held="!!credential"
+                >
+                  <ShieldCheck
+                    :size="12"
+                    aria-hidden="true"
+                  />
+                  <span>{{ credential ? '持有操作权' : '只读（保留草稿）' }}</span>
+                </span>
+                <details class="exercise-metadata">
+                  <summary>详情</summary>
+                  <div class="metadata-popover">
+                    <p
+                      v-if="exercise.preparationFailureReason"
+                      role="status"
+                    >
+                      {{ failureReasons[exercise.preparationFailureReason] ?? '准备失败，请联系维护者核对。' }}
+                    </p>
+                    <p v-if="exercise.cleanupState">
+                      旧实例清理：{{ exercise.cleanupState === 'SUCCEEDED' ? '已确认' : '等待确认' }}
+                    </p>
+                    <p v-if="exercise.deadlineAt">
+                      服务器截止时间：{{ new Date(exercise.deadlineAt).toLocaleString() }}
+                    </p>
+                    <p>修订：{{ exercise.revision ?? '尚未确认' }}</p>
+                  </div>
+                </details>
               </div>
-            </details>
+              <div class="summary-controls">
+                <span
+                  v-if="implementingStates.includes(exercise.state)"
+                  role="status"
+                  class="timer-pill"
+                >
+                  <Clock
+                    :size="12"
+                    aria-hidden="true"
+                  />
+                  <span>{{ expired ? '作答已到期' : `剩余时间 ${remaining}` }}</span>
+                </span>
+                <Button
+                  v-if="['READY', 'ACTIVE'].includes(exercise.state)"
+                  variant="secondary"
+                  size="small"
+                  @click="modelOpen = true"
+                >
+                  <Cpu
+                    :size="13"
+                    aria-hidden="true"
+                  />
+                  <span>Copilot 模型与检查</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="small"
+                  :disabled="pending || active.isFetching.value"
+                  @click="catalogue.refetch(); active.refetch(); exercise && controlState.refetch()"
+                >
+                  <RefreshCw
+                    :size="13"
+                    aria-hidden="true"
+                  />
+                  <span>刷新查询</span>
+                </Button>
+                <Button
+                  v-if="!credential && ['READY', 'ACTIVE', 'PAUSED'].includes(exercise.state)"
+                  variant="secondary"
+                  size="small"
+                  :disabled="pending || controlState.data.value?.state === 'PENDING'"
+                  @click="takeControl(controlState.data.value?.held ? 'takeover' : 'acquire')"
+                >
+                  {{ controlState.data.value?.held ? '接管操作权' : '申请操作权' }}
+                </Button>
+                <Button
+                  v-if="exercise.state === 'READY'"
+                  variant="primary"
+                  size="small"
+                  :disabled="pending || !!unresolved || !credential"
+                  @click="change('start')"
+                >
+                  确认开始计时
+                </Button>
+                <Button
+                  v-if="exercise.state === 'ACTIVE' && !expired"
+                  data-testid="pause-exercise"
+                  variant="secondary"
+                  size="small"
+                  :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy"
+                  @click="pauseExercise"
+                >
+                  暂停演练
+                </Button>
+                <Button
+                  v-if="exercise.state === 'PAUSED'"
+                  data-testid="resume-exercise"
+                  variant="primary"
+                  size="small"
+                  :disabled="pending || ending || !!unresolved || !credential || !writable || logoutBusy"
+                  @click="change('resume')"
+                >
+                  恢复演练
+                </Button>
+                <Button
+                  v-if="canEnd"
+                  data-testid="end-exercise"
+                  variant="danger"
+                  size="small"
+                  :disabled="pending || ending || !!unresolved || !canRecover || logoutBusy"
+                  @click="endPrompt = true"
+                >
+                  结束演练
+                </Button>
+                <Button
+                  v-if="exercise.state === 'PREPARATION_FAILED'"
+                  size="small"
+                  :disabled="pending || !!unresolved"
+                  @click="change('preparation-retry')"
+                >
+                  使用新实例重试准备
+                </Button>
+                <Button
+                  v-if="['READY', 'PREPARATION_FAILED'].includes(exercise.state)"
+                  variant="danger"
+                  size="small"
+                  :disabled="pending || !!unresolved"
+                  @click="change('abandon')"
+                >
+                  放弃本次演练
+                </Button>
+              </div>
+            </div>
             <p
               v-if="['PAUSING', 'PAUSED', 'RESUMING'].includes(exercise.state)"
               class="summary-notice"
             >
-              本地草稿保留，禁止新的作答和收费请求；已提交修改不回滚。恢复演练后，保留的 Copilot 队列仍须显式重新授权。
+              本地草稿保留，禁止新的作答和收费请求；恢复后保留的 Copilot 队列须显式重新授权。
             </p>
             <p
               v-if="exercise.state === 'PREPARING'"
               class="summary-notice"
             >
-              后台正在核对准备结果。结果未知时不能另开重试或放弃请求。
+              后台正在核对准备结果，结果未知时不能另开重试或放弃请求。
             </p>
             <section
               v-if="endPrompt && canEnd"
@@ -536,7 +564,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               aria-modal="true"
               aria-label="结束演练确认"
             >
-              <p>结束后不可继续作答。可先保存、明确丢弃，或只保留本地草稿而不提交新保存。保留草稿不需要本页操作权；最终验收使用服务器关闭并核对后的已提交版本。</p>
+              <p>结束后不可继续作答。可先保存、明确丢弃，或只保留本地草稿而不提交新保存；最终验收使用服务器关闭并核对后的已提交版本。</p>
               <p
                 v-if="testBusy"
                 class="end-warning"
@@ -582,17 +610,17 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               class="finalization-panel"
               aria-label="最终验收结果"
             >
-              <p>最终冻结修订：<code>{{ exercise.finalization.finalRevision ?? '尚未确认，正在核对' }}</code></p>
-              <p>{{ ({ PENDING: '最终验收待核对', PASSED: '最终验收通过', FAILED: '最终验收失败', TIMED_OUT: '最终验收超时', UNAVAILABLE: '最终验收结果不可用' })[exercise.finalization.verification] }}</p>
-              <p>系统验收尝试 {{ exercise.finalization.attempts }} / {{ exercise.finalization.maxAttempts }}。</p>
+              <span>最终冻结修订：<code>{{ exercise.finalization.finalRevision ?? '尚未确认' }}</code></span>
+              <span>{{ ({ PENDING: '最终验收待核对', PASSED: '最终验收通过', FAILED: '最终验收失败', TIMED_OUT: '最终验收超时', UNAVAILABLE: '最终验收结果不可用' })[exercise.finalization.verification] }}</span>
+              <span>验收尝试 {{ exercise.finalization.attempts }} / {{ exercise.finalization.maxAttempts }}</span>
               <RouterLink
                 v-if="exercise.state === 'ENDED'"
                 class="ui-button ui-button-primary ui-button-small"
                 :to="{ name: routes.report.name, query: { exercise: exercise.exerciseId } }"
               >进入回顾与评价报告</RouterLink>
-              <p v-if="exercise.finalization.status === 'RECONCILIATION_REQUIRED'">
-                冻结事实未确认，不能虚构最终版本，请稍后刷新。
-              </p>
+              <span v-if="exercise.finalization.status === 'RECONCILIATION_REQUIRED'">
+                冻结事实未确认，请稍后刷新。
+              </span>
             </section>
           </section>
           <p
@@ -600,7 +628,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
             role="status"
             class="ws-banner"
           >
-            这个固定题目版本尚未配备正式执行配置，测试不可用；不会替换已有工作区版本。
+            该题目版本尚未配备正式执行配置，测试不可用；不会替换已有工作区版本。
           </p>
           <Dialog
             v-if="['READY', 'ACTIVE'].includes(exercise.state)"
@@ -636,30 +664,66 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
           />
           <WorkbenchLayout>
             <template #assistant>
-              <div class="assistant-stack">
-                <InterviewerPanel
-                  v-if="['READY', ...historyStates].includes(exercise.state)"
-                  :key="`interviewer:${owner}:${exercise.exerciseId}`"
-                  :owner="owner"
-                  :exercise-id="exercise.exerciseId"
-                  :credential="credential"
-                  :phase="exercise.state"
-                  :disabled="challengeBlocked || !writable || !['READY', 'ACTIVE'].includes(exercise.state) || expired || pending || !!unresolved || ending || endPrompt || logoutBusy"
-                  @unauthorized="credential = ''; account.refetch()"
-                />
-                <CopilotConversations
-                  v-if="historyStates.includes(exercise.state)"
-                  :key="owner + exercise.exerciseId"
-                  :owner="owner"
-                  :exercise-id="exercise.exerciseId"
-                  :credential="credential"
-                  :disabled="challengeBlocked || !editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
-                  :paths="exercise.paths"
-                  :prepare="prepareCopilot"
-                  @inspect-test="testView?.inspect($event)"
-                  @changed="refreshWorkspace"
-                  @unauthorized="credential = ''; account.refetch()"
-                />
+              <div class="assistant-shell">
+                <div
+                  class="assistant-tabs"
+                  role="tablist"
+                  aria-label="AI 协作切换"
+                >
+                  <button
+                    v-if="historyStates.includes(exercise.state)"
+                    type="button"
+                    role="tab"
+                    :aria-selected="assistantTab === 'copilot'"
+                    @click="assistantTab = 'copilot'"
+                  >
+                    Copilot 协作
+                  </button>
+                  <button
+                    v-if="['READY', ...historyStates].includes(exercise.state)"
+                    type="button"
+                    role="tab"
+                    :aria-selected="assistantTab === 'interviewer'"
+                    @click="assistantTab = 'interviewer'"
+                  >
+                    面试官澄清
+                  </button>
+                </div>
+                <div class="assistant-body">
+                  <div
+                    v-if="historyStates.includes(exercise.state)"
+                    v-show="assistantTab === 'copilot'"
+                    class="assistant-panel-slot"
+                  >
+                    <CopilotConversations
+                      :key="owner + exercise.exerciseId"
+                      :owner="owner"
+                      :exercise-id="exercise.exerciseId"
+                      :credential="credential"
+                      :disabled="challengeBlocked || !editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
+                      :paths="exercise.paths"
+                      :prepare="prepareCopilot"
+                      @inspect-test="testView?.inspect($event)"
+                      @changed="refreshWorkspace"
+                      @unauthorized="credential = ''; account.refetch()"
+                    />
+                  </div>
+                  <div
+                    v-if="['READY', ...historyStates].includes(exercise.state)"
+                    v-show="assistantTab === 'interviewer' || !historyStates.includes(exercise.state)"
+                    class="assistant-panel-slot"
+                  >
+                    <InterviewerPanel
+                      :key="`interviewer:${owner}:${exercise.exerciseId}`"
+                      :owner="owner"
+                      :exercise-id="exercise.exerciseId"
+                      :credential="credential"
+                      :phase="exercise.state"
+                      :disabled="challengeBlocked || !writable || !['READY', 'ACTIVE'].includes(exercise.state) || expired || pending || !!unresolved || ending || endPrompt || logoutBusy"
+                      @unauthorized="credential = ''; account.refetch()"
+                    />
+                  </div>
+                </div>
               </div>
             </template>
             <template #commands>
@@ -722,20 +786,16 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               >
                 <div class="pane-block">
                   <div class="pane-heading">
-                    <h2>题目要求</h2>
+                    <h2>工作区文件</h2>
                     <Tooltip :text="`允许编辑：${problem?.editableRoots.join('、') ?? '尚未确认'}；pom.xml 与验收测试受保护。`">
                       <Button
                         variant="ghost"
                         size="small"
                       >
-                        编辑范围说明
+                        编辑范围
                       </Button>
                     </Tooltip>
                   </div>
-                  <ProblemRequirements :source="problem?.requirements ?? ''" />
-                </div>
-                <div class="pane-block">
-                  <h2>工作区文件</h2>
                   <p
                     v-if="!exercise.paths.length"
                     class="empty-files"
@@ -770,30 +830,41 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                     <pre class="requirements">{{ content }}</pre>
                   </details>
                 </div>
+                <div class="pane-block pane-block-requirements">
+                  <div class="pane-heading">
+                    <h2>题目要求</h2>
+                  </div>
+                  <ProblemRequirements :source="problem?.requirements ?? ''" />
+                </div>
               </section>
             </template>
             <template #editor>
-              <p
-                v-if="source.isFetching.value"
-                role="status"
-                class="editor-status-msg"
+              <div
+                v-if="source.isFetching.value || source.isError.value"
+                class="editor-fetch-bar"
               >
-                正在读取文件…
-              </p>
-              <p
-                v-if="source.isError.value"
-                role="alert"
-                class="editor-status-msg editor-status-err"
-              >
-                {{ api.message(source.error.value) }}
-              </p>
-              <Button
-                v-if="source.isError.value"
-                size="small"
-                @click="source.refetch()"
-              >
-                重试文件读取
-              </Button>
+                <span
+                  v-if="source.isFetching.value"
+                  role="status"
+                  class="editor-status-msg"
+                >
+                  正在读取文件…
+                </span>
+                <span
+                  v-if="source.isError.value"
+                  role="alert"
+                  class="editor-status-msg editor-status-err"
+                >
+                  {{ api.message(source.error.value) }}
+                </span>
+                <Button
+                  v-if="source.isError.value"
+                  size="small"
+                  @click="source.refetch()"
+                >
+                  重试文件读取
+                </Button>
+              </div>
               <WorkspaceEditor
                 v-if="hasEditor"
                 :key="owner + exercise.workspaceInstanceId + editorGeneration"
@@ -853,44 +924,53 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
   width: 100%;
   height: 100dvh;
   margin: 0;
-  padding: 0 18px 18px;
+  padding: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  background: var(--oc-bg);
 }
 
 .workspace-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  padding: 12px 0;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--oc-border);
+  background: var(--oc-bg-subtle);
   flex-shrink: 0;
 }
 
 .workspace-header h1 {
   font-size: 14px;
   margin: 0;
-  color: var(--oc-fg-muted);
-  font-weight: 550;
-  letter-spacing: -0.01em;
+  color: var(--oc-fg);
+  font-weight: 600;
 }
 
 .header-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .ws-banner {
-  margin: 4px 0 8px;
-  padding: 10px 14px;
-  border-radius: 10px;
+  margin: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--oc-border);
   background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--oc-fg-muted);
+  flex-shrink: 0;
+}
+
+.ws-banner-action {
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--oc-border);
+  background: var(--oc-surface);
   flex-shrink: 0;
 }
 
@@ -900,33 +980,37 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
   border-color: var(--oc-warning-border);
 }
 
-/* HUD Status Card */
+/* Unified Compact HUD Topbar */
 .exercise-summary {
   display: grid;
-  gap: 10px;
-  padding: 14px 18px;
-  border: 1px solid var(--oc-border);
-  border-radius: 12px;
-  background:
-    radial-gradient(circle at 0% 0%, rgba(160, 196, 165, 0.06), transparent 45%),
-    var(--oc-surface);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
-  margin-bottom: 12px;
+  gap: 6px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--oc-border);
+  background: var(--oc-surface);
   flex-shrink: 0;
+}
+
+.hud-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
 
 .summary-primary {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px 12px;
+  gap: 6px 10px;
+  min-width: 0;
 }
 
-.exercise-summary h2 {
+.hud-title {
   margin: 0;
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 650;
-  margin-right: auto;
+  color: var(--oc-fg);
   overflow-wrap: anywhere;
 }
 
@@ -935,12 +1019,13 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
 .timer-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   margin: 0;
-  padding: 4px 10px;
+  padding: 2px 8px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 550;
+  white-space: nowrap;
 }
 
 .status-pill {
@@ -961,9 +1046,10 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
 }
 
 .timer-pill {
-  background: var(--oc-surface-2);
+  background: var(--oc-bg-subtle);
   border: 1px solid var(--oc-border-strong);
   color: var(--oc-fg);
+  font-family: var(--oc-font-mono);
   font-variant-numeric: tabular-nums;
 }
 
@@ -971,51 +1057,65 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .exercise-metadata {
-  font-size: 12px;
+  position: relative;
+  font-size: 11.5px;
   color: var(--oc-fg-muted);
 }
 
 .exercise-metadata summary {
   cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
-.metadata-grid {
+.exercise-metadata summary:hover {
+  color: var(--oc-fg);
+  background: var(--oc-surface-2);
+}
+
+.metadata-popover {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 18px;
-  margin-top: 8px;
+  gap: 6px 14px;
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-radius: var(--radius-control);
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
 }
 
-.metadata-grid p {
+.metadata-popover p {
   margin: 0;
 }
 
 .summary-notice {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
 }
 
 .end-confirm-panel,
 .finalization-panel {
-  padding: 14px 16px;
-  border-radius: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
   background: var(--oc-surface-2);
   border: 1px solid var(--oc-border-strong);
-  display: grid;
-  gap: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  font-size: 12.5px;
 }
 
-.end-confirm-panel p,
-.finalization-panel p {
+.end-confirm-panel p {
   margin: 0;
-  font-size: 13px;
   color: var(--oc-fg-muted);
-  line-height: 1.6;
+  line-height: 1.5;
+  flex: 1 1 300px;
 }
 
 .end-warning {
@@ -1025,19 +1125,20 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
 .end-confirm-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .finalization-panel a {
   width: fit-content;
   text-decoration: none;
+  margin-left: auto;
 }
 
 .workspace-empty {
   margin: auto;
   text-align: center;
-  padding: 48px 32px;
-  max-width: 480px;
+  padding: 40px 28px;
+  max-width: 440px;
   background: var(--oc-surface);
   border: 1px solid var(--oc-border);
   border-radius: var(--radius-panel);
@@ -1047,12 +1148,12 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
 
 .workspace-empty h2 {
   margin: 0 0 8px;
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .workspace-empty p {
-  margin: 0 0 20px;
-  font-size: 14px;
+  margin: 0 0 18px;
+  font-size: 13.5px;
   line-height: 1.6;
 }
 
@@ -1060,16 +1161,22 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
   text-decoration: none;
 }
 
-.files-pane,
-.assistant-stack {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 20px;
+/* Left Files & Requirements Pane */
+.files-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .pane-block {
+  padding: 12px 14px;
   display: grid;
-  gap: 10px;
+  gap: 8px;
+  border-bottom: 1px solid var(--oc-border);
+}
+
+.pane-block-requirements {
+  border-bottom: 0;
 }
 
 .pane-heading {
@@ -1077,20 +1184,18 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--oc-border);
 }
 
 .pane-block h2 {
-  font-size: 13.5px;
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  color: var(--oc-fg-muted);
   margin: 0;
 }
 
 .empty-files {
   margin: 0;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--oc-fg-muted);
 }
 
@@ -1099,29 +1204,29 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
   padding: 0;
   margin: 0;
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
 .file-list button {
   width: 100%;
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 7px;
+  padding: 6px 8px;
   text-align: left;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-left: 2px solid transparent;
+  border-radius: 5px;
   background: transparent;
   color: var(--oc-fg-muted);
   font-family: var(--oc-font-mono);
-  font-size: 12.5px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.4;
   overflow-wrap: anywhere;
   cursor: pointer;
   transition:
-    background-color 150ms var(--oc-ease),
-    border-color 150ms var(--oc-ease),
-    color 150ms var(--oc-ease);
+    background-color 140ms var(--oc-ease),
+    color 140ms var(--oc-ease);
 }
 
 .file-list button svg {
@@ -1130,13 +1235,13 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
 }
 
 .file-list button:hover {
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--oc-surface);
   color: var(--oc-fg);
 }
 
 .file-list button[aria-pressed="true"] {
-  background: var(--oc-selected);
-  border-color: var(--oc-border-accent);
+  background: var(--oc-surface-2);
+  border-left-color: var(--oc-accent);
   color: var(--oc-fg);
   font-weight: 550;
 }
@@ -1146,12 +1251,63 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
 }
 
 .acceptance-file {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
 }
 
 .acceptance-file summary {
   cursor: pointer;
+}
+
+/* Right AI Collaboration Pane */
+.assistant-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.assistant-tabs {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--oc-border);
+  background: var(--oc-surface);
+}
+
+.assistant-tabs button {
+  padding: 9px 10px;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--oc-fg-muted);
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 140ms var(--oc-ease), border-color 140ms var(--oc-ease);
+}
+
+.assistant-tabs button:hover {
+  color: var(--oc-fg);
+}
+
+.assistant-tabs button[aria-selected="true"] {
+  color: var(--oc-fg);
+  border-bottom-color: var(--oc-accent);
+}
+
+.assistant-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.assistant-panel-slot {
+  min-width: 0;
 }
 
 .workspace-page section {
@@ -1160,12 +1316,12 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
 
 pre {
   font-family: var(--oc-font-mono);
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 12.5px;
+  line-height: 1.6;
   overflow: auto;
-  max-height: 65vh;
-  padding: 12px;
-  border-radius: 8px;
+  max-height: 60vh;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
   background: var(--oc-bg-input);
   border: 1px solid var(--oc-border);
 }
@@ -1175,9 +1331,19 @@ pre {
   overflow-wrap: anywhere;
 }
 
+.editor-fetch-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--oc-border);
+  background: var(--oc-bg-subtle);
+}
+
 .editor-status-msg {
-  margin: 0 0 8px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
 }
 
@@ -1186,14 +1352,13 @@ pre {
 }
 
 .readonly-source {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--oc-border);
+  padding: 14px;
+  overflow: auto;
 }
 
 .readonly-source h2 {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: 13px;
   font-family: var(--oc-font-mono);
 }
 
@@ -1202,14 +1367,12 @@ pre {
     height: auto;
     min-height: 100dvh;
     overflow: visible;
-    padding: 0 12px 24px;
   }
   .exercise-summary {
     max-height: none;
   }
-  .workspace-header {
-    flex-wrap: wrap;
-    padding: 10px 4px;
+  .assistant-shell {
+    height: auto;
   }
 }
 </style>

@@ -5,12 +5,18 @@ import { PanelLeftClose, PanelLeftOpen, TerminalSquare } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
 import Tooltip from '../components/ui/Tooltip.vue';
 import ResizablePanels from '../components/ui/ResizablePanels.vue';
+
 const compact = useMediaQuery('(max-width: 1100px)');
 const focused = ref(false);
 const tool = ref('commands');
 const toolsOpen = ref(true);
-const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', label: '验证输出' }, { id: 'storage', label: '数据容量' }];
+const toolTabs = [
+  { id: 'commands', label: '命令与历史' },
+  { id: 'tests', label: '验证输出' },
+  { id: 'storage', label: '数据容量' },
+];
 </script>
+
 <template>
   <div
     class="workbench"
@@ -23,7 +29,7 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
       </div>
       <Tooltip text="专注模式只收起题目，不停止 AI 任务，不暂停演练。">
         <Button
-          variant="secondary"
+          variant="ghost"
           size="small"
           :aria-pressed="focused"
           @click="focused = !focused"
@@ -37,17 +43,14 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
         </Button>
       </Tooltip>
     </div>
-    <p class="workbench-hint">
-      题目与文件、编辑与验证、AI 协作相互独立。专注模式不停止 AI 任务，不暂停演练；暂停状态始终显示，AI 停止与审批操作不会被专注模式隐藏。
-    </p>
     <div class="workbench-viewport">
       <ResizablePanels
         first-label="题目与文件面板"
         second-label="实现与协作面板"
         resize-label="调整题目面板宽度"
         :direction="compact ? 'vertical' : 'horizontal'"
-        :first-size="24"
-        :min-size="15"
+        :first-size="22"
+        :min-size="14"
         :first-hidden="focused"
       >
         <template #first>
@@ -61,7 +64,7 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
             second-label="AI 协作面板"
             resize-label="调整编辑器与协作面板"
             :direction="compact ? 'vertical' : 'horizontal'"
-            :first-size="64"
+            :first-size="63"
             :min-size="25"
           >
             <template #first>
@@ -71,7 +74,7 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
                   second-label="命令与验证终端"
                   resize-label="调整终端面板高度"
                   direction="vertical"
-                  :first-size="64"
+                  :first-size="66"
                   :min-size="15"
                   :second-hidden="!toolsOpen"
                 >
@@ -82,23 +85,38 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
                   </template>
                   <template #second>
                     <div class="tools">
-                      <div
-                        class="tool-tabs"
-                        role="tablist"
-                        aria-label="终端面板"
-                      >
-                        <button
-                          v-for="tab in toolTabs"
-                          :id="`tool-tab-${tab.id}`"
-                          :key="tab.id"
-                          type="button"
-                          role="tab"
-                          :aria-selected="tool === tab.id"
-                          :aria-controls="`tool-panel-${tab.id}`"
-                          @click="tool = tab.id"
+                      <div class="tools-header">
+                        <div
+                          class="tool-tabs"
+                          role="tablist"
+                          aria-label="终端面板"
                         >
-                          {{ tab.label }}
-                        </button>
+                          <button
+                            v-for="tab in toolTabs"
+                            :id="`tool-tab-${tab.id}`"
+                            :key="tab.id"
+                            type="button"
+                            role="tab"
+                            :aria-selected="tool === tab.id"
+                            :aria-controls="`tool-panel-${tab.id}`"
+                            @click="tool = tab.id"
+                          >
+                            {{ tab.label }}
+                          </button>
+                        </div>
+                        <Button
+                          class="terminal-toggle"
+                          variant="ghost"
+                          size="small"
+                          :aria-expanded="toolsOpen"
+                          @click="toolsOpen = false"
+                        >
+                          <TerminalSquare
+                            :size="13"
+                            aria-hidden="true"
+                          />
+                          <span>收起终端面板</span>
+                        </Button>
                       </div>
                       <div
                         v-for="tab in toolTabs"
@@ -119,19 +137,24 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
                     </div>
                   </template>
                 </ResizablePanels>
-                <Button
-                  class="terminal-toggle"
-                  variant="ghost"
-                  size="small"
-                  :aria-expanded="toolsOpen"
-                  @click="toolsOpen = !toolsOpen"
+                <div
+                  v-if="!toolsOpen"
+                  class="terminal-collapsed-bar"
                 >
-                  <TerminalSquare
-                    :size="14"
-                    aria-hidden="true"
-                  />
-                  <span>{{ toolsOpen ? '收起终端面板' : '展开终端面板' }}</span>
-                </Button>
+                  <Button
+                    class="terminal-toggle"
+                    variant="ghost"
+                    size="small"
+                    :aria-expanded="toolsOpen"
+                    @click="toolsOpen = true"
+                  >
+                    <TerminalSquare
+                      :size="13"
+                      aria-hidden="true"
+                    />
+                    <span>展开终端面板</span>
+                  </Button>
+                </div>
               </div>
             </template>
             <template #second>
@@ -145,6 +168,7 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
     </div>
   </div>
 </template>
+
 <style scoped>
 .workbench {
   min-width: 0;
@@ -152,20 +176,19 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
   display: flex;
   flex-direction: column;
   flex: 1;
+  background: var(--oc-bg);
 }
 
 .workbench-toolbar {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
-  border-bottom: 0;
-  border-radius: 12px 12px 0 0;
-  box-shadow: var(--oc-hairline-top);
+  min-height: 36px;
+  padding: 4px 12px;
+  background: var(--oc-bg-subtle);
+  border-bottom: 1px solid var(--oc-border);
 }
 
 .toolbar-title {
@@ -175,48 +198,63 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
 }
 
 .toolbar-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   background: var(--oc-accent);
-  box-shadow: 0 0 8px var(--oc-accent);
 }
 
 .workbench-toolbar h2 {
   margin: 0;
-  font-size: 13px;
-  color: var(--oc-fg);
-  font-weight: 600;
-}
-
-.workbench-hint {
-  margin: 0;
-  padding: 0 14px 10px;
-  background: var(--oc-surface);
-  border-left: 1px solid var(--oc-border);
-  border-right: 1px solid var(--oc-border);
+  font-size: 12.5px;
   color: var(--oc-fg-muted);
-  font-size: 12px;
-  line-height: 1.5;
+  font-weight: 600;
 }
 
 .workbench-viewport {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--oc-border);
-  border-radius: 0 0 12px 12px;
-  background: var(--oc-surface);
-  box-shadow: var(--oc-shadow-sm);
+  background: var(--oc-bg);
 }
 
 .workbench-viewport > :deep(.ui-splitter) {
   height: 100%;
 }
 
+.workbench-viewport :deep(.ui-splitter-handle) {
+  position: relative;
+  flex: 0 0 5px;
+  background: transparent;
+}
+
+.workbench-viewport :deep(.ui-splitter-handle::after) {
+  content: '';
+  display: block;
+  width: 1px;
+  height: 100%;
+  border-radius: 0;
+  background: var(--oc-border);
+}
+
+.workbench-viewport :deep(.ui-splitter-handle[data-orientation="vertical"]::after) {
+  width: 100%;
+  height: 1px;
+}
+
+.workbench-viewport :deep(.ui-splitter-handle:hover),
+.workbench-viewport :deep(.ui-splitter-handle:focus-visible) {
+  background: var(--oc-accent-soft);
+}
+
+.workbench-viewport :deep(.ui-splitter-handle:hover::after),
+.workbench-viewport :deep(.ui-splitter-handle:focus-visible::after) {
+  background: var(--oc-accent);
+  transform: none;
+}
+
 .pane {
   min-width: 0;
-  padding: 16px;
   height: 100%;
   overflow: auto;
   overflow-wrap: anywhere;
@@ -225,10 +263,14 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
 .files,
 .assistant {
   background: var(--oc-bg-subtle);
+  padding: 0;
 }
 
 .editor {
-  background: var(--oc-surface);
+  background: var(--oc-bg);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .editor-stack {
@@ -236,6 +278,7 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  background: var(--oc-bg);
 }
 
 .editor-stack > :deep(.ui-splitter) {
@@ -251,26 +294,35 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
   overflow: hidden;
 }
 
-.tool-tabs {
+.tools-header {
   display: flex;
-  gap: 4px;
-  padding: 0 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px 0 6px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--oc-border);
   background: var(--oc-surface);
 }
 
+.tool-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+}
+
 .tool-tabs button {
   position: relative;
-  padding: 10px 12px;
+  padding: 8px 10px;
   background: none;
   border: 0;
   border-bottom: 2px solid transparent;
   color: var(--oc-fg-muted);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 550;
   cursor: pointer;
-  transition: color 160ms var(--oc-ease), border-color 160ms var(--oc-ease);
+  white-space: nowrap;
+  transition: color 140ms var(--oc-ease), border-color 140ms var(--oc-ease);
 }
 
 .tool-tabs button:hover {
@@ -283,21 +335,29 @@ const toolTabs = [{ id: 'commands', label: '命令与历史' }, { id: 'tests', l
 }
 
 .tool-content {
-  padding: 16px;
+  padding: 12px;
   overflow: auto;
   min-height: 0;
+  flex: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
+  gap: 12px;
+  align-content: start;
+}
+
+.terminal-collapsed-bar {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 3px 10px;
+  border-top: 1px solid var(--oc-border);
+  background: var(--oc-surface);
 }
 
 .terminal-toggle {
-  flex-shrink: 0;
-  align-self: stretch;
-  border-radius: 0;
-  border-top: 1px solid var(--oc-border);
-  background: var(--oc-surface);
   font-size: 12px;
+  min-height: 26px;
+  padding: 2px 8px;
 }
 
 .compact .workbench-viewport {

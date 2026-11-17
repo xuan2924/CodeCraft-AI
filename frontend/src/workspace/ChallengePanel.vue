@@ -79,14 +79,12 @@ function enter() {
 </template>
 <style scoped>
 .challenge-panel {
-  border: 1px solid var(--oc-border-accent);
-  border-radius: 12px;
-  padding: 16px 18px;
-  margin-bottom: 12px;
-  background:
-    radial-gradient(circle at 0% 0%, rgba(160, 196, 165, 0.08), transparent 55%),
-    var(--oc-surface);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+  border: 1px solid var(--oc-border);
+  border-left: 3px solid var(--oc-accent);
+  border-radius: var(--radius-control);
+  padding: 12px 14px;
+  margin: 0;
+  background: var(--oc-surface);
   display: grid;
   gap: 8px;
   flex-shrink: 0;
@@ -95,19 +93,19 @@ function enter() {
 .challenge-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .challenge-panel h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: 13.5px;
   font-weight: 600;
 }
 
 .challenge-pill {
   font-size: 11px;
   font-weight: 550;
-  padding: 2px 9px;
+  padding: 2px 8px;
   border-radius: 999px;
   background: var(--oc-accent-soft);
   border: 1px solid var(--oc-border-accent);
@@ -117,23 +115,23 @@ function enter() {
 .challenge-desc,
 .challenge-meta {
   margin: 0;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--oc-fg-muted);
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .challenge-text {
-  margin: 4px 0 0;
-  padding: 12px;
-  border-radius: 8px;
+  margin: 2px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
   background: var(--oc-bg-input);
   border: 1px solid var(--oc-border);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 22rem;
+  max-height: 18rem;
   overflow: auto;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12.5px;
+  line-height: 1.55;
 }
 
 .challenge-details summary {

@@ -44,8 +44,21 @@ function shortcut(event: globalThis.KeyboardEvent) {
 }
 onMounted(() => {
   if (!host.value) return;
-  instance = editor.create(host.value, { theme: installEditorTheme(editor), model: null, minimap: { enabled: false }, ariaLabel: '文件编辑器',
-    scrollBeyondLastLine: false, fontSize: 14, wordWrap: 'on', tabSize: 4, automaticLayout: false });
+  instance = editor.create(host.value, {
+    theme: installEditorTheme(editor),
+    model: null,
+    minimap: { enabled: false },
+    ariaLabel: '文件编辑器',
+    scrollBeyondLastLine: false,
+    fontSize: 13.5,
+    lineHeight: 21,
+    fontFamily: '"JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, ui-monospace, monospace',
+    lineNumbersMinChars: 3,
+    padding: { top: 10, bottom: 10 },
+    wordWrap: 'on',
+    tabSize: 4,
+    automaticLayout: false,
+  });
   change = instance.onDidChangeModelContent(() => { if (!applying) emit('update:modelValue', instance!.getValue()); });
   resize = new globalThis.ResizeObserver(() => instance?.layout());
   resize.observe(host.value);
@@ -71,14 +84,15 @@ onScopeDispose(() => {
 
 <style scoped>
 .code-editor {
-  height: 54vh;
+  flex: 1 1 0%;
   min-height: 280px;
+  height: 100%;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  border: 1px solid var(--oc-border);
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
+  background: var(--oc-bg);
   overflow: hidden;
-  box-shadow: var(--oc-shadow-xs);
 }
 </style>

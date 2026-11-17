@@ -91,13 +91,12 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
     aria-label="测试任务与结果"
   >
     <div class="tests-header">
-      <div>
+      <div class="tests-title-group">
         <h2>基础测试</h2>
-        <p class="tests-desc">
-          使用已保存的稳定版本。离开页面或接管不会停止测试；日志只读，最终状态以结构化结果为准。
-        </p>
+        <span class="tests-sub">使用已保存版本 · 最终状态以结构化结果为准</span>
       </div>
       <Button
+        variant="secondary"
         size="small"
         @click="recent.refetch(); chosen && detail.refetch()"
       >
@@ -296,10 +295,10 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
 <style scoped>
 .workspace-tests {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  padding: 16px;
-  border-radius: 10px;
+  padding: 14px;
+  border-radius: var(--radius-panel);
   background: var(--oc-surface);
   border: 1px solid var(--oc-border);
 }
@@ -308,14 +307,26 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
+}
+
+.tests-title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .tests-header h2 {
-  margin: 0 0 4px;
-  font-size: 14.5px;
+  margin: 0;
+  font-size: 13.5px;
   font-weight: 600;
+}
+
+.tests-sub {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
 }
 
 .tests-desc,

@@ -23,9 +23,6 @@ const listing = useQuery({ queryKey: computed(() => ['feedback', owner.value, ad
 <template>
   <main class="feedback-page">
     <header class="feedback-hero">
-      <p class="eyebrow">
-        CODECRAFT / AUTHORIZED FEEDBACK
-      </p>
       <h1>{{ admin ? '授权反馈处理' : '我的授权反馈' }}</h1>
       <p>只分享你明确授权的快照，私有演练的其他内容不会被公开。</p>
     </header>
@@ -119,28 +116,21 @@ const listing = useQuery({ queryKey: computed(() => ['feedback', owner.value, ad
 }
 
 .feedback-hero {
-  margin-bottom: 28px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  color: var(--oc-accent);
+  margin-bottom: 20px;
 }
 
 h1 {
-  margin: 0 0 8px;
-  font-size: clamp(26px, 3vw, 34px);
+  margin: 0 0 6px;
+  font-size: clamp(22px, 2.4vw, 26px);
   font-weight: 650;
+  letter-spacing: -0.025em;
 }
 
-.feedback-hero p:not(.eyebrow) {
+.feedback-hero p {
   margin: 0;
-  line-height: 1.65;
+  line-height: 1.55;
   color: var(--oc-fg-muted);
-  font-size: 14px;
+  font-size: 13.5px;
 }
 
 .feedback-card {

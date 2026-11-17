@@ -300,20 +300,27 @@ onScopeDispose(() => {
   >
     <div class="editor-header-bar">
       <div class="editor-file-meta">
-        <h2>{{ selected || '选择或创建文件' }}</h2>
+        <div class="editor-tab">
+          <span
+            v-if="current && dirty(current)"
+            class="dirty-dot"
+            title="未保存修改"
+          />
+          <h2>{{ selected || '选择或创建文件' }}</h2>
+        </div>
         <div class="editor-status-row">
-          <p
+          <span
             role="status"
             class="editor-status-chip"
           >
             {{ busy ? '正在保存或核对…' : notice }}
-          </p>
-          <p
+          </span>
+          <span
             role="status"
             class="editor-backup-chip"
           >
             {{ backup }}
-          </p>
+          </span>
         </div>
       </div>
       <div class="editor-actions">
@@ -413,14 +420,6 @@ onScopeDispose(() => {
         恢复此草稿
       </Button>
     </div>
-    <details class="local-backups-details">
-      <summary>查看本场本地草稿备份（含已删除文件）</summary>
-      <ClosedDrafts
-        :owner="owner"
-        :exercise-id="exercise"
-        active
-      />
-    </details>
     <div
       v-if="deleted.size"
       class="deleted-drafts-bar"
@@ -441,8 +440,11 @@ onScopeDispose(() => {
     >
       正式文件已在修订 {{ deleted.get(current.path) }} 删除；本地草稿已保留，不能直接覆盖保存。请复制草稿后显式新建文件，或丢弃草稿。
     </p>
-    <div :class="{ 'conflict-columns': !!current?.remote }">
-      <div>
+    <div
+      class="editor-surface"
+      :class="{ 'conflict-columns': !!current?.remote }"
+    >
+      <div class="editor-primary-column">
         <h3
           v-if="current?.remote"
           class="conflict-heading"
@@ -480,14 +482,20 @@ onScopeDispose(() => {
       </section>
     </div>
     <div class="file-actions">
-      <label for="file-destination">新建或重命名的目标路径</label>
       <div class="file-actions-row">
+        <label
+          for="file-destination"
+          class="file-dest-label"
+        >路径</label>
         <input
           id="file-destination"
           v-model="newPath"
           autocomplete="off"
+          aria-label="新建或重命名的目标路径"
+          placeholder="src/test/java/Example.java"
         >
         <Button
+          variant="secondary"
           size="small"
           :disabled="!canWrite || busy || !!unresolved"
           @click="createFile"
@@ -495,6 +503,7 @@ onScopeDispose(() => {
           创建文本文件
         </Button>
         <Button
+          variant="secondary"
           size="small"
           :disabled="!canWrite || !current || dirty(current) || busy || !!unresolved"
           @click="removeOrRename(true)"
@@ -510,7 +519,17 @@ onScopeDispose(() => {
           删除文件
         </Button>
       </div>
-      <p>删除或重命名前，先保存或明确丢弃该文件的草稿。</p>
+      <details class="local-backups-details">
+        <summary>本地草稿备份与文件操作说明</summary>
+        <p class="file-actions-tip">
+          删除或重命名前，先保存或明确丢弃该文件的草稿。
+        </p>
+        <ClosedDrafts
+          :owner="owner"
+          :exercise-id="exercise"
+          active
+        />
+      </details>
     </div>
     <div
       v-if="leaving"
@@ -553,54 +572,72 @@ onScopeDispose(() => {
   min-width: 0;
   min-inline-size: 0;
   width: 100%;
+  flex: 1 1 0%;
+  min-height: 0;
   border: 0;
   margin: 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  background: var(--oc-bg);
 }
 
 .editor-header-bar {
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 10px 14px;
+  gap: 8px 12px;
   min-width: 0;
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border);
-  box-shadow: var(--oc-hairline-top);
+  min-height: 40px;
+  padding: 6px 12px;
+  background: var(--oc-surface);
+  border-bottom: 1px solid var(--oc-border);
 }
 
 .editor-file-meta {
   min-width: 0;
   flex: 1 1 180px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.editor-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--oc-warning);
+  flex-shrink: 0;
 }
 
 .editor-file-meta h2 {
   margin: 0;
-  font-size: 14.5px;
+  font-size: 12.5px;
   font-weight: 600;
   font-family: var(--oc-font-mono);
+  color: var(--oc-fg);
   overflow-wrap: anywhere;
 }
 
 .editor-status-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 12px;
+  gap: 4px 10px;
 }
 
 .editor-status-chip,
 .editor-backup-chip {
-  margin: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--oc-fg-muted);
 }
 
@@ -608,16 +645,16 @@ onScopeDispose(() => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .editor-banner {
+  flex-shrink: 0;
   margin: 0;
-  padding: 10px 14px;
-  border-radius: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--oc-border);
   background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border);
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
 }
 
@@ -629,12 +666,12 @@ onScopeDispose(() => {
 
 .editor-prompt-card,
 .draft-choice {
+  flex-shrink: 0;
   display: grid;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 10px;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--oc-border-strong);
   background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border-strong);
   font-size: 12.5px;
 }
 
@@ -642,41 +679,59 @@ onScopeDispose(() => {
   margin: 0;
 }
 
-.local-backups-details {
-  font-size: 12.5px;
-  color: var(--oc-fg-muted);
-}
-
-.local-backups-details summary {
-  cursor: pointer;
-}
-
 .deleted-drafts-bar {
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--oc-border);
+  background: var(--oc-bg-subtle);
+}
+
+.editor-surface {
+  flex: 1 1 0%;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.editor-primary-column {
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .conflict-columns {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
+  gap: 1px;
+  background: var(--oc-border);
+}
+
+.conflict-columns .editor-primary-column {
+  background: var(--oc-bg);
 }
 
 .conflict-heading {
-  margin: 0 0 8px;
-  font-size: 13px;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12.5px;
   font-weight: 600;
+  border-bottom: 1px solid var(--oc-border);
+  background: var(--oc-surface);
 }
 
 .conflict-remote-card {
   padding: 12px;
-  border-radius: 10px;
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border);
+  background: var(--oc-surface);
   display: grid;
   gap: 10px;
   align-content: start;
+  overflow: auto;
 }
 
 .conflict-note {
@@ -688,68 +743,77 @@ onScopeDispose(() => {
 .conflict-columns pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 45vh;
+  max-height: 40vh;
   overflow: auto;
   padding: 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--oc-bg-input);
   border: 1px solid var(--oc-border);
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .file-actions {
+  flex-shrink: 0;
   display: grid;
-  gap: 8px;
-  padding: 12px 14px;
-  border-radius: 10px;
+  gap: 6px;
+  padding: 7px 12px;
   background: var(--oc-bg-subtle);
-  border: 1px solid var(--oc-border);
-}
-
-.file-actions label {
-  font-size: 12.5px;
-  font-weight: 550;
-  color: var(--oc-fg-muted);
+  border-top: 1px solid var(--oc-border);
 }
 
 .file-actions-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.file-dest-label {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--oc-fg-muted);
+  white-space: nowrap;
 }
 
 .file-actions input {
-  flex: 1 1 240px;
+  flex: 1 1 200px;
   min-width: 0;
-  padding: 7px 10px;
+  padding: 5px 9px;
   font-family: var(--oc-font-mono);
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg);
   background: var(--oc-bg-input);
   border: 1px solid var(--oc-border-input);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
 }
 
-.file-actions p {
-  margin: 0;
+.local-backups-details {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.local-backups-details summary {
+  cursor: pointer;
+}
+
+.file-actions-tip {
+  margin: 6px 0 8px;
   font-size: 12px;
   color: var(--oc-fg-muted);
 }
 
 .leave-dialog {
-  padding: 18px;
-  border-radius: 12px;
+  flex-shrink: 0;
+  padding: 14px 16px;
   background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border-strong);
-  box-shadow: var(--oc-shadow-md);
+  border-top: 1px solid var(--oc-border-strong);
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .leave-dialog h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 @media (max-width: 760px) {
@@ -758,3 +822,4 @@ onScopeDispose(() => {
   }
 }
 </style>
+

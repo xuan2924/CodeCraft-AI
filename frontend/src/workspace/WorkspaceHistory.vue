@@ -76,12 +76,24 @@ function restore() {
 <template>
   <section
     class="history"
-    :style="{ borderColor: 'var(--border)' }"
     aria-label="代码修改历史"
   >
-    <h3>代码修改历史</h3>
-    <p>仅恢复受管理源码；不恢复对话、费用、网络副作用、依赖缓存或进程。本地草稿不会自动保存或丢弃，恢复后请处理冲突。测试成绩仍属于原测试修订。</p>
-    <p>最多保留最近 20 次变化所需版本，容量不足可提前清理。已清理版本不能恢复。</p>
+    <header class="history-header">
+      <div class="history-title">
+        <h3>代码修改历史</h3>
+        <details class="history-rules">
+          <summary>恢复规则</summary>
+          <p>仅恢复受管理源码，保留最近 20 次变化所需版本；不恢复对话、缓存或进程，本地草稿需手动处理冲突。</p>
+        </details>
+      </div>
+      <Button
+        variant="secondary"
+        size="small"
+        @click="listing.refetch()"
+      >
+        刷新历史
+      </Button>
+    </header>
     <p
       v-if="listing.isPending.value"
       role="status"
@@ -91,65 +103,76 @@ function restore() {
     <p
       v-if="listing.error.value"
       role="alert"
+      class="history-alert"
     >
       {{ message(listing.error.value) }}
     </p>
-    <Button @click="listing.refetch()">
-      刷新历史
-    </Button>
     <p v-if="listing.data.value?.changes.length === 0">
       尚无代码变化。
     </p>
-    <label>选择修改<select
-      v-model="selected"
-      :disabled="busy"
-      aria-label="选择代码修改"
-    >
-      <option value="">请选择</option>
-      <option
-        v-for="item in listing.data.value?.changes"
-        :key="item.id"
-        :value="item.id"
-      >r{{ item.baseRevision }} → r{{ item.resultRevision }} · {{ item.source }} · {{ item.retained ? '版本可用' : '版本已清理' }}</option>
-    </select></label>
-    <div class="actions">
-      <Button
-        v-if="listing.data.value?.nextBefore"
-        :disabled="busy"
-        @click="cursor = listing.data.value.nextBefore; selected = ''"
-      >
-        更早的修改
-      </Button>
-      <Button
-        v-if="cursor"
-        :disabled="busy"
-        @click="cursor = null; selected = ''"
-      >
-        返回最近修改
-      </Button>
-    </div>
-    <template v-if="change">
-      <p>{{ change.recordedAt }} · 任务 {{ change.taskId ?? '无' }} · 会话 {{ change.conversationId ?? '无' }}</p>
+    <div class="history-toolbar">
+      <label class="history-select-label">
+        <span>选择修改</span>
+        <select
+          v-model="selected"
+          :disabled="busy"
+          aria-label="选择代码修改"
+        >
+          <option value="">请选择</option>
+          <option
+            v-for="item in listing.data.value?.changes"
+            :key="item.id"
+            :value="item.id"
+          >r{{ item.baseRevision }} → r{{ item.resultRevision }} · {{ item.source }} · {{ item.retained ? '版本可用' : '版本已清理' }}</option>
+        </select>
+      </label>
       <div class="actions">
         <Button
+          v-if="listing.data.value?.nextBefore"
+          size="small"
+          :disabled="busy"
+          @click="cursor = listing.data.value.nextBefore; selected = ''"
+        >
+          更早的修改
+        </Button>
+        <Button
+          v-if="cursor"
+          size="small"
+          :disabled="busy"
+          @click="cursor = null; selected = ''"
+        >
+          返回最近修改
+        </Button>
+      </div>
+    </div>
+    <template v-if="change">
+      <p class="history-meta">
+        {{ change.recordedAt }} · 任务 {{ change.taskId ?? '无' }} · 会话 {{ change.conversationId ?? '无' }}
+      </p>
+      <div class="actions">
+        <Button
+          size="small"
           :disabled="!change.retained || busy"
           @click="inspect('DIFF')"
         >
           查看修改 Diff
         </Button>
         <Button
+          size="small"
           :disabled="!change.retained || busy"
           @click="inspect('UNDO')"
         >
           预览撤销此次修改
         </Button>
         <Button
+          size="small"
           :disabled="!change.retained || busy"
           @click="inspect('ROLLBACK', change.baseRevision)"
         >
           预览回滚到修改前
         </Button>
         <Button
+          size="small"
           :disabled="!change.retained || busy"
           @click="inspect('ROLLBACK', change.resultRevision)"
         >
@@ -166,20 +189,25 @@ function restore() {
     <p
       v-if="preview.error.value"
       role="alert"
+      class="history-alert"
     >
       {{ message(preview.error.value) }}
     </p>
     <template v-if="preview.data.value">
-      <p>预览基线 r{{ preview.data.value.expectedRevision }} · {{ preview.data.value.mode }}</p>
+      <p class="history-meta">
+        预览基线 r{{ preview.data.value.expectedRevision }} · {{ preview.data.value.mode }}
+      </p>
       <p
         v-if="stale"
         role="alert"
+        class="history-alert"
       >
         当前修订已变化，请重新预览后确认。
       </p>
       <p
         v-if="preview.data.value.conflicts.length"
         role="alert"
+        class="history-alert"
       >
         撤销冲突，未覆盖后续修改：{{ preview.data.value.conflicts.join('、') }}
       </p>
@@ -189,12 +217,14 @@ function restore() {
         label="历史比较文件"
       />
       <template v-if="preview.data.value.mode !== 'DIFF'">
-        <label><input
+        <label class="history-ack"><input
           v-model="acknowledged"
           type="checkbox"
           :disabled="busy || stale || preview.data.value.conflicts.length > 0"
         >确认按此预览恢复源码，保留本地草稿</label>
         <Button
+          variant="primary"
+          size="small"
           :disabled="!mayRestore"
           @click="restore"
         >
@@ -211,11 +241,13 @@ function restore() {
     <p
       v-if="command.error.value"
       role="alert"
+      class="history-alert"
     >
       {{ command.error.value }}
     </p>
     <Button
       v-if="command.uncertain.value"
+      size="small"
       :disabled="command.pending.value"
       @click="command.retry()"
     >
@@ -230,11 +262,13 @@ function restore() {
     <p
       v-if="operation.error.value"
       role="alert"
+      class="history-alert"
     >
       {{ message(operation.error.value) }}
     </p>
     <Button
       v-if="operation.error.value"
+      size="small"
       @click="operation.refetch()"
     >
       重新核对回执
@@ -245,26 +279,109 @@ function restore() {
 <style scoped>
 .history {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  border: 1px solid var(--oc-border) !important;
-  border-radius: 10px;
-  padding: 16px;
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-panel);
+  padding: 14px;
   background: var(--oc-surface);
-  box-shadow: var(--oc-hairline-top);
 }
-h3 { margin: 0; font-size: 14.5px; font-weight: 600; }
-p { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.55; overflow-wrap: anywhere; }
-label { display: grid; gap: 6px; font-size: 12.5px; font-weight: 550; }
-select {
-  box-sizing: border-box;
-  width: 100%;
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.history-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.history-rules {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.history-rules summary {
+  cursor: pointer;
+}
+
+.history-rules p {
+  margin: 6px 0 0;
+}
+
+p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.history-meta {
+  font-family: var(--oc-font-mono);
+}
+
+.history-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.history-select-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 240px;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.history-select-label span {
+  white-space: nowrap;
+  color: var(--oc-fg-muted);
+}
+
+.history-select-label select {
+  flex: 1 1 0%;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+.history-ack {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.history-alert {
   padding: 8px 10px;
-  font: inherit;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
+  background: var(--oc-danger-bg);
+  border: 1px solid var(--oc-danger-border);
+  color: var(--oc-danger);
 }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 </style>

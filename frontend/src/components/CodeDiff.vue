@@ -38,12 +38,12 @@ onScopeDispose(() => { resize?.disconnect(); instance?.dispose(); original?.disp
 </template>
 <style scoped>
 .code-diff {
-  height: 420px;
+  height: 400px;
   width: 100%;
   min-width: 0;
   border: 1px solid var(--oc-border);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
+  background: var(--oc-bg);
   overflow: hidden;
-  box-shadow: var(--oc-shadow-xs);
 }
 </style>

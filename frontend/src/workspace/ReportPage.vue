@@ -31,9 +31,6 @@ const allowed = computed(() => account.isFetchedAfterMount.value && !account.isE
       >查看原工作区</RouterLink>
     </nav>
     <header class="report-page-header">
-      <p class="eyebrow">
-        CODECRAFT / EVALUATION REPORT
-      </p>
       <h1>回顾与评价</h1>
     </header>
     <StatePanel
@@ -91,20 +88,12 @@ const allowed = computed(() => account.isFetchedAfterMount.value && !account.isE
 }
 
 .report-page-header {
-  margin-bottom: 24px;
-}
-
-.eyebrow {
-  margin: 0 0 6px;
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  color: var(--oc-accent);
+  margin-bottom: 18px;
 }
 
 h1 {
   margin: 0;
-  font-size: clamp(24px, 3vw, 32px);
+  font-size: clamp(22px, 2.4vw, 26px);
   font-weight: 650;
   letter-spacing: -0.025em;
 }

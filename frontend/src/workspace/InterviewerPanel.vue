@@ -197,21 +197,20 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
 .interviewer {
   background: var(--oc-surface);
   border: 1px solid var(--oc-border);
-  border-radius: 12px;
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
-  padding: 16px;
+  border-radius: var(--radius-panel);
+  padding: 14px;
   min-width: 0;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .interviewer header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   border-bottom: 1px solid var(--oc-border);
-  padding-bottom: 10px;
+  padding-bottom: 8px;
 }
 
 .interviewer-title {
@@ -222,14 +221,14 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
 
 .interviewer h2 {
   margin: 0;
-  font-size: 14.5px;
+  font-size: 13.5px;
   font-weight: 600;
 }
 
 .interviewer-badge {
   font-size: 11px;
   font-weight: 550;
-  padding: 2px 8px;
+  padding: 1px 7px;
   border-radius: 999px;
   background: var(--oc-surface-2);
   border: 1px solid var(--oc-border);
@@ -240,14 +239,14 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
 .interviewer-note,
 .interviewer-empty {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .interviewer-error-box {
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
   background: var(--oc-danger-bg);
   border: 1px solid var(--oc-danger-border);
   color: var(--oc-danger);
@@ -262,8 +261,8 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
 
 #interviewer-help {
   color: var(--oc-fg-muted);
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 11.5px;
+  line-height: 1.45;
   margin: 0;
 }
 
@@ -271,16 +270,16 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
   list-style: none;
   padding: 0;
   margin: 0;
-  max-height: 40dvh;
+  max-height: 44dvh;
   min-height: 60px;
   overflow: auto;
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .interviewer-history li {
-  padding: 12px;
-  border-radius: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
   background: var(--oc-surface-2);
   border: 1px solid var(--oc-border);
   display: grid;
@@ -289,8 +288,8 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
 
 .interviewer-question {
   margin: 0;
-  font-size: 13px;
-  font-weight: 550;
+  font-size: 12.5px;
+  font-weight: 600;
   color: var(--oc-fg);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -304,9 +303,11 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
 
 .interviewer-answer {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: rgba(243, 244, 242, 0.88);
+  padding-left: 10px;
+  border-left: 2px solid var(--oc-accent);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--oc-fg);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
