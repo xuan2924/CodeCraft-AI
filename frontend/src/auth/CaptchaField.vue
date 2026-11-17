@@ -50,7 +50,7 @@ onScopeDispose(() => { epoch++; controller?.abort(); globalThis.clearTimeout(exp
     :aria-busy="pending"
   >
     <label for="login-captcha">图片验证码</label>
-    <div class="captcha-image">
+    <div class="captcha-row">
       <div class="captcha-frame">
         <img
           v-if="challenge"
@@ -63,28 +63,33 @@ onScopeDispose(() => { epoch++; controller?.abort(); globalThis.clearTimeout(exp
           v-else
           role="status"
           class="captcha-placeholder"
-        >{{ pending ? '正在生成图片…' : '请刷新验证码' }}</span>
+        >{{ pending ? '正在生成…' : '请刷新' }}</span>
       </div>
-      <Button
-        variant="secondary"
-        size="small"
-        :disabled="disabled || pending"
-        @click="refresh"
-      >
-        刷新图片
-      </Button>
+      <div class="captcha-input-group">
+        <div class="captcha-controls">
+          <input
+            id="login-captcha"
+            v-model="answer"
+            autocomplete="off"
+            maxlength="5"
+            placeholder="5 位字符"
+            :disabled="disabled || !challenge"
+            aria-describedby="captcha-help"
+            @input="emit('change', challenge?.id ?? '', answer)"
+          >
+          <Button
+            variant="secondary"
+            size="small"
+            class="captcha-refresh"
+            :disabled="disabled || pending"
+            @click="refresh"
+          >
+            刷新图片
+          </Button>
+        </div>
+        <small id="captcha-help">不区分大小写，2 分钟内有效，每次尝试后更新。</small>
+      </div>
     </div>
-    <input
-      id="login-captcha"
-      v-model="answer"
-      autocomplete="off"
-      maxlength="5"
-      placeholder="输入图中 5 位字符"
-      :disabled="disabled || !challenge"
-      aria-describedby="captcha-help"
-      @input="emit('change', challenge?.id ?? '', answer)"
-    >
-    <small id="captcha-help">不区分大小写。图片两分钟内有效，每次登录尝试后需获取新图片。</small>
     <p
       v-if="error"
       role="alert"
@@ -98,7 +103,7 @@ onScopeDispose(() => { epoch++; controller?.abort(); globalThis.clearTimeout(exp
 <style scoped>
 .captcha-field {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -108,20 +113,20 @@ onScopeDispose(() => { epoch++; controller?.abort(); globalThis.clearTimeout(exp
   color: var(--oc-fg);
 }
 
-.captcha-image {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+.captcha-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
 }
 
 .captcha-frame {
   display: grid;
   place-items: center;
-  min-width: 160px;
-  min-height: 56px;
+  width: 160px;
+  height: 56px;
   padding: 2px;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--oc-border-strong);
   background: var(--oc-bg-input);
   overflow: hidden;
@@ -129,46 +134,60 @@ onScopeDispose(() => { epoch++; controller?.abort(); globalThis.clearTimeout(exp
 
 .captcha-frame img {
   display: block;
-  border-radius: 6px;
+  width: 154px;
+  height: 50px;
+  object-fit: cover;
+  border-radius: 4px;
 }
 
 .captcha-placeholder {
   font-size: 12px;
   color: var(--oc-fg-muted);
-  padding: 0 12px;
+  padding: 0 10px;
 }
 
-input {
+.captcha-input-group {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.captcha-controls {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.captcha-controls input {
+  flex: 1 1 0%;
+  min-width: 0;
   width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--oc-border-input);
-  border-radius: var(--radius-control);
-  background: var(--oc-bg-input);
-  color: var(--oc-fg);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
-  transition:
-    border-color 180ms var(--oc-ease),
-    box-shadow 180ms var(--oc-ease);
+  padding: 8px 10px;
+  font-family: var(--oc-font-mono);
+  letter-spacing: 0.08em;
 }
 
-input:hover:not(:disabled) {
-  border-color: #7c8492;
-}
-
-input:focus-visible {
-  border-color: var(--oc-accent);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 3px var(--oc-accent-glow);
+.captcha-refresh {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 small {
   color: var(--oc-fg-muted);
-  font-size: 12.5px;
-  line-height: 1.55;
+  font-size: 11.5px;
+  line-height: 1.45;
 }
 
 .captcha-error {
   margin: 0;
   font-size: 12.5px;
   color: var(--oc-danger);
+}
+
+@media (max-width: 480px) {
+  .captcha-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

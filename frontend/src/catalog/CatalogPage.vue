@@ -70,19 +70,16 @@ function start() {
   <main class="catalog-page">
     <header class="catalog-header">
       <div>
-        <p class="eyebrow">
-          CODECRAFT / ENGINEERING PRACTICE
-        </p>
         <h1>题库</h1>
         <p>从一个真实问题开始，在工作区中完成分析、编码与验证。</p>
       </div>
       <RouterLink
-        class="ui-button ui-button-secondary history-entry"
+        class="ui-button ui-button-secondary ui-button-small history-entry"
         :to="{ name: routes.history.name }"
       >
         <span>历史演练</span>
         <ArrowRight
-          :size="15"
+          :size="14"
           aria-hidden="true"
         />
       </RouterLink>
@@ -107,43 +104,50 @@ function start() {
         aria-label="进行中演练"
       >
         <div class="current-exercise-copy">
-          <h2>继续你的演练</h2>
-          <p v-if="current.isPending.value">
-            正在查询…
-          </p>
-          <p
+          <span class="current-strip-label">当前演练</span>
+          <span
+            v-if="current.isPending.value"
+            class="current-strip-text"
+          >正在查询…</span>
+          <span
             v-else-if="current.isError.value"
             role="alert"
-            class="failure-text"
+            class="current-strip-text failure-text"
+          >无法确认进行中的演练；暂不创建新演练。</span>
+          <span
+            v-else-if="!current.data.value"
+            class="current-strip-text"
+          >暂无进行中演练，选择下方题目即可准备。</span>
+          <div
+            v-else
+            class="current-active-meta"
           >
-            无法确认进行中的演练；暂不创建新的演练。
-          </p>
-          <p v-else-if="!current.data.value">
-            没有进行中的演练。准备好后，选择一道题目。
-          </p>
-          <template v-else>
-            <h3 class="current-title">
-              <span>{{ currentTitle }}</span>
-              <span class="status-badge">{{ current.data.value.state === 'READY' ? '准备就绪' : current.data.value.state === 'PAUSED' ? '已暂停' : '当前演练' }}</span>
-            </h3>
+            <strong class="current-title">{{ currentTitle }}</strong>
+            <span
+              class="ui-pill"
+              data-tone="accent"
+            >{{ current.data.value.state === 'READY' ? '准备就绪' : current.data.value.state === 'PAUSED' ? '已暂停' : '进行中' }}</span>
             <details class="exercise-identity">
-              <summary>演练标识</summary>
+              <summary>标识</summary>
               <code>{{ current.data.value.exerciseId }}</code>
             </details>
-          </template>
+          </div>
         </div>
-        <RouterLink
-          v-if="current.data.value && !current.isError.value"
-          :to="{ name: routes.workspace.name, query: { exercise: current.data.value.exerciseId } }"
-          class="ui-button ui-button-primary"
-        >继续演练</RouterLink>
-        <Button
-          v-if="current.isError.value"
-          variant="secondary"
-          @click="current.refetch()"
-        >
-          重新查询
-        </Button>
+        <div class="current-exercise-actions">
+          <RouterLink
+            v-if="current.data.value && !current.isError.value"
+            :to="{ name: routes.workspace.name, query: { exercise: current.data.value.exerciseId } }"
+            class="ui-button ui-button-primary ui-button-small"
+          >继续演练</RouterLink>
+          <Button
+            v-if="current.isError.value"
+            variant="secondary"
+            size="small"
+            @click="current.refetch()"
+          >
+            重新查询
+          </Button>
+        </div>
       </section>
       <div class="catalog-filters">
         <div class="search-box">
@@ -225,10 +229,14 @@ function start() {
           aria-label="题目详情"
         >
           <header class="detail-header">
-            <div>
+            <div class="detail-title-wrap">
               <div class="problem-meta">
-                <span>JAVA / {{ detail.version }}</span>
-                <span class="tabular">{{ detail.durationSeconds / 60 }} 分钟</span>
+                <span
+                  class="ui-pill"
+                  data-tone="accent"
+                >JAVA</span>
+                <span class="ui-pill">v{{ detail.version }}</span>
+                <span class="ui-pill tabular">{{ detail.durationSeconds / 60 }} 分钟</span>
               </div>
               <h2>{{ detail.title }}</h2>
             </div>
@@ -243,7 +251,7 @@ function start() {
               @click="toggle(detail.problemId)"
             >
               <Star
-                :size="18"
+                :size="17"
                 :fill="saved.has(detail.problemId) ? 'currentColor' : 'none'"
               />
             </Button>
@@ -287,6 +295,7 @@ function start() {
       >
         <Button
           variant="secondary"
+          size="small"
           :disabled="page === 0"
           @click="page--"
         >
@@ -295,6 +304,7 @@ function start() {
         <span class="page-indicator">第 {{ page + 1 }} 页</span>
         <Button
           variant="secondary"
+          size="small"
           :disabled="(page + 1) * 12 >= filtered.length"
           @click="page++"
         >
@@ -324,6 +334,7 @@ function start() {
       </p>
       <Button
         v-if="favorite.uncertain.value"
+        size="small"
         :disabled="favorite.pending.value"
         @click="favorite.retry()"
       >
@@ -338,6 +349,7 @@ function start() {
       </p>
       <Button
         v-if="create.uncertain.value"
+        size="small"
         :disabled="create.pending.value"
         @click="create.retry()"
       >
@@ -376,7 +388,7 @@ function start() {
 .catalog-page {
   max-width: 1220px;
   margin: 0 auto;
-  padding: 36px 32px 64px;
+  padding: 28px 32px 56px;
 }
 
 .catalog-header {
@@ -385,97 +397,90 @@ function start() {
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 28px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: var(--oc-accent);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
+  margin-bottom: 18px;
 }
 
 .catalog-header h1 {
-  margin: 0 0 8px;
-  font-size: clamp(28px, 3.2vw, 36px);
+  margin: 0 0 6px;
+  font-size: clamp(22px, 2.4vw, 26px);
   font-weight: 650;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.025em;
 }
 
-.catalog-header p:not(.eyebrow) {
+.catalog-header p {
   margin: 0;
   color: var(--oc-fg-muted);
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: 13.5px;
+  line-height: 1.55;
 }
 
 .history-entry {
   text-decoration: none;
 }
 
+/* Single-row Compact Status Toolbar Strip */
 .current-exercise {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 12px;
   flex-wrap: wrap;
-  padding: 22px 24px;
+  min-height: 44px;
+  padding: 8px 14px;
   border: 1px solid var(--oc-border);
-  border-radius: var(--radius-panel);
-  background:
-    radial-gradient(circle at 0% 0%, rgba(160, 196, 165, 0.08), transparent 55%),
-    var(--oc-surface);
-  box-shadow: var(--oc-shadow-sm), var(--oc-hairline-top);
+  border-radius: var(--radius-control);
+  background: var(--oc-surface);
+  box-shadow: var(--oc-hairline-top);
   overflow-wrap: anywhere;
 }
 
 .current-exercise-copy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
   min-width: 0;
   flex: 1 1 280px;
 }
 
-.current-exercise h2 {
-  margin: 0 0 6px;
-  font-size: 13px;
+.current-strip-label {
+  font-size: 12px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--oc-accent);
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--oc-accent-soft);
+  border: 1px solid var(--oc-border-accent);
+  white-space: nowrap;
 }
 
-.current-exercise p {
-  margin: 0;
-  font-size: 14px;
+.current-strip-text {
+  font-size: 13px;
   color: var(--oc-fg-muted);
-  line-height: 1.6;
 }
 
 .failure-text {
-  color: var(--oc-danger) !important;
+  color: var(--oc-danger);
+}
+
+.current-active-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .current-title {
-  margin: 4px 0 8px;
-  font-size: 18px;
+  font-size: 13.5px;
   font-weight: 600;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.status-badge {
-  font-size: 11.5px;
-  font-weight: 550;
-  color: var(--oc-accent);
-  border: 1px solid var(--oc-border-accent);
-  background: var(--oc-accent-soft);
-  border-radius: 999px;
-  padding: 3px 10px;
+  color: var(--oc-fg);
 }
 
 .exercise-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   color: var(--oc-fg-muted);
 }
@@ -485,82 +490,68 @@ function start() {
 }
 
 .exercise-identity code {
-  display: inline-block;
-  margin-top: 6px;
-  padding: 3px 8px;
-  border-radius: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
   background: var(--oc-bg-input);
   border: 1px solid var(--oc-border);
+  font-size: 11.5px;
 }
 
-.current-exercise a {
+.current-exercise-actions a {
   text-decoration: none;
 }
 
-/* Integrated Glass Filter Bar */
+/* Inline Filter Bar */
 .catalog-filters {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   flex-wrap: wrap;
-  margin: 22px 0;
-  padding: 12px 16px;
+  margin: 14px 0 18px;
+  padding: 10px 14px;
   background: var(--oc-surface);
   border: 1px solid var(--oc-border);
-  border-radius: 12px;
-  box-shadow: var(--oc-shadow-xs), var(--oc-hairline-top);
+  border-radius: var(--radius-control);
 }
 
 .search-box {
   position: relative;
   flex: 1 1 240px;
-  max-width: 360px;
+  max-width: 340px;
   display: flex;
   align-items: center;
 }
 
 .search-icon {
   position: absolute;
-  left: 12px;
+  left: 10px;
   color: var(--oc-fg-dim);
   pointer-events: none;
 }
 
 input[type="search"] {
   width: 100%;
-  padding: 8px 12px 8px 36px;
+  padding: 7px 11px 7px 32px;
   background: var(--oc-bg-input);
   border: 1px solid var(--oc-border-input);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   color: var(--oc-fg);
-  font-size: 13.5px;
-  transition:
-    border-color 180ms var(--oc-ease),
-    box-shadow 180ms var(--oc-ease);
-}
-
-input[type="search"]:hover {
-  border-color: #7c8492;
-}
-
-input[type="search"]:focus-visible {
-  border-color: var(--oc-accent);
-  box-shadow: 0 0 0 3px var(--oc-accent-glow);
+  font-size: 13px;
 }
 
 .favorite-filter {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-radius: 8px;
+  gap: 7px;
+  padding: 6px 11px;
+  border-radius: var(--radius-control);
   background: var(--oc-surface-2);
   border: 1px solid var(--oc-border);
   font-size: 13px;
   font-weight: 500;
   color: var(--oc-fg);
   cursor: pointer;
-  transition: border-color 160ms var(--oc-ease), background-color 160ms var(--oc-ease);
+  transition: border-color 140ms var(--oc-ease), background-color 140ms var(--oc-ease);
 }
 
 .favorite-filter:hover {
@@ -575,74 +566,66 @@ input[type="search"]:focus-visible {
 .version-count {
   margin-left: auto;
   color: var(--oc-fg-muted);
-  font-size: 12.5px;
+  font-size: 12px;
+  font-family: var(--oc-font-mono);
   font-variant-numeric: tabular-nums;
-  padding: 4px 10px;
+  padding: 3px 9px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--oc-surface-2);
   border: 1px solid var(--oc-border);
 }
 
-/* Bento Master-Detail Grid */
+/* Master-Detail Columns */
 .catalog-columns {
   display: grid;
-  grid-template-columns: minmax(270px, 0.85fr) minmax(0, 1.45fr);
-  gap: 20px;
+  grid-template-columns: minmax(270px, 0.82fr) minmax(0, 1.48fr);
+  gap: 16px;
   align-items: start;
 }
 
 .problem-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .problem-choice {
   position: relative;
-  padding: 18px 20px;
+  padding: 13px 15px;
   text-align: left;
   display: grid;
-  gap: 12px;
+  gap: 9px;
   color: var(--oc-fg);
   background: var(--oc-surface);
   border: 1px solid var(--oc-border);
-  border-radius: 12px;
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+  border-left: 2px solid transparent;
+  border-radius: 8px;
   cursor: pointer;
   overflow-wrap: anywhere;
   transition:
-    background-color 180ms var(--oc-ease),
-    border-color 180ms var(--oc-ease),
-    box-shadow 180ms var(--oc-ease),
-    transform 160ms var(--oc-ease);
+    background-color 140ms var(--oc-ease),
+    border-color 140ms var(--oc-ease);
 }
 
 .problem-choice:hover {
   background: var(--oc-surface-2);
   border-color: var(--oc-border-strong);
-  transform: translateY(-1px);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-sm);
 }
 
 .problem-choice strong {
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.45;
+  line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  min-height: 2.9em;
+  min-height: 2.8em;
 }
 
 .problem-choice[aria-pressed="true"] {
-  border-color: var(--oc-border-accent);
-  background:
-    radial-gradient(circle at 0% 0%, rgba(160, 196, 165, 0.1), transparent 65%),
-    var(--oc-surface-2);
-  box-shadow:
-    var(--oc-hairline-top),
-    0 0 0 1px rgba(160, 196, 165, 0.2),
-    var(--oc-shadow-sm);
+  background: var(--oc-surface-2);
+  border-color: var(--oc-border-strong);
+  border-left: 2px solid var(--oc-accent);
 }
 
 .choice-meta {
@@ -652,11 +635,12 @@ input[type="search"]:focus-visible {
 }
 
 .meta-chip {
+  font-family: var(--oc-font-mono);
   font-size: 11.5px;
   color: var(--oc-fg-muted);
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.04);
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--oc-bg-subtle);
   border: 1px solid var(--oc-border);
 }
 
@@ -664,13 +648,13 @@ input[type="search"]:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-/* Sticky Detail Bento Card */
+/* Sticky Detail Panel: Fixed Header + Scrollable Body + Fixed Footer */
 .problem-detail {
   min-width: 0;
   border: 1px solid var(--oc-border);
   border-radius: var(--radius-panel);
   background: var(--oc-surface);
-  box-shadow: var(--oc-shadow-md), var(--oc-hairline-top);
+  box-shadow: var(--oc-shadow-sm), var(--oc-hairline-top);
   display: flex;
   flex-direction: column;
   max-height: calc(100dvh - 48px);
@@ -680,23 +664,24 @@ input[type="search"]:focus-visible {
 }
 
 .detail-header {
+  flex-shrink: 0;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  padding: 24px 24px 18px;
+  gap: 14px;
+  padding: 18px 22px 16px;
   border-bottom: 1px solid var(--oc-border);
-  background: rgba(255, 255, 255, 0.015);
+  background: var(--oc-surface-2);
 }
 
-.detail-header > div {
+.detail-title-wrap {
   flex: 1;
   min-width: 0;
 }
 
 .detail-header h2 {
   margin: 8px 0 0;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 650;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -704,19 +689,9 @@ input[type="search"]:focus-visible {
 
 .problem-meta {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
-  font-size: 11.5px;
-  font-weight: 550;
-  letter-spacing: 0.04em;
-  color: var(--oc-accent);
-}
-
-.problem-meta span {
-  background: var(--oc-accent-soft);
-  border: 1px solid var(--oc-border-accent);
-  border-radius: 999px;
-  padding: 3px 10px;
+  font-family: var(--oc-font-mono);
 }
 
 .favorite-toggle[aria-pressed="true"] {
@@ -726,16 +701,17 @@ input[type="search"]:focus-visible {
 }
 
 .requirements {
+  flex: 1;
   overflow: auto;
   min-height: 0;
-  padding: 20px 24px 24px;
+  padding: 18px 22px 22px;
 }
 
 .runtime-meta {
-  margin: 18px 0 0;
-  padding-top: 14px;
+  margin: 16px 0 0;
+  padding-top: 12px;
   border-top: 1px solid var(--oc-border);
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -743,26 +719,25 @@ input[type="search"]:focus-visible {
 .start-action {
   flex-shrink: 0;
   border-top: 1px solid var(--oc-border);
-  padding: 16px 24px;
-  background: var(--oc-surface-glass);
-  backdrop-filter: blur(10px);
+  padding: 13px 22px;
+  background: var(--oc-surface-2);
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   justify-content: space-between;
 }
 
 .start-action p {
   margin: 0;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--oc-fg-muted);
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .start-action .alert-warning {
   color: var(--oc-warning);
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-control);
   background: var(--oc-warning-bg);
   border: 1px solid var(--oc-warning-border);
 }
@@ -771,12 +746,12 @@ input[type="search"]:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  margin: 28px 0 12px;
+  gap: 14px;
+  margin: 22px 0 10px;
 }
 
 .page-indicator {
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--oc-fg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -786,33 +761,32 @@ input[type="search"]:focus-visible {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  margin: 16px 0;
-  padding: 12px 16px;
-  border-radius: 10px;
+  margin: 14px 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-control);
   background: var(--oc-danger-bg);
   border: 1px solid var(--oc-danger-border);
   color: var(--oc-danger);
-  font-size: 13.5px;
+  font-size: 13px;
 }
 
 .withdrawn-card {
-  margin-top: 32px;
-  padding: 24px;
+  margin-top: 24px;
+  padding: 18px 20px;
   background: var(--oc-surface);
   border: 1px solid var(--oc-border);
   border-radius: var(--radius-panel);
-  box-shadow: var(--oc-shadow-xs), var(--oc-hairline-top);
 }
 
 .withdrawn-header h2 {
-  margin: 0 0 6px;
-  font-size: 16px;
+  margin: 0 0 4px;
+  font-size: 15px;
   font-weight: 600;
 }
 
 .withdrawn-header p {
-  margin: 0 0 14px;
-  font-size: 13px;
+  margin: 0 0 12px;
+  font-size: 12.5px;
   color: var(--oc-fg-muted);
 }
 
@@ -820,11 +794,11 @@ input[type="search"]:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
   flex-wrap: wrap;
-  padding: 12px 0;
+  padding: 10px 0;
   border-top: 1px solid var(--oc-border);
-  font-size: 13.5px;
+  font-size: 13px;
   color: var(--oc-fg-muted);
   overflow-wrap: anywhere;
 }
@@ -843,8 +817,8 @@ input[type="search"]:focus-visible {
   .detail-header,
   .requirements,
   .start-action {
-    padding-left: 18px;
-    padding-right: 18px;
+    padding-left: 16px;
+    padding-right: 16px;
   }
   .start-action {
     flex-wrap: wrap;

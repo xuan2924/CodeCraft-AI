@@ -1,9 +1,17 @@
 /** Single color source for application controls, Monaco and the terminal. */
 export const colors = {
-  background: '#111612', surface: '#191e19', selected: '#303730',
-  border: '#3c443c', controlBorder: '#788574', foreground: '#eeeee5', muted: '#aab2a7',
-  accent: '#a0c4a5', primary: '#eeeee5', primaryForeground: '#111612',
-  failure: '#ffb4a9', warning: '#e5c27e',
+  background: '#0b0d10',
+  surface: '#13171e',
+  selected: '#1e2632',
+  border: '#232a35',
+  controlBorder: '#758296',
+  foreground: '#f1f5f9',
+  muted: '#94a3b8',
+  accent: '#6ee7b7',
+  primary: '#f1f5f9',
+  primaryForeground: '#0b0d10',
+  failure: '#fda4af',
+  warning: '#fcd34d',
 } as const;
 
 export function installTokens(root: HTMLElement) {

@@ -93,7 +93,7 @@ watch(() => route.fullPath, async () => {
         >
           <component
             :is="link.icon"
-            :size="18"
+            :size="16"
             aria-hidden="true"
           /><span>{{ link.label }}</span>
         </RouterLink>
@@ -155,7 +155,7 @@ watch(() => route.fullPath, async () => {
 .app-shell {
   min-height: 100dvh;
   display: grid;
-  grid-template-columns: 236px minmax(0, 1fr);
+  grid-template-columns: 216px minmax(0, 1fr);
 }
 
 .app-sidebar {
@@ -164,9 +164,10 @@ watch(() => route.fullPath, async () => {
   height: 100dvh;
   display: flex;
   flex-direction: column;
-  padding: 20px 12px 16px;
+  padding: 16px 10px 12px;
   border-right: 1px solid var(--oc-border);
   background: var(--oc-bg-subtle);
+  min-width: 0;
 }
 
 .app-brand-row {
@@ -174,109 +175,119 @@ watch(() => route.fullPath, async () => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 24px;
-  padding: 0 4px;
+  margin-bottom: 18px;
+  padding: 0 6px;
 }
 
 .app-brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   color: var(--oc-fg);
   text-decoration: none;
-  font-size: 16.5px;
+  font-size: 15px;
   font-weight: 650;
   letter-spacing: -0.025em;
+  min-width: 0;
 }
 
 .app-brand-mark {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--oc-surface-2);
   border: 1px solid var(--oc-border-strong);
   color: var(--oc-accent);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+  flex-shrink: 0;
 }
 
 .app-navigation {
   display: grid;
-  gap: 4px;
+  gap: 2px;
+  min-width: 0;
 }
 
 .app-nav-link {
   position: relative;
   display: flex;
-  gap: 11px;
+  gap: 10px;
   align-items: center;
-  min-height: 38px;
-  padding: 8px 12px;
-  border-radius: 9px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 6px;
   border: 1px solid transparent;
   color: var(--oc-fg-muted);
   text-decoration: none;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 500;
+  min-width: 0;
   transition:
-    background-color 160ms var(--oc-ease),
-    border-color 160ms var(--oc-ease),
-    color 160ms var(--oc-ease);
+    background-color 140ms var(--oc-ease),
+    border-color 140ms var(--oc-ease),
+    color 140ms var(--oc-ease);
+}
+
+.app-nav-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app-nav-link:hover {
   color: var(--oc-fg);
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--oc-surface);
 }
 
 .app-nav-link.router-link-exact-active {
   color: var(--oc-fg);
   background: var(--oc-surface-2);
   border-color: var(--oc-border);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+  font-weight: 550;
 }
 
 .app-nav-link.router-link-exact-active::before {
   content: '';
   position: absolute;
   left: -1px;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
   background: var(--oc-accent);
 }
 
 .app-nav-link.router-link-exact-active svg {
   color: var(--oc-accent);
+  opacity: 1;
 }
 
 .app-nav-link svg {
   flex-shrink: 0;
-  opacity: 0.85;
+  opacity: 0.8;
 }
 
 .app-session {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   margin-top: auto;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid var(--oc-border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--oc-surface);
-  box-shadow: var(--oc-hairline-top);
-  font-size: 12.5px;
+  font-size: 12px;
+  min-width: 0;
 }
 
 .app-session-avatar {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--oc-surface-2);
   border: 1px solid var(--oc-border-strong);
   color: var(--oc-accent);
@@ -285,26 +296,33 @@ watch(() => route.fullPath, async () => {
 
 .app-session-meta {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 0%;
 }
 
 .app-session small {
   display: block;
   color: var(--oc-fg-muted);
-  margin-top: 2px;
-  font-size: 11.5px;
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .app-session p {
   margin: 0;
   color: var(--oc-fg-muted);
+  font-size: 12px;
 }
 
 .app-username {
   display: block;
   color: var(--oc-fg);
   font-weight: 550;
-  overflow-wrap: anywhere;
+  font-size: 12.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .app-content {
@@ -317,11 +335,11 @@ watch(() => route.fullPath, async () => {
   top: -80px;
   left: 16px;
   z-index: 200;
-  padding: 10px 16px;
+  padding: 9px 14px;
   background: var(--oc-cta-bg);
   color: var(--oc-cta-fg);
   font-weight: 600;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   box-shadow: var(--oc-shadow-md);
 }
 
@@ -344,7 +362,7 @@ watch(() => route.fullPath, async () => {
     top: 0;
     z-index: 40;
     height: auto;
-    padding: 12px 16px;
+    padding: 10px 14px;
     border-right: 0;
     border-bottom: 1px solid var(--oc-border);
     background: var(--oc-surface-glass);
@@ -360,11 +378,11 @@ watch(() => route.fullPath, async () => {
   }
   .navigation-expanded .app-navigation {
     display: grid;
-    margin-top: 14px;
+    margin-top: 12px;
   }
   .navigation-expanded .app-session {
     display: flex;
-    margin-top: 14px;
+    margin-top: 12px;
   }
 }
 </style>

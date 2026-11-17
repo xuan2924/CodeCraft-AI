@@ -17,50 +17,50 @@
 :root {
   color-scheme: dark;
 
-  /* Obsidian Craft — Linear / Vercel / Apple Design System Tokens */
+  /* Carbon Slate + Precision Mint Design System Tokens */
   --oc-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
   --oc-font-mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, ui-monospace, monospace;
 
-  --oc-bg: #090a0c;
-  --oc-bg-subtle: #0d0f12;
-  --oc-bg-input: #0b0c10;
-  --oc-surface: #121418;
-  --oc-surface-2: #181b21;
-  --oc-surface-hover: #1e222a;
-  --oc-surface-glass: rgba(18, 20, 24, 0.82);
+  --oc-bg: #0b0d10;
+  --oc-bg-subtle: #0e1116;
+  --oc-bg-input: #090b0e;
+  --oc-surface: #13171e;
+  --oc-surface-2: #181d26;
+  --oc-surface-hover: #1e2632;
+  --oc-surface-glass: rgba(19, 23, 30, 0.88);
 
-  --oc-selected: rgba(160, 196, 165, 0.11);
-  --oc-selected-strong: rgba(160, 196, 165, 0.18);
+  --oc-selected: rgba(110, 231, 183, 0.11);
+  --oc-selected-strong: rgba(110, 231, 183, 0.18);
 
-  --oc-border: rgba(255, 255, 255, 0.08);
-  --oc-border-strong: rgba(255, 255, 255, 0.15);
-  --oc-border-hover: rgba(255, 255, 255, 0.24);
-  --oc-border-input: #5e6570;
-  --oc-border-accent: rgba(160, 196, 165, 0.45);
+  --oc-border: #232a35;
+  --oc-border-strong: #2f3846;
+  --oc-border-hover: #414d60;
+  --oc-border-input: #758296;
+  --oc-border-accent: rgba(110, 231, 183, 0.42);
 
-  --oc-fg: #f3f4f2;
-  --oc-fg-muted: #98a0ab;
-  --oc-fg-dim: #6c737f;
+  --oc-fg: #f1f5f9;
+  --oc-fg-muted: #94a3b8;
+  --oc-fg-dim: #64748b;
 
-  --oc-cta-bg: #f3f4f0;
+  --oc-cta-bg: #f1f5f9;
   --oc-cta-hover: #ffffff;
-  --oc-cta-fg: #090a0c;
+  --oc-cta-fg: #0b0d10;
 
-  --oc-accent: #a0c4a5;
-  --oc-accent-glow: rgba(160, 196, 165, 0.18);
-  --oc-accent-soft: rgba(160, 196, 165, 0.12);
+  --oc-accent: #6ee7b7;
+  --oc-accent-glow: rgba(110, 231, 183, 0.18);
+  --oc-accent-soft: rgba(110, 231, 183, 0.11);
 
-  --oc-danger: #ffb4a9;
-  --oc-danger-bg: rgba(255, 180, 169, 0.1);
-  --oc-danger-border: rgba(255, 180, 169, 0.34);
+  --oc-danger: #fda4af;
+  --oc-danger-bg: rgba(253, 164, 175, 0.1);
+  --oc-danger-border: rgba(253, 164, 175, 0.34);
 
-  --oc-warning: #e5c27e;
-  --oc-warning-bg: rgba(229, 194, 126, 0.1);
-  --oc-warning-border: rgba(229, 194, 126, 0.32);
+  --oc-warning: #fcd34d;
+  --oc-warning-bg: rgba(252, 211, 77, 0.1);
+  --oc-warning-border: rgba(252, 211, 77, 0.32);
 
-  --oc-hairline-top: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --oc-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --oc-shadow-sm: 0 4px 12px -2px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --oc-hairline-top: inset 0 1px 0 rgba(241, 245, 249, 0.05);
+  --oc-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --oc-shadow-sm: 0 4px 12px -2px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.35);
   --oc-shadow-md: 0 14px 36px -8px rgba(0, 0, 0, 0.65), 0 3px 10px rgba(0, 0, 0, 0.4);
   --oc-shadow-lg: 0 28px 64px -14px rgba(0, 0, 0, 0.8), 0 6px 20px rgba(0, 0, 0, 0.45);
 
@@ -76,8 +76,8 @@
 
   /* Compatibility aliases for shared tokens */
   --line: var(--oc-border);
-  --radius-control: 8px;
-  --radius-panel: 14px;
+  --radius-control: 6px;
+  --radius-panel: 10px;
   --radius-lg: var(--radius-panel);
   --radius-md: var(--radius-control);
   --radius: var(--radius-control);
@@ -94,16 +94,13 @@
 * {
   box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-color: rgba(148, 163, 184, 0.22) transparent;
 }
 
 body {
   margin: 0;
   color: var(--oc-fg);
-  background:
-    radial-gradient(ellipse 80% 45% at 50% -8%, rgba(160, 196, 165, 0.055), transparent 70%),
-    var(--oc-bg);
-  background-attachment: fixed;
+  background: var(--oc-bg);
   line-height: 1.55;
 }
 
@@ -119,15 +116,60 @@ code, pre {
 a {
   color: var(--oc-accent);
   text-underline-offset: 4px;
-  transition: color 180ms var(--oc-ease), opacity 180ms var(--oc-ease);
+  transition: color 160ms var(--oc-ease), opacity 160ms var(--oc-ease);
 }
 
 a:hover {
-  color: #c2dec6;
+  color: #a7f3d0;
 }
 
 button, input, select, textarea {
   font: inherit;
+}
+
+/* Global baseline for native inputs so controls stay consistent across pages */
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  color: var(--oc-fg);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border-input);
+  border-radius: var(--radius-control);
+  padding: 8px 11px;
+  font-size: 13.5px;
+  line-height: 1.4;
+  transition:
+    border-color 160ms var(--oc-ease),
+    background-color 160ms var(--oc-ease),
+    box-shadow 160ms var(--oc-ease);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):hover:not(:disabled),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled) {
+  border-color: var(--oc-fg-muted);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--oc-accent);
+  outline-offset: 1px;
+  border-color: var(--oc-accent);
+  box-shadow: 0 0 0 3px var(--oc-accent-glow);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):disabled,
+select:disabled,
+textarea:disabled {
+  background: var(--oc-surface-2);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+select option {
+  background: var(--oc-surface);
+  color: var(--oc-fg);
 }
 
 fieldset {
@@ -140,17 +182,62 @@ fieldset {
   outline-offset: 2px;
 }
 
+/* Shared Badges & Pills */
+.ui-badge,
+.ui-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.5;
+  white-space: nowrap;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-surface-2);
+  color: var(--oc-fg-muted);
+}
+
+.ui-badge {
+  border-radius: 6px;
+}
+
+.ui-pill {
+  border-radius: 999px;
+}
+
+.ui-badge[data-tone="accent"],
+.ui-pill[data-tone="accent"] {
+  color: var(--oc-accent);
+  background: var(--oc-accent-soft);
+  border-color: var(--oc-border-accent);
+}
+
+.ui-badge[data-tone="warning"],
+.ui-pill[data-tone="warning"] {
+  color: var(--oc-warning);
+  background: var(--oc-warning-bg);
+  border-color: var(--oc-warning-border);
+}
+
+.ui-badge[data-tone="danger"],
+.ui-pill[data-tone="danger"] {
+  color: var(--oc-danger);
+  background: var(--oc-danger-bg);
+  border-color: var(--oc-danger-border);
+}
+
 /* Interactive Buttons */
 .ui-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  min-height: 36px;
-  padding: 8px 14px;
+  min-height: 34px;
+  padding: 7px 13px;
   border-radius: var(--radius-control);
   border: 1px solid transparent;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 550;
   line-height: 1.35;
   letter-spacing: -0.005em;
@@ -159,24 +246,23 @@ fieldset {
   overflow-wrap: anywhere;
   text-align: center;
   transition:
-    background-color 180ms var(--oc-ease),
-    border-color 180ms var(--oc-ease),
-    color 180ms var(--oc-ease),
-    box-shadow 180ms var(--oc-ease),
-    transform 140ms var(--oc-ease);
+    background-color 150ms var(--oc-ease),
+    border-color 150ms var(--oc-ease),
+    color 150ms var(--oc-ease),
+    box-shadow 150ms var(--oc-ease);
 }
 
 .ui-button-primary {
   color: var(--oc-cta-fg);
   background: var(--oc-cta-bg);
-  border-color: rgba(255, 255, 255, 0.25);
-  box-shadow: var(--oc-shadow-xs), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  border-color: rgba(241, 245, 249, 0.35);
+  box-shadow: var(--oc-shadow-xs);
 }
 
 .ui-button-primary:not(:disabled):hover {
   background: var(--oc-cta-hover);
-  transform: translateY(-1px);
-  box-shadow: var(--oc-shadow-sm), 0 0 20px -6px rgba(244, 244, 240, 0.35);
+  border-color: #ffffff;
+  box-shadow: var(--oc-shadow-sm);
 }
 
 .ui-button-secondary {
@@ -189,8 +275,6 @@ fieldset {
 .ui-button-secondary:not(:disabled):hover {
   background: var(--oc-surface-hover);
   border-color: var(--oc-border-hover);
-  transform: translateY(-1px);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-sm);
 }
 
 .ui-button-ghost {
@@ -201,7 +285,7 @@ fieldset {
 
 .ui-button-ghost:not(:disabled):hover {
   color: var(--oc-fg);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--oc-surface-hover);
   border-color: var(--oc-border);
 }
 
@@ -209,17 +293,15 @@ fieldset {
   color: var(--oc-danger);
   background: var(--oc-danger-bg);
   border-color: var(--oc-danger-border);
-  box-shadow: var(--oc-shadow-xs);
 }
 
 .ui-button-danger:not(:disabled):hover {
-  background: rgba(255, 180, 169, 0.16);
+  background: rgba(253, 164, 175, 0.16);
   border-color: var(--oc-danger);
-  transform: translateY(-1px);
 }
 
 .ui-button:not(:disabled):active {
-  transform: translateY(0) scale(0.985);
+  opacity: 0.9;
 }
 
 .ui-button:disabled {
@@ -229,16 +311,16 @@ fieldset {
 }
 
 .ui-button-small {
-  min-height: 30px;
-  padding: 5px 11px;
+  min-height: 28px;
+  padding: 4px 10px;
   font-size: 12.5px;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
 }
 
 .ui-button-icon {
-  width: 36px;
-  height: 36px;
-  padding: 7px;
+  width: 34px;
+  height: 34px;
+  padding: 6px;
   flex-shrink: 0;
 }
 
@@ -254,7 +336,7 @@ fieldset {
 /* Form Fields & Inputs */
 .ui-field {
   display: grid;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -267,20 +349,20 @@ fieldset {
 .ui-input {
   width: 100%;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 9px 12px;
   color: var(--oc-fg);
   background: var(--oc-bg-input);
   border: 1px solid var(--oc-border-input);
   border-radius: var(--radius-control);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
   transition:
-    border-color 180ms var(--oc-ease),
-    box-shadow 180ms var(--oc-ease),
-    background-color 180ms var(--oc-ease);
+    border-color 160ms var(--oc-ease),
+    box-shadow 160ms var(--oc-ease),
+    background-color 160ms var(--oc-ease);
 }
 
 .ui-input:hover:not(:disabled) {
-  border-color: #7c8492;
+  border-color: var(--oc-fg-muted);
 }
 
 .ui-input:focus-visible {
@@ -296,14 +378,14 @@ fieldset {
 
 .ui-field-help {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
-  line-height: 1.6;
+  line-height: 1.55;
 }
 
 .ui-field-error {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-danger);
 }
 
@@ -312,8 +394,8 @@ fieldset {
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgba(5, 6, 8, 0.72);
-  backdrop-filter: blur(8px);
+  background: rgba(5, 6, 8, 0.74);
+  backdrop-filter: blur(6px);
 }
 
 .ui-dialog {
@@ -336,14 +418,14 @@ fieldset {
 
 .ui-dialog-title {
   margin: 0 40px 8px 0;
-  font-size: 19px;
+  font-size: 18px;
   font-weight: 600;
   letter-spacing: -0.02em;
 }
 
 .ui-dialog-description {
   color: var(--oc-fg-muted);
-  margin: 0 0 22px;
+  margin: 0 0 20px;
   font-size: 13.5px;
   line-height: 1.6;
 }
@@ -359,31 +441,31 @@ fieldset {
   display: grid;
   justify-items: center;
   gap: 10px;
-  padding: 40px 28px;
+  padding: 36px 24px;
   text-align: center;
   color: var(--oc-fg-muted);
-  background: rgba(255, 255, 255, 0.015);
+  background: var(--oc-surface);
   border: 1px dashed var(--oc-border-strong);
   border-radius: var(--radius-panel);
 }
 
 .ui-state-icon {
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--oc-surface-2);
   border: 1px solid var(--oc-border);
   box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .ui-state p {
   margin: 0;
-  max-width: 60ch;
+  max-width: 58ch;
   font-size: 13.5px;
-  line-height: 1.65;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 
@@ -396,7 +478,7 @@ fieldset {
 .ui-state[data-kind="error"] {
   color: var(--oc-danger);
   border-color: var(--oc-danger-border);
-  background: rgba(255, 180, 169, 0.03);
+  background: rgba(253, 164, 175, 0.04);
 }
 
 .ui-state[data-kind="error"] .ui-state-icon {
@@ -424,7 +506,7 @@ fieldset {
   place-items: center;
   touch-action: none;
   background: var(--oc-bg);
-  transition: background-color 160ms var(--oc-ease);
+  transition: background-color 150ms var(--oc-ease);
 }
 
 .ui-splitter-handle::after {
@@ -433,7 +515,7 @@ fieldset {
   height: 28px;
   background: var(--oc-border-strong);
   border-radius: 999px;
-  transition: background-color 160ms var(--oc-ease), transform 160ms var(--oc-ease);
+  transition: background-color 150ms var(--oc-ease);
 }
 
 .ui-splitter-handle[data-orientation="vertical"]::after {
@@ -443,13 +525,12 @@ fieldset {
 
 .ui-splitter-handle:hover,
 .ui-splitter-handle:focus-visible {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--oc-surface);
 }
 
 .ui-splitter-handle:hover::after,
 .ui-splitter-handle:focus-visible::after {
   background: var(--oc-accent);
-  transform: scale(1.15);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -5,6 +5,7 @@ import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import * as api from './retentionApi';
 import { message } from './api';
+
 const props = defineProps<{ owner: string; entry: api.HistoryEntry }>();
 const emit = defineEmits<{ deleted: [id: string, owner: string]; select: [id: string] }>();
 const client = useQueryClient();
@@ -15,9 +16,13 @@ const error = ref('');
 let unresolved: { kind: 'delete' | 'retry'; key: string } | undefined;
 let disposed = false;
 const controller = new globalThis.AbortController();
-const progress = useQuery({ queryKey: ['workspace', props.owner, 'deletion', props.entry.exerciseId],
-  queryFn: ({ signal }) => api.progress(props.entry.exerciseId, signal), enabled: revoked, retry: false,
-  refetchInterval: (query) => query.state.data?.state === 'SUCCEEDED' ? false : 3000 });
+const progress = useQuery({
+  queryKey: ['workspace', props.owner, 'deletion', props.entry.exerciseId],
+  queryFn: ({ signal }) => api.progress(props.entry.exerciseId, signal),
+  enabled: revoked,
+  retry: false,
+  refetchInterval: (query) => query.state.data?.state === 'SUCCEEDED' ? false : 3000,
+});
 watch(() => props.entry.deletionState, (state) => {
   if (state !== null) { revoked.value = true; emit('deleted', props.entry.exerciseId, props.owner); }
 }, { immediate: true });
@@ -58,10 +63,11 @@ async function perform(kind: 'delete' | 'retry') {
     <div class="entry-head">
       <Button
         v-if="!revoked"
+        variant="ghost"
         size="small"
         @click="emit('select', entry.exerciseId)"
       >
-        {{ entry.exerciseId }}
+        <code>{{ entry.exerciseId }}</code>
       </Button>
       <code v-else>{{ entry.exerciseId }}</code>
     </div>
@@ -166,42 +172,50 @@ async function perform(kind: 'delete' | 'retry') {
 
 <style scoped>
 .retention-entry {
-  margin-top: 10px;
-  padding: 14px;
-  border-radius: 10px;
-  background: var(--oc-surface-2);
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--oc-bg-subtle);
   border: 1px solid var(--oc-border);
   display: grid;
   gap: 8px;
+  justify-items: start;
+}
+
+.entry-head code {
+  font-size: 12px;
+  color: var(--oc-fg);
 }
 
 .entry-meta,
 .entry-status {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .entry-alert {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-danger);
 }
 
 .delete-confirm {
-  padding: 12px;
-  border-radius: 8px;
+  width: 100%;
+  padding: 10px;
+  border-radius: var(--radius-control);
   background: var(--oc-danger-bg);
   border: 1px solid var(--oc-danger-border);
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .delete-confirm p {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg);
+  line-height: 1.5;
 }
 
 .entry-actions {

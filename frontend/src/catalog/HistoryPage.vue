@@ -9,6 +9,7 @@ import StatePanel from '../components/ui/StatePanel.vue';
 import WorkspaceRetention from '../workspace/WorkspaceRetention.vue';
 import { confirmExerciseDeletion } from '../workspace/drafts';
 import { routes } from '../routes';
+
 const account = useQuery({ queryKey: ['identity-session'], queryFn: ({ signal }) => session(signal), retry: false });
 const owner = computed(() => account.data.value?.id ?? '');
 const now = useTimestamp({ scheduler: callback => useIntervalFn(callback, 1000) });
@@ -23,22 +24,20 @@ async function deleted(id: string, user: string) {
   catch { if (user === owner.value) error.value = '服务端访问已撤销，但本地草稿清理失败。请刷新后重试清理或清除本站浏览器数据。'; }
 }
 </script>
+
 <template>
   <main class="history-page">
     <header class="history-hero">
       <div>
-        <p class="eyebrow">
-          CODECRAFT / HISTORY &amp; RETENTION
-        </p>
         <h1>历史演练</h1>
         <p>查看已结束的练习、冻结结果及真实保留状态。</p>
       </div>
       <RouterLink
-        class="ui-button ui-button-secondary"
+        class="ui-button ui-button-secondary ui-button-small"
         :to="{ name: routes.catalog.name }"
       >
         <ArrowLeft
-          :size="15"
+          :size="14"
           aria-hidden="true"
         />
         <span>前往题库</span>
@@ -72,43 +71,36 @@ async function deleted(id: string, user: string) {
     </p>
   </main>
 </template>
+
 <style scoped>
 .history-page {
   max-width: 1220px;
   margin: 0 auto;
-  padding: 36px 32px 64px;
+  padding: 28px 32px 56px;
   min-width: 0;
 }
 
 .history-hero {
-  margin-bottom: 28px;
+  margin-bottom: 18px;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 20px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  color: var(--oc-accent);
+  gap: 16px;
 }
 
 .history-hero h1 {
-  margin: 0 0 8px;
-  font-size: clamp(28px, 3vw, 34px);
+  margin: 0 0 6px;
+  font-size: clamp(22px, 2.4vw, 26px);
   font-weight: 650;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.025em;
 }
 
-.history-hero p:not(.eyebrow) {
+.history-hero p {
   margin: 0;
   color: var(--oc-fg-muted);
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: 13.5px;
+  line-height: 1.55;
 }
 
 .history-hero a {
@@ -116,13 +108,13 @@ async function deleted(id: string, user: string) {
 }
 
 .history-error {
-  margin-top: 16px;
-  padding: 12px 16px;
-  border-radius: 10px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: var(--radius-control);
   background: var(--oc-danger-bg);
   border: 1px solid var(--oc-danger-border);
   color: var(--oc-danger);
-  font-size: 13.5px;
+  font-size: 13px;
 }
 
 @media (max-width: 600px) {

@@ -1,53 +1,68 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
+import { RouterLink } from 'vue-router';
+import { Search } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
 import StatePanel from '../components/ui/StatePanel.vue';
-import { RouterLink } from 'vue-router';
 import { routes } from '../routes';
 import ExerciseRetentionEntry from './ExerciseRetentionEntry.vue';
 import { history } from './retentionApi';
+
 const props = defineProps<{ owner: string }>();
 const emit = defineEmits<{ deleted: [id: string, owner: string]; select: [id: string] }>();
 const after = ref<string>();
 const search = ref('');
 const status = ref('all');
-const query = useQuery({ queryKey: ['workspace', computed(() => props.owner), 'history', after],
-  queryFn: ({ signal }) => history(signal, after.value, props.owner), retry: false, refetchInterval: 5000 });
+const query = useQuery({
+  queryKey: ['workspace', computed(() => props.owner), 'history', after],
+  queryFn: ({ signal }) => history(signal, after.value, props.owner),
+  retry: false,
+  refetchInterval: 5000,
+});
 watch(() => props.owner, () => { after.value = undefined; search.value = ''; status.value = 'all'; });
 const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.exerciseId.includes(search.value)
   && (status.value === 'all' || status.value === 'retained' && entry.deletionState === null || status.value === 'cleanup' && entry.deletionState !== null)));
 </script>
+
 <template>
   <section
     class="retention-panel"
     aria-label="历史演练与删除"
   >
-    <div class="history-heading">
-      <h2>已结束演练</h2>
-      <details class="retention-rule">
-        <summary>保留规则</summary>
-        <p>按真实到期日保留。达到数量上限后先删除旧演练，不会自动淘汰未到期记录。</p>
-      </details>
-    </div>
-    <div class="history-filters">
-      <label>
-        <span>筛选本页演练</span>
-        <input
-          v-model="search"
-          type="search"
-          placeholder="输入演练标识…"
-          maxlength="128"
-        >
-      </label>
-      <label>
-        <span>状态</span>
-        <select v-model="status">
-          <option value="all">全部</option>
-          <option value="retained">保留中</option>
-          <option value="cleanup">清理中 / 失败</option>
-        </select>
-      </label>
+    <div class="history-toolbar">
+      <div class="toolbar-title">
+        <h2>已结束演练</h2>
+        <details class="retention-rule">
+          <summary>保留规则</summary>
+          <p>按真实到期日保留。达到数量上限后先删除旧演练，不会自动淘汰未到期记录。</p>
+        </details>
+      </div>
+      <div class="history-filters">
+        <label class="filter-search">
+          <span class="sr-only">筛选本页演练</span>
+          <Search
+            :size="14"
+            class="filter-search-icon"
+            aria-hidden="true"
+          />
+          <input
+            v-model="search"
+            type="search"
+            aria-label="筛选本页演练"
+            placeholder="按演练标识筛选…"
+            maxlength="128"
+          >
+        </label>
+        <label class="filter-select">
+          <span>状态</span>
+          <select v-model="status">
+            <option value="all">全部</option>
+            <option value="retained">保留中</option>
+            <option value="cleanup">清理中 / 失败</option>
+          </select>
+        </label>
+      </div>
     </div>
     <p
       v-if="query.isPending.value"
@@ -69,7 +84,7 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
       description="完成一场演练后，可以在这里查看结果与报告。"
     >
       <RouterLink
-        class="ui-button ui-button-secondary"
+        class="ui-button ui-button-secondary ui-button-small"
         :to="{ name: routes.catalog.name }"
       >前往题库开始演练</RouterLink>
     </StatePanel>
@@ -96,7 +111,7 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
               状态
             </th>
             <th scope="col">
-              查看 / 清理
+              操作
             </th>
           </tr>
         </thead>
@@ -108,38 +123,41 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
             <td class="identity-cell">
               <code>{{ entry.exerciseId }}</code>
             </td>
-            <td class="tabular">
+            <td class="time-cell tabular">
               {{ new Date(entry.endedAt).toLocaleString() }}
             </td>
-            <td class="tabular">
+            <td class="time-cell tabular">
               {{ new Date(entry.retainUntil).toLocaleString() }}
             </td>
-            <td>
+            <td class="state-cell">
               <span
-                class="retention-badge"
+                class="ui-pill retention-badge"
                 :data-state="entry.deletionState ?? 'RETAINED'"
+                :data-tone="entry.deletionState === null ? 'accent' : entry.deletionState === 'FAILED' ? 'danger' : entry.deletionState === 'SUCCEEDED' ? 'muted' : 'warning'"
               >
                 {{ entry.deletionState === null ? '保留中' : entry.deletionState === 'FAILED' ? '清理失败' : entry.deletionState === 'SUCCEEDED' ? '已删除' : '清理中' }}
               </span>
             </td>
             <td class="action-cell">
-              <Button
-                v-if="entry.deletionState === null"
-                variant="secondary"
-                size="small"
-                @click="emit('select', entry.exerciseId)"
-              >
-                查看演练
-              </Button>
-              <details>
-                <summary>删除与清理详情</summary>
-                <ExerciseRetentionEntry
-                  :owner="owner"
-                  :entry="entry"
-                  @deleted="(id, user) => emit('deleted', id, user)"
-                  @select="emit('select', $event)"
-                />
-              </details>
+              <div class="action-row">
+                <Button
+                  v-if="entry.deletionState === null"
+                  variant="secondary"
+                  size="small"
+                  @click="emit('select', entry.exerciseId)"
+                >
+                  查看演练
+                </Button>
+                <details class="cleanup-details">
+                  <summary>删除与清理详情</summary>
+                  <ExerciseRetentionEntry
+                    :owner="owner"
+                    :entry="entry"
+                    @deleted="(id, user) => emit('deleted', id, user)"
+                    @select="emit('select', $event)"
+                  />
+                </details>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -151,6 +169,7 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
     >
       <Button
         v-if="query.isError.value"
+        size="small"
         @click="query.refetch()"
       >
         重试读取历史
@@ -158,6 +177,7 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
       <Button
         v-if="after"
         variant="secondary"
+        size="small"
         @click="after = undefined"
       >
         返回第一页
@@ -165,6 +185,7 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
       <Button
         v-if="query.data.value?.length === 50"
         variant="secondary"
+        size="small"
         @click="after = query.data.value.at(-1)?.exerciseId"
       >
         下一页
@@ -172,87 +193,119 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
     </nav>
   </section>
 </template>
+
 <style scoped>
 .retention-panel {
   background: var(--oc-surface);
   border: 1px solid var(--oc-border);
   border-radius: var(--radius-panel);
-  box-shadow: var(--oc-shadow-sm), var(--oc-hairline-top);
-  padding: 24px;
+  box-shadow: var(--oc-shadow-xs), var(--oc-hairline-top);
+  overflow: hidden;
 }
 
-.history-heading {
+.history-toolbar {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 12px 20px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--oc-border);
+  background: var(--oc-surface-2);
 }
 
-.history-heading h2 {
-  font-size: 17px;
+.toolbar-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.toolbar-title h2 {
+  font-size: 14.5px;
   font-weight: 600;
   margin: 0;
 }
 
 .retention-rule {
-  font-size: 12.5px;
+  position: relative;
+  font-size: 12px;
   color: var(--oc-fg-muted);
-  max-width: 55ch;
 }
 
 .retention-rule summary {
   cursor: pointer;
+  user-select: none;
+}
+
+.retention-rule summary:hover {
+  color: var(--oc-fg);
 }
 
 .retention-rule p {
-  margin: 8px 0 0;
-  line-height: 1.6;
+  margin: 6px 0 0;
+  max-width: 52ch;
+  line-height: 1.5;
+  color: var(--oc-fg-muted);
 }
 
 .history-filters {
   display: flex;
-  gap: 18px;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
-  padding: 18px 0;
-  margin: 18px 0 18px;
-  border-top: 1px solid var(--oc-border);
-  border-bottom: 1px solid var(--oc-border);
 }
 
-.history-filters label {
+.filter-search {
+  position: relative;
   display: flex;
-  gap: 10px;
   align-items: center;
-  font-size: 13px;
+}
+
+.filter-search-icon {
+  position: absolute;
+  left: 9px;
+  color: var(--oc-fg-dim);
+  pointer-events: none;
+}
+
+.filter-search input {
+  width: 210px;
+  padding: 6px 10px 6px 29px;
+  font-size: 12.5px;
+}
+
+.filter-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
   color: var(--oc-fg-muted);
+}
+
+.filter-select select {
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
 }
 
 a {
   text-decoration: none;
 }
 
-input,
-select {
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  padding: 8px 11px;
-  border-radius: var(--radius-control);
-  max-width: 100%;
-  transition: border-color 180ms var(--oc-ease), box-shadow 180ms var(--oc-ease);
-}
-
-input:focus-visible,
-select:focus-visible {
-  border-color: var(--oc-accent);
-  box-shadow: 0 0 0 3px var(--oc-accent-glow);
-}
-
 .history-scroll {
   overflow-x: auto;
-  border: 1px solid var(--oc-border);
-  border-radius: 10px;
 }
 
 table {
@@ -260,21 +313,22 @@ table {
   width: 100%;
   min-width: 780px;
   text-align: left;
+  table-layout: fixed;
 }
 
 th,
 td {
-  padding: 14px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--oc-border);
   vertical-align: top;
-  font-size: 13.5px;
+  font-size: 13px;
 }
 
 th {
   color: var(--oc-fg-muted);
-  font-size: 12px;
-  font-weight: 550;
-  background: rgba(255, 255, 255, 0.02);
+  font-size: 11.5px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.015);
 }
 
 tbody tr:last-child td {
@@ -282,11 +336,11 @@ tbody tr:last-child td {
 }
 
 tbody tr {
-  transition: background-color 150ms var(--oc-ease);
+  transition: background-color 140ms var(--oc-ease);
 }
 
 tbody tr:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--oc-surface-2);
 }
 
 .identity-cell {
@@ -295,9 +349,10 @@ tbody tr:hover {
 }
 
 .identity-cell code {
-  padding: 3px 7px;
-  border-radius: 6px;
-  background: var(--oc-surface-2);
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--oc-bg-subtle);
   border: 1px solid var(--oc-border);
   font-size: 12px;
 }
@@ -306,66 +361,71 @@ tbody tr:hover {
   font-variant-numeric: tabular-nums;
 }
 
-td:nth-child(2),
-td:nth-child(3) {
+.time-cell {
   width: 170px;
+  color: var(--oc-fg-muted);
 }
 
-td:nth-child(4) {
+.state-cell {
   width: 110px;
 }
 
-.retention-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 550;
-  background: var(--oc-accent-soft);
-  border: 1px solid var(--oc-border-accent);
-  color: var(--oc-accent);
-  white-space: nowrap;
+.action-cell {
+  width: 260px;
 }
 
-.retention-badge[data-state="FAILED"] {
-  background: var(--oc-danger-bg);
-  border-color: var(--oc-danger-border);
-  color: var(--oc-danger);
+.action-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
 }
 
-.retention-badge[data-state="SUCCEEDED"] {
-  background: var(--oc-surface-2);
-  border-color: var(--oc-border);
-  color: var(--oc-fg-muted);
+.cleanup-details {
+  width: 100%;
 }
 
-.action-cell summary {
+.cleanup-details summary {
   cursor: pointer;
-  margin-top: 8px;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
+}
+
+.cleanup-details summary:hover {
+  color: var(--oc-fg);
 }
 
 .history-pagination {
   display: flex;
-  gap: 12px;
-  margin-top: 18px;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--oc-border);
+}
+
+.history-pagination:empty {
+  display: none;
 }
 
 .inline-status {
+  margin: 0;
+  padding: 18px;
   color: var(--oc-fg-muted);
-  font-size: 13.5px;
+  font-size: 13px;
 }
 
 .inline-alert {
+  margin: 0;
+  padding: 18px;
   color: var(--oc-danger);
-  font-size: 13.5px;
+  font-size: 13px;
 }
 
 @media (max-width: 600px) {
-  .retention-panel {
-    padding: 16px;
+  .history-toolbar {
+    padding: 12px 14px;
+  }
+  .filter-search input {
+    width: 100%;
   }
 }
 </style>
