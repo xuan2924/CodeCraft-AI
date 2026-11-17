@@ -119,8 +119,8 @@ const listing = useQuery({ queryKey: computed(() => ['feedback', owner.value, ad
 </template>
 <style scoped>
 .feedback-page {
-  max-width: 1120px;
-  padding: 36px 32px 64px;
+  max-width: 820px;
+  padding: 28px 32px 56px;
   margin: 0 auto;
 }
 

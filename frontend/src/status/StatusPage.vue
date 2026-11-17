@@ -1,9 +1,17 @@
 <script setup lang="ts">
-import { useQuery } from '@tanstack/vue-query';
+import { computed } from 'vue';
+import { useQuery, useQueryClient } from '@tanstack/vue-query';
+import type { Identity } from '../auth/api';
 import Button from '../components/ui/Button.vue';
+import SectionTabs from '../components/ui/SectionTabs.vue';
+import { routes } from '../routes';
 import { fetchStatus } from './api';
 
-const { data, isFetching, isError, refetch } = useQuery({
+const client = useQueryClient();
+const cachedIdentity = computed(() => client.getQueryData<Identity | null>(['identity-session']) ?? null);
+const showTabs = computed(() => !!cachedIdentity.value && !cachedIdentity.value.passwordChangeRequired);
+
+const { data, dataUpdatedAt, isFetching, isError, refetch } = useQuery({
   queryKey: ['internal-dependency-status'],
   queryFn: ({ signal }) => fetchStatus(signal),
   retry: false,
@@ -17,16 +25,32 @@ const { data, isFetching, isError, refetch } = useQuery({
   <main class="status-page">
     <header class="status-header">
       <div class="status-title-group">
-        <h1>服务状态</h1>
-        <p>此页只检查底层依赖的可用性；演练执行环境以具体题目的准备结果为准。</p>
+        <h1>{{ showTabs ? '设置' : '服务状态' }}</h1>
+        <SectionTabs
+          v-if="showTabs && cachedIdentity"
+          label="设置切换"
+          :active="routes.status.name"
+          :items="[
+            { name: routes.account.name, label: cachedIdentity.role === 'ADMIN' ? '账号管理' : '账号设置' },
+            { name: routes.status.name, label: '服务状态' },
+          ]"
+        />
       </div>
-      <span
-        v-if="!isFetching && !isError && data"
-        class="ui-pill"
-        :data-tone="data.database === 'AVAILABLE' && data.sandbox === 'AVAILABLE' ? 'accent' : 'danger'"
-      >
-        {{ data.database === 'AVAILABLE' && data.sandbox === 'AVAILABLE' ? '核心链路正常' : '存在不可用依赖' }}
-      </span>
+      <div class="status-meta-pills">
+        <span
+          v-if="!isFetching && !isError && dataUpdatedAt"
+          class="status-checked-at font-mono-num"
+        >
+          {{ new Date(dataUpdatedAt).toLocaleTimeString() }}
+        </span>
+        <span
+          v-if="!isFetching && !isError && data"
+          class="ui-pill"
+          :data-tone="data.database === 'AVAILABLE' && data.sandbox === 'AVAILABLE' ? 'accent' : 'danger'"
+        >
+          {{ data.database === 'AVAILABLE' && data.sandbox === 'AVAILABLE' ? '核心链路正常' : '存在不可用依赖' }}
+        </span>
+      </div>
     </header>
     <section
       class="status-panel"
@@ -68,7 +92,7 @@ const { data, isFetching, isError, refetch } = useQuery({
         class="status-table-wrap"
       >
         <table>
-          <caption>本次真实查询结果</caption>
+          <caption>此页只检查底层依赖的可用性；演练执行环境以具体题目的准备结果为准。</caption>
           <thead>
             <tr>
               <th scope="col">

@@ -16,6 +16,7 @@ import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.workspace.config.RetentionProperties;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.modules.workspace.model.dto.ExecutionCleanupDTO;
+import ai.codecraft.modules.workspace.model.dto.ExerciseHistoryResponse;
 import ai.codecraft.workspace.v1.WorkspaceDeletionReceipt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -208,5 +209,25 @@ class DeletionStoreTest {
         assertEquals(now, service.request("session", "exercise", "delete").requestedAt());
         when(exercises.find("exercise")).thenReturn(new ExerciseEntity("exercise", "other", "problem", "workspace", "prepare", "ENDED", 7L, "[]", 1, now, now, now, null, null, null));
         assertThrows(BusinessException.class, () -> service.request("session", "exercise", "delete"));
+    }
+
+    @Test
+    void historyReturnsProblemMetadataAndVerificationSummary() {
+        Instant now = Instant.parse("2026-01-10T00:00:00Z");
+        DeletionRepository deletions = mock(DeletionRepository.class);
+        ExerciseRepository exercises = mock(ExerciseRepository.class);
+        IdentityTransactionService identity = mock(IdentityTransactionService.class);
+        when(identity.authorization("session")).thenReturn(new SessionAuthorizationDTO("owner", "USER", false, 1, now.plusSeconds(60)));
+        List<ExerciseHistoryResponse> expected = List.of(
+            new ExerciseHistoryResponse("ex-1", "购物车金额计算", "1.1.0", "PASSED", now, now.plusSeconds(86400), null)
+        );
+        when(deletions.history("owner", null, now.minusSeconds(7 * 86400L))).thenReturn(expected);
+        DeletionStore service = new DeletionStore(deletions, exercises, identity, Clock.fixed(now, ZoneOffset.UTC),
+            new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), new ExerciseDataService(List.of()));
+        List<ExerciseHistoryResponse> actual = service.history("session", null);
+        assertEquals(expected, actual);
+        assertEquals("购物车金额计算", actual.getFirst().problemTitle());
+        assertEquals("1.1.0", actual.getFirst().problemVersion());
+        assertEquals("PASSED", actual.getFirst().finalVerification());
     }
 }

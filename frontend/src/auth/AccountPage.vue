@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import Button from '../components/ui/Button.vue';
+import SectionTabs from '../components/ui/SectionTabs.vue';
 import { RouterLink, useRouter } from 'vue-router';
-import { Activity, ArrowRight, BookOpen, Braces, Settings2, Terminal, UserRound } from '@lucide/vue';
+import { Activity, ArrowRight, Terminal, UserRound } from '@lucide/vue';
+import { routes } from '../routes';
 import { requestSaveLogout } from '../workspace/logoutIntent';
 import { validPassword, validUsername } from './api';
 import { useAccount } from './useAccount';
@@ -80,9 +82,21 @@ const pipelineSteps = [
           data-tone="accent"
         >仅受邀访问</span>
       </div>
-      <h1>{{ identity ? '账号设置' : '受邀账号登录' }}</h1>
-      <p class="account-lead">
-        {{ identity ? '管理个人资料与账号安全；在真实工作区中练习分析、编码与验证，保留每一次工程决策。' : '面向工程演练与评估的 AI 结对编程工作台。' }}
+      <h1>{{ identity ? '设置' : '受邀账号登录' }}</h1>
+      <SectionTabs
+        v-if="identity && !identity.passwordChangeRequired"
+        label="设置切换"
+        :active="routes.account.name"
+        :items="[
+          { name: routes.account.name, label: identity.role === 'ADMIN' ? '账号管理' : '账号设置' },
+          { name: routes.status.name, label: '服务状态' },
+        ]"
+      />
+      <p
+        v-if="!identity"
+        class="account-lead"
+      >
+        面向工程演练与评估的 AI 结对编程工作台。
       </p>
       <ol
         v-if="!identity"
@@ -213,98 +227,33 @@ const pipelineSteps = [
         </p>
       </form>
       <template v-else>
-        <div class="account-panel-grid">
-          <section
-            class="panel-card profile-card"
-            aria-label="个人资料"
-          >
-            <div class="avatar">
-              <UserRound
-                :size="22"
-                aria-hidden="true"
-              />
-            </div>
-            <div class="profile-meta">
-              <h2>个人资料</h2>
-              <p class="account-identity">
-                <span>{{ identity.username }}</span>
-                <span
-                  class="ui-pill"
-                  data-tone="accent"
-                >{{ identity.role === 'ADMIN' ? '管理员' : '受邀用户' }}</span>
-              </p>
-              <p
-                v-if="!showPasswordForm"
-                class="account-ready-note"
-              >
-                账号已就绪，可进入题目与工作区工程底座。
-              </p>
-            </div>
-          </section>
-          <nav
-            v-if="identity && !identity.passwordChangeRequired"
-            class="panel-card quick-links-card"
-            aria-label="工作区快捷入口"
-          >
-            <div class="panel-card-head">
-              <h2>工程入口</h2>
-              <span class="panel-card-sub">快捷直达常用工作台页面</span>
-            </div>
-            <div class="quick-links-grid">
-              <RouterLink
-                :to="{ name: 'workspace' }"
-                class="quick-link-tile"
-              >
-                <Braces
-                  :size="15"
-                  aria-hidden="true"
-                />
-                <span>题目与工作区</span>
-              </RouterLink>
-              <RouterLink
-                v-if="identity.role === 'USER'"
-                :to="{ name: 'models' }"
-                class="quick-link-tile"
-              >
-                <Settings2
-                  :size="15"
-                  aria-hidden="true"
-                />
-                <span>个人模型连接</span>
-              </RouterLink>
-              <RouterLink
-                v-if="identity.role === 'USER'"
-                :to="{ name: 'skills' }"
-                class="quick-link-tile"
-              >
-                <BookOpen
-                  :size="15"
-                  aria-hidden="true"
-                />
-                <span>个人 Skill</span>
-              </RouterLink>
-              <RouterLink
-                to="/"
-                class="quick-link-tile"
-              >
-                <Activity
-                  :size="15"
-                  aria-hidden="true"
-                />
-                <span>查看服务链路</span>
-              </RouterLink>
-            </div>
-          </nav>
-        </div>
+        <section
+          class="panel-card profile-card"
+          aria-label="个人资料"
+        >
+          <div class="avatar">
+            <UserRound
+              :size="20"
+              aria-hidden="true"
+            />
+          </div>
+          <div class="profile-meta">
+            <h2>个人资料</h2>
+            <p class="account-identity">
+              <span>{{ identity.username }}</span>
+              <span
+                class="ui-pill"
+                data-tone="accent"
+              >{{ identity.role === 'ADMIN' ? '管理员' : '受邀用户' }}</span>
+            </p>
+          </div>
+        </section>
         <section
           class="panel-card security-card"
           aria-label="账号安全"
         >
           <div class="security-header">
             <h2>账号安全</h2>
-            <p class="security-description">
-              定期更新密码，退出前处理好本地草稿。
-            </p>
           </div>
           <form
             v-if="showPasswordForm"
@@ -483,9 +432,6 @@ const pipelineSteps = [
               </Button>
             </div>
           </section>
-          <p class="security-note">
-            登录仅确认身份，不代表测试容器、模型或演练环境已准备完成。
-          </p>
         </section>
       </template>
       <div
@@ -518,7 +464,7 @@ const pipelineSteps = [
 
 <style scoped>
 .account-page {
-  max-width: 1080px;
+  max-width: 720px;
   margin: 0 auto;
   padding: 28px 32px 56px;
 }

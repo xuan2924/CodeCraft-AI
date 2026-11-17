@@ -1,8 +1,19 @@
 /* Page-specific presentation & StatusPage engineering monitor styling. Shared controls and tokens live in components/ui/ui.css. */
 .status-page {
-  max-width: 1040px;
+  max-width: 760px;
   margin: 0 auto;
   padding: 28px 32px 56px;
+}
+
+.status-meta-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-checked-at {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
 }
 
 .status-header {

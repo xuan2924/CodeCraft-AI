@@ -1,9 +1,22 @@
 import { ApiError, object, ownerHeaders, post, remove, request } from '../api/request';
 
-export interface HistoryEntry { exerciseId: string; endedAt: string; retainUntil: string; deletionState: string | null }
+export interface HistoryEntry {
+  exerciseId: string;
+  problemTitle?: string | null;
+  problemVersion?: string | null;
+  finalVerification?: string | null;
+  endedAt: string;
+  retainUntil: string;
+  deletionState: string | null;
+}
 export interface Deletion { exerciseId: string; state: string; requestedAt: string; completedAt: string | null; nextAttemptAt: string; failureCode: string | null; interventionRequired: boolean }
 const states = ['PENDING', 'RUNNING', 'FAILED', 'SUCCEEDED'];
 function timestamp(value: unknown): value is string { return typeof value === 'string' && Number.isFinite(Date.parse(value)); }
+function optionalString(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) return value;
+  if (typeof value !== 'string') invalid();
+  return value;
+}
 function invalid(): never { throw new ApiError(502, 'INVALID_RESPONSE'); }
 export async function history(signal: AbortSignal, after?: string, owner?: string): Promise<HistoryEntry[]> {
   const value = await request(`/api/exercises${after ? `?after=${encodeURIComponent(after)}` : ''}`, signal, { headers: ownerHeaders(owner) });
@@ -11,7 +24,15 @@ export async function history(signal: AbortSignal, after?: string, owner?: strin
   return value.map((item: unknown) => {
     if (!object(item) || typeof item.exerciseId !== 'string' || !timestamp(item.endedAt) || !timestamp(item.retainUntil)
       || item.deletionState !== null && !states.includes(String(item.deletionState))) return invalid();
-    return { exerciseId: item.exerciseId, endedAt: item.endedAt, retainUntil: item.retainUntil, deletionState: item.deletionState === null ? null : String(item.deletionState) };
+    return {
+      exerciseId: item.exerciseId,
+      problemTitle: optionalString(item.problemTitle),
+      problemVersion: optionalString(item.problemVersion),
+      finalVerification: optionalString(item.finalVerification),
+      endedAt: item.endedAt,
+      retainUntil: item.retainUntil,
+      deletionState: item.deletionState === null ? null : String(item.deletionState),
+    };
   });
 }
 function deletion(value: unknown, id: string): Deletion {

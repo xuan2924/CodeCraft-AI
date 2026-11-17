@@ -2,41 +2,81 @@
 import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
 import { RouterLink } from 'vue-router';
-import { Search } from '@lucide/vue';
+import { Search, Trash2 } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
+import Dialog from '../components/ui/Dialog.vue';
 import StatePanel from '../components/ui/StatePanel.vue';
+import Tooltip from '../components/ui/Tooltip.vue';
 import { routes } from '../routes';
 import ExerciseRetentionEntry from './ExerciseRetentionEntry.vue';
-import { history } from './retentionApi';
+import { history, type HistoryEntry } from './retentionApi';
 
 const props = defineProps<{ owner: string }>();
 const emit = defineEmits<{ deleted: [id: string, owner: string]; select: [id: string] }>();
 const after = ref<string>();
 const search = ref('');
 const status = ref('all');
+const cleanupTarget = ref<HistoryEntry | null>(null);
+
 const query = useQuery({
   queryKey: ['workspace', computed(() => props.owner), 'history', after],
   queryFn: ({ signal }) => history(signal, after.value, props.owner),
   retry: false,
   refetchInterval: 5000,
 });
-watch(() => props.owner, () => { after.value = undefined; search.value = ''; status.value = 'all'; });
-const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.exerciseId.includes(search.value)
-  && (status.value === 'all' || status.value === 'retained' && entry.deletionState === null || status.value === 'cleanup' && entry.deletionState !== null)));
+
+watch(() => props.owner, () => {
+  after.value = undefined;
+  search.value = '';
+  status.value = 'all';
+  cleanupTarget.value = null;
+});
+
+const entries = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  return (query.data.value ?? []).filter((entry) => {
+    const matchesSearch = !q
+      || entry.exerciseId.toLowerCase().includes(q)
+      || (entry.problemTitle?.toLowerCase().includes(q) ?? false);
+    const matchesStatus = status.value === 'all'
+      || status.value === 'retained' && entry.deletionState === null
+      || status.value === 'cleanup' && entry.deletionState !== null;
+    return matchesSearch && matchesStatus;
+  });
+});
+
+watch(entries, (list) => {
+  if (!cleanupTarget.value) return;
+  const fresh = list.find(e => e.exerciseId === cleanupTarget.value!.exerciseId);
+  if (fresh) cleanupTarget.value = fresh;
+});
+
+const verificationLabels: Record<string, { label: string; tone?: string }> = {
+  PASSED: { label: '验收通过', tone: 'accent' },
+  FAILED: { label: '验收未通过', tone: 'danger' },
+  TIMED_OUT: { label: '验收超时', tone: 'warning' },
+  UNAVAILABLE: { label: '结果不可用', tone: 'warning' },
+  PENDING: { label: '待核对' },
+};
 </script>
 
 <template>
   <section
-    class="retention-panel"
+    class="retention-panel ui-surface-flat"
     aria-label="历史演练与删除"
   >
     <div class="history-toolbar">
       <div class="toolbar-title">
         <h2>已结束演练</h2>
-        <details class="retention-rule">
-          <summary>保留规则</summary>
-          <p>按真实到期日保留。达到数量上限后先删除旧演练，不会自动淘汰未到期记录。</p>
-        </details>
+        <Tooltip text="按真实到期日保留；达到数量上限后先删除旧演练，不会自动淘汰未到期记录。">
+          <button
+            type="button"
+            class="rule-hint"
+            aria-label="保留规则说明"
+          >
+            ?
+          </button>
+        </Tooltip>
       </div>
       <div class="history-filters">
         <label class="filter-search">
@@ -50,7 +90,7 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
             v-model="search"
             type="search"
             aria-label="筛选本页演练"
-            placeholder="按演练标识筛选…"
+            placeholder="按题目或标识筛选…"
             maxlength="128"
           >
         </label>
@@ -64,6 +104,7 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
         </label>
       </div>
     </div>
+
     <p
       v-if="query.isPending.value"
       role="status"
@@ -99,7 +140,10 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
         <thead>
           <tr>
             <th scope="col">
-              演练标识
+              题目与标识
+            </th>
+            <th scope="col">
+              验收结果
             </th>
             <th scope="col">
               结束时间
@@ -108,7 +152,7 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
               保留至
             </th>
             <th scope="col">
-              状态
+              保留状态
             </th>
             <th scope="col">
               操作
@@ -121,12 +165,41 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
             :key="`${owner}:${entry.exerciseId}`"
           >
             <td class="identity-cell">
-              <code>{{ entry.exerciseId }}</code>
+              <template v-if="entry.problemTitle">
+                <div class="title-line">
+                  <strong>{{ entry.problemTitle }}</strong>
+                  <span
+                    v-if="entry.problemVersion"
+                    class="version-tag font-mono-num"
+                  >v{{ entry.problemVersion }}</span>
+                </div>
+                <code
+                  class="short-id font-mono-num"
+                  :title="entry.exerciseId"
+                >#{{ entry.exerciseId.slice(0, 8) }}</code>
+              </template>
+              <code
+                v-else
+                class="font-mono-num"
+              >{{ entry.exerciseId }}</code>
             </td>
-            <td class="time-cell tabular">
+            <td class="verification-cell">
+              <span
+                v-if="entry.finalVerification"
+                class="ui-badge"
+                :data-tone="verificationLabels[entry.finalVerification]?.tone"
+              >
+                {{ verificationLabels[entry.finalVerification]?.label ?? entry.finalVerification }}
+              </span>
+              <span
+                v-else
+                class="muted-dash"
+              >-</span>
+            </td>
+            <td class="time-cell font-mono-num">
               {{ new Date(entry.endedAt).toLocaleString() }}
             </td>
-            <td class="time-cell tabular">
+            <td class="time-cell font-mono-num">
               {{ new Date(entry.retainUntil).toLocaleString() }}
             </td>
             <td class="state-cell">
@@ -142,27 +215,32 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
               <div class="action-row">
                 <Button
                   v-if="entry.deletionState === null"
-                  variant="secondary"
+                  variant="ghost"
                   size="small"
                   @click="emit('select', entry.exerciseId)"
                 >
                   查看演练
                 </Button>
-                <details class="cleanup-details">
-                  <summary>删除与清理详情</summary>
-                  <ExerciseRetentionEntry
-                    :owner="owner"
-                    :entry="entry"
-                    @deleted="(id, user) => emit('deleted', id, user)"
-                    @select="emit('select', $event)"
+                <Button
+                  variant="ghost"
+                  size="small"
+                  class="cleanup-trigger"
+                  :aria-label="`删除或查看清理状态 ${entry.problemTitle ?? entry.exerciseId}`"
+                  @click="cleanupTarget = entry"
+                >
+                  <Trash2
+                    :size="13"
+                    aria-hidden="true"
                   />
-                </details>
+                  <span>{{ entry.deletionState ? '清理进度' : '删除' }}</span>
+                </Button>
               </div>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
+
     <nav
       aria-label="历史分页"
       class="history-pagination"
@@ -191,15 +269,27 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
         下一页
       </Button>
     </nav>
+
+    <Dialog
+      :open="!!cleanupTarget"
+      :title="cleanupTarget?.problemTitle ? `管理演练：${cleanupTarget.problemTitle}` : '演练删除与清理'"
+      description="删除将撤销服务端访问并清除此浏览器对应草稿，不可恢复。"
+      @update:open="!$event && (cleanupTarget = null)"
+    >
+      <ExerciseRetentionEntry
+        v-if="cleanupTarget"
+        :key="`${owner}:${cleanupTarget.exerciseId}`"
+        :owner="owner"
+        :entry="cleanupTarget"
+        @deleted="(id, user) => emit('deleted', id, user)"
+        @select="(id) => { cleanupTarget = null; emit('select', id); }"
+      />
+    </Dialog>
   </section>
 </template>
 
 <style scoped>
 .retention-panel {
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
-  border-radius: var(--radius-panel);
-  box-shadow: var(--oc-shadow-xs), var(--oc-hairline-top);
   overflow: hidden;
 }
 
@@ -208,46 +298,33 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px 20px;
-  padding: 14px 18px;
+  gap: 12px 18px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--oc-border);
-  background: var(--oc-surface-2);
+  background: var(--oc-bg-subtle);
 }
 
 .toolbar-title {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
-  flex-wrap: wrap;
-  min-width: 0;
+  align-items: center;
+  gap: 8px;
 }
 
 .toolbar-title h2 {
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 600;
   margin: 0;
 }
 
-.retention-rule {
-  position: relative;
-  font-size: 12px;
+.rule-hint {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-surface);
   color: var(--oc-fg-muted);
-}
-
-.retention-rule summary {
-  cursor: pointer;
-  user-select: none;
-}
-
-.retention-rule summary:hover {
-  color: var(--oc-fg);
-}
-
-.retention-rule p {
-  margin: 6px 0 0;
-  max-width: 52ch;
-  line-height: 1.5;
-  color: var(--oc-fg-muted);
+  font-size: 11px;
+  cursor: help;
 }
 
 .history-filters {
@@ -271,8 +348,8 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
 }
 
 .filter-search input {
-  width: 210px;
-  padding: 6px 10px 6px 29px;
+  width: 220px;
+  padding: 5px 10px 5px 29px;
   font-size: 12.5px;
 }
 
@@ -285,7 +362,7 @@ const entries = computed(() => (query.data.value ?? []).filter((entry) => entry.
 }
 
 .filter-select select {
-  padding: 6px 10px;
+  padding: 5px 10px;
   font-size: 12.5px;
 }
 
@@ -320,7 +397,7 @@ th,
 td {
   padding: 12px 16px;
   border-bottom: 1px solid var(--oc-border);
-  vertical-align: top;
+  vertical-align: middle;
   font-size: 13px;
 }
 
@@ -336,7 +413,7 @@ tbody tr:last-child td {
 }
 
 tbody tr {
-  transition: background-color 140ms var(--oc-ease);
+  transition: background-color 120ms var(--oc-ease);
 }
 
 tbody tr:hover {
@@ -348,57 +425,75 @@ tbody tr:hover {
   overflow-wrap: anywhere;
 }
 
-.identity-cell code {
-  display: inline-block;
-  padding: 2px 7px;
-  border-radius: 5px;
-  background: var(--oc-bg-subtle);
-  border: 1px solid var(--oc-border);
-  font-size: 12px;
+.title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
-.tabular {
-  font-variant-numeric: tabular-nums;
+.title-line strong {
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--oc-fg);
+}
+
+.version-tag {
+  font-size: 11px;
+  color: var(--oc-fg-muted);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--oc-bg-input);
+}
+
+.short-id {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--oc-fg-dim);
+}
+
+.verification-cell {
+  width: 120px;
+}
+
+.muted-dash {
+  color: var(--oc-fg-dim);
 }
 
 .time-cell {
-  width: 170px;
+  width: 165px;
   color: var(--oc-fg-muted);
+  font-size: 12px;
 }
 
 .state-cell {
-  width: 110px;
+  width: 105px;
 }
 
 .action-cell {
-  width: 260px;
+  width: 170px;
 }
 
 .action-row {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 
-.cleanup-details {
-  width: 100%;
-}
-
-.cleanup-details summary {
-  cursor: pointer;
-  font-size: 12px;
+.cleanup-trigger {
   color: var(--oc-fg-muted);
 }
 
-.cleanup-details summary:hover {
-  color: var(--oc-fg);
+.cleanup-trigger:hover {
+  color: var(--oc-danger);
 }
 
 .history-pagination {
   display: flex;
   gap: 10px;
-  padding: 14px 18px;
+  padding: 12px 18px;
   border-top: 1px solid var(--oc-border);
 }
 

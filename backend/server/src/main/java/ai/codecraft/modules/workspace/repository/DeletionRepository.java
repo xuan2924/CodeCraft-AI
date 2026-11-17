@@ -30,7 +30,7 @@ public interface DeletionRepository {
     @Delete("DELETE FROM workspace_transition WHERE exercise_id IN (" + EXPIRED_EXERCISES + ")")
     void expireTransitionReceipts(Instant before);
     String COLUMNS = "exercise_id::text, user_id::text, workspace_instance_id::text, state, requested_at, completed_at, attempts, next_attempt_at, first_failure_at, failure_code";
-    @Select("SELECT e.id::text AS exercise_id, e.ended_at, e.retain_until, d.state AS deletion_state FROM workspace_exercise e LEFT JOIN workspace_deletion d ON d.exercise_id = e.id WHERE e.user_id = #{user}::uuid AND e.state = 'ENDED' AND (#{after}::uuid IS NULL OR e.id < #{after}::uuid) AND (d.completed_at IS NULL OR d.completed_at > #{before}) ORDER BY e.id DESC LIMIT 50")
+    @Select("SELECT e.id::text AS exercise_id, coalesce(p.artifact->'manifest'->>'title', p.problem_id) AS problem_title, p.version AS problem_version, f.verification AS final_verification, e.ended_at, e.retain_until, d.state AS deletion_state FROM workspace_exercise e LEFT JOIN problem_version p ON p.id = e.problem_version_id LEFT JOIN workspace_finalization f ON f.exercise_id = e.id LEFT JOIN workspace_deletion d ON d.exercise_id = e.id WHERE e.user_id = #{user}::uuid AND e.state = 'ENDED' AND (#{after}::uuid IS NULL OR e.id < #{after}::uuid) AND (d.completed_at IS NULL OR d.completed_at > #{before}) ORDER BY e.id DESC LIMIT 50")
     List<ExerciseHistoryResponse> history(@Param("user") String user, @Param("after") String after, @Param("before") Instant before);
     @Select("SELECT " + COLUMNS + " FROM workspace_deletion WHERE exercise_id = #{id}::uuid")
     DeletionEntity find(String id);

@@ -23,7 +23,7 @@ async function render(fetcher: typeof fetch) {
   vi.stubGlobal('fetch', fetcher);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   clients.push(client);
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: AccountPage }, { path: '/workspace', name: 'workspace', component: { template: '<div />' } }, { path: '/models', name: 'models', component: { template: '<div />' } }, { path: '/skills', name: 'skills', component: { template: '<div />' } }] });
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: AccountPage }, { path: '/workspace', name: 'workspace', component: { template: '<div />' } }, { path: '/status', name: 'status', component: { template: '<div />' } }, { path: '/account', name: 'account', component: AccountPage }] });
   await router.push('/');
   const page = mount(AccountPage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
   pages.push(page);
@@ -52,11 +52,12 @@ it('offers a save-and-logout flow without logging out or clearing drafts immedia
   expect(fetcher.mock.calls.some(([input]) => String(input) === '/api/auth/logout')).toBe(false);
 });
 
-it('shows model and Skill entries without claiming the later interview stage exists', async () => {
+it('shows streamlined settings tabs and profile without duplicated sidebar shortcut tiles', async () => {
   const { page } = await render(vi.fn<typeof fetch>(async () => ok(fixtures.user)));
-  expect(page.get('a[href="/models"]').text()).toBe('个人模型连接');
-  expect(page.get('a[href="/skills"]').text()).toBe('个人 Skill');
-  expect(page.text()).toContain('在真实工作区中练习分析、编码与验证');
+  expect(page.find('nav[aria-label="工作区快捷入口"]').exists()).toBe(false);
+  expect(page.get('a[href="/status"]').text()).toBe('服务状态');
+  expect(page.text()).toContain('个人资料');
+  expect(page.text()).toContain('修改密码');
 });
 
 it('clears account drafts only after confirmed logout', async () => {
@@ -204,7 +205,8 @@ describe('identity form boundaries', () => {
     await page.findAll('button').find((button) => button.text() === '丢弃账号草稿并退出')!.trigger('click');
     await flushPromises();
     expect(clearDrafts).not.toHaveBeenCalled();
-    expect(page.text()).toContain('账号已就绪');
+    expect(page.text()).toContain('个人资料');
+    expect(page.text()).toContain('受邀用户');
     expect(page.get('[role="alert"]').text()).toContain('操作结果尚未确认');
   });
 
