@@ -432,17 +432,17 @@ function addFile() {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 20px;
+  padding: 18px;
   border: 1px solid var(--oc-border);
   background: var(--oc-surface);
   border-radius: var(--radius-panel);
   box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
-  transition: border-color 180ms var(--oc-ease), transform 160ms var(--oc-ease);
+  transition: border-color 150ms var(--oc-ease), background-color 150ms var(--oc-ease);
 }
 
 .skills li:hover {
   border-color: var(--oc-border-strong);
-  transform: translateY(-1px);
+  background: var(--oc-surface-2);
 }
 
 .skill-card-head {

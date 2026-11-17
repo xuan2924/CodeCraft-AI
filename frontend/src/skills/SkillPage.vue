@@ -20,9 +20,6 @@ function unauthorized() {
 <template>
   <main class="skill-page">
     <header class="skill-hero">
-      <p class="eyebrow">
-        CODECRAFT / COPILOT SKILLS
-      </p>
       <h1>个人 Skill</h1>
       <p>为 Copilot 保存可复用的工作指导，按任务显式选择。</p>
     </header>
@@ -67,28 +64,21 @@ function unauthorized() {
 }
 
 .skill-hero {
-  margin-bottom: 28px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  color: var(--oc-accent);
+  margin-bottom: 20px;
 }
 
 .skill-hero h1 {
-  margin: 0 0 8px;
-  font-size: clamp(26px, 3vw, 34px);
+  margin: 0 0 6px;
+  font-size: clamp(22px, 2.4vw, 26px);
   font-weight: 650;
+  letter-spacing: -0.025em;
 }
 
-.skill-hero p:not(.eyebrow) {
+.skill-hero p {
   margin: 0;
   color: var(--oc-fg-muted);
-  line-height: 1.65;
-  font-size: 14px;
+  line-height: 1.55;
+  font-size: 13.5px;
 }
 
 .inline-status {

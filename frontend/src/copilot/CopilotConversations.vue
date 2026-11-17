@@ -48,7 +48,7 @@ const current = computed(() => list.data.value?.find(item => item.id === selecte
   >
     <div class="conversation-controls">
       <label>
-        <span>当前会话</span>
+        <span class="sr-only">当前会话</span>
         <select
           v-model="selected"
           :disabled="!list.data.value || create.pending.value"
@@ -64,6 +64,7 @@ const current = computed(() => list.data.value?.find(item => item.id === selecte
         </select>
       </label>
       <Button
+        variant="secondary"
         size="small"
         :disabled="disabled || !credential || !list.data.value || create.pending.value || create.uncertain.value"
         @click="newConversation"
@@ -72,7 +73,7 @@ const current = computed(() => list.data.value?.find(item => item.id === selecte
       </Button>
     </div>
     <p class="conv-note">
-      会话各自保留聊天，共享当前代码。新建或切换不回滚代码，也不停止其他会话的任务；每个演练同一时间仅执行一个主任务。
+      会话共享当前代码，切换不回滚；每场同一时间仅执行一个主任务。
     </p>
     <p
       v-if="current?.forkSource"
@@ -161,45 +162,49 @@ const current = computed(() => list.data.value?.find(item => item.id === selecte
 .copilot-conversations {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  padding: 16px;
-  border-radius: 12px;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-panel);
   background: var(--oc-surface);
   border: 1px solid var(--oc-border);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
 }
 
 .conversation-controls {
   display: flex;
-  align-items: flex-end;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .conversation-controls label {
-  display: grid;
-  gap: 6px;
-  flex: 1 1 200px;
+  flex: 1 1 180px;
   min-width: 0;
-  font-size: 12.5px;
-  font-weight: 550;
+  display: flex;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
 }
 
 select {
+  width: 100%;
   max-width: 100%;
-  padding: 8px 10px;
-  font: inherit;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12.5px;
 }
 
 .conv-note {
   margin: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--oc-fg-muted);
-  line-height: 1.55;
+  line-height: 1.45;
 }
 
 .conv-fork-banner,

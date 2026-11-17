@@ -65,12 +65,19 @@ function start() {
       <p v-if="!result.data.value.currentConfiguration">
         配置已变更，旧检查不再代表当前能力。
       </p>
-      <dl>
-        <template
+      <dl class="check-metrics">
+        <div
           v-for="row in rows"
           :key="row.name"
+          class="check-metric-card"
         >
-          <dt>{{ row.name }}：{{ label(row.item) }}</dt>
+          <dt>
+            <span>{{ row.name }}</span>
+            <span
+              class="ui-pill"
+              :data-tone="valid(row.item) ? 'accent' : row.item.status === 'RUNNING' ? 'warning' : row.item.errorCode ? 'danger' : 'muted'"
+            >{{ label(row.item) }}</span>
+          </dt>
           <dd>
             <template v-if="row.item.completedAt">
               完成于 <time :datetime="row.item.completedAt">{{ new Date(row.item.completedAt).toLocaleString() }}</time>。
@@ -84,7 +91,7 @@ function start() {
               class="failure"
             >{{ errorMessage(new ApiError(400, row.item.errorCode)) }}</span>
           </dd>
-        </template>
+        </div>
       </dl>
       <ModelCheckUsage
         :key="`${scope}/${result.data.value.check.id}`"
@@ -146,12 +153,14 @@ function start() {
   </div>
 </template>
 <style scoped>
-.check-view { border-top: 1px solid var(--oc-border); margin-top: 16px; padding-top: 16px; display: grid; gap: 10px; }
-h4 { font-size: 15px; font-weight: 600; margin: 0; }
-dl { margin: 0; display: grid; gap: 8px; padding: 12px; border-radius: 10px; background: var(--oc-surface-2); border: 1px solid var(--oc-border); }
-dt { font-weight: 600; font-size: 13px; }
-dd { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.6; overflow-wrap: anywhere; }
-.help { color: var(--oc-fg-muted); font-size: 12.5px; margin: 0; line-height: 1.6; }
-.actions { margin-top: 4px; }
-label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.check-view { border-top: 1px solid var(--oc-border); margin-top: 14px; padding-top: 14px; display: grid; gap: 10px; }
+h4 { font-size: 14px; font-weight: 600; margin: 0; }
+.check-metrics { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.check-metric-card { padding: 12px; border-radius: var(--radius-control); background: var(--oc-surface-2); border: 1px solid var(--oc-border); display: grid; gap: 6px; align-content: start; }
+dt { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: 600; font-size: 12.5px; }
+dd { margin: 0; font-size: 12px; color: var(--oc-fg-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.failure { color: var(--oc-danger); }
+.help { color: var(--oc-fg-muted); font-size: 12px; margin: 0; line-height: 1.5; }
+.actions { margin-top: 2px; }
+label { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
 </style>

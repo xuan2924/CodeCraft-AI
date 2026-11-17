@@ -45,68 +45,96 @@ function save() {
   <form @submit.prevent="save">
     <fieldset :disabled="locked">
       <legend>{{ model ? '编辑模型' : '新增模型' }}</legend>
-      <label :for="`${prefix}-name`">显示名称</label><input
-        :id="`${prefix}-name`"
-        v-model="draft.name"
-        required
-        maxlength="128"
-      >
-      <label :for="`${prefix}-id`">供应商模型 ID</label><input
-        :id="`${prefix}-id`"
-        v-model="draft.modelId"
-        required
-        maxlength="256"
-        autocomplete="off"
-      >
-      <label :for="`${prefix}-window`">上下文窗口（Token，用户提供）</label><input
-        :id="`${prefix}-window`"
-        v-model="draft.contextWindow"
-        type="number"
-        min="2"
-        max="2147483647"
-        required
-      >
-      <label :for="`${prefix}-output`">单次最大输出 Token</label><input
-        :id="`${prefix}-output`"
-        v-model="draft.maxOutputTokens"
-        type="number"
-        min="1"
-        max="16384"
-        required
-      >
-      <label :for="`${prefix}-thinking`">思考模式</label><select
-        :id="`${prefix}-thinking`"
-        v-model="draft.thinkingMode"
-      >
-        <option value="OFF">
-          关闭
-        </option><option value="ON">
-          开启
-        </option>
-      </select>
-      <template v-if="draft.thinkingMode === 'ON'">
-        <label :for="`${prefix}-effort`">reasoning effort（可选，以供应商支持为准）</label><input
-          :id="`${prefix}-effort`"
-          v-model="draft.reasoningEffort"
-          maxlength="32"
-        >
-        <template v-if="connection.protocol === 'ANTHROPIC'">
-          <label :for="`${prefix}-budget`">思考预算 Token（可选，默认 1024）</label><input
-            :id="`${prefix}-budget`"
-            v-model="draft.thinkingBudgetTokens"
-            type="number"
-            min="1024"
+      <div class="form-grid">
+        <div class="field-item">
+          <label :for="`${prefix}-name`">显示名称</label>
+          <input
+            :id="`${prefix}-name`"
+            v-model="draft.name"
+            required
+            maxlength="128"
           >
+        </div>
+        <div class="field-item">
+          <label :for="`${prefix}-id`">供应商模型 ID</label>
+          <input
+            :id="`${prefix}-id`"
+            v-model="draft.modelId"
+            required
+            maxlength="256"
+            autocomplete="off"
+          >
+        </div>
+        <div class="field-item">
+          <label :for="`${prefix}-window`">上下文窗口（Token，用户提供）</label>
+          <input
+            :id="`${prefix}-window`"
+            v-model="draft.contextWindow"
+            type="number"
+            min="2"
+            max="2147483647"
+            required
+          >
+        </div>
+        <div class="field-item">
+          <label :for="`${prefix}-output`">单次最大输出 Token</label>
+          <input
+            :id="`${prefix}-output`"
+            v-model="draft.maxOutputTokens"
+            type="number"
+            min="1"
+            max="16384"
+            required
+          >
+        </div>
+        <div class="field-item">
+          <label :for="`${prefix}-thinking`">思考模式</label>
+          <select
+            :id="`${prefix}-thinking`"
+            v-model="draft.thinkingMode"
+          >
+            <option value="OFF">
+              关闭
+            </option>
+            <option value="ON">
+              开启
+            </option>
+          </select>
+        </div>
+        <div class="field-item">
+          <label :for="`${prefix}-temperature`">温度（可选，0–2）</label>
+          <input
+            :id="`${prefix}-temperature`"
+            v-model="draft.temperature"
+            type="number"
+            min="0"
+            max="2"
+            step="any"
+          >
+        </div>
+        <template v-if="draft.thinkingMode === 'ON'">
+          <div class="field-item">
+            <label :for="`${prefix}-effort`">reasoning effort（可选，以供应商支持为准）</label>
+            <input
+              :id="`${prefix}-effort`"
+              v-model="draft.reasoningEffort"
+              maxlength="32"
+            >
+          </div>
+          <div
+            v-if="connection.protocol === 'ANTHROPIC'"
+            class="field-item"
+          >
+            <label :for="`${prefix}-budget`">思考预算 Token（可选，默认 1024）</label>
+            <input
+              :id="`${prefix}-budget`"
+              v-model="draft.thinkingBudgetTokens"
+              type="number"
+              min="1024"
+            >
+          </div>
         </template>
-      </template>
-      <label :for="`${prefix}-temperature`">温度（可选，0–2）</label><input
-        :id="`${prefix}-temperature`"
-        v-model="draft.temperature"
-        type="number"
-        min="0"
-        max="2"
-        step="any"
-      >
+      </div>
     </fieldset>
     <p class="help">
       窗口为你提供的容量声明，检查不会验证标称容量。不会自动调整协议或思考模式；部分供应商可能忽略温度。
@@ -154,30 +182,29 @@ function save() {
 <style scoped>
 form { display: grid; gap: 12px; }
 fieldset {
-  display: grid;
-  gap: 10px;
   border: 1px solid var(--oc-border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: var(--oc-bg-subtle);
-  padding: 20px;
+  padding: 18px;
   min-width: 0;
 }
-legend { padding: 0 8px; font-size: 16px; font-weight: 600; }
-label { font-size: 13px; font-weight: 550; }
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+.field-item { display: grid; gap: 6px; align-content: start; min-width: 0; }
+legend { padding: 0 8px; font-size: 15px; font-weight: 600; }
+label { font-size: 12.5px; font-weight: 550; }
 input, select {
   width: 100%;
   min-width: 0;
-  padding: 10px 12px;
-  font: inherit;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: var(--radius-control);
+  padding: 8px 10px;
 }
-input:focus-visible, select:focus-visible {
-  border-color: var(--oc-accent);
-  box-shadow: 0 0 0 3px var(--oc-accent-glow);
+.help { color: var(--oc-fg-muted); font-size: 12px; margin: 0; }
+.failure { color: var(--oc-danger); margin: 0; font-size: 12.5px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 640px) {
+  .form-grid { grid-template-columns: 1fr; }
 }
-.help { color: var(--oc-fg-muted); font-size: 12.5px; margin: 0; }
-.actions { display: flex; flex-wrap: wrap; gap: 10px; }
 </style>

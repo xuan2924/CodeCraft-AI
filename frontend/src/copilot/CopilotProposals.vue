@@ -63,9 +63,21 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
   <section
     aria-label="Copilot 修改提案"
     class="proposals"
+    :data-pending="proposal?.state === 'PENDING' && proposal.mode === 'ASK' ? 'true' : undefined"
   >
-    <h3>修改提案 · 整批审批</h3>
-    <p>默认先审批再写入。批准不保存或覆盖本地草稿；与修改重叠的草稿需在编辑器中协调。关闭页面不等于拒绝。</p>
+    <div class="proposals-head">
+      <h3>修改提案 · 整批审批</h3>
+      <Button
+        variant="ghost"
+        size="small"
+        @click="list.refetch(); selected && status.refetch(); detail.isError.value && detail.refetch()"
+      >
+        重新读取提案
+      </Button>
+    </div>
+    <p class="proposals-note">
+      默认先审批再写入；批准不保存或覆盖本地草稿。
+    </p>
     <p
       v-if="list.isPending.value"
       role="status"
@@ -75,18 +87,21 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
     <p
       v-else-if="list.isError.value"
       role="alert"
+      class="proposals-alert"
     >
       {{ errorMessage(list.error.value) }}
     </p>
     <p v-else-if="!list.data.value?.items.length">
       本页没有修改提案。
     </p>
-    <ul>
+    <ul v-if="list.data.value?.items.length">
       <li
         v-for="item in list.data.value?.items"
         :key="item.id"
       >
         <Button
+          size="small"
+          :variant="selected === item.id ? 'primary' : 'secondary'"
           :disabled="command.pending.value || command.uncertain.value"
           @click="selected = item.id"
         >
@@ -94,15 +109,23 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
         </Button>
       </li>
     </ul>
-    <Button @click="before = '0'; list.refetch()">
-      最近提案
-    </Button>
-    <Button
-      v-if="list.data.value?.nextCursor"
-      @click="before = list.data.value.nextCursor"
-    >
-      更早的提案
-    </Button>
+    <div class="actions">
+      <Button
+        variant="ghost"
+        size="small"
+        @click="before = '0'; list.refetch()"
+      >
+        最近提案
+      </Button>
+      <Button
+        v-if="list.data.value?.nextCursor"
+        variant="ghost"
+        size="small"
+        @click="before = list.data.value.nextCursor"
+      >
+        更早的提案
+      </Button>
+    </div>
     <p
       v-if="selected && detail.isPending.value"
       role="status"
@@ -112,12 +135,14 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
     <p
       v-if="detail.isError.value"
       role="alert"
+      class="proposals-alert"
     >
       {{ errorMessage(detail.error.value) }}
     </p>
     <p
       v-if="status.isError.value"
       role="alert"
+      class="proposals-alert"
     >
       {{ errorMessage(status.error.value) }}
     </p>
@@ -130,7 +155,10 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
       <p v-if="proposal.decisionReason">
         拒绝理由：{{ proposal.decisionReason }}
       </p>
-      <p v-if="proposal.failureCode">
+      <p
+        v-if="proposal.failureCode"
+        class="proposals-alert"
+      >
         {{ errorMessage(new ApiError(409, proposal.failureCode)) }}
       </p>
       <label :for="`proposal-file-${proposal.id}`">逐文件查看完整修改</label>
@@ -160,17 +188,11 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
         </details>
       </template>
       <template v-if="proposal.state === 'PENDING' && proposal.mode === 'ASK'">
-        <label><input
+        <label class="consent-row"><input
           v-model="consent"
           type="checkbox"
           :disabled="!ready"
         >我已核对整批 Diff，同意保留草稿并应用此提案；完成后原任务将继续，可能产生模型费用。</label>
-        <Button
-          :disabled="!ready || !consent"
-          @click="decide('APPROVE')"
-        >
-          批准整批修改
-        </Button>
         <label :for="`proposal-reason-${proposal.id}`">拒绝理由（可选）</label>
         <textarea
           :id="`proposal-reason-${proposal.id}`"
@@ -178,17 +200,30 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
           :disabled="!ready"
           rows="2"
         />
-        <Button
-          :disabled="!ready"
-          @click="decide('REJECT')"
-        >
-          拒绝整批并继续任务
-        </Button>
+        <div class="actions">
+          <Button
+            variant="primary"
+            size="small"
+            :disabled="!ready || !consent"
+            @click="decide('APPROVE')"
+          >
+            批准整批修改
+          </Button>
+          <Button
+            variant="danger"
+            size="small"
+            :disabled="!ready"
+            @click="decide('REJECT')"
+          >
+            拒绝整批并继续任务
+          </Button>
+        </div>
       </template>
     </template>
     <p
       v-if="command.error.value || notice"
       role="alert"
+      class="proposals-alert"
     >
       {{ command.error.value || notice }}
     </p>
@@ -197,46 +232,95 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
     </p>
     <Button
       v-if="command.uncertain.value"
+      size="small"
       :disabled="command.pending.value || disabled || !credential"
       @click="command.retry"
     >
       核对原审批请求
     </Button>
-    <Button @click="list.refetch(); selected && status.refetch(); detail.isError.value && detail.refetch()">
-      重新读取提案
-    </Button>
   </section>
 </template>
 <style scoped>
 .proposals {
-  border: 1px solid var(--oc-border-strong);
-  border-radius: 10px;
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-control);
   background: var(--oc-surface-2);
-  padding: 14px;
+  padding: 10px 12px;
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
-h3, h4, h5 { margin: 0; font-size: 13.5px; font-weight: 600; }
-p { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.55; }
-ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
-label { display: grid; gap: 6px; font-size: 12.5px; }
+
+.proposals[data-pending="true"] {
+  border-color: var(--oc-warning-border);
+  border-left: 3px solid var(--oc-warning);
+}
+
+.proposals-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+h3, h4, h5 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+  line-height: 1.5;
+}
+
+.proposals-alert {
+  color: var(--oc-danger);
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.consent-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--oc-fg);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 textarea, select {
   max-width: 100%;
   width: 100%;
-  box-sizing: border-box;
-  padding: 8px 10px;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12.5px;
 }
+
 pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 420px;
+  max-height: 360px;
   overflow: auto;
   padding: 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--oc-bg-input);
   border: 1px solid var(--oc-border);
   font-size: 12px;

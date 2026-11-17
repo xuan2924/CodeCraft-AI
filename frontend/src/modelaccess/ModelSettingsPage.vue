@@ -25,9 +25,6 @@ function unauthorized() {
   >
     <header class="settings-hero">
       <div>
-        <p class="eyebrow">
-          CODECRAFT / MODEL ACCESS
-        </p>
         <h1>个人模型连接</h1>
         <p>你的连接、Key 与模型配置仅供本人使用。保存与检查分开进行。</p>
       </div>
@@ -88,28 +85,21 @@ function unauthorized() {
   align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 28px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  color: var(--oc-accent);
+  margin-bottom: 20px;
 }
 
 .settings-hero h1 {
-  margin: 0 0 8px;
-  font-size: clamp(26px, 3vw, 34px);
+  margin: 0 0 6px;
+  font-size: clamp(22px, 2.4vw, 26px);
   font-weight: 650;
+  letter-spacing: -0.025em;
 }
 
-.settings-hero p:not(.eyebrow):not(.owner-badge) {
+.settings-hero p:not(.owner-badge) {
   margin: 0;
   color: var(--oc-fg-muted);
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: 13.5px;
+  line-height: 1.55;
 }
 
 .owner-badge {

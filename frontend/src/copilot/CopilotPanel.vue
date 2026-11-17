@@ -123,19 +123,18 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
     :aria-label="delegated ? '委派子任务对话' : 'Copilot 对话'"
   >
     <div class="copilot-head">
-      <h2>{{ delegated ? '子任务 Copilot' : 'Copilot' }} · 读取、修改提案与测试</h2>
-      <p
-        v-if="delegated"
-        class="copilot-desc"
-      >
-        子任务不能再次委派；这里的审批、方向调整及停止针对当前子任务，本场审批模式仍共享。没有另起主任务或自动保存草稿的入口。
-      </p>
-      <p class="copilot-desc">
-        模型读取服务端已保存代码，可提出整批修改，默认须经你审批后写入；可对指定保存版本运行基础测试，结果不代表后续版本或未保存草稿。
-      </p>
-      <p class="copilot-desc">
-        请求可能收费，多轮任务、委派子任务及自动摘要可能持续调用你的模型。关闭页面不停止后台任务；停止后已发出的请求仍可能收费。
-      </p>
+      <div class="copilot-head-row">
+        <h2>{{ delegated ? '子任务 Copilot' : 'Copilot' }}</h2>
+        <details class="copilot-rules-drawer">
+          <summary>协作与计费说明</summary>
+          <p v-if="delegated">
+            子任务不能再次委派；审批、方向调整与停止仅针对当前子任务，共享本场审批模式。
+          </p>
+          <p>
+            读取服务端已保存代码，可提出整批修改与运行测试；请求可能收费，关闭页面不停止后台任务。
+          </p>
+        </details>
+      </div>
     </div>
     <CopilotApprovalMode
       v-if="!delegated"
@@ -145,27 +144,70 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       :disabled="disabled"
       @unauthorized="emit('unauthorized')"
     />
-    <p
-      v-if="latest.isPending.value"
-      role="status"
-      class="copilot-status"
+    <div
+      v-if="latest.isPending.value || latest.isError.value || task || running"
+      class="copilot-task-strip"
     >
-      正在读取任务…
-    </p>
-    <p
-      v-else-if="latest.isError.value"
-      role="alert"
-      class="copilot-alert"
-    >
-      {{ errorMessage(latest.error.value) }}
-    </p>
-    <p
-      v-else-if="task"
-      role="status"
-      class="copilot-task-badge"
-    >
-      {{ labels[task.state] }} · {{ task.id }}
-    </p>
+      <p
+        v-if="latest.isPending.value"
+        role="status"
+        class="copilot-status"
+      >
+        正在读取任务…
+      </p>
+      <p
+        v-else-if="latest.isError.value"
+        role="alert"
+        class="copilot-alert"
+      >
+        {{ errorMessage(latest.error.value) }}
+      </p>
+      <div
+        v-else-if="task"
+        class="copilot-task-row"
+      >
+        <p
+          role="status"
+          class="copilot-task-badge"
+        >
+          {{ labels[task.state] }} · {{ task.id }}
+        </p>
+        <Button
+          v-if="running"
+          variant="danger"
+          size="small"
+          :disabled="stop.pending.value"
+          @click="stop.uncertain.value ? stop.retry() : stopTask()"
+        >
+          {{ stop.uncertain.value ? '核对原停止请求' : delegated ? '停止此子任务并交回结果' : '停止 Copilot 任务' }}
+        </Button>
+      </div>
+      <p
+        v-if="task?.reason"
+        class="copilot-warn"
+      >
+        {{ errorMessage(new ApiError(409, task.reason)) }}
+      </p>
+      <p
+        v-if="running"
+        class="copilot-status"
+      >
+        {{ connected ? '实时状态已连接' : '实时状态重连中；只读轮询仍在核对，不会重启任务。' }}
+      </p>
+      <p
+        v-if="stop.error.value"
+        role="alert"
+        class="copilot-alert"
+      >
+        {{ stop.error.value }}
+      </p>
+      <p
+        v-if="task?.state === 'PAUSED'"
+        class="copilot-warn"
+      >
+        {{ delegated ? '子任务已暂停。处理配置或容量问题后，可停止子任务并把停止结果交回父任务；不会自动重发。' : '请处理模型配置或容量问题；可先停止当前任务，再显式发起新请求。不会自动回退或重发。' }}
+      </p>
+    </div>
     <p
       v-else
       class="copilot-desc"
@@ -173,63 +215,20 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       尚无 Copilot 任务。
     </p>
     <p
-      v-if="task?.reason"
-      class="copilot-warn"
-    >
-      {{ errorMessage(new ApiError(409, task.reason)) }}
-    </p>
-    <p
       v-if="latest.data.value?.textHistory"
       class="copilot-desc"
     >
       模型配置域已变化：完整历史批次作为带来源的只读文本证据传入；原始协议证据仍保留，不重做已完成工具。
     </p>
-    <p
-      v-if="running"
-      class="copilot-status"
-    >
-      {{ connected ? '实时状态已连接' : '实时状态重连中；只读轮询仍在核对，不会重启任务。' }}
-    </p>
-    <Button
-      v-if="running"
-      variant="danger"
-      size="small"
-      :disabled="stop.pending.value"
-      @click="stop.uncertain.value ? stop.retry() : stopTask()"
-    >
-      {{ stop.uncertain.value ? '核对原停止请求' : delegated ? '停止此子任务并交回结果' : '停止 Copilot 任务' }}
-    </Button>
-    <p
-      v-if="stop.error.value"
-      role="alert"
-      class="copilot-alert"
-    >
-      {{ stop.error.value }}
-    </p>
-    <p
-      v-if="task?.state === 'PAUSED'"
-      class="copilot-warn"
-    >
-      {{ delegated ? '子任务已暂停。处理配置或容量问题后，可停止子任务并把停止结果交回父任务；不会自动重发。' : '请处理模型配置或容量问题；可先停止当前任务，再显式发起新请求。不会自动回退或重发。' }}
-    </p>
-    <CopilotSteers
+    <CopilotProposals
       v-if="task"
-      :key="owner + task.id + ':steers'"
+      :key="owner + task.id"
       :owner="owner"
-      :exercise-id="exerciseId"
       :task-id="task.id"
-      :state="task.state"
       :credential="credential"
-      :disabled="disabled"
+      :disabled="disabled || task.state !== 'WAITING_APPROVAL'"
       @unauthorized="emit('unauthorized')"
-    />
-    <CopilotTests
-      v-if="task"
-      :key="owner + task.id + ':tests'"
-      :owner="owner"
-      :task-id="task.id"
-      :running="running"
-      @inspect="emit('inspect-test', $event)"
+      @changed="emit('changed')"
     />
     <CopilotCommands
       v-if="task"
@@ -242,15 +241,24 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       @unauthorized="emit('unauthorized')"
       @changed="emit('changed')"
     />
-    <CopilotProposals
+    <CopilotTests
       v-if="task"
-      :key="owner + task.id"
+      :key="owner + task.id + ':tests'"
       :owner="owner"
       :task-id="task.id"
+      :running="running"
+      @inspect="emit('inspect-test', $event)"
+    />
+    <CopilotSteers
+      v-if="task"
+      :key="owner + task.id + ':steers'"
+      :owner="owner"
+      :exercise-id="exerciseId"
+      :task-id="task.id"
+      :state="task.state"
       :credential="credential"
-      :disabled="disabled || task.state !== 'WAITING_APPROVAL'"
+      :disabled="disabled"
       @unauthorized="emit('unauthorized')"
-      @changed="emit('changed')"
     />
     <div
       class="messages"
@@ -320,17 +328,16 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
         预览已截断。完整确认的回复将在上方对话记录显示。
       </p>
     </aside>
-    <p class="copilot-desc">
-      当前仅展示有界的一页消息，不代表完整历史；任务状态以上方结构化状态为准。
-    </p>
     <div class="copilot-pagination">
       <Button
+        variant="ghost"
         size="small"
         @click="after = '-1'; history.refetch()"
       >
         显示最近消息
       </Button>
       <Button
+        variant="ghost"
         size="small"
         @click="after = '0'"
       >
@@ -338,6 +345,7 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       </Button>
       <Button
         v-if="after !== '-1' && history.data.value?.nextCursor"
+        variant="ghost"
         size="small"
         @click="after = history.data.value.nextCursor"
       >
@@ -374,53 +382,50 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
         />
       </template>
     </CopilotDelegations>
-    <CopilotProjectInstructions
-      :owner="owner"
-      :exercise-id="exerciseId"
-      :task-id="task?.id ?? null"
-      :running="running"
-      @unauthorized="emit('unauthorized')"
-    />
     <div
       v-if="!delegated"
       class="copilot-composer"
     >
-      <CopilotSkills
-        v-model="selectedSkills"
-        :owner="owner"
-        :task-id="task?.id ?? null"
-        :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
-        @unauthorized="emit('unauthorized')"
-      />
-      <label :for="`copilot-text-${exerciseId}`">给 Copilot 的请求</label>
+      <label
+        :for="`copilot-text-${exerciseId}`"
+        class="sr-only"
+      >给 Copilot 的请求</label>
       <textarea
         :id="`copilot-text-${exerciseId}`"
         v-model="text"
-        rows="4"
-        placeholder="描述目标、约束或待排查问题…"
+        rows="3"
+        placeholder="向 Copilot 描述目标、约束或待排查问题…"
         :disabled="saving || start.pending.value || start.uncertain.value"
       />
-      <label
-        :for="`copilot-fee-${exerciseId}`"
-        class="fee-checkbox"
-      ><input
-        :id="`copilot-fee-${exerciseId}`"
-        v-model="fee"
-        type="checkbox"
-        :disabled="saving || start.pending.value || start.uncertain.value"
-      ><span>我确认模型请求可能收费</span></label>
-      <CopilotReferences
-        v-model="references"
-        :owner="owner"
-        :exercise-id="exerciseId"
-        :conversation-id="conversationId ?? exerciseId"
-        :paths="paths"
-        :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
-        @unauthorized="emit('unauthorized')"
-      />
-      <p class="copilot-desc">
-        发送前将尝试保存当前页全部草稿；如需继续编辑，请不要发送。保存冲突或期间产生新编辑时不会启动请求。
-      </p>
+      <div class="composer-bar">
+        <label
+          :for="`copilot-fee-${exerciseId}`"
+          class="fee-checkbox"
+        ><input
+          :id="`copilot-fee-${exerciseId}`"
+          v-model="fee"
+          type="checkbox"
+          :disabled="saving || start.pending.value || start.uncertain.value"
+        ><span>确认模型请求可能收费</span></label>
+        <Button
+          v-if="start.uncertain.value"
+          size="small"
+          :disabled="start.pending.value || disabled || !credential"
+          @click="start.retry"
+        >
+          核对原 Copilot 请求
+        </Button>
+        <Button
+          v-else
+          variant="primary"
+          size="small"
+          :disabled="!canSend"
+          :loading="saving || start.pending.value"
+          @click="send"
+        >
+          保存草稿并发送
+        </Button>
+      </div>
       <p
         v-if="saveError"
         role="alert"
@@ -441,45 +446,56 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       >
         受理结果未知，仅可核对原请求；不会换键重复派发。
       </p>
-      <Button
-        v-if="start.uncertain.value"
-        size="small"
-        :disabled="start.pending.value || disabled || !credential"
-        @click="start.retry"
-      >
-        核对原 Copilot 请求
-      </Button>
-      <Button
-        v-else
-        variant="primary"
-        size="small"
-        :disabled="!canSend"
-        :loading="saving || start.pending.value"
-        @click="send"
-      >
-        保存草稿并发送
-      </Button>
-      <CopilotFollowups
-        :owner="owner"
-        :exercise-id="exerciseId"
-        :conversation-id="conversationId ?? exerciseId"
-        :credential="credential"
-        :disabled="disabled"
-        :running="running"
-        @unauthorized="emit('unauthorized')"
-        @changed="latest.refetch()"
-      />
-      <CopilotBtw
-        :owner="owner"
-        :exercise-id="exerciseId"
-        :parent-conversation-id="conversationId ?? exerciseId"
-        :credential="credential"
-        :main-running="running"
-        :disabled="disabled || saving || start.pending.value || start.uncertain.value"
-        :handoff-disabled="handoff.pending.value || handoff.uncertain.value || (running && !canSteer)"
-        @unauthorized="emit('unauthorized')"
-        @bringback="bringBack"
-      />
+      <div class="composer-drawers">
+        <details class="panel-drawer">
+          <summary>Skill 指导（已选 {{ selectedSkills.length }}）</summary>
+          <CopilotSkills
+            v-model="selectedSkills"
+            :owner="owner"
+            :task-id="task?.id ?? null"
+            :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
+            @unauthorized="emit('unauthorized')"
+          />
+        </details>
+        <details class="panel-drawer">
+          <summary>上下文引用（{{ references.length }}/4）</summary>
+          <CopilotReferences
+            v-model="references"
+            :owner="owner"
+            :exercise-id="exerciseId"
+            :conversation-id="conversationId ?? exerciseId"
+            :paths="paths"
+            :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
+            @unauthorized="emit('unauthorized')"
+          />
+        </details>
+        <details class="panel-drawer">
+          <summary>后续队列与 BTW 旁支</summary>
+          <div class="drawer-stack">
+            <CopilotFollowups
+              :owner="owner"
+              :exercise-id="exerciseId"
+              :conversation-id="conversationId ?? exerciseId"
+              :credential="credential"
+              :disabled="disabled"
+              :running="running"
+              @unauthorized="emit('unauthorized')"
+              @changed="latest.refetch()"
+            />
+            <CopilotBtw
+              :owner="owner"
+              :exercise-id="exerciseId"
+              :parent-conversation-id="conversationId ?? exerciseId"
+              :credential="credential"
+              :main-running="running"
+              :disabled="disabled || saving || start.pending.value || start.uncertain.value"
+              :handoff-disabled="handoff.pending.value || handoff.uncertain.value || (running && !canSteer)"
+              @unauthorized="emit('unauthorized')"
+              @bringback="bringBack"
+            />
+          </div>
+        </details>
+      </div>
       <p
         v-if="handoffNotice"
         role="status"
@@ -503,19 +519,31 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
         核对原旁支带回 steer（不换键）
       </Button>
     </div>
-    <CopilotUsage
-      :conversation-id="conversationId"
+    <details class="panel-drawer">
+      <summary>用量与上下文状态</summary>
+      <div class="drawer-stack">
+        <CopilotUsage
+          :conversation-id="conversationId"
+          :owner="owner"
+          :exercise-id="exerciseId"
+          @unauthorized="emit('unauthorized')"
+        />
+        <CopilotContext
+          :conversation-id="conversationId"
+          :owner="owner"
+          :exercise-id="exerciseId"
+          :credential="credential"
+          :disabled="disabled"
+          @busy="contextBusy = $event"
+          @unauthorized="emit('unauthorized')"
+        />
+      </div>
+    </details>
+    <CopilotProjectInstructions
       :owner="owner"
       :exercise-id="exerciseId"
-      @unauthorized="emit('unauthorized')"
-    />
-    <CopilotContext
-      :conversation-id="conversationId"
-      :owner="owner"
-      :exercise-id="exerciseId"
-      :credential="credential"
-      :disabled="disabled"
-      @busy="contextBusy = $event"
+      :task-id="task?.id ?? null"
+      :running="running"
       @unauthorized="emit('unauthorized')"
     />
   </section>
@@ -523,83 +551,113 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
 <style scoped>
 .copilot-panel {
   border-top: 1px solid var(--oc-border);
-  padding-top: 16px;
-  margin-top: 8px;
+  padding-top: 10px;
+  margin-top: 2px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
+  gap: 8px;
 }
 
-.copilot-head {
-  display: grid;
-  gap: 6px;
+.copilot-head-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .copilot-head h2 {
   margin: 0;
-  font-size: 14.5px;
+  font-size: 13px;
   font-weight: 600;
+}
+
+.copilot-rules-drawer {
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+
+.copilot-rules-drawer summary {
+  cursor: pointer;
+}
+
+.copilot-rules-drawer p {
+  margin: 4px 0 0;
+  line-height: 1.45;
+}
+
+.copilot-task-strip {
+  display: grid;
+  gap: 6px;
+}
+
+.copilot-task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .copilot-desc {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .copilot-status {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-accent);
 }
 
 .copilot-task-badge {
   margin: 0;
-  padding: 6px 10px;
-  border-radius: 8px;
+  padding: 4px 9px;
+  border-radius: var(--radius-control);
   background: var(--oc-accent-soft);
   border: 1px solid var(--oc-border-accent);
   color: var(--oc-accent);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 550;
   overflow-wrap: anywhere;
 }
 
 .copilot-alert {
   margin: 0;
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-control);
   background: var(--oc-danger-bg);
   border: 1px solid var(--oc-danger-border);
   color: var(--oc-danger);
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .copilot-warn {
   margin: 0;
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-control);
   background: var(--oc-warning-bg);
   border: 1px solid var(--oc-warning-border);
   color: var(--oc-warning);
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .messages {
-  max-height: 560px;
+  max-height: 460px;
   overflow: auto;
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .message-card {
-  padding: 12px;
-  border-radius: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
   background: var(--oc-surface-2);
   border: 1px solid var(--oc-border);
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .message-card[data-kind="USER"] {
@@ -616,23 +674,23 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
 
 .message-head h3 {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--oc-fg);
 }
 
 .partial-preview {
-  padding: 12px;
-  border-radius: 10px;
+  padding: 10px;
+  border-radius: 8px;
   background: var(--oc-surface-2);
   border: 1px dashed var(--oc-border-accent);
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .partial-preview h3 {
   margin: 0;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .partial-preview p {
@@ -644,31 +702,72 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
 .copilot-pagination {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
 }
 
 .copilot-composer {
-  padding: 14px;
-  border-radius: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-panel);
   background: var(--oc-surface-2);
   border: 1px solid var(--oc-border-strong);
-  box-shadow: var(--oc-hairline-top);
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
-.copilot-composer label {
-  font-size: 12.5px;
-  font-weight: 550;
+.composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .fee-checkbox {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 500 !important;
-  font-size: 12.5px;
+  gap: 7px;
+  font-weight: 500;
+  font-size: 12px;
   color: var(--oc-fg-muted);
+}
+
+.composer-drawers {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--oc-border);
+}
+
+.panel-drawer {
+  padding: 7px 10px;
+  border-radius: var(--radius-control);
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.panel-drawer summary {
+  cursor: pointer;
+  font-weight: 550;
+  color: var(--oc-fg);
+}
+
+.drawer-stack {
+  margin-top: 8px;
+  display: grid;
+  gap: 10px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
 }
 
 pre {
@@ -678,18 +777,9 @@ pre {
 }
 
 textarea {
-  box-sizing: border-box;
   width: 100%;
-  padding: 10px 12px;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
   resize: vertical;
-}
-
-textarea:focus-visible {
-  border-color: var(--oc-accent);
-  box-shadow: 0 0 0 3px var(--oc-accent-glow);
 }
 </style>

@@ -42,30 +42,45 @@ async function send() {
     aria-label="Copilot 方向调整"
     class="steers"
   >
-    <h3>调整当前任务方向 · steer</h3>
-    <p>只调整当前任务，不另起任务、不回滚已应用代码，也不改变已发出的模型请求。当前工具、写入或测试先收敛，旧批次剩余项不再执行；后续模型请求仍可能收费。</p>
+    <div class="steers-head">
+      <h3>调整当前任务方向 · steer</h3>
+      <Button
+        variant="ghost"
+        size="small"
+        :disabled="history.isFetching.value"
+        @click="history.refetch()"
+      >
+        重新读取方向记录
+      </Button>
+    </div>
     <p
       v-if="!accepting"
       role="status"
     >
       当前任务已结束、暂停或正在停止，不能接收新方向调整；不会自动创建新任务。
     </p>
-    <label :for="`steer-${taskId}`">给当前任务的方向调整</label>
+    <label
+      :for="`steer-${taskId}`"
+      class="sr-only"
+    >给当前任务的方向调整</label>
     <textarea
       :id="`steer-${taskId}`"
       v-model="text"
-      rows="3"
+      rows="2"
+      placeholder="输入方向调整（仅调整当前任务，不回滚代码）…"
       :disabled="!accepting || disabled || !credential || command.pending.value || command.uncertain.value"
     />
     <p
       v-if="feedback"
       role="status"
+      class="steer-status"
     >
       {{ feedback }}
     </p>
     <p
       v-if="command.error.value"
       role="alert"
+      class="steer-alert"
     >
       {{ command.error.value }}
     </p>
@@ -78,6 +93,7 @@ async function send() {
     <div class="actions">
       <Button
         v-if="command.uncertain.value"
+        size="small"
         :disabled="command.pending.value"
         @click="command.retry"
       >
@@ -85,85 +101,148 @@ async function send() {
       </Button>
       <Button
         v-else
+        variant="secondary"
+        size="small"
         :disabled="!canSend"
         :loading="command.pending.value"
         @click="send"
       >
         发送方向调整
       </Button>
-      <Button
-        :disabled="history.isFetching.value"
-        @click="history.refetch()"
-      >
-        重新读取方向记录
-      </Button>
     </div>
-    <p
-      v-if="history.isPending.value"
-      role="status"
+    <details
+      class="steers-drawer"
+      :open="!!history.data.value?.items.length"
     >
-      正在读取方向调整记录…
-    </p>
-    <p
-      v-else-if="history.isError.value"
-      role="alert"
-    >
-      {{ errorMessage(history.error.value) }}
-    </p>
-    <template v-else-if="history.data.value">
-      <p v-if="!history.data.value.items.length">
-        当前页没有方向调整记录。
+      <summary>方向调整记录（{{ history.data.value?.items.length ?? 0 }}）</summary>
+      <p
+        v-if="history.isPending.value"
+        role="status"
+      >
+        正在读取方向调整记录…
       </p>
-      <ol v-else>
-        <li
-          v-for="item in history.data.value.items"
-          :key="item.id"
-        >
-          <strong>#{{ item.sequence }} · {{ labels[item.state] }}</strong>
-          <p>{{ item.text }}</p>
-          <p v-if="item.reason">
-            {{ errorMessage(new ApiError(409, item.reason)) }}
-          </p>
-          <time :datetime="item.createdAt">{{ new Date(item.createdAt).toLocaleString() }}</time>
-        </li>
-      </ol>
-      <p>按接收序号倒序查看，每页最多 20 条；生效时按接收顺序纳入。已纳入请求不保证供应商收到或成功回复。</p>
-      <Button
-        v-if="history.data.value.nextCursor"
-        @click="before = history.data.value.nextCursor"
+      <p
+        v-else-if="history.isError.value"
+        role="alert"
+        class="steer-alert"
       >
-        更早的方向调整
-      </Button>
-      <Button
-        v-if="before !== '0'"
-        @click="before = '0'"
-      >
-        最近方向调整
-      </Button>
-    </template>
+        {{ errorMessage(history.error.value) }}
+      </p>
+      <template v-else-if="history.data.value">
+        <p v-if="!history.data.value.items.length">
+          当前页没有方向调整记录。
+        </p>
+        <ol v-else>
+          <li
+            v-for="item in history.data.value.items"
+            :key="item.id"
+          >
+            <strong>#{{ item.sequence }} · {{ labels[item.state] }}</strong>
+            <p>{{ item.text }}</p>
+            <p v-if="item.reason">
+              {{ errorMessage(new ApiError(409, item.reason)) }}
+            </p>
+            <time :datetime="item.createdAt">{{ new Date(item.createdAt).toLocaleString() }}</time>
+          </li>
+        </ol>
+        <div class="actions">
+          <Button
+            v-if="history.data.value.nextCursor"
+            size="small"
+            @click="before = history.data.value.nextCursor"
+          >
+            更早的方向调整
+          </Button>
+          <Button
+            v-if="before !== '0'"
+            size="small"
+            @click="before = '0'"
+          >
+            最近方向调整
+          </Button>
+        </div>
+      </template>
+    </details>
   </section>
 </template>
 <style scoped>
 .steers {
-  padding: 14px;
+  padding: 10px 12px;
   border: 1px solid var(--oc-border);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: var(--oc-surface-2);
   display: grid;
   gap: 8px;
 }
-h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
-label { display: grid; gap: 6px; font-size: 12.5px; font-weight: 550; }
+
+.steers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
 textarea {
   width: 100%;
-  box-sizing: border-box;
-  font: inherit;
-  padding: 8px 10px;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  resize: vertical;
 }
-p, li { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: 12.5px; color: var(--oc-fg-muted); }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+p, li {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.steer-status {
+  color: var(--oc-accent);
+}
+
+.steer-alert {
+  color: var(--oc-danger);
+}
+
+.steers-drawer {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.steers-drawer summary {
+  cursor: pointer;
+}
+
+.steers-drawer ol {
+  margin: 6px 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 </style>

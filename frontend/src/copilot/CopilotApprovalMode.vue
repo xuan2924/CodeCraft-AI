@@ -41,7 +41,27 @@ async function change() {
     aria-label="Copilot 审批模式"
     class="approval-mode"
   >
-    <h3>审批模式</h3>
+    <div class="approval-head">
+      <div class="approval-title">
+        <h3>审批模式</h3>
+        <span
+          v-if="current.data.value"
+          role="status"
+          class="ui-pill"
+          :data-tone="current.data.value.mode === 'AUTO' ? 'warning' : 'accent'"
+        >
+          {{ current.isError.value ? '上次确认' : '已生效' }}：{{ labels[current.data.value.mode] }} · 模式版本 {{ current.data.value.version }}
+        </span>
+      </div>
+      <Button
+        variant="ghost"
+        size="small"
+        :disabled="current.isFetching.value"
+        @click="current.refetch()"
+      >
+        重新读取模式
+      </Button>
+    </div>
     <p
       v-if="current.isPending.value"
       role="status"
@@ -51,30 +71,50 @@ async function change() {
     <p
       v-if="current.isError.value"
       role="alert"
+      class="approval-alert"
     >
       {{ errorMessage(current.error.value) }}
     </p>
-    <p
-      v-if="current.data.value"
-      role="status"
-    >
-      {{ current.isError.value ? '上次确认' : '已生效' }}：{{ labels[current.data.value.mode] }} · 模式版本 {{ current.data.value.version }}
-    </p>
-    <p>默认逐次审批。auto 只免除修改的逐次批准，不扩大文件、测试或网络权限，不保存或覆盖本地草稿。已登记提案保持原模式；切到 auto 不批准旧待审批提案。</p>
-    <label :for="`approval-mode-${exerciseId}`">期望审批模式（确认前不生效）</label>
-    <select
-      :id="`approval-mode-${exerciseId}`"
-      v-model="desired"
-      :disabled="!editable"
-    >
-      <option value="ASK">
-        逐次审批（ask for approve）
-      </option>
-      <option value="AUTO">
-        自动审批（auto）
-      </option>
-    </select>
-    <label v-if="desired === 'AUTO'"><input
+    <div class="approval-controls">
+      <label
+        :for="`approval-mode-${exerciseId}`"
+        class="sr-only"
+      >期望审批模式（确认前不生效）</label>
+      <select
+        :id="`approval-mode-${exerciseId}`"
+        v-model="desired"
+        :disabled="!editable"
+      >
+        <option value="ASK">
+          逐次审批（ask for approve）
+        </option>
+        <option value="AUTO">
+          自动审批（auto）
+        </option>
+      </select>
+      <Button
+        v-if="command.uncertain.value"
+        size="small"
+        :disabled="command.pending.value || disabled"
+        @click="command.retry"
+      >
+        核对原模式切换
+      </Button>
+      <Button
+        v-else
+        variant="secondary"
+        size="small"
+        :disabled="!editable || desired === 'AUTO' && !consent"
+        :loading="command.pending.value"
+        @click="change"
+      >
+        确认审批模式
+      </Button>
+    </div>
+    <label
+      v-if="desired === 'AUTO'"
+      class="approval-consent"
+    ><input
       v-model="consent"
       type="checkbox"
       :disabled="!editable"
@@ -82,6 +122,7 @@ async function change() {
     <p
       v-if="command.error.value"
       role="alert"
+      class="approval-alert"
     >
       {{ command.error.value }}
     </p>
@@ -91,30 +132,12 @@ async function change() {
     >
       切换结果未确认，只能核对原键与原内容；当前模式读取不代表原请求已收敛。
     </p>
-    <div class="actions">
-      <Button
-        v-if="command.uncertain.value"
-        :disabled="command.pending.value || disabled"
-        @click="command.retry"
-      >
-        核对原模式切换
-      </Button>
-      <Button
-        v-else
-        :disabled="!editable || desired === 'AUTO' && !consent"
-        :loading="command.pending.value"
-        @click="change"
-      >
-        确认审批模式
-      </Button>
-      <Button
-        :disabled="current.isFetching.value"
-        @click="current.refetch()"
-      >
-        重新读取模式
-      </Button>
-    </div>
-    <template v-if="current.data.value">
+    <details
+      v-if="current.data.value"
+      class="approval-details"
+    >
+      <summary>模式规则与最近 20 次变更记录（{{ current.data.value.history.length }}）</summary>
+      <p>默认逐次审批。auto 只免除修改的逐次批准，不扩大文件、测试或网络权限，不保存或覆盖本地草稿。已登记提案保持原模式。</p>
       <h4>最近保留的 20 次模式确认</h4>
       <p v-if="!current.data.value.history.length">
         尚无模式确认记录，使用默认逐次审批。
@@ -128,29 +151,103 @@ async function change() {
           <time :datetime="item.createdAt">{{ new Date(item.createdAt).toLocaleString() }}</time>
         </li>
       </ol>
-    </template>
+    </details>
   </section>
 </template>
 <style scoped>
 .approval-mode {
-  padding: 14px;
-  border-radius: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
   background: var(--oc-surface-2);
   border: 1px solid var(--oc-border);
   display: grid;
   gap: 8px;
 }
-h3, h4 { margin: 0; font-size: 13.5px; font-weight: 600; }
-p, li { margin: 0; overflow-wrap: anywhere; line-height: 1.55; font-size: 12.5px; color: var(--oc-fg-muted); }
-ol { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
-label { display: grid; gap: 6px; font-size: 12.5px; font-weight: 550; }
-select {
-  width: 100%;
-  padding: 8px 10px;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: 8px;
+
+.approval-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.approval-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+h3, h4 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.approval-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.approval-controls select {
+  flex: 1 1 170px;
+  min-width: 0;
+  padding: 5px 9px;
+  font-size: 12.5px;
+}
+
+.approval-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.approval-details {
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+
+.approval-details summary {
+  cursor: pointer;
+}
+
+.approval-details p,
+.approval-details h4 {
+  margin-top: 6px;
+}
+
+.approval-alert {
+  color: var(--oc-danger);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+p, li {
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+ol {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
 </style>

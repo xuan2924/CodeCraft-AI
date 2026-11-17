@@ -48,75 +48,87 @@ async function save() {
   >
     <fieldset :disabled="locked">
       <legend>{{ connection ? '编辑连接' : '新建连接' }}</legend>
-      <label :for="`${prefix}-name`">连接名称</label>
-      <input
-        :id="`${prefix}-name`"
-        v-model="draft.name"
-        required
-        maxlength="128"
-        autocomplete="off"
-      >
-      <label :for="`${prefix}-protocol`">协议</label>
-      <select
-        :id="`${prefix}-protocol`"
-        v-model="draft.protocol"
-      >
-        <option value="OPENAI_CHAT">
-          OpenAI Chat Completions
-        </option>
-        <option value="OPENAI_RESPONSES">
-          OpenAI Responses
-        </option>
-        <option value="ANTHROPIC">
-          Anthropic Messages
-        </option>
-      </select>
-      <label :for="`${prefix}-preset`">供应商适配</label>
-      <select
-        :id="`${prefix}-preset`"
-        v-model="draft.preset"
-      >
-        <option
-          v-for="preset in providerPresets"
-          :key="preset"
-          :value="preset"
-        >
-          {{ preset === 'CUSTOM' ? '自定义兼容供应商' : preset }}
-        </option>
-      </select>
-      <label :for="`${prefix}-url`">Base URL（HTTPS）</label>
-      <input
-        :id="`${prefix}-url`"
-        v-model="draft.baseUrl"
-        required
-        type="url"
-        maxlength="2048"
-        autocomplete="off"
-        :aria-describedby="`${prefix}-url-help`"
-      >
-      <p
-        :id="`${prefix}-url-help`"
-        class="help"
-      >
-        按供应商文档填写完整基础路径。不会探测地址、切换协议或使用环境 Key。该地址的运营方会收到 Key 和请求内容；同名模型不保证实际模型或价格相同。
-      </p>
-      <label :for="`${prefix}-key`">{{ connection ? '替换 API Key（留空保留）' : 'API Key' }}</label>
-      <input
-        :id="`${prefix}-key`"
-        v-model="draft.apiKey"
-        type="password"
-        :required="!connection"
-        maxlength="4096"
-        autocomplete="off"
-        spellcheck="false"
-        :aria-describedby="`${prefix}-key-help`"
-      >
-      <p
-        :id="`${prefix}-key-help`"
-        class="help"
-      >
-        {{ connection?.keyConfigured ? '已配置 Key，不提供回显。' : 'Key 由服务端加密保存。' }}提交后清空输入，不写入浏览器存储。
-      </p>
+      <div class="form-grid">
+        <div class="field-item">
+          <label :for="`${prefix}-name`">连接名称</label>
+          <input
+            :id="`${prefix}-name`"
+            v-model="draft.name"
+            required
+            maxlength="128"
+            autocomplete="off"
+          >
+        </div>
+        <div class="field-item">
+          <label :for="`${prefix}-protocol`">协议</label>
+          <select
+            :id="`${prefix}-protocol`"
+            v-model="draft.protocol"
+          >
+            <option value="OPENAI_CHAT">
+              OpenAI Chat Completions
+            </option>
+            <option value="OPENAI_RESPONSES">
+              OpenAI Responses
+            </option>
+            <option value="ANTHROPIC">
+              Anthropic Messages
+            </option>
+          </select>
+        </div>
+        <div class="field-item">
+          <label :for="`${prefix}-preset`">供应商适配</label>
+          <select
+            :id="`${prefix}-preset`"
+            v-model="draft.preset"
+          >
+            <option
+              v-for="preset in providerPresets"
+              :key="preset"
+              :value="preset"
+            >
+              {{ preset === 'CUSTOM' ? '自定义兼容供应商' : preset }}
+            </option>
+          </select>
+        </div>
+        <div class="field-item">
+          <label :for="`${prefix}-key`">{{ connection ? '替换 API Key（留空保留）' : 'API Key' }}</label>
+          <input
+            :id="`${prefix}-key`"
+            v-model="draft.apiKey"
+            type="password"
+            :required="!connection"
+            maxlength="4096"
+            autocomplete="off"
+            spellcheck="false"
+            :aria-describedby="`${prefix}-key-help`"
+          >
+          <p
+            :id="`${prefix}-key-help`"
+            class="help"
+          >
+            {{ connection?.keyConfigured ? '已配置 Key，不提供回显。' : 'Key 由服务端加密保存。' }}提交后清空输入，不写入浏览器存储。
+          </p>
+        </div>
+        <div class="field-item field-span">
+          <label :for="`${prefix}-url`">Base URL（HTTPS）</label>
+          <input
+            :id="`${prefix}-url`"
+            v-model="draft.baseUrl"
+            required
+            type="url"
+            maxlength="2048"
+            autocomplete="off"
+            :aria-describedby="`${prefix}-url-help`"
+          >
+          <p
+            :id="`${prefix}-url-help`"
+            class="help"
+          >
+            按供应商文档填写完整基础路径。不会探测地址、切换协议或使用环境 Key。该地址的运营方会收到 Key 和请求内容；同名模型不保证实际模型或价格相同。
+          </p>
+        </div>
+      </div>
     </fieldset>
     <p class="help">
       保存不会自动发起模型检查。实际配置变更后，旧检查结果不再有效。
@@ -163,33 +175,32 @@ async function save() {
 </template>
 
 <style scoped>
-.connection-form { max-width: 700px; display: grid; gap: 12px; }
+.connection-form { max-width: 720px; display: grid; gap: 12px; }
 fieldset {
-  display: grid;
-  gap: 10px;
   border: 1px solid var(--oc-border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: var(--oc-bg-subtle);
-  padding: 20px;
+  padding: 18px;
   min-width: 0;
 }
-legend { padding: 0 8px; font-size: 16px; font-weight: 600; }
-label { font-size: 13px; font-weight: 550; }
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+.field-item { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.field-span { grid-column: 1 / -1; }
+legend { padding: 0 8px; font-size: 15px; font-weight: 600; }
+label { font-size: 12.5px; font-weight: 550; }
 input, select {
   width: 100%;
   min-width: 0;
-  padding: 10px 12px;
-  font: inherit;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: var(--radius-control);
-  transition: border-color 180ms var(--oc-ease), box-shadow 180ms var(--oc-ease);
+  padding: 8px 10px;
 }
-input:focus-visible, select:focus-visible {
-  border-color: var(--oc-accent);
-  box-shadow: 0 0 0 3px var(--oc-accent-glow);
+.help { color: var(--oc-fg-muted); font-size: 12px; line-height: 1.5; margin: 0; }
+.failure { color: var(--oc-danger); margin: 0; font-size: 12.5px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 640px) {
+  .form-grid { grid-template-columns: 1fr; }
 }
-.help { color: var(--oc-fg-muted); font-size: 12.5px; line-height: 1.6; margin: 0 0 6px; }
-.actions { display: flex; flex-wrap: wrap; gap: 10px; }
 </style>

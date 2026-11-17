@@ -90,9 +90,7 @@ function stateLabel(state: string) { return ({ DRAFT: '草稿', PUBLISHED: '已�
 <template>
   <main class="platform-page">
     <header>
-      <p class="eyebrow">
-        PLATFORM / ROLE CONFIGURATION
-      </p><h1>平台角色配置</h1><p>仅管理面试官与评测者，不提供用户私有模型、Skill、代码或对话浏览。检查与业务调用由平台付费，独立于 Copilot 用量。</p>
+      <h1>平台角色配置</h1><p>仅管理面试官与评测者，不提供用户私有模型、Skill、代码或对话浏览。检查与业务调用由平台付费，独立于 Copilot 用量。</p>
     </header>
     <StatePanel
       v-if="account.isPending.value || !account.isFetchedAfterMount.value"
@@ -336,21 +334,14 @@ function stateLabel(state: string) { return ({ DRAFT: '草稿', PUBLISHED: '已�
 }
 
 header {
-  margin-bottom: 28px;
+  margin-bottom: 20px;
 }
 
 h1 {
-  margin: 0 0 8px;
-  font-size: clamp(26px, 3vw, 34px);
+  margin: 0 0 6px;
+  font-size: clamp(22px, 2.4vw, 26px);
   font-weight: 650;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--oc-accent);
-  letter-spacing: 0.1em;
+  letter-spacing: -0.025em;
 }
 
 p,

@@ -82,7 +82,7 @@ function decide(kind: 'APPROVE' | 'REJECT') {
   <section
     class="copilot-commands"
     aria-label="Copilot Bash 命令"
-    :style="{ borderColor: 'var(--border)' }"
+    :data-pending="current?.state === 'PENDING' && current.mode === 'ASK' ? 'true' : undefined"
   >
     <h3>Copilot 开发命令</h3>
     <p
@@ -172,12 +172,16 @@ function decide(kind: 'APPROVE' | 'REJECT') {
         <small>{{ rejectionBytes }} / 2048 UTF-8 字节</small>
         <div class="actions">
           <Button
+            variant="primary"
+            size="small"
             :disabled="!canDecide"
             @click="decide('APPROVE')"
           >
             批准此命令
           </Button>
           <Button
+            variant="danger"
+            size="small"
             :disabled="!canDecide || rejectionBytes > 2048"
             @click="decide('REJECT')"
           >
@@ -243,35 +247,58 @@ function decide(kind: 'APPROVE' | 'REJECT') {
 <style scoped>
 .copilot-commands {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  border: 1px solid var(--oc-border) !important;
-  border-radius: 10px;
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-control);
   background: var(--oc-surface-2);
-  padding: 14px;
+  padding: 10px 12px;
 }
-h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
-p, small { margin: 0; font-size: 12.5px; color: var(--oc-fg-muted); line-height: 1.55; }
-label { display: grid; gap: 6px; font-size: 12.5px; }
+
+.copilot-commands[data-pending="true"] {
+  border-color: var(--oc-warning-border);
+  border-left: 3px solid var(--oc-warning);
+}
+
+h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+p, small {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+  line-height: 1.5;
+}
+
+label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+}
+
 pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;
-  padding: 10px;
-  border-radius: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
   background: var(--oc-bg-input);
   border: 1px solid var(--oc-border);
   font-size: 12px;
 }
+
 textarea, select {
-  box-sizing: border-box;
   width: 100%;
-  padding: 8px 10px;
-  font: inherit;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12.5px;
 }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 </style>

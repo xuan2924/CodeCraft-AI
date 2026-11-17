@@ -14,8 +14,21 @@ watch(usage.error, error => { if (identityFailure(error)) emit('unauthorized'); 
 </script>
 
 <template>
-  <section aria-label="连接检查用量与费用">
-    <h4>本组检查用量与费用</h4>
+  <section
+    class="check-usage"
+    aria-label="连接检查用量与费用"
+  >
+    <div class="check-usage-head">
+      <h4>本组检查用量与费用</h4>
+      <Button
+        variant="ghost"
+        size="small"
+        :disabled="usage.isFetching.value"
+        @click="usage.refetch()"
+      >
+        重新读取检查用量
+      </Button>
+    </div>
     <p>仅记录本组实际派发；复用的检查不重复计数，与演练费用分开。</p>
     <p
       v-if="usage.isPending.value"
@@ -26,6 +39,7 @@ watch(usage.error, error => { if (identityFailure(error)) emit('unauthorized'); 
     <p
       v-else-if="usage.isError.value"
       role="alert"
+      class="failure"
     >
       {{ errorMessage(usage.error.value) }}
     </p>
@@ -33,11 +47,41 @@ watch(usage.error, error => { if (identityFailure(error)) emit('unauthorized'); 
       v-else-if="usage.data.value"
       :data="usage.data.value"
     />
-    <Button
-      :disabled="usage.isFetching.value"
-      @click="usage.refetch()"
-    >
-      重新读取检查用量
-    </Button>
   </section>
 </template>
+
+<style scoped>
+.check-usage {
+  padding: 12px;
+  border-radius: var(--radius-control);
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  display: grid;
+  gap: 8px;
+}
+
+.check-usage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+  line-height: 1.5;
+}
+
+.failure {
+  color: var(--oc-danger);
+}
+</style>

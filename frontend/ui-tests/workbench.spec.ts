@@ -27,7 +27,7 @@ for (const width of [1600, 390]) {
     await page.getByTestId('workspace-file').click();
     await expect(page.getByRole('group', { name: '文件编辑', exact: true })).toBeVisible();
     await expect(page.locator('.monaco-editor').first()).toBeVisible();
-    await expect(page.locator('.monaco-editor').first()).toHaveCSS('background-color', 'rgb(17, 22, 18)');
+    await expect(page.locator('.monaco-editor').first()).toHaveCSS('background-color', 'rgb(11, 13, 16)');
     await expect(page.getByRole('region', { name: 'AI 协作面板', exact: true })).toBeVisible();
     const focus = page.getByRole('button', { name: '专注实现，收起题目' });
     await focus.focus(); await page.keyboard.press('Enter');
