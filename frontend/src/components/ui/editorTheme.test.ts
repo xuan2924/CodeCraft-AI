@@ -8,7 +8,7 @@ it('uses the shared palette through the Monaco public theme API', () => {
   expect(defineTheme).toHaveBeenCalledWith('codecraft', expect.objectContaining({
     base: 'vs-dark',
     colors: expect.objectContaining({
-      'editor.background': '#0b0d10',
+      'editor.background': colors.background,
       'editor.foreground': colors.foreground,
       'editorLineNumber.foreground': colors.muted,
       'editor.selectionBackground': colors.selected,

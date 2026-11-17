@@ -14,6 +14,7 @@ const route = useRoute();
 const navigation = useTemplateRef<globalThis.HTMLElement>('navigation');
 const content = useTemplateRef<globalThis.HTMLElement>('content');
 const ready = computed(() => !props.pending && !props.failed && props.identity && !props.identity.passwordChangeRequired);
+const compactRail = computed(() => route.name === routes.workspace.name);
 const links = computed(() => {
   if (ready.value && props.identity?.role === 'USER') {
     return [
@@ -26,8 +27,8 @@ const links = computed(() => {
   }
   if (ready.value && props.identity?.role === 'ADMIN') {
     return [
-      { ...routes.platformAgents, label: '平台角色配置', icon: Settings2, matches: [routes.platformAgents.name] },
-      { ...routes.feedback, label: '授权反馈处理', icon: ShieldCheck, matches: [routes.feedback.name] },
+      { ...routes.platformAgents, label: 'Agent 策略', icon: Settings2, matches: [routes.platformAgents.name] },
+      { ...routes.feedback, label: '授权反馈', icon: ShieldCheck, matches: [routes.feedback.name] },
       { ...routes.account, label: '账号管理', icon: ShieldCheck, matches: [routes.account.name, routes.status.name] },
     ];
   }
@@ -51,7 +52,7 @@ watch(() => route.fullPath, async () => {
 <template>
   <div
     class="app-shell"
-    :class="{ 'navigation-expanded': layout.navigationExpanded }"
+    :class="{ 'navigation-expanded': layout.navigationExpanded, 'is-rail': compactRail }"
   >
     <a
       class="skip-link"
@@ -66,10 +67,11 @@ watch(() => route.fullPath, async () => {
           :to="{ name: identity?.role === 'USER' && ready ? routes.catalog.name : routes.account.name }"
           class="app-brand"
           aria-label="CodeCraft 首页"
+          title="CodeCraft"
         >
           <span class="app-brand-mark">
             <Terminal
-              :size="17"
+              :size="16"
               aria-hidden="true"
             />
           </span>
@@ -118,11 +120,15 @@ watch(() => route.fullPath, async () => {
         <p
           v-if="pending"
           role="status"
+          class="app-session-note"
         >
-          正在确认身份…
+          确认身份…
         </p>
         <template v-else-if="failed">
-          <p role="alert">
+          <p
+            role="alert"
+            class="app-session-note"
+          >
             无法确认登录状态
           </p>
           <Button
@@ -130,13 +136,16 @@ watch(() => route.fullPath, async () => {
             size="small"
             @click="$emit('retry')"
           >
-            重新检查
+            重试
           </Button>
         </template>
         <template v-else-if="identity">
-          <div class="app-session-avatar">
+          <div
+            class="app-session-avatar"
+            :title="identity.username"
+          >
             <UserRound
-              :size="16"
+              :size="15"
               aria-hidden="true"
             />
           </div>
@@ -145,11 +154,14 @@ watch(() => route.fullPath, async () => {
               class="app-username"
               :title="identity.username"
             >{{ identity.username }}</span>
-            <small>{{ identity.passwordChangeRequired ? '需要修改临时密码' : identity.role === 'ADMIN' ? '管理员' : '受邀用户' }}</small>
+            <small>{{ identity.passwordChangeRequired ? '需要改密' : identity.role === 'ADMIN' ? '管理员' : '受邀用户' }}</small>
           </div>
         </template>
-        <p v-else>
-          仅向受邀用户开放
+        <p
+          v-else
+          class="app-session-note"
+        >
+          仅受邀访问
         </p>
       </div>
     </aside>
@@ -168,7 +180,12 @@ watch(() => route.fullPath, async () => {
 .app-shell {
   min-height: 100dvh;
   display: grid;
-  grid-template-columns: 216px minmax(0, 1fr);
+  grid-template-columns: 200px minmax(0, 1fr);
+  background: var(--oc-bg);
+}
+
+.app-shell.is-rail {
+  grid-template-columns: 48px minmax(0, 1fr);
 }
 
 .app-sidebar {
@@ -177,7 +194,7 @@ watch(() => route.fullPath, async () => {
   height: 100dvh;
   display: flex;
   flex-direction: column;
-  padding: 16px 10px 12px;
+  padding: 14px 8px 12px;
   border-right: 1px solid var(--oc-border);
   background: var(--oc-bg-subtle);
   min-width: 0;
@@ -188,7 +205,7 @@ watch(() => route.fullPath, async () => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
   padding: 0 6px;
 }
 
@@ -198,20 +215,19 @@ watch(() => route.fullPath, async () => {
   gap: 9px;
   color: var(--oc-fg);
   text-decoration: none;
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: -0.025em;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   min-width: 0;
 }
 
 .app-brand-mark {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   display: grid;
   place-items: center;
   border-radius: 6px;
   background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border-strong);
   color: var(--oc-accent);
   flex-shrink: 0;
 }
@@ -225,21 +241,17 @@ watch(() => route.fullPath, async () => {
 .app-nav-link {
   position: relative;
   display: flex;
-  gap: 10px;
+  gap: 9px;
   align-items: center;
-  min-height: 34px;
-  padding: 6px 10px;
+  min-height: 32px;
+  padding: 6px 8px;
   border-radius: 6px;
-  border: 1px solid transparent;
   color: var(--oc-fg-muted);
   text-decoration: none;
   font-size: 13px;
   font-weight: 500;
   min-width: 0;
-  transition:
-    background-color 140ms var(--oc-ease),
-    border-color 140ms var(--oc-ease),
-    color 140ms var(--oc-ease);
+  transition: background-color 120ms var(--oc-ease), color 120ms var(--oc-ease);
 }
 
 .app-nav-link span {
@@ -250,14 +262,13 @@ watch(() => route.fullPath, async () => {
 
 .app-nav-link:hover {
   color: var(--oc-fg);
-  background: var(--oc-surface);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .app-nav-link.router-link-exact-active,
 .app-nav-link.is-group-active {
   color: var(--oc-fg);
   background: var(--oc-surface-2);
-  border-color: var(--oc-border);
   font-weight: 550;
 }
 
@@ -265,7 +276,7 @@ watch(() => route.fullPath, async () => {
 .app-nav-link.is-group-active::before {
   content: '';
   position: absolute;
-  left: -1px;
+  left: 0;
   top: 7px;
   bottom: 7px;
   width: 2px;
@@ -281,32 +292,29 @@ watch(() => route.fullPath, async () => {
 
 .app-nav-link svg {
   flex-shrink: 0;
-  opacity: 0.8;
+  opacity: 0.78;
 }
 
 .app-session {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   margin-top: auto;
-  padding: 10px;
-  border: 1px solid var(--oc-border);
-  border-radius: 8px;
-  background: var(--oc-surface);
+  padding: 12px 6px 2px;
+  border-top: 1px solid var(--oc-border);
   font-size: 12px;
   min-width: 0;
 }
 
 .app-session-avatar {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   display: grid;
   place-items: center;
   border-radius: 6px;
   background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border-strong);
-  color: var(--oc-accent);
+  color: var(--oc-fg-muted);
   flex-shrink: 0;
 }
 
@@ -317,13 +325,13 @@ watch(() => route.fullPath, async () => {
 
 .app-session small {
   display: block;
-  color: var(--oc-fg-muted);
+  color: var(--oc-fg-dim);
   margin-top: 1px;
   font-size: 11px;
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
-.app-session p {
+.app-session-note {
   margin: 0;
   color: var(--oc-fg-muted);
   font-size: 12px;
@@ -332,9 +340,9 @@ watch(() => route.fullPath, async () => {
 .app-username {
   display: block;
   color: var(--oc-fg);
-  font-weight: 550;
+  font-weight: 500;
   font-size: 12.5px;
-  line-height: 1.35;
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -343,6 +351,7 @@ watch(() => route.fullPath, async () => {
 
 .app-content {
   min-width: 0;
+  overflow-x: hidden;
   outline: none;
 }
 
@@ -367,10 +376,48 @@ watch(() => route.fullPath, async () => {
   .app-nav-toggle {
     display: none;
   }
+  .is-rail .app-sidebar {
+    padding: 12px 6px;
+    align-items: center;
+  }
+  .is-rail .app-brand-row {
+    justify-content: center;
+    padding: 0;
+    margin-bottom: 14px;
+  }
+  .is-rail .app-brand-text,
+  .is-rail .app-session-meta,
+  .is-rail .app-session-note {
+    display: none;
+  }
+  .is-rail .app-navigation {
+    width: 100%;
+    justify-items: center;
+    gap: 4px;
+  }
+  .is-rail .app-nav-link {
+    width: 34px;
+    height: 34px;
+    justify-content: center;
+    padding: 0;
+  }
+  .is-rail .app-nav-link span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  .is-rail .app-session {
+    width: 100%;
+    justify-content: center;
+    padding: 10px 0 0;
+  }
 }
 
 @media (max-width: 900px) {
-  .app-shell {
+  .app-shell,
+  .app-shell.is-rail {
     display: block;
   }
   .app-sidebar {

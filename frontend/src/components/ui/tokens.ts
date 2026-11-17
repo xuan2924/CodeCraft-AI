@@ -1,15 +1,15 @@
 /** Single color source for application controls, Monaco and the terminal. */
 export const colors = {
-  background: '#0b0d10',
-  surface: '#13171e',
-  selected: '#1e2632',
-  border: '#232a35',
+  background: '#18181b',
+  surface: '#1f1f23',
+  selected: '#27272a',
+  border: '#2e2e34',
   controlBorder: '#758296',
-  foreground: '#f1f5f9',
-  muted: '#94a3b8',
+  foreground: '#f4f4f5',
+  muted: '#a1a1aa',
   accent: '#6ee7b7',
-  primary: '#f1f5f9',
-  primaryForeground: '#0b0d10',
+  primary: '#f4f4f5',
+  primaryForeground: '#18181b',
   failure: '#fda4af',
   warning: '#fcd34d',
 } as const;

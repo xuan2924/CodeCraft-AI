@@ -25,8 +25,8 @@ describe('theme accessibility contract', () => {
   it('installs the same palette as semantic CSS properties, without persisting client data', () => {
     const root = document.createElement('div');
     installTokens(root);
-    expect(root.style.getPropertyValue('--background')).toBe('#0b0d10');
-    expect(root.style.getPropertyValue('--primary-foreground')).toBe('#0b0d10');
+    expect(root.style.getPropertyValue('--background')).toBe('#18181b');
+    expect(root.style.getPropertyValue('--primary-foreground')).toBe('#18181b');
     expect(root.style.getPropertyValue('--control-border')).toBe('#758296');
   });
 });

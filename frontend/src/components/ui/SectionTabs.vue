@@ -15,14 +15,14 @@ defineProps<{
 
 <template>
   <nav
-    class="section-tabs ui-segmented"
+    class="section-tabs"
     :aria-label="label"
   >
     <RouterLink
       v-for="item in items"
       :key="item.name"
       :to="{ name: item.name }"
-      class="ui-segmented-btn"
+      class="section-tab"
       :class="{ 'is-active': active === item.name }"
       :aria-current="active === item.name ? 'page' : undefined"
     >
@@ -33,6 +33,36 @@ defineProps<{
 
 <style scoped>
 .section-tabs {
-  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  border-bottom: 1px solid var(--oc-border);
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.section-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 9px 2px 10px;
+  color: var(--oc-fg-muted);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 140ms var(--oc-ease), border-color 140ms var(--oc-ease);
+}
+
+.section-tab:hover {
+  color: var(--oc-fg);
+}
+
+.section-tab.is-active {
+  color: var(--oc-fg);
+  font-weight: 550;
+  border-bottom-color: var(--oc-accent);
 }
 </style>

@@ -21,6 +21,7 @@ describe('application navigation', () => {
     expect(wrapper.text()).toContain('历史演练');
     expect(wrapper.text()).toContain('设置');
     expect(wrapper.text()).not.toContain('账号管理');
+    expect(wrapper.classes()).toContain('is-rail');
     const toggle = wrapper.get('button[aria-controls="application-navigation"]');
     await toggle.trigger('click');
     expect(toggle.attributes('aria-expanded')).toBe('true');
@@ -37,6 +38,7 @@ describe('application navigation', () => {
     await toggle.trigger('click');
     await router.push('/skills');
     await flushPromises();
+    expect(wrapper.classes()).not.toContain('is-rail');
     expect(toggle.attributes('aria-expanded')).toBe('false');
     expect(wrapper.get('a[href="/models"]').classes()).toContain('is-group-active');
     await wrapper.setProps({ identity: null, failed: true });
