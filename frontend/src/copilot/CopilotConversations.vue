@@ -72,9 +72,6 @@ const current = computed(() => list.data.value?.find(item => item.id === selecte
         {{ create.pending.value ? '正在新建…' : 'New · 新会话' }}
       </Button>
     </div>
-    <p class="conv-note">
-      会话共享当前代码，切换不回滚；每场同一时间仅执行一个主任务。
-    </p>
     <p
       v-if="current?.forkSource"
       class="conv-fork-banner"
@@ -163,10 +160,9 @@ const current = computed(() => list.data.value?.find(item => item.id === selecte
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 8px;
-  padding: 12px;
-  border-radius: var(--radius-panel);
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
+  padding: 0;
+  background: transparent;
+  border: 0;
 }
 
 .conversation-controls {

@@ -7,6 +7,8 @@ import * as drafts from './drafts';
 vi.mock('./drafts', async (original) => ({ ...await original<typeof drafts>(), listAccountDrafts: vi.fn(async () => []), confirmExerciseDeletion: vi.fn(async () => {}) }));
 
 const endPreparation = vi.hoisted(() => vi.fn<(choice: 'save' | 'discard' | 'retain') => Promise<boolean>>());
+vi.mock('./CodeEditor.vue', () => ({ default: { props: ['path', 'modelValue', 'readonly'],
+  template: '<pre data-testid="source" :data-readonly="readonly">{{ modelValue }}</pre>' } }));
 vi.mock('./WorkspaceEditor.vue', () => ({ __esModule: true, default: { props: ['credential', 'answeringClosed', 'locked'], data: () => ({ draft: '' }),
   methods: { prepareEnd: (choice: 'save' | 'discard' | 'retain') => endPreparation(choice) },
   template: '<textarea aria-label="草稿夹具" v-model="draft" :data-can-write="!!credential" :readonly="answeringClosed || locked" />' } }));

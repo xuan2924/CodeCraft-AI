@@ -16,10 +16,12 @@ function render() {
 }
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(api.history).mockResolvedValue([]); vi.mocked(api.ask).mockResolvedValue(task); });
 afterEach(() => { wrappers.splice(0).forEach((wrapper) => wrapper.unmount()); });
-it('shows empty clarification without requiring a question and sends a real command', async () => {
+it('shows prompt chips when empty and sends a real command without submitting automatically', async () => {
   const wrapper = render(); await flushPromises();
-  expect(wrapper.text()).toContain('可直接开始实现');
-  expect(wrapper.text()).toContain('尚无提问');
+  const chips = wrapper.findAll('.prompt-chip');
+  expect(chips.length).toBe(3);
+  await chips[0]!.trigger('click');
+  expect(wrapper.get('textarea').element.value).toContain('边界');
   await wrapper.get('textarea').setValue('需求是什么？');
   await wrapper.get('form').trigger('submit'); await flushPromises();
   expect(api.ask).toHaveBeenCalledWith('owner', 'exercise', '需求是什么？', expect.any(String), 'credential', expect.any(AbortSignal));

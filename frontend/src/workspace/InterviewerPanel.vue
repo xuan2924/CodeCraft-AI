@@ -108,12 +108,6 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
       </Tooltip>
     </header>
     <p
-      v-if="phase === 'READY'"
-      class="interviewer-phase-hint"
-    >
-      现在不计时；可直接开始实现，无需先提问。
-    </p>
-    <p
       v-if="records.isPending.value"
       role="status"
       class="interviewer-note"
@@ -134,12 +128,21 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
         重新读取
       </Button>
     </div>
-    <p
+    <div
       v-else-if="!records.data.value?.length"
-      class="interviewer-empty"
+      class="interviewer-empty-chips"
     >
-      尚无提问。可以先核对需求，也可以直接开始实现。
-    </p>
+      <button
+        v-for="prompt in ['请确认输入边界条件与空值处理约定？', '精度、四舍五入和异常状态如何约束？', '实现时有哪些不能破坏的接口或结构要求？']"
+        :key="prompt"
+        type="button"
+        class="prompt-chip"
+        :disabled="blocked"
+        @click="text = prompt"
+      >
+        {{ prompt }}
+      </button>
+    </div>
     <ol
       v-else
       class="interviewer-history"
@@ -325,8 +328,11 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
         :readonly="blocked"
         aria-describedby="interviewer-help"
       />
-      <p id="interviewer-help">
-        {{ disabled ? '当前阶段暂停提问，历史仍可查看。' : !credential ? '取得本页操作权后可提问。' : running ? '请等待当前回答结束后再提问。' : '最多 4 KiB 文字。提问不会自动保存草稿或延长作答时间。' }}
+      <p
+        v-if="disabled || !credential || running"
+        id="interviewer-help"
+      >
+        {{ disabled ? '当前阶段暂停提问，历史仍可查看。' : !credential ? '取得本页操作权后可提问。' : '请等待当前回答结束后再提问。' }}
       </p>
       <p
         v-if="command.error.value"
@@ -360,13 +366,43 @@ const labels: Record<string, string> = { QUEUED: '等待面试官', RUNNING: '�
 
 <style scoped>
 .interviewer {
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
-  border-radius: var(--radius-panel);
-  padding: 14px;
+  background: transparent;
+  border: 0;
+  padding: 0;
   min-width: 0;
   display: grid;
   gap: 10px;
+}
+
+.interviewer-empty-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.prompt-chip {
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--oc-border);
+  background: var(--oc-surface);
+  color: var(--oc-fg-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background-color 120ms var(--oc-ease), color 120ms var(--oc-ease), border-color 120ms var(--oc-ease);
+}
+
+.prompt-chip:hover:not(:disabled) {
+  color: var(--oc-fg);
+  background: var(--oc-surface-2);
+  border-color: var(--oc-border-strong);
+}
+
+.prompt-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .interviewer header {

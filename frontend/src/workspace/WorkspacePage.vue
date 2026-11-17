@@ -3,13 +3,15 @@ import { computed, defineAsyncComponent, onScopeDispose, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import Button from '../components/ui/Button.vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
-import { Clock, Cpu, FileCode2, RefreshCw, ShieldCheck } from '@lucide/vue';
+import { ArrowLeft, Clock, Cpu, RefreshCw, ShieldCheck } from '@lucide/vue';
 import { session } from '../auth/api';
 import { routes } from '../routes';
 import { ApiError } from '../api/request';
 import * as api from './api';
 import WorkspaceLogout from './WorkspaceLogout.vue';
 import WorkbenchLayout from './WorkbenchLayout.vue';
+import CodeEditor from './CodeEditor.vue';
+import FileTree from './FileTree.vue';
 import WorkspaceTests from './WorkspaceTests.vue';
 import WorkspaceCommands from './WorkspaceCommands.vue';
 import WorkspaceHistory from './WorkspaceHistory.vue';
@@ -29,6 +31,7 @@ import { useExerciseTimer } from './useExerciseTimer';
 
 const modelOpen = ref(false);
 const assistantTab = ref<'copilot' | 'interviewer'>('copilot');
+const leftSection = ref<'requirements' | 'acceptance'>('requirements');
 
 const WorkspaceEditor = defineAsyncComponent(() => import('./WorkspaceEditor.vue'));
 const client = useQueryClient();
@@ -402,12 +405,27 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
           >
             <div class="hud-row">
               <div class="summary-primary">
+                <RouterLink
+                  :to="{ name: routes.catalog.name }"
+                  class="hud-back"
+                  title="返回题库"
+                  aria-label="返回题库"
+                >
+                  <ArrowLeft
+                    :size="15"
+                    aria-hidden="true"
+                  />
+                </RouterLink>
                 <h1 class="hud-title">
                   {{ problem?.title ?? '固定版本演练' }}
                 </h1>
                 <span
+                  v-if="problem?.version"
+                  class="version-pill font-mono-num"
+                >v{{ problem.version }}</span>
+                <span
                   role="status"
-                  class="status-pill"
+                  class="status-pill font-mono-num"
                 >
                   {{ labels[exercise.state] }} · 修订 {{ exercise.revision ?? '尚未确认' }}
                 </span>
@@ -421,8 +439,23 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                     :size="12"
                     aria-hidden="true"
                   />
-                  <span>{{ credential ? '持有操作权' : '只读（保留草稿）' }}</span>
+                  <span>{{ credential ? '持有操作权' : '只读草稿' }}</span>
                 </span>
+                <Tooltip
+                  v-if="problem && !problem.executionAvailable"
+                  text="该题目版本未配备正式执行配置，测试不可用。"
+                >
+                  <span
+                    class="env-warning-dot"
+                    role="status"
+                  >
+                    <span
+                      class="ui-status-dot"
+                      data-tone="warning"
+                    />
+                    <span>无执行环境</span>
+                  </span>
+                </Tooltip>
                 <details class="exercise-metadata">
                   <summary>详情</summary>
                   <div class="metadata-popover">
@@ -438,7 +471,9 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                     <p v-if="exercise.deadlineAt">
                       服务器截止时间：{{ new Date(exercise.deadlineAt).toLocaleString() }}
                     </p>
-                    <p>修订：{{ exercise.revision ?? '尚未确认' }}</p>
+                    <p class="font-mono-num">
+                      修订：{{ exercise.revision ?? '尚未确认' }}
+                    </p>
                   </div>
                 </details>
               </div>
@@ -452,23 +487,12 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                     :size="12"
                     aria-hidden="true"
                   />
-                  <span>{{ expired ? '作答已到期' : `剩余时间 ${remaining}` }}</span>
+                  <span class="sr-only-text">剩余时间 </span><span>{{ expired ? '作答已到期' : remaining }}</span>
                 </span>
-                <Button
-                  v-if="['READY', 'ACTIVE'].includes(exercise.state)"
-                  variant="secondary"
-                  size="small"
-                  @click="modelOpen = true"
-                >
-                  <Cpu
-                    :size="13"
-                    aria-hidden="true"
-                  />
-                  <span>Copilot 模型与检查</span>
-                </Button>
                 <Button
                   variant="ghost"
                   size="small"
+                  title="刷新查询"
                   :disabled="pending || active.isFetching.value"
                   @click="catalogue.refetch(); active.refetch(); exercise && controlState.refetch()"
                 >
@@ -476,7 +500,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                     :size="13"
                     aria-hidden="true"
                   />
-                  <span>刷新查询</span>
+                  <span class="sr-only-text">刷新查询</span>
                 </Button>
                 <Button
                   v-if="!credential && ['READY', 'ACTIVE', 'PAUSED'].includes(exercise.state)"
@@ -623,13 +647,6 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
               </span>
             </section>
           </section>
-          <p
-            v-if="problem && !problem.executionAvailable"
-            role="status"
-            class="ws-banner"
-          >
-            该题目版本尚未配备正式执行配置，测试不可用；不会替换已有工作区版本。
-          </p>
           <Dialog
             v-if="['READY', 'ACTIVE'].includes(exercise.state)"
             v-model:open="modelOpen"
@@ -665,29 +682,45 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
           <WorkbenchLayout>
             <template #assistant>
               <div class="assistant-shell">
-                <div
-                  class="assistant-tabs"
-                  role="tablist"
-                  aria-label="AI 协作切换"
-                >
-                  <button
-                    v-if="historyStates.includes(exercise.state)"
-                    type="button"
-                    role="tab"
-                    :aria-selected="assistantTab === 'copilot'"
-                    @click="assistantTab = 'copilot'"
+                <div class="assistant-tabs-bar">
+                  <div
+                    class="assistant-tabs"
+                    role="tablist"
+                    aria-label="AI 协作切换"
                   >
-                    Copilot 协作
-                  </button>
-                  <button
-                    v-if="['READY', ...historyStates].includes(exercise.state)"
-                    type="button"
-                    role="tab"
-                    :aria-selected="assistantTab === 'interviewer'"
-                    @click="assistantTab = 'interviewer'"
+                    <button
+                      v-if="historyStates.includes(exercise.state)"
+                      type="button"
+                      role="tab"
+                      :aria-selected="assistantTab === 'copilot'"
+                      @click="assistantTab = 'copilot'"
+                    >
+                      Copilot 协作
+                    </button>
+                    <button
+                      v-if="['READY', ...historyStates].includes(exercise.state)"
+                      type="button"
+                      role="tab"
+                      :aria-selected="assistantTab === 'interviewer'"
+                      @click="assistantTab = 'interviewer'"
+                    >
+                      面试官澄清
+                    </button>
+                  </div>
+                  <Button
+                    v-if="['READY', 'ACTIVE'].includes(exercise.state)"
+                    variant="ghost"
+                    size="small"
+                    class="copilot-model-btn"
+                    title="配置或检查本场 Copilot 模型"
+                    @click="modelOpen = true"
                   >
-                    面试官澄清
-                  </button>
+                    <Cpu
+                      :size="13"
+                      aria-hidden="true"
+                    />
+                    <span>模型</span>
+                  </Button>
                 </div>
                 <div class="assistant-body">
                   <div
@@ -785,16 +818,11 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                 class="files-pane"
                 aria-label="题目与文件"
               >
-                <div class="pane-block">
+                <div class="pane-block pane-block-files">
                   <div class="pane-heading">
                     <h2>工作区文件</h2>
                     <Tooltip :text="`允许编辑：${problem?.editableRoots.join('、') ?? '尚未确认'}；pom.xml 与验收测试受保护。`">
-                      <Button
-                        variant="ghost"
-                        size="small"
-                      >
-                        编辑范围
-                      </Button>
+                      <span class="scope-hint">编辑范围</span>
                     </Tooltip>
                   </div>
                   <p
@@ -803,39 +831,60 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                   >
                     尚无已确认文件。
                   </p>
-                  <ul class="file-list">
-                    <li
-                      v-for="path in exercise.paths"
-                      :key="path"
-                    >
-                      <button
-                        type="button"
-                        data-testid="workspace-file"
-                        :aria-pressed="selected === path"
-                        @click="selected = path"
-                      >
-                        <FileCode2
-                          :size="14"
-                          aria-hidden="true"
-                        />
-                        <span>{{ path }}</span>
-                      </button>
-                    </li>
-                  </ul>
-                  <details
-                    v-for="(content, path) in problem?.acceptanceFiles"
-                    :key="path"
-                    class="acceptance-file"
-                  >
-                    <summary>受保护验收测试：{{ path }}</summary>
-                    <pre class="requirements">{{ content }}</pre>
-                  </details>
+                  <FileTree
+                    v-else
+                    :paths="exercise.paths"
+                    :selected="selected"
+                    @select="selected = $event"
+                  />
                 </div>
                 <div class="pane-block pane-block-requirements">
                   <div class="pane-heading">
-                    <h2>题目要求</h2>
+                    <div
+                      class="ui-segmented"
+                      role="tablist"
+                      aria-label="题目与验收"
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        class="ui-segmented-btn"
+                        :aria-selected="leftSection === 'requirements'"
+                        @click="leftSection = 'requirements'"
+                      >
+                        题目要求
+                      </button>
+                      <button
+                        v-if="Object.keys(problem?.acceptanceFiles ?? {}).length"
+                        type="button"
+                        role="tab"
+                        class="ui-segmented-btn"
+                        :aria-selected="leftSection === 'acceptance'"
+                        @click="leftSection = 'acceptance'"
+                      >
+                        验收测试
+                      </button>
+                    </div>
                   </div>
-                  <ProblemRequirements :source="problem?.requirements ?? ''" />
+                  <ProblemRequirements
+                    v-if="leftSection === 'requirements'"
+                    :source="problem?.requirements ?? ''"
+                  />
+                  <div
+                    v-else
+                    class="acceptance-list"
+                  >
+                    <div
+                      v-for="(content, path) in problem?.acceptanceFiles"
+                      :key="path"
+                      class="acceptance-file"
+                    >
+                      <div class="acceptance-path font-mono-num">
+                        {{ path }}
+                      </div>
+                      <pre class="requirements">{{ content }}</pre>
+                    </div>
+                  </div>
                 </div>
               </section>
             </template>
@@ -890,25 +939,39 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                 class="readonly-source"
                 aria-label="只读源码"
               >
-                <h2>{{ selected || '选择文件查看源码' }}</h2>
+                <div class="readonly-source-bar">
+                  <h2 class="font-mono-num">
+                    {{ selected || '选择文件查看源码' }}
+                  </h2>
+                  <span
+                    v-if="selected"
+                    class="readonly-tag"
+                  >只读</span>
+                </div>
                 <p
                   v-if="selected && source.isPending.value"
                   role="status"
+                  class="readonly-msg"
                 >
                   正在读取已提交文件…
                 </p>
                 <p
                   v-else-if="source.isError.value"
                   role="alert"
+                  class="readonly-msg"
                 >
                   {{ api.message(source.error.value) }}
                 </p>
-                <pre
+                <CodeEditor
                   v-else-if="selected && source.data.value"
-                  data-testid="source"
-                  tabindex="0"
-                >{{ source.data.value.content }}</pre>
-                <p v-else>
+                  :path="selected"
+                  :model-value="source.data.value.content"
+                  :readonly="true"
+                />
+                <p
+                  v-else
+                  class="readonly-msg"
+                >
                   这里不会显示准备中的半成品文件。
                 </p>
               </section>
@@ -1007,12 +1070,55 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
   min-width: 0;
 }
 
+.hud-back {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  color: var(--oc-fg-muted);
+  text-decoration: none;
+}
+
+.hud-back:hover {
+  color: var(--oc-fg);
+  background: var(--oc-surface-2);
+}
+
 .hud-title {
   margin: 0;
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 650;
   color: var(--oc-fg);
   overflow-wrap: anywhere;
+}
+
+.version-pill {
+  font-size: 11px;
+  color: var(--oc-fg-muted);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+}
+
+.env-warning-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--oc-warning);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--oc-warning-bg);
+}
+
+.sr-only-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
 }
 
 .status-pill,
@@ -1260,6 +1366,28 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
   cursor: pointer;
 }
 
+.pane-block-files {
+  max-height: 44%;
+  overflow-y: auto;
+}
+
+.scope-hint {
+  font-size: 11.5px;
+  color: var(--oc-fg-dim);
+  cursor: help;
+}
+
+.acceptance-list {
+  display: grid;
+  gap: 12px;
+}
+
+.acceptance-path {
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+  margin-bottom: 4px;
+}
+
 /* Right AI Collaboration Pane */
 .assistant-shell {
   display: flex;
@@ -1269,13 +1397,27 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
   min-width: 0;
 }
 
-.assistant-tabs {
+.assistant-tabs-bar {
   flex-shrink: 0;
   display: flex;
-  gap: 2px;
-  padding: 0 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 0 10px;
   border-bottom: 1px solid var(--oc-border);
   background: var(--oc-surface);
+}
+
+.assistant-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+}
+
+.copilot-model-btn {
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 11.5px;
 }
 
 .assistant-tabs button {
@@ -1353,14 +1495,46 @@ pre {
 }
 
 .readonly-source {
-  padding: 14px;
-  overflow: auto;
+  flex: 1 1 0%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--oc-bg);
 }
 
-.readonly-source h2 {
-  margin: 0 0 10px;
+.readonly-source-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--oc-border);
+  background: var(--oc-bg-subtle);
+}
+
+.readonly-source-bar h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--oc-fg);
+}
+
+.readonly-tag {
+  font-size: 11px;
+  color: var(--oc-fg-muted);
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--oc-surface-2);
+}
+
+.readonly-msg {
+  padding: 16px;
+  margin: 0;
   font-size: 13px;
-  font-family: var(--oc-font-mono);
+  color: var(--oc-fg-muted);
 }
 
 @media (max-width: 1100px) {

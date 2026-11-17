@@ -70,3 +70,31 @@ it('does not deliver an old favorite failure into a newly switched account', asy
   expect(page.get('button[aria-label="收藏题目"]').attributes('disabled')).toBeUndefined();
   page.unmount(); client.clear();
 });
+
+it('groups multiple versions of the same problem and switches versions cleanly', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path === '/api/auth/session') return ok({ id: 'owner', username: 'user', role: 'USER', passwordChangeRequired: false, expiresAt: '2030-01-01T00:00:00Z' });
+    if (path === '/api/problem-favorites') return ok([]);
+    if (path === '/api/exercises/current') return new Response(JSON.stringify({ code: 'RESOURCE_NOT_FOUND' }), { status: 404 });
+    if (path === '/api/problems') return ok([
+      { problemId: 'cart', problemVersionId: 'v1', title: '购物车金额计算', version: '1.0.0', requirements: '旧版说明', durationSeconds: 2700, editableRoots: [], acceptanceFiles: {}, executionAvailable: false },
+      { problemId: 'cart', problemVersionId: 'v2', title: '购物车金额计算', version: '1.1.0', requirements: '新版含挑战说明', durationSeconds: 2700, editableRoots: [], acceptanceFiles: {}, executionAvailable: true },
+    ]);
+    throw new Error(`Unexpected request ${path}`);
+  }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'catalog', component: CatalogPage },
+    { path: '/workspace', name: 'workspace', component: { template: '<div />' } }, { path: '/history', name: 'history', component: { template: '<div />' } }] });
+  await router.push('/');
+  const page = mount(CatalogPage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
+  await flushPromises();
+  expect(page.findAll('.problem-choice')).toHaveLength(1);
+  expect(page.text()).toContain('新版含挑战说明');
+  const v1Btn = page.findAll('button').find(b => b.text() === 'v1.0.0');
+  expect(v1Btn).toBeDefined();
+  await v1Btn!.trigger('click');
+  expect(page.text()).toContain('旧版说明');
+  expect(page.text()).toContain('该版本执行环境不可用');
+  page.unmount(); client.clear();
+});

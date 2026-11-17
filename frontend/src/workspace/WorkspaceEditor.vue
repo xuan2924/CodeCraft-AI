@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
+import { Play, Save, X } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
+import Tooltip from '../components/ui/Tooltip.vue';
 import { ApiError } from '../api/request';
 import * as api from './api';
 import { buffer, committed, dirty as contentDirty, observe, useLatestBaseline, type Buffer } from './editorBuffer';
@@ -13,6 +15,27 @@ const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.Wo
 const emit = defineEmits<{ saved: []; select: [path: string]; 'stale-control': []; 'run-test': [revision: string]; 'write-busy': [value: boolean] }>();
 const buffers = reactive(new Map<string, Buffer>());
 const deleted = reactive(new Map<string, string>());
+const openTabs = ref<string[]>([]);
+watch(() => props.selected, (path) => {
+  if (path && !openTabs.value.includes(path)) openTabs.value.push(path);
+}, { immediate: true });
+watch(() => props.exercise.workspaceInstanceId, () => {
+  openTabs.value = props.selected ? [props.selected] : [];
+});
+function tabLabel(path: string): string {
+  const idx = path.lastIndexOf('/');
+  return idx >= 0 ? path.slice(idx + 1) : path;
+}
+function closeTab(path: string) {
+  if (busy.value || unresolved.value || props.locked) return;
+  const target = buffers.get(path);
+  if (target && dirty(target) && !globalThis.confirm('文件有未保存修改。关闭视图会保留本页缓冲区，不代表已保存或已备份；是否关闭？')) return;
+  const idx = openTabs.value.indexOf(path);
+  if (idx >= 0) openTabs.value.splice(idx, 1);
+  if (props.selected === path) {
+    emit('select', openTabs.value[idx] ?? openTabs.value[idx - 1] ?? '');
+  }
+}
 function dirty(value: Buffer): boolean { return contentDirty(value) || deleted.has(value.path); }
 const current = computed(() => buffers.get(props.selected));
 const edited = computed(() => [...buffers.values()].some(dirty));
@@ -224,8 +247,7 @@ async function saveAndTest() {
 function saveCurrent() { if (current.value && !props.locked) void saveBuffers([current.value]); }
 function closeFile() {
   if (!current.value || busy.value || unresolved.value || props.locked) return;
-  if (dirty(current.value) && !globalThis.confirm('文件有未保存修改。关闭视图会保留本页缓冲区，不代表已保存或已备份；是否关闭？')) return;
-  emit('select', '');
+  closeTab(current.value.path);
 }
 function createFile() {
   if (!canWrite.value || !props.exercise.revision || busy.value || unresolved.value) return;
@@ -299,50 +321,91 @@ onScopeDispose(() => {
     aria-label="文件编辑"
   >
     <div class="editor-header-bar">
-      <div class="editor-file-meta">
-        <div class="editor-tab">
-          <span
-            v-if="current && dirty(current)"
-            class="dirty-dot"
-            title="未保存修改"
-          />
-          <h2>{{ selected || '选择或创建文件' }}</h2>
-        </div>
-        <div class="editor-status-row">
-          <span
-            role="status"
-            class="editor-status-chip"
+      <div
+        class="editor-tabs-strip"
+        role="tablist"
+        aria-label="已打开文件"
+      >
+        <div
+          v-for="tab in openTabs"
+          :key="tab"
+          class="editor-tab-item"
+          :class="{ 'is-active': selected === tab }"
+        >
+          <button
+            type="button"
+            role="tab"
+            class="editor-tab-btn"
+            :aria-selected="selected === tab"
+            :title="tab"
+            @click="emit('select', tab)"
           >
-            {{ busy ? '正在保存或核对…' : notice }}
-          </span>
-          <span
-            role="status"
-            class="editor-backup-chip"
+            <span
+              v-if="buffers.get(tab) && dirty(buffers.get(tab)!)"
+              class="dirty-dot"
+              title="未保存修改"
+            />
+            <span class="font-mono-num">{{ tabLabel(tab) }}</span>
+          </button>
+          <button
+            type="button"
+            class="editor-tab-close"
+            :aria-label="`关闭 ${tabLabel(tab)}`"
+            :disabled="busy || !!unresolved"
+            @click.stop="closeTab(tab)"
           >
-            {{ backup }}
-          </span>
+            <X
+              :size="11"
+              aria-hidden="true"
+            />
+          </button>
         </div>
+        <span
+          v-if="!openTabs.length"
+          class="editor-empty-tab"
+        >选择或创建文件</span>
       </div>
       <div class="editor-actions">
+        <Tooltip :text="`${busy ? '正在保存或核对…' : notice} · ${backup}`">
+          <span
+            role="status"
+            class="editor-status-chip font-mono-num"
+          >
+            <span
+              class="ui-status-dot"
+              :data-tone="busy ? 'warning' : current && dirty(current) ? 'warning' : 'accent'"
+            />
+            <span>{{ busy ? '核对中…' : notice }}</span>
+          </span>
+        </Tooltip>
         <Button
           variant="primary"
           size="small"
           :disabled="!canWrite || busy || !!unresolved || testBusy || testPrompt"
           @click="requestTest"
         >
-          {{ testTarget === 'challenge' ? '运行挑战与基础回归' : '运行基础测试' }}
-        </Button>
-        <Button
-          variant="secondary"
-          size="small"
-          :disabled="!current || !canWrite || busy || !!unresolved"
-          @click="saveCurrent"
-        >
-          保存文件
+          <Play
+            :size="12"
+            aria-hidden="true"
+          />
+          <span>{{ testTarget === 'challenge' ? '运行挑战与基础回归' : '运行基础测试' }}</span>
         </Button>
         <Button
           variant="ghost"
           size="small"
+          :disabled="!current || !canWrite || busy || !!unresolved"
+          @click="saveCurrent"
+        >
+          <Save
+            :size="13"
+            aria-hidden="true"
+          />
+          <span>保存文件</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="small"
+          class="sr-only-action"
           :disabled="!current || busy || !!unresolved"
           @click="closeFile"
         >
@@ -358,8 +421,9 @@ onScopeDispose(() => {
         </Button>
         <Button
           v-if="current && dirty(current)"
-          variant="danger"
+          variant="ghost"
           size="small"
+          class="discard-btn"
           :disabled="busy || !!unresolved"
           @click="discard(current)"
         >
@@ -519,17 +583,23 @@ onScopeDispose(() => {
           删除文件
         </Button>
       </div>
-      <details class="local-backups-details">
-        <summary>本地草稿备份与文件操作说明</summary>
-        <p class="file-actions-tip">
-          删除或重命名前，先保存或明确丢弃该文件的草稿。
-        </p>
-        <ClosedDrafts
-          :owner="owner"
-          :exercise-id="exercise"
-          active
-        />
-      </details>
+      <div class="local-backups-row">
+        <details class="local-backups-details">
+          <summary>本地草稿备份与文件操作说明</summary>
+          <p class="file-actions-tip">
+            删除或重命名前，先保存或明确丢弃该文件的草稿。
+          </p>
+          <ClosedDrafts
+            :owner="owner"
+            :exercise-id="exercise"
+            active
+          />
+        </details>
+        <span
+          role="status"
+          class="backup-inline-status"
+        >{{ backup }}</span>
+      </div>
     </div>
     <div
       v-if="leaving"
@@ -588,64 +658,126 @@ onScopeDispose(() => {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px 12px;
+  gap: 6px 10px;
   min-width: 0;
-  min-height: 40px;
-  padding: 6px 12px;
-  background: var(--oc-surface);
+  min-height: 36px;
+  padding: 0 10px 0 0;
+  background: var(--oc-bg-subtle);
   border-bottom: 1px solid var(--oc-border);
 }
 
-.editor-file-meta {
-  min-width: 0;
-  flex: 1 1 180px;
+.editor-tabs-strip {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 12px;
+  align-items: stretch;
+  min-width: 0;
+  flex: 1 1 200px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.editor-tab {
+.editor-tab-item {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  border-right: 1px solid var(--oc-border);
+  border-top: 2px solid transparent;
+  background: transparent;
+  max-width: 200px;
+}
+
+.editor-tab-item.is-active {
+  background: var(--oc-bg);
+  border-top-color: var(--oc-accent);
+}
+
+.editor-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 8px 4px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--oc-fg-muted);
+  font-size: 12px;
+  cursor: pointer;
   min-width: 0;
+}
+
+.editor-tab-item.is-active .editor-tab-btn {
+  color: var(--oc-fg);
+  font-weight: 550;
+}
+
+.editor-tab-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-tab-close {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--oc-fg-dim);
+  cursor: pointer;
+}
+
+.editor-tab-close:hover:not(:disabled) {
+  background: var(--oc-surface-2);
+  color: var(--oc-fg);
+}
+
+.editor-empty-tab {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--oc-fg-dim);
 }
 
 .dirty-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   background: var(--oc-warning);
   flex-shrink: 0;
 }
 
-.editor-file-meta h2 {
-  margin: 0;
-  font-size: 12.5px;
-  font-weight: 600;
-  font-family: var(--oc-font-mono);
-  color: var(--oc-fg);
-  overflow-wrap: anywhere;
-}
-
-.editor-status-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-}
-
-.editor-status-chip,
-.editor-backup-chip {
+.editor-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11.5px;
   color: var(--oc-fg-muted);
+  padding: 2px 6px;
+}
+
+.sr-only-action {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  padding: 0;
+  min-height: 0;
+}
+
+.discard-btn {
+  color: var(--oc-danger);
 }
 
 .editor-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 
 .editor-banner {
@@ -787,9 +919,22 @@ onScopeDispose(() => {
   border-radius: var(--radius-control);
 }
 
+.local-backups-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+
 .local-backups-details {
   font-size: 12px;
   color: var(--oc-fg-muted);
+}
+
+.backup-inline-status {
+  font-size: 11.5px;
+  color: var(--oc-fg-dim);
 }
 
 .local-backups-details summary {
