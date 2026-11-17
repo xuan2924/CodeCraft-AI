@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/vue-query';
 import { RouterLink, useRouter } from 'vue-router';
 import { ArrowLeft } from '@lucide/vue';
 import { session } from '../auth/api';
+import SectionTabs from '../components/ui/SectionTabs.vue';
 import StatePanel from '../components/ui/StatePanel.vue';
 import WorkspaceRetention from '../workspace/WorkspaceRetention.vue';
 import { confirmExerciseDeletion } from '../workspace/drafts';
@@ -28,9 +29,17 @@ async function deleted(id: string, user: string) {
 <template>
   <main class="history-page">
     <header class="history-hero">
-      <div>
+      <div class="history-title-wrap">
         <h1>历史演练</h1>
-        <p>查看已结束的练习、冻结结果及真实保留状态。</p>
+        <SectionTabs
+          v-if="allowed"
+          label="历史与反馈切换"
+          :active="routes.history.name"
+          :items="[
+            { name: routes.history.name, label: '已结束演练' },
+            { name: routes.feedback.name, label: '授权反馈' },
+          ]"
+        />
       </div>
       <RouterLink
         class="ui-button ui-button-secondary ui-button-small"

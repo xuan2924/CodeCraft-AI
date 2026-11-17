@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, useTemplateRef, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
-import { Activity, BookOpen, Braces, History, Library, Menu, Settings2, ShieldCheck, Terminal, UserRound } from '@lucide/vue';
+import { Activity, Braces, History, Library, Menu, Settings, Settings2, ShieldCheck, SlidersHorizontal, Terminal, UserRound } from '@lucide/vue';
 import type { Identity } from '../auth/api';
 import Button from '../components/ui/Button.vue';
 import { routes } from '../routes';
@@ -14,19 +14,31 @@ const route = useRoute();
 const navigation = useTemplateRef<globalThis.HTMLElement>('navigation');
 const content = useTemplateRef<globalThis.HTMLElement>('content');
 const ready = computed(() => !props.pending && !props.failed && props.identity && !props.identity.passwordChangeRequired);
-const links = computed(() => [
-  ...(ready.value && props.identity?.role === 'USER' ? [
-    { ...routes.catalog, label: '题库首页', icon: Library },
-    { ...routes.workspace, label: '演练工作区', icon: Braces },
-    { ...routes.history, label: '历史演练', icon: History },
-    { ...routes.models, label: '个人模型', icon: Settings2 },
-    { ...routes.skills, label: '个人 Skill', icon: BookOpen },
-  ] : []),
-  ...(ready.value && props.identity?.role === 'ADMIN' ? [{ ...routes.platformAgents, label: '平台角色配置', icon: Settings2 }] : []),
-  ...(ready.value ? [{ ...routes.feedback, label: props.identity?.role === 'ADMIN' ? '授权反馈处理' : '授权反馈', icon: ShieldCheck }] : []),
-  { ...routes.account, label: ready.value && props.identity?.role === 'ADMIN' ? '账号管理' : props.identity ? '账号设置' : '受邀登录', icon: ready.value && props.identity?.role === 'ADMIN' ? ShieldCheck : UserRound },
-  { ...routes.status, label: '服务状态', icon: Activity },
-]);
+const links = computed(() => {
+  if (ready.value && props.identity?.role === 'USER') {
+    return [
+      { ...routes.catalog, label: '题库', icon: Library, matches: [routes.catalog.name] },
+      { ...routes.workspace, label: '演练工作区', icon: Braces, matches: [routes.workspace.name, routes.report.name] },
+      { ...routes.history, label: '历史演练', icon: History, matches: [routes.history.name, routes.feedback.name] },
+      { ...routes.models, label: 'AI 配置', icon: SlidersHorizontal, matches: [routes.models.name, routes.skills.name] },
+      { ...routes.account, label: '设置', icon: Settings, matches: [routes.account.name, routes.status.name] },
+    ];
+  }
+  if (ready.value && props.identity?.role === 'ADMIN') {
+    return [
+      { ...routes.platformAgents, label: '平台角色配置', icon: Settings2, matches: [routes.platformAgents.name] },
+      { ...routes.feedback, label: '授权反馈处理', icon: ShieldCheck, matches: [routes.feedback.name] },
+      { ...routes.account, label: '账号管理', icon: ShieldCheck, matches: [routes.account.name, routes.status.name] },
+    ];
+  }
+  return [
+    { ...routes.account, label: props.identity ? '账号设置' : '受邀登录', icon: UserRound, matches: [routes.account.name] },
+    { ...routes.status, label: '服务状态', icon: Activity, matches: [routes.status.name] },
+  ];
+});
+function isActive(matches: readonly string[]): boolean {
+  return typeof route.name === 'string' && matches.includes(route.name);
+}
 watch(() => [props.identity?.id, props.identity?.role, props.identity?.passwordChangeRequired, props.failed], () => layout.closeNavigation());
 watch(() => route.fullPath, async () => {
   const navigationHadFocus = navigation.value?.contains(globalThis.document.activeElement);
@@ -89,6 +101,7 @@ watch(() => route.fullPath, async () => {
           :key="link.name"
           :to="{ name: link.name }"
           class="app-nav-link"
+          :class="{ 'is-group-active': isActive(link.matches) }"
           :title="link.label"
         >
           <component
@@ -240,14 +253,16 @@ watch(() => route.fullPath, async () => {
   background: var(--oc-surface);
 }
 
-.app-nav-link.router-link-exact-active {
+.app-nav-link.router-link-exact-active,
+.app-nav-link.is-group-active {
   color: var(--oc-fg);
   background: var(--oc-surface-2);
   border-color: var(--oc-border);
   font-weight: 550;
 }
 
-.app-nav-link.router-link-exact-active::before {
+.app-nav-link.router-link-exact-active::before,
+.app-nav-link.is-group-active::before {
   content: '';
   position: absolute;
   left: -1px;
@@ -258,7 +273,8 @@ watch(() => route.fullPath, async () => {
   background: var(--oc-accent);
 }
 
-.app-nav-link.router-link-exact-active svg {
+.app-nav-link.router-link-exact-active svg,
+.app-nav-link.is-group-active svg {
   color: var(--oc-accent);
   opacity: 1;
 }

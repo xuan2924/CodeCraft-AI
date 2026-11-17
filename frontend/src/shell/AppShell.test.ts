@@ -16,7 +16,10 @@ async function setup(identity: Identity | null = user) {
 describe('application navigation', () => {
   it('shows only role-appropriate destinations and resets expanded navigation when identity changes', async () => {
     const { wrapper } = await setup();
-    expect(wrapper.text()).toContain('个人模型');
+    expect(wrapper.text()).toContain('AI 配置');
+    expect(wrapper.text()).toContain('题库');
+    expect(wrapper.text()).toContain('历史演练');
+    expect(wrapper.text()).toContain('设置');
     expect(wrapper.text()).not.toContain('账号管理');
     const toggle = wrapper.get('button[aria-controls="application-navigation"]');
     await toggle.trigger('click');
@@ -24,20 +27,21 @@ describe('application navigation', () => {
     await wrapper.setProps({ identity: { ...user, id: 'admin-1', role: 'ADMIN' } });
     expect(toggle.attributes('aria-expanded')).toBe('false');
     expect(wrapper.text()).toContain('账号管理');
-    expect(wrapper.text()).not.toContain('个人模型');
+    expect(wrapper.text()).not.toContain('AI 配置');
     expect(wrapper.text()).not.toContain('演练工作区');
     wrapper.unmount();
   });
-  it('keeps failure distinct from a signed-out session and closes the menu after navigation', async () => {
+  it('highlights grouped parent navigation and resets menu after navigation', async () => {
     const { wrapper, router } = await setup();
     const toggle = wrapper.get('button[aria-controls="application-navigation"]');
     await toggle.trigger('click');
-    await router.push('/models');
+    await router.push('/skills');
     await flushPromises();
     expect(toggle.attributes('aria-expanded')).toBe('false');
+    expect(wrapper.get('a[href="/models"]').classes()).toContain('is-group-active');
     await wrapper.setProps({ identity: null, failed: true });
     expect(wrapper.get('[role="alert"]').text()).toContain('无法确认登录状态');
-    expect(wrapper.text()).not.toContain('个人模型');
+    expect(wrapper.text()).not.toContain('AI 配置');
     await wrapper.get('[data-testid="retry-session"]').trigger('click');
     expect(wrapper.emitted('retry')).toHaveLength(1);
     wrapper.unmount();

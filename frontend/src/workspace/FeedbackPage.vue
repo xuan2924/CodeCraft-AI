@@ -6,6 +6,7 @@ import { session } from '../auth/api';
 import { RouterLink } from 'vue-router';
 import { routes } from '../routes';
 import Button from '../components/ui/Button.vue';
+import SectionTabs from '../components/ui/SectionTabs.vue';
 import StatePanel from '../components/ui/StatePanel.vue';
 import FeedbackEntry from './FeedbackEntry.vue';
 import { message } from './api';
@@ -23,8 +24,16 @@ const listing = useQuery({ queryKey: computed(() => ['feedback', owner.value, ad
 <template>
   <main class="feedback-page">
     <header class="feedback-hero">
-      <h1>{{ admin ? '授权反馈处理' : '我的授权反馈' }}</h1>
-      <p>只分享你明确授权的快照，私有演练的其他内容不会被公开。</p>
+      <h1>{{ admin ? '授权反馈处理' : '历史演练' }}</h1>
+      <SectionTabs
+        v-if="allowed && !admin"
+        label="历史与反馈切换"
+        :active="routes.feedback.name"
+        :items="[
+          { name: routes.history.name, label: '已结束演练' },
+          { name: routes.feedback.name, label: '授权反馈' },
+        ]"
+      />
     </header>
     <StatePanel
       v-if="account.isPending.value || !account.isFetchedAfterMount.value"

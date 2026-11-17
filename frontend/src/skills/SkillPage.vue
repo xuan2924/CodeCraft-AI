@@ -2,7 +2,9 @@
 import { computed, onScopeDispose, ref } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import Button from '../components/ui/Button.vue';
+import SectionTabs from '../components/ui/SectionTabs.vue';
 import { session } from '../auth/api';
+import { routes } from '../routes';
 import SkillPanel from './SkillPanel.vue';
 const client = useQueryClient();
 const account = useQuery({ queryKey: ['identity-session'], queryFn: ({ signal }) => session(signal), retry: false, gcTime: 0, staleTime: 0, refetchInterval: 30000 });
@@ -20,8 +22,16 @@ function unauthorized() {
 <template>
   <main class="skill-page">
     <header class="skill-hero">
-      <h1>个人 Skill</h1>
-      <p>为 Copilot 保存可复用的工作指导，按任务显式选择。</p>
+      <h1>AI 配置</h1>
+      <SectionTabs
+        v-if="allowed"
+        label="AI 配置切换"
+        :active="routes.skills.name"
+        :items="[
+          { name: routes.models.name, label: '个人模型' },
+          { name: routes.skills.name, label: '个人 Skill' },
+        ]"
+      />
     </header>
     <p
       v-if="account.isPending.value || !account.isFetchedAfterMount.value"

@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import Button from '../components/ui/Button.vue';
 import { RouterLink } from 'vue-router';
 import { session } from '../auth/api';
+import SectionTabs from '../components/ui/SectionTabs.vue';
+import { routes } from '../routes';
 import ModelSettingsPanel from './ModelSettingsPanel.vue';
 const client = useQueryClient();
 const account = useQuery({ queryKey: ['identity-session'], queryFn: ({ signal }) => session(signal), retry: false, gcTime: 0, staleTime: 0, refetchInterval: 30000 });
@@ -24,15 +26,23 @@ function unauthorized() {
     class="settings-page"
   >
     <header class="settings-hero">
-      <div>
-        <h1>个人模型连接</h1>
-        <p>你的连接、Key 与模型配置仅供本人使用。保存与检查分开进行。</p>
+      <div class="settings-hero-left">
+        <h1>AI 配置</h1>
+        <SectionTabs
+          v-if="allowed"
+          label="AI 配置切换"
+          :active="routes.models.name"
+          :items="[
+            { name: routes.models.name, label: '个人模型' },
+            { name: routes.skills.name, label: '个人 Skill' },
+          ]"
+        />
       </div>
       <p
         v-if="allowed && account.data.value"
-        class="owner-badge"
+        class="owner-badge font-mono-num"
       >
-        当前账号：{{ account.data.value.username }}
+        {{ account.data.value.username }}
       </p>
     </header>
     <p

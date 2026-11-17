@@ -11,7 +11,7 @@ for (const width of [1440, 390]) {
       await page.keyboard.press('Enter');
       await expect(toggle).toHaveAttribute('aria-expanded', 'true');
       await expect(page.getByRole('navigation')).toBeVisible();
-      await page.getByRole('link', { name: '个人模型' }).focus();
+      await page.getByRole('link', { name: 'AI 配置' }).focus();
       await page.keyboard.press('Enter');
       await expect(toggle).toHaveAttribute('aria-expanded', 'false');
       await expect(page.locator('#application-content')).toBeFocused();

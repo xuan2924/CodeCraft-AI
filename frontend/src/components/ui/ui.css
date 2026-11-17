@@ -533,6 +533,88 @@ fieldset {
   background: var(--oc-accent);
 }
 
+/* Noise-reduction surface & typography primitives */
+.font-mono-num {
+  font-family: var(--oc-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-surface-flat {
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-panel);
+}
+
+.ui-surface-inset {
+  background: var(--oc-surface-2);
+  border-radius: var(--radius-control);
+}
+
+.ui-divider-list > * + * {
+  border-top: 1px solid var(--oc-border);
+}
+
+.ui-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-control);
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+}
+
+.ui-segmented-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--oc-fg-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 140ms var(--oc-ease), color 140ms var(--oc-ease);
+}
+
+.ui-segmented-btn:hover {
+  color: var(--oc-fg);
+}
+
+.ui-segmented-btn[aria-pressed="true"],
+.ui-segmented-btn[aria-selected="true"],
+.ui-segmented-btn.is-active {
+  background: var(--oc-surface-2);
+  color: var(--oc-fg);
+  font-weight: 550;
+}
+
+.ui-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  display: inline-block;
+  flex-shrink: 0;
+  background: var(--oc-fg-dim);
+}
+
+.ui-status-dot[data-tone="accent"] {
+  background: var(--oc-accent);
+}
+
+.ui-status-dot[data-tone="warning"] {
+  background: var(--oc-warning);
+}
+
+.ui-status-dot[data-tone="danger"] {
+  background: var(--oc-danger);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: .01ms !important;
