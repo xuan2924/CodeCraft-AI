@@ -6,8 +6,7 @@ const expectedSandbox = process.env.EXPECT_SANDBOX ?? 'AVAILABLE';
 
 test('browser reports actual dependency state through Java, with keyboard retry', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '服务链路检查' })).toBeVisible();
-  await expect(page.getByText('AI 与完整演练尚未接入。')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '服务状态' })).toBeVisible();
   const retry = page.getByRole('button', { name: '重新检查' });
   if (javaUnavailable) {
     await expect(page.getByRole('alert')).toContainText('无法取得有效状态');
@@ -17,8 +16,8 @@ test('browser reports actual dependency state through Java, with keyboard retry'
     expect(response.status()).toBe(expectedDatabase === 'AVAILABLE' && expectedSandbox === 'AVAILABLE' ? 200 : 503);
     expect(await response.json()).toEqual({ database: expectedDatabase, sandbox: expectedSandbox });
     expect(response.headers()['cache-control']).toBe('no-store');
-    await expect(page.getByTestId('database').locator('td')).toHaveText(expectedDatabase === 'AVAILABLE' ? '可用' : '不可用');
-    await expect(page.getByTestId('sandbox').locator('td')).toHaveText(expectedSandbox === 'AVAILABLE' ? '可用' : '不可用');
+    await expect(page.getByTestId('database').locator('td').last()).toHaveText(expectedDatabase === 'AVAILABLE' ? '可用' : '不可用');
+    await expect(page.getByTestId('sandbox').locator('td').last()).toHaveText(expectedSandbox === 'AVAILABLE' ? '可用' : '不可用');
   }
   await expect(retry).toBeEnabled();
   await retry.focus();

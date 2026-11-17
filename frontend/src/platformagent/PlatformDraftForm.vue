@@ -45,7 +45,7 @@ function submit() {
     class="platform-form"
     @submit.prevent="submit"
   >
-    <h2>保存新草稿</h2><p>不会覆盖已发布版本。保存不代表检查或发布；新版本需重新填写凭证。</p>
+    <h2>保存新草稿</h2>
     <fieldset :disabled="disabled">
       <div class="form-grid">
         <label><span :id="`${fieldPrefix}-role`">平台角色</span><select
@@ -147,11 +147,10 @@ function submit() {
       /></label>
       <label>平台 Skill 文本包 JSON 数组<textarea
         v-model="skillJson"
-        rows="5"
+        rows="4"
         maxlength="300000"
         spellcheck="false"
       /></label>
-      <p>Skill 使用现有 formatVersion: 1 / files 包格式；只能包含 SKILL.md 与 references 文本。指令与 Skill 合计最多 64 KiB，不能覆盖 Java 权限和阶段逻辑。</p>
     </fieldset>
     <p
       v-if="error"

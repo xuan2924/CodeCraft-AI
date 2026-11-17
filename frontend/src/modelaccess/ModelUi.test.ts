@@ -39,7 +39,7 @@ beforeEach(() => {
   vi.mocked(api.startCheck).mockResolvedValue(check);
   vi.mocked(api.getCheck).mockResolvedValue({ check, reason: null, currentConfiguration: true, basic: item, tool: item });
 });
-afterEach(() => { wrappers.splice(0).forEach((wrapper) => wrapper.unmount()); clients.splice(0).forEach((queryClient) => queryClient.clear()); vi.useRealTimers(); });
+afterEach(() => { wrappers.splice(0).forEach((wrapper) => wrapper.unmount()); clients.splice(0).forEach((queryClient) => queryClient.clear()); document.body.innerHTML = ''; vi.useRealTimers(); });
 
 it('selects explicit revisions without paid checks, reports deleted selections, and preserves the original key on uncertain retry', async () => {
   vi.mocked(api.connections).mockResolvedValue({ items: [connection], nextCursor: null });
@@ -110,16 +110,21 @@ it.each([{ role: 'ADMIN' as const, passwordChangeRequired: false }, { role: 'USE
   await flushPromises(); expect(api.connections).not.toHaveBeenCalled(); expect(wrapper.text()).toContain('管理员不能配置个人模型');
 });
 it('clears the old form on server owner mismatch and loads the newly confirmed owner without retaining its Key', async () => {
-  const wrapper = mount(ModelSettingsPage, { global: { plugins: [[VueQueryPlugin, { queryClient: client() }]], stubs: { RouterLink: true } } }); wrappers.push(wrapper);
-  await flushPromises(); await button(wrapper, '新建连接').trigger('click');
-  await wrapper.get('#connection-new-name').setValue('Private old name'); await wrapper.get('#connection-new-url').setValue('https://example.test');
-  await wrapper.get('#connection-new-key').setValue('fixture-old-key');
+  const wrapper = mount(ModelSettingsPage, { attachTo: document.body, global: { plugins: [[VueQueryPlugin, { queryClient: client() }]], stubs: { RouterLink: true } } }); wrappers.push(wrapper);
+  await flushPromises(); await button(wrapper, '新建连接').trigger('click'); await flushPromises();
+  (document.body.querySelector('#connection-new-name') as HTMLInputElement).value = 'Private old name';
+  document.body.querySelector('#connection-new-name')!.dispatchEvent(new Event('input'));
+  (document.body.querySelector('#connection-new-url') as HTMLInputElement).value = 'https://example.test';
+  document.body.querySelector('#connection-new-url')!.dispatchEvent(new Event('input'));
+  (document.body.querySelector('#connection-new-key') as HTMLInputElement).value = 'fixture-old-key';
+  document.body.querySelector('#connection-new-key')!.dispatchEvent(new Event('input'));
   vi.mocked(session).mockResolvedValue({ ...identity, id: 'owner-b', username: 'Account B' });
   vi.mocked(api.saveConnection).mockRejectedValue(new ApiError(401, 'UNAUTHENTICATED'));
-  await wrapper.get('form').trigger('submit'); await flushPromises(); await flushPromises();
+  document.body.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true })); await flushPromises(); await flushPromises();
   expect(wrapper.text()).toContain('Account B'); expect(wrapper.text()).not.toContain('Private old name');
   expect(vi.mocked(api.connections).mock.lastCall?.[2]).toBe('owner-b');
-  await button(wrapper, '新建连接').trigger('click'); expect(wrapper.get<HTMLInputElement>('#connection-new-key').element.value).toBe('');
+  await button(wrapper, '新建连接').trigger('click'); await flushPromises();
+  expect((document.body.querySelector('#connection-new-key') as HTMLInputElement).value).toBe('');
 });
 it.each(['FORBIDDEN', 'PASSWORD_CHANGE_REQUIRED'])('hides private settings after a fresh authorization rejection: %s', async (code) => {
   vi.mocked(session).mockResolvedValueOnce(identity).mockResolvedValue({ ...identity, passwordChangeRequired: true });

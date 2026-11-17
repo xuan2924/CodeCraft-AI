@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { Plus, RefreshCw } from '@lucide/vue';
+import { ChevronRight, Plus } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
+import Dialog from '../components/ui/Dialog.vue';
 import StatePanel from '../components/ui/StatePanel.vue';
 import * as api from './api';
 import { errorMessage, identityFailure } from './errors';
@@ -46,118 +47,179 @@ watch([list.error, detail.error], (errors) => { if (errors.some(identityFailure)
 
 function refresh() { void client.invalidateQueries({ queryKey: ['model-access', props.owner] }); }
 function saved(connection: api.Connection) { selected.value = connection.id; form.value = null; notice.value = '连接已保存。'; refresh(); }
-function deleted() { selected.value = null; form.value = null; notice.value = '连接及其模型配置已删除。'; refresh(); }
+function deleted() { selected.value = null; form.value = null; notice.value = '连接已删除。'; refresh(); }
 </script>
 
 <template>
   <section
-    class="settings-layout ui-surface-flat"
+    class="settings-flow"
     aria-label="个人连接管理"
   >
-    <nav
-      class="directory"
-      aria-label="连接目录"
+    <p
+      v-if="notice"
+      role="status"
+      class="flow-notice"
     >
-      <div class="directory-head">
-        <h2>连接目录</h2>
-        <div class="directory-actions">
-          <Button
-            variant="ghost"
-            size="small"
-            title="重新读取"
-            @click="refresh"
-          >
-            <RefreshCw
-              :size="13"
-              aria-hidden="true"
-            />
-            <span class="sr-only-text">重新读取</span>
-          </Button>
-          <Button
-            variant="secondary"
-            size="small"
-            @click="form = 'new'"
-          >
-            <Plus
-              :size="13"
-              aria-hidden="true"
-            />
-            <span>新建连接</span>
-          </Button>
-        </div>
+      {{ notice }}
+    </p>
+
+    <div class="group-block">
+      <div class="group-header">
+        <h2>模型连接</h2>
+        <Button
+          variant="secondary"
+          size="small"
+          @click="form = 'new'"
+        >
+          <Plus
+            :size="13"
+            aria-hidden="true"
+          />
+          <span>新建连接</span>
+        </Button>
       </div>
 
       <p
         v-if="list.isPending.value"
         role="status"
-        class="dir-status"
+        class="group-status"
       >
         正在读取连接…
       </p>
       <p
         v-else-if="list.isError.value"
         role="alert"
-        class="failure dir-status"
+        class="group-alert"
       >
         {{ errorMessage(list.error.value) }}
       </p>
       <template v-else-if="list.data.value">
-        <p
+        <StatePanel
           v-if="!list.data.value.items.length"
-          class="dir-empty"
+          title="还没有个人模型连接"
+          description="添加 HTTPS 连接地址与 API Key，用于演练期间调用 Copilot。"
         >
-          暂无已保存连接
-        </p>
-        <ul
+          <Button
+            variant="primary"
+            size="small"
+            @click="form = 'new'"
+          >
+            新建连接
+          </Button>
+        </StatePanel>
+        <nav
           v-else
-          class="connection-list ui-divider-list"
+          aria-label="连接目录"
+          class="list-surface"
         >
-          <li
-            v-for="connection in list.data.value.items"
-            :key="connection.id"
-          >
-            <button
-              type="button"
-              :aria-pressed="selected === connection.id && form !== 'new'"
-              @click="selected = connection.id; form = null"
+          <ul class="ui-divide-list conn-list">
+            <li
+              v-for="connection in list.data.value.items"
+              :key="connection.id"
             >
-              <span class="conn-name">{{ connection.name }}</span>
-              <span class="conn-proto font-mono-num">{{ connection.protocol }}</span>
-            </button>
-          </li>
-        </ul>
-        <div
-          v-if="cursor || list.data.value.nextCursor"
-          class="dir-pagination"
-        >
-          <Button
-            variant="ghost"
-            size="small"
-            :disabled="!cursor"
-            @click="cursor = null"
+              <button
+                type="button"
+                class="conn-row-btn"
+                :aria-pressed="selected === connection.id"
+                @click="selected = connection.id"
+              >
+                <span class="conn-row-main">
+                  <strong class="conn-name">{{ connection.name }}</strong>
+                  <span class="conn-meta font-mono-num">{{ connection.protocol }} · {{ connection.preset }}</span>
+                </span>
+                <ChevronRight
+                  :size="14"
+                  class="conn-chevron"
+                  aria-hidden="true"
+                />
+              </button>
+            </li>
+          </ul>
+          <div
+            v-if="cursor || list.data.value.nextCursor"
+            class="list-pagination"
           >
-            连接首页
-          </Button>
-          <Button
-            variant="ghost"
-            size="small"
-            :disabled="!list.data.value.nextCursor"
-            @click="cursor = list.data.value.nextCursor"
-          >
-            下一页连接
-          </Button>
-        </div>
+            <Button
+              variant="ghost"
+              size="small"
+              :disabled="!cursor"
+              @click="cursor = null"
+            >
+              连接首页
+            </Button>
+            <Button
+              variant="ghost"
+              size="small"
+              :disabled="!list.data.value.nextCursor"
+              @click="cursor = list.data.value.nextCursor"
+            >
+              下一页连接
+            </Button>
+          </div>
+        </nav>
       </template>
-    </nav>
+    </div>
 
-    <div class="detail">
+    <div
+      v-if="selected"
+      class="group-block selected-group"
+    >
       <p
-        v-if="notice && !form"
+        v-if="detail.isPending.value"
         role="status"
-        class="detail-notice"
+        class="group-status"
       >
-        {{ notice }}
+        正在读取连接详情…
       </p>
+      <p
+        v-else-if="detail.isError.value"
+        role="alert"
+        class="group-alert"
+      >
+        {{ errorMessage(detail.error.value) }}
+      </p>
+      <template v-else-if="detail.data.value && !detail.data.value.deleted">
+        <div class="detail-bar">
+          <div class="detail-copy">
+            <h3>{{ detail.data.value.name }}</h3>
+            <p class="detail-meta font-mono-num">
+              <code>{{ detail.data.value.baseUrl }}</code>
+              <span>{{ detail.data.value.keyConfigured ? 'Key 已配置' : 'Key 未配置' }}</span>
+            </p>
+          </div>
+          <div class="detail-actions">
+            <Button
+              variant="ghost"
+              size="small"
+              @click="form = 'edit'"
+            >
+              编辑连接
+            </Button>
+            <DeleteConfiguration
+              :key="selected"
+              :owner="owner"
+              kind="connection"
+              :entity="detail.data.value"
+              @deleted="deleted"
+              @unauthorized="emit('unauthorized')"
+            />
+          </div>
+        </div>
+
+        <ConnectionModels
+          :key="`${owner}/${selected}`"
+          :owner="owner"
+          :connection="detail.data.value"
+          @unauthorized="emit('unauthorized')"
+        />
+      </template>
+    </div>
+
+    <Dialog
+      :open="form !== null"
+      :title="form === 'edit' ? '编辑连接' : '新建连接'"
+      @update:open="(val) => { if (!val) { form = null; refresh(); } }"
+    >
       <ConnectionForm
         v-if="form === 'new'"
         :key="`${owner}/new`"
@@ -167,269 +229,174 @@ function deleted() { selected.value = null; form.value = null; notice.value = '�
         @cancel="form = null; refresh()"
         @unauthorized="emit('unauthorized')"
       />
-      <template v-else-if="selected">
-        <p
-          v-if="detail.isPending.value"
-          role="status"
-          class="dir-status"
-        >
-          正在读取连接详情…
-        </p>
-        <p
-          v-else-if="detail.isError.value"
-          role="alert"
-          class="failure dir-status"
-        >
-          {{ errorMessage(detail.error.value) }}
-        </p>
-        <template v-else-if="detail.data.value && !detail.data.value.deleted">
-          <ConnectionForm
-            v-if="form === 'edit'"
-            :key="`${owner}/${selected}`"
-            :owner="owner"
-            :connection="detail.data.value"
-            @saved="saved"
-            @cancel="form = null; refresh()"
-            @unauthorized="emit('unauthorized')"
-          />
-          <template v-else>
-            <div class="detail-header">
-              <div>
-                <h2>{{ detail.data.value.name }}</h2>
-                <p class="detail-meta font-mono-num">
-                  <code>{{ detail.data.value.baseUrl }}</code>
-                  <span>{{ detail.data.value.protocol }} · {{ detail.data.value.preset }}</span>
-                  <span>{{ detail.data.value.keyConfigured ? 'Key 已配置' : 'Key 未配置' }}</span>
-                </p>
-              </div>
-              <div class="toolbar">
-                <Button
-                  variant="ghost"
-                  size="small"
-                  @click="form = 'edit'"
-                >
-                  编辑连接
-                </Button>
-                <DeleteConfiguration
-                  :key="selected"
-                  :owner="owner"
-                  kind="connection"
-                  :entity="detail.data.value"
-                  @deleted="deleted"
-                  @unauthorized="emit('unauthorized')"
-                />
-              </div>
-            </div>
-            <ConnectionModels
-              :key="`${owner}/${selected}`"
-              :owner="owner"
-              :connection="detail.data.value"
-              @unauthorized="emit('unauthorized')"
-            />
-          </template>
-        </template>
-      </template>
-      <div
-        v-else
-        class="empty-detail"
-      >
-        <StatePanel
-          title="还没有个人模型连接"
-          description="保存连接地址与 API Key 后，即可添加具体模型并测试连通性。"
-        >
-          <Button
-            variant="primary"
-            @click="form = 'new'"
-          >
-            新建连接
-          </Button>
-        </StatePanel>
-      </div>
-    </div>
+      <ConnectionForm
+        v-else-if="form === 'edit' && detail.data.value && !detail.data.value.deleted"
+        :key="`${owner}/${selected}`"
+        :owner="owner"
+        :connection="detail.data.value"
+        @saved="saved"
+        @cancel="form = null; refresh()"
+        @unauthorized="emit('unauthorized')"
+      />
+    </Dialog>
   </section>
 </template>
 
 <style scoped>
-.settings-layout {
+.settings-flow {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  min-height: min(640px, calc(100dvh - 180px));
-  overflow: hidden;
-}
-
-.directory {
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--oc-border);
-  background: var(--oc-bg-subtle);
+  gap: 28px;
   min-width: 0;
 }
 
-.directory-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--oc-border);
-}
-
-.directory-head h2 {
+.flow-notice {
   margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--oc-fg-muted);
-}
-
-.directory-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.sr-only-text {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-}
-
-.dir-status,
-.dir-empty {
-  padding: 14px;
-  margin: 0;
-  font-size: 13px;
-  color: var(--oc-fg-muted);
-}
-
-.connection-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-}
-
-.connection-list button {
-  width: 100%;
-  text-align: left;
-  padding: 11px 14px;
-  font: inherit;
-  color: var(--oc-fg);
-  background: transparent;
-  border: 0;
-  border-left: 2px solid transparent;
-  cursor: pointer;
-  overflow-wrap: anywhere;
-  transition: background-color 120ms var(--oc-ease);
-}
-
-.connection-list button:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.connection-list button[aria-pressed="true"] {
-  background: var(--oc-surface-2);
-  border-left-color: var(--oc-accent);
-}
-
-.conn-name {
-  display: block;
-  font-size: 13.5px;
-  font-weight: 550;
-}
-
-.conn-proto {
-  display: block;
-  color: var(--oc-fg-muted);
-  font-size: 11px;
-  margin-top: 3px;
-}
-
-.dir-pagination {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
-  margin-top: auto;
-  border-top: 1px solid var(--oc-border);
-}
-
-.detail {
-  padding: 22px 26px;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.detail-notice {
-  margin: 0 0 14px;
   padding: 8px 12px;
   border-radius: var(--radius-control);
-  background: var(--oc-accent-soft);
+  background: var(--oc-accent-bg);
   color: var(--oc-accent);
   font-size: 12.5px;
 }
 
-.detail-header {
+.group-block {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.selected-group {
+  padding-top: 22px;
+  border-top: 1px solid var(--oc-border);
+}
+
+.group-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 12px;
+}
+
+.group-header h2,
+.detail-copy h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--oc-fg);
+}
+
+.group-status {
+  margin: 0;
+  font-size: 13px;
+  color: var(--oc-fg-muted);
+}
+
+.group-alert {
+  margin: 0;
+  font-size: 13px;
+  color: var(--oc-danger);
+}
+
+.list-surface {
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.conn-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.conn-row-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--oc-fg);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms var(--oc-ease);
+}
+
+.conn-row-btn:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.conn-row-btn[aria-pressed="true"] {
+  background: var(--oc-surface-2);
+}
+
+.conn-row-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
-.detail-header h2 {
-  margin: 0 0 6px;
-  font-size: 18px;
-  font-weight: 650;
+.conn-name {
+  font-size: 13.5px;
+  font-weight: 550;
+}
+
+.conn-meta {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.conn-chevron {
+  flex-shrink: 0;
+  color: var(--oc-fg-dim);
+}
+
+.conn-row-btn[aria-pressed="true"] .conn-chevron {
+  color: var(--oc-accent);
+}
+
+.list-pagination {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--oc-border);
+}
+
+.detail-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.detail-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
 .detail-meta {
   margin: 0;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   font-size: 12px;
   color: var(--oc-fg-muted);
 }
 
-.detail-meta code {
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--oc-bg-input);
-  color: var(--oc-fg);
-}
-
-.toolbar {
+.detail-actions {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-}
-
-.empty-detail {
-  margin: auto;
-  max-width: 440px;
-  width: 100%;
-}
-
-.failure {
-  color: var(--oc-danger);
-}
-
-@media (max-width: 780px) {
-  .settings-layout {
-    grid-template-columns: 1fr;
-    min-height: auto;
-  }
-  .directory {
-    border-right: 0;
-    border-bottom: 1px solid var(--oc-border);
-  }
-  .detail {
-    padding: 18px 16px;
-  }
+  flex-shrink: 0;
 }
 </style>

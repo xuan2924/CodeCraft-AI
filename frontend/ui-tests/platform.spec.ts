@@ -18,7 +18,6 @@ for (const width of [1440, 390]) {
     await page.getByLabel('角色指令', { exact: true }).fill('仅解释已发布需求，不伪造测试通过，也不改变 Java 阶段。');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await expect(page.getByRole('button', { name: '保存新草稿', exact: true })).toBeEnabled();
-    await expect(page.getByText('保存不代表检查或发布', { exact: false })).toBeVisible();
     await page.screenshot({ path: `test-results/ui/platform-${width}.png`, fullPage: true });
   });
 }

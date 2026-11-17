@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { ArrowLeft, Download, FileText, Plus, RefreshCw, Trash2, Upload } from '@lucide/vue';
+import { ArrowLeft, Download, FileText, HelpCircle, Plus, Trash2, Upload } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
 import Dialog from '../components/ui/Dialog.vue';
 import MarkdownContent from '../components/ui/MarkdownContent.vue';
@@ -197,6 +197,12 @@ function removeFile(index: number) {
     activePath.value = files.value[0]?.path ?? 'SKILL.md';
   }
 }
+
+function closeEditor() {
+  current.value = null;
+  files.value = [];
+  error.value = '';
+}
 </script>
 
 <template>
@@ -204,399 +210,388 @@ function removeFile(index: number) {
     class="skill-workspace"
     aria-label="个人 Skill 管理"
   >
+    <div class="section-head">
+      <div class="section-title-row">
+        <h2>个人 Skill</h2>
+        <Tooltip text="启停和内容变更从下一任务生效">
+          <button
+            type="button"
+            class="help-icon-btn"
+            aria-label="查看生效说明"
+          >
+            <HelpCircle :size="13" />
+          </button>
+        </Tooltip>
+        <span class="quota-text font-mono-num">{{ Math.ceil(totalBytes / 1024) }} / 64 KiB</span>
+      </div>
+      <div class="section-actions">
+        <Button
+          size="small"
+          variant="ghost"
+          :disabled="busy"
+          @click="error = ''; importOpen = true"
+        >
+          <Upload :size="14" />
+          <span>导入 JSON 文本包</span>
+        </Button>
+        <Button
+          size="small"
+          variant="primary"
+          data-test="new-skill"
+          :disabled="busy"
+          @click="fresh"
+        >
+          <Plus :size="14" />
+          <span>新建 Skill</span>
+        </Button>
+      </div>
+    </div>
+
     <p
-      v-if="error"
+      v-if="error && !files.length && !importOpen"
       role="alert"
-      class="skill-alert"
+      class="inline-alert"
     >
       {{ error }}
     </p>
     <p
-      v-if="notice"
+      v-else-if="notice"
       role="status"
-      class="skill-notice"
+      class="inline-notice"
     >
       {{ notice }}
     </p>
 
-    <!-- List / Overview Mode -->
-    <template v-if="!files.length">
-      <div class="skill-topbar">
-        <div class="actions">
-          <Button
-            data-test="new-skill"
-            variant="primary"
-            size="small"
-            :disabled="busy"
-            @click="fresh"
-          >
-            <Plus
-              :size="14"
-              aria-hidden="true"
-            />
-            <span>新建 Skill</span>
-          </Button>
-          <Button
-            variant="secondary"
-            size="small"
-            :disabled="busy"
-            @click="importOpen = true"
-          >
-            <Upload
-              :size="13"
-              aria-hidden="true"
-            />
-            <span>导入 JSON</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="small"
-            title="重新读取列表"
-            :disabled="busy || listing.isFetching.value"
-            @click="listing.refetch()"
-          >
-            <RefreshCw
-              :size="13"
-              aria-hidden="true"
-            />
-            <span class="sr-only-text">重新读取列表</span>
-          </Button>
-        </div>
-
-        <div
-          class="quota-bar font-mono-num"
-          aria-label="Skill 用量"
-        >
-          <span>{{ listing.isError.value || listing.isPending.value ? '数量未知' : `${listing.data.value?.length ?? 0} 个` }}</span>
-          <span>{{ listing.isError.value || listing.isPending.value ? '容量未知' : `${(totalBytes / 1024).toFixed(1)} KiB` }}</span>
-          <span class="next-task-chip">下一任务生效</span>
-          <Tooltip text="新建与导入默认停用；单包默认 256 KiB、上限 50 个、主文档 64 KiB、总计 5 MiB；Skill 不授予工具权限。">
-            <button
-              type="button"
-              class="quota-help-btn"
-              aria-label="配额与使用规则"
-            >
-              ?
-            </button>
-          </Tooltip>
-        </div>
-      </div>
-
-      <p
-        v-if="listing.isPending.value"
-        role="status"
-        class="skill-status"
+    <p
+      v-if="listing.isPending.value"
+      role="status"
+      class="inline-status"
+    >
+      正在加载 Skill…
+    </p>
+    <StatePanel
+      v-else-if="listing.isError.value"
+      kind="error"
+      title="Skill 加载失败"
+      :description="error || '无法获取个人 Skill 列表'"
+    >
+      <Button
+        size="small"
+        @click="listing.refetch()"
       >
-        正在读取 Skill…
-      </p>
-      <p
-        v-else-if="listing.isError.value"
-        role="alert"
-        class="skill-alert"
+        重试
+      </Button>
+    </StatePanel>
+    <div
+      v-else-if="!listing.data.value?.length"
+      class="empty-row"
+    >
+      <span>尚无 Skill。</span>
+      <Button
+        size="small"
+        variant="ghost"
+        :disabled="busy"
+        @click="fresh"
       >
-        无法读取个人 Skill，请重试。
-      </p>
-      <StatePanel
-        v-else-if="!listing.data.value?.length"
-        title="尚无 Skill · 创建你的第一份工作指导"
-        description="保存代码规范、检查清单或领域知识，在下一次任务中使用。"
-      />
-      <ul
-        v-else
-        class="skills"
+        创建第一个 Skill
+      </Button>
+    </div>
+    <ul
+      v-else
+      class="ui-divide-list skills"
+    >
+      <li
+        v-for="skill in listing.data.value"
+        :key="skill.id"
+        class="ui-divide-row skill-row"
       >
-        <li
-          v-for="skill in listing.data.value"
-          :key="skill.id"
-          class="skill-card ui-surface-flat"
-        >
-          <div class="skill-card-head">
-            <h3 class="font-mono-num">
-              {{ skill.name }}
-            </h3>
-            <button
-              type="button"
-              class="skill-switch"
-              role="switch"
-              :aria-checked="skill.enabled"
-              :disabled="busy"
-              @click="change(skill, false)"
-            >
-              {{ skill.enabled ? '已启用' : '已停用' }}
-            </button>
+        <div class="skill-row-main">
+          <div class="skill-title-line">
+            <span class="skill-name">{{ skill.name }}</span>
+            <span class="skill-meta font-mono-num">版本 {{ skill.version }}，{{ Math.max(1, Math.ceil(skill.contentBytes / 1024)) }} KiB</span>
           </div>
-          <p class="skill-desc">
+          <p
+            v-if="skill.description"
+            class="skill-desc"
+          >
             {{ skill.description }}
           </p>
-          <div class="skill-card-footer">
-            <span class="skill-meta font-mono-num">v{{ skill.version }} · {{ skill.contentBytes }} B</span>
-            <div class="card-btns">
-              <Button
-                variant="ghost"
-                size="small"
-                :disabled="busy"
-                @click="open(skill)"
-              >
-                编辑 {{ skill.name }}
-              </Button>
-              <Button
-                variant="ghost"
-                size="small"
-                class="delete-ghost"
-                :disabled="busy"
-                @click="change(skill, true)"
-              >
-                <Trash2
-                  :size="13"
-                  aria-hidden="true"
-                />
-                <span class="sr-only-text">删除 {{ skill.name }}</span>
-              </Button>
-            </div>
-          </div>
-        </li>
-      </ul>
-    </template>
+        </div>
+        <div class="skill-row-actions">
+          <button
+            type="button"
+            class="skill-switch"
+            role="switch"
+            :aria-checked="skill.enabled"
+            :aria-label="skill.enabled ? `停用 ${skill.name}` : `启用 ${skill.name}`"
+            :disabled="busy"
+            @click="change(skill, false)"
+          >
+            <span class="switch-track">
+              <span class="switch-thumb" />
+            </span>
+          </button>
+          <Button
+            size="small"
+            variant="ghost"
+            :aria-label="`编辑 ${skill.name}`"
+            :disabled="busy"
+            @click="open(skill)"
+          >
+            编辑
+          </Button>
+          <Button
+            size="small"
+            variant="ghost"
+            class="delete-ghost"
+            :aria-label="`删除 ${skill.name}`"
+            :disabled="busy"
+            @click="change(skill, true)"
+          >
+            <Trash2 :size="14" />
+          </Button>
+        </div>
+      </li>
+    </ul>
 
-    <!-- Dual-Pane Cursor Rules Editor Mode -->
-    <form
-      v-else
-      class="skill-editor-workbench ui-surface-flat"
-      @submit.prevent="save"
+    <div
+      v-if="files.length"
+      class="skill-drawer-backdrop"
+      @click.self="closeEditor"
     >
-      <header class="workbench-head">
-        <div class="workbench-title-group">
-          <Button
-            variant="ghost"
-            size="small"
-            :disabled="busy"
-            @click="files = []; current = null"
-          >
-            <ArrowLeft
-              :size="14"
-              aria-hidden="true"
-            />
-            <span>取消编辑</span>
-          </Button>
-          <h2>{{ current ? current.name : '新建 Skill' }}</h2>
-        </div>
-        <div class="actions">
-          <Button
-            variant="ghost"
-            size="small"
-            @click="exportOpen = true"
-          >
-            <Download
-              :size="13"
-              aria-hidden="true"
-            />
-            <span>导出 JSON</span>
-          </Button>
-          <Button
-            type="submit"
-            variant="primary"
-            size="small"
-            :loading="busy"
-            :disabled="busy"
-          >
-            保存整个文本包
-          </Button>
-        </div>
-      </header>
-
-      <fieldset
-        :disabled="busy"
-        class="editor-split"
+      <form
+        class="skill-editor-workbench skill-drawer-panel"
+        @submit.prevent="save"
       >
-        <aside
-          class="file-sidebar"
-          aria-label="Skill 文件目录"
-        >
-          <ul class="sidebar-files">
-            <li
-              v-for="(file, index) in files"
-              :key="file.path"
-              class="sidebar-file-row"
-            >
-              <button
-                type="button"
-                class="sidebar-file-btn font-mono-num"
-                :aria-pressed="activeFile?.path === file.path"
-                :title="file.path"
-                @click="activePath = file.path"
-              >
-                <FileText
-                  :size="13"
-                  aria-hidden="true"
-                />
-                <span>{{ file.path }}</span>
-              </button>
-              <button
-                v-if="file.path !== 'SKILL.md'"
-                type="button"
-                class="sidebar-remove-btn"
-                :aria-label="`移除 ${file.path}`"
-                @click="removeFile(index)"
-              >
-                <Trash2
-                  :size="12"
-                  aria-hidden="true"
-                />
-              </button>
-            </li>
-          </ul>
-          <div class="ref-add-box">
-            <label
-              for="skill-reference-path"
-              class="sr-only-text"
-            >参考文件相对路径</label>
-            <input
-              id="skill-reference-path"
-              v-model="path"
-              class="font-mono-num"
-              maxlength="256"
-              placeholder="references/notes.md"
-            >
+        <header class="workbench-head">
+          <div class="workbench-title-group">
             <Button
-              variant="secondary"
               size="small"
-              @click="addFile"
+              variant="ghost"
+              :disabled="busy"
+              @click="closeEditor"
             >
-              添加参考文件
+              <ArrowLeft :size="14" />
+              <span>返回</span>
+            </Button>
+            <h2>{{ current ? current.name : '新建 Skill' }}</h2>
+          </div>
+          <div class="workbench-actions">
+            <Button
+              size="small"
+              variant="ghost"
+              :disabled="busy"
+              @click="exportOpen = true"
+            >
+              <Download :size="14" />
+              <span>导出 JSON</span>
+            </Button>
+            <Button
+              type="submit"
+              size="small"
+              variant="primary"
+              :disabled="busy"
+            >
+              {{ busy ? '保存中…' : '保存整个文本包' }}
             </Button>
           </div>
-        </aside>
+        </header>
 
-        <div
-          v-if="activeFile"
-          class="editor-main"
+        <p
+          v-if="error"
+          role="alert"
+          class="drawer-alert"
         >
-          <div
-            v-if="activeFile.path === 'SKILL.md'"
-            class="frontmatter-bar"
-          >
-            <label class="fm-field">
-              <span>名称</span>
-              <input
-                v-model="skillName"
-                type="text"
-                class="font-mono-num"
-                maxlength="64"
-                placeholder="my-skill"
-              >
-            </label>
-            <label class="fm-field fm-desc">
-              <span>适用场景</span>
-              <input
-                v-model="skillDescription"
-                type="text"
-                maxlength="2048"
-                placeholder="描述此 Skill 适用的场景…"
-              >
-            </label>
-          </div>
+          {{ error }}
+        </p>
 
-          <div class="editor-subbar">
-            <span class="active-path font-mono-num">{{ activeFile.path }}</span>
+        <div class="editor-split">
+          <aside class="file-sidebar">
+            <ul class="sidebar-files">
+              <li
+                v-for="(file, index) in files"
+                :key="file.path"
+                class="sidebar-file-row"
+              >
+                <button
+                  type="button"
+                  class="sidebar-file-btn font-mono"
+                  :aria-pressed="activePath === file.path"
+                  @click="activePath = file.path"
+                >
+                  <FileText :size="13" />
+                  <span>{{ file.path }}</span>
+                </button>
+                <button
+                  v-if="file.path !== 'SKILL.md'"
+                  type="button"
+                  class="sidebar-remove-btn"
+                  :aria-label="`移除 ${file.path}`"
+                  @click="removeFile(index)"
+                >
+                  <Trash2 :size="12" />
+                </button>
+              </li>
+            </ul>
+
+            <div class="ref-add-box">
+              <input
+                v-model="path"
+                type="text"
+                class="font-mono"
+                aria-label="新增附属文件路径"
+                placeholder="references/notes.md"
+              >
+              <Button
+                size="small"
+                variant="ghost"
+                :disabled="busy"
+                @click="addFile"
+              >
+                <Plus :size="13" />
+                <span>添加文件</span>
+              </Button>
+            </div>
+          </aside>
+
+          <div class="editor-main">
             <div
-              class="ui-segmented"
-              role="tablist"
-              aria-label="编辑与预览切换"
+              v-if="activeFile?.path === 'SKILL.md'"
+              class="frontmatter-bar"
             >
-              <button
-                type="button"
-                role="tab"
-                class="ui-segmented-btn"
-                :aria-selected="editorTab === 'edit'"
-                @click="editorTab = 'edit'"
-              >
-                编辑
-              </button>
-              <button
-                type="button"
-                role="tab"
-                class="ui-segmented-btn"
-                :aria-selected="editorTab === 'preview'"
-                @click="editorTab = 'preview'"
-              >
-                预览
-              </button>
+              <label class="fm-field">
+                <span>名称</span>
+                <input
+                  v-model="skillName"
+                  type="text"
+                  class="font-mono"
+                  placeholder="my-skill"
+                >
+              </label>
+              <label class="fm-field">
+                <span>适用场景</span>
+                <input
+                  v-model="skillDescription"
+                  type="text"
+                  placeholder="描述触发场景"
+                >
+              </label>
+            </div>
+
+            <div class="editor-subbar">
+              <span class="active-path font-mono">{{ activeFile?.path }}</span>
+              <div class="ui-segmented ui-segmented-compact">
+                <button
+                  type="button"
+                  :aria-pressed="editorTab === 'edit'"
+                  @click="editorTab = 'edit'"
+                >
+                  原文
+                </button>
+                <button
+                  type="button"
+                  :aria-pressed="editorTab === 'preview'"
+                  @click="editorTab = 'preview'"
+                >
+                  预览
+                </button>
+              </div>
+            </div>
+
+            <textarea
+              v-if="editorTab === 'edit' && activeFile"
+              v-model="activeFile.content"
+              class="code-textarea font-mono"
+              :aria-label="`${activeFile.path} 原文`"
+              rows="18"
+            />
+            <div
+              v-else
+              class="markdown-preview"
+            >
+              <MarkdownContent :source="previewBody" />
             </div>
           </div>
-
-          <textarea
-            v-show="editorTab === 'edit'"
-            v-model="activeFile.content"
-            :aria-label="`${activeFile.path} 原文`"
-            class="code-textarea font-mono-num"
-            rows="16"
-            spellcheck="false"
-          />
-          <div
-            v-if="editorTab === 'preview'"
-            class="markdown-preview"
-          >
-            <MarkdownContent :source="previewBody" />
-          </div>
         </div>
-      </fieldset>
-    </form>
+      </form>
+    </div>
 
     <Dialog
       v-model:open="importOpen"
       title="导入 JSON 文本包"
-      description="粘贴 JSON 或选择 .json 文件；导入后默认停用。"
-      :busy="busy"
+      width="wide"
     >
-      <div
-        class="import-dropzone"
-        @dragover.prevent
-        @drop.prevent="fileDropped"
-      >
-        <label for="skill-json-file">拖拽 .json 到此处，或选择文件（至多 2 MiB）</label>
-        <input
-          id="skill-json-file"
-          type="file"
-          accept=".json,application/json"
-          :disabled="busy"
-          @change="fileSelected"
+      <div class="ui-dialog-body import-dialog-body">
+        <p
+          v-if="error && importOpen"
+          role="alert"
+          class="inline-alert"
         >
+          {{ error }}
+        </p>
+        <div
+          class="import-dropzone"
+          @dragover.prevent
+          @drop.prevent="fileDropped"
+        >
+          <span class="drop-hint">拖拽 `.json` 文件到此处，或选择本地文件</span>
+          <input
+            type="file"
+            accept=".json,application/json"
+            aria-label="选择 JSON 文件"
+            @change="fileSelected"
+          >
+        </div>
+        <label class="import-field">
+          <span class="field-label">粘贴完整 JSON（至多 2 MiB）</span>
+          <textarea
+            v-model="imported"
+            rows="8"
+            class="font-mono"
+            placeholder="{&quot;formatVersion&quot;:1,&quot;files&quot;:[...]}"
+          />
+        </label>
       </div>
-      <p
-        v-if="error"
-        role="alert"
-        class="skill-alert"
-      >
-        {{ error }}
-      </p>
-      <label for="skill-import">粘贴完整 JSON（至多 2 MiB）</label>
-      <textarea
-        id="skill-import"
-        v-model="imported"
-        rows="8"
-        :disabled="busy"
-      />
-      <Button
-        variant="primary"
-        :disabled="busy || !imported.trim()"
-        @click="importing"
-      >
-        导入新 Skill
-      </Button>
+      <template #footer>
+        <div class="ui-dialog-footer">
+          <Button
+            size="small"
+            variant="ghost"
+            @click="importOpen = false"
+          >
+            取消
+          </Button>
+          <Button
+            size="small"
+            variant="primary"
+            :disabled="busy || !imported.trim()"
+            @click="importing"
+          >
+            {{ busy ? '导入中…' : '原子导入新 Skill' }}
+          </Button>
+        </div>
+      </template>
     </Dialog>
 
     <Dialog
       v-model:open="exportOpen"
-      title="导出当前编辑文本"
-      description="复制完整 JSON 文本包（含尚未保存的修改）。"
+      title="导出 JSON 文本包"
+      width="wide"
     >
-      <textarea
-        id="skill-export"
-        :value="JSON.stringify({ formatVersion: 1, files }, null, 2)"
-        readonly
-        rows="12"
-        class="font-mono-num"
-      />
+      <div class="ui-dialog-body">
+        <pre class="export-pre font-mono"><code>{{ JSON.stringify({ formatVersion: 1, files }, null, 2) }}</code></pre>
+      </div>
+      <template #footer>
+        <div class="ui-dialog-footer">
+          <Button
+            size="small"
+            variant="primary"
+            @click="exportOpen = false"
+          >
+            关闭
+          </Button>
+        </div>
+      </template>
     </Dialog>
   </section>
 </template>
@@ -604,18 +599,11 @@ function removeFile(index: number) {
 <style scoped>
 .skill-workspace {
   display: grid;
-  gap: 16px;
+  gap: 14px;
+  min-width: 0;
 }
 
-.sr-only-text {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-}
-
-.skill-topbar {
+.section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -623,159 +611,210 @@ function removeFile(index: number) {
   flex-wrap: wrap;
 }
 
-.actions {
+.section-title-row {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
-.quota-bar {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--oc-fg-muted);
-}
-
-.next-task-chip {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--oc-surface-2);
-  font-size: 11px;
-}
-
-.quota-help-btn {
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  border: 1px solid var(--oc-border);
-  background: var(--oc-surface);
-  color: var(--oc-fg-muted);
-  font-size: 11px;
-  cursor: help;
-}
-
-.skill-alert {
+.section-title-row h2 {
   margin: 0;
-  padding: 9px 12px;
-  border-radius: var(--radius-control);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--oc-fg-muted);
+}
+
+.quota-text {
+  font-size: 12px;
+  color: var(--oc-fg-dim);
+}
+
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.inline-alert {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
   background: var(--oc-danger-bg);
   color: var(--oc-danger);
   font-size: 13px;
 }
 
-.skill-notice {
+.inline-notice {
   margin: 0;
-  padding: 9px 12px;
-  border-radius: var(--radius-control);
-  background: var(--oc-accent-soft);
-  color: var(--oc-accent);
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--oc-accent-bg);
+  color: var(--oc-fg);
   font-size: 13px;
 }
 
-.skill-status {
+.inline-status {
   margin: 0;
-  font-size: 13.5px;
+  color: var(--oc-fg-muted);
+  font-size: 13px;
+}
+
+.empty-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 16px;
+  border-radius: 10px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  font-size: 13px;
   color: var(--oc-fg-muted);
 }
 
 .skills {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 310px), 1fr));
-  gap: 14px;
+  border-radius: 10px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  overflow: hidden;
 }
 
-.skill-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 16px 18px;
-  transition: border-color 140ms var(--oc-ease), background-color 140ms var(--oc-ease);
-}
-
-.skill-card:hover {
-  border-color: var(--oc-border-strong);
-  background: var(--oc-surface-2);
-}
-
-.skill-card-head {
+.skill-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  padding: 13px 16px;
+  min-width: 0;
+}
+
+.skill-row-main {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 3px;
+}
+
+.skill-title-line {
+  display: flex;
+  align-items: baseline;
   gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
-.skill-card-head h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
+.skill-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--oc-fg);
 }
 
-.skill-switch {
-  padding: 2px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--oc-border);
-  background: var(--oc-surface-2);
-  color: var(--oc-fg-muted);
-  font-size: 11.5px;
-  font-weight: 550;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.skill-switch[aria-checked="true"] {
-  background: var(--oc-accent-soft);
-  border-color: var(--oc-border-accent);
-  color: var(--oc-accent);
+.skill-meta {
+  font-size: 12px;
+  color: var(--oc-fg-dim);
 }
 
 .skill-desc {
   margin: 0;
+  font-size: 12.5px;
   color: var(--oc-fg-muted);
-  font-size: 13px;
-  line-height: 1.55;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.skill-card-footer {
-  margin-top: auto;
-  padding-top: 8px;
-  border-top: 1px solid var(--oc-border);
+.skill-row-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-.skill-meta {
-  font-size: 11.5px;
+.help-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: 0;
+  background: transparent;
   color: var(--oc-fg-dim);
+  cursor: pointer;
 }
 
-.card-btns {
-  display: flex;
+.help-icon-btn:hover {
+  color: var(--oc-fg-muted);
+}
+
+.skill-switch {
+  border: 0;
+  padding: 4px;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
+}
+
+.skill-switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.switch-track {
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border-strong);
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  transition: background var(--dur-base) var(--ease-standard), border-color var(--dur-base) var(--ease-standard);
+}
+
+.skill-switch[aria-checked="true"] .switch-track {
+  background: var(--oc-accent);
+  border-color: var(--oc-accent);
+}
+
+.switch-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--oc-fg);
+  transform: translateX(0);
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+
+.skill-switch[aria-checked="true"] .switch-thumb {
+  transform: translateX(14px);
 }
 
 .delete-ghost {
   color: var(--oc-danger);
 }
 
-/* Dual-Pane Editor Workbench */
+/* Slide-over Editor Sheet */
+.skill-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: rgba(9, 9, 11, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.skill-drawer-panel {
+  width: min(860px, 100vw);
+  height: 100dvh;
+  background: var(--oc-surface);
+  border-left: 1px solid var(--oc-border-strong);
+  box-shadow: var(--oc-shadow-lg);
+}
+
 .skill-editor-workbench {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  min-height: min(620px, calc(100dvh - 180px));
 }
 
 .workbench-head {
@@ -784,12 +823,13 @@ function removeFile(index: number) {
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  padding: 10px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--oc-border);
   background: var(--oc-bg-subtle);
 }
 
-.workbench-title-group {
+.workbench-title-group,
+.workbench-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -797,18 +837,24 @@ function removeFile(index: number) {
 
 .workbench-title-group h2 {
   margin: 0;
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 600;
+}
+
+.drawer-alert {
+  margin: 10px 16px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--oc-danger-bg);
+  color: var(--oc-danger);
+  font-size: 13px;
 }
 
 .editor-split {
   flex: 1;
   min-height: 0;
-  border: 0;
-  margin: 0;
-  padding: 0;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
 }
 
 .file-sidebar {
@@ -818,6 +864,8 @@ function removeFile(index: number) {
   background: var(--oc-bg-subtle);
   padding: 10px;
   gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .sidebar-files {
@@ -859,7 +907,7 @@ function removeFile(index: number) {
 
 .sidebar-file-btn:hover {
   color: var(--oc-fg);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .sidebar-file-btn[aria-pressed="true"] {
@@ -905,7 +953,7 @@ function removeFile(index: number) {
 
 .frontmatter-bar {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
+  grid-template-columns: 180px minmax(0, 1fr);
   gap: 10px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--oc-border);
@@ -919,7 +967,7 @@ function removeFile(index: number) {
 
 .fm-field span {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--oc-fg-muted);
 }
 
@@ -927,7 +975,6 @@ function removeFile(index: number) {
   width: 100%;
   padding: 5px 9px;
   font-size: 12.5px;
-  border: 1px solid var(--oc-border);
   background: var(--oc-bg-input);
 }
 
@@ -949,9 +996,9 @@ function removeFile(index: number) {
 .code-textarea {
   flex: 1;
   width: 100%;
-  min-height: 360px;
+  min-height: 300px;
   padding: 16px;
-  border: 0;
+  border: 0 !important;
   border-radius: 0;
   background: var(--oc-bg);
   color: var(--oc-fg);
@@ -967,24 +1014,45 @@ function removeFile(index: number) {
   overflow: auto;
 }
 
+.import-dialog-body,
+.import-field {
+  display: grid;
+  gap: 10px;
+}
+
+.field-label,
+.drop-hint {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
 .import-dropzone {
-  padding: 18px;
-  margin-bottom: 14px;
+  padding: 14px;
   border: 1px dashed var(--oc-border-strong);
-  border-radius: var(--radius-control);
+  border-radius: 8px;
   background: var(--oc-bg-subtle);
   display: grid;
   gap: 8px;
 }
 
-textarea {
+.import-field textarea,
+.export-pre {
   width: 100%;
-  font-family: var(--oc-font-mono);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
-@media (max-width: 780px) {
+.export-pre {
+  margin: 0;
+  max-height: 55vh;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--oc-bg);
+  border: 1px solid var(--oc-border);
+}
+
+@media (max-width: 720px) {
   .editor-split,
   .frontmatter-bar {
     grid-template-columns: 1fr;
@@ -992,6 +1060,7 @@ textarea {
   .file-sidebar {
     border-right: 0;
     border-bottom: 1px solid var(--oc-border);
+    max-height: 180px;
   }
 }
 </style>

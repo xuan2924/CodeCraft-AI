@@ -14,10 +14,10 @@ function fixture() {
 }
 const skill: Skill = { id: '10000000-0000-0000-0000-000000000001', name: 'review', description: 'Guidance', version: '1',
   contentVersion: '20000000-0000-0000-0000-000000000001', enabled: false, deleted: false, contentBytes: 40 };
-it('explains private next-task semantics and offers an accessible text editor', async () => {
+it('renders empty state and offers an accessible text editor', async () => {
   const { client, wrapper } = fixture();
   await flushPromises();
-  expect(wrapper.text()).toContain('下一任务');
+  expect(wrapper.find('button[aria-label="查看生效说明"]').exists()).toBe(true);
   expect(wrapper.text()).toContain('尚无 Skill');
   await wrapper.get('[data-test="new-skill"]').trigger('click');
   expect(wrapper.find('textarea[aria-label="SKILL.md 原文"]').exists()).toBe(true);
@@ -44,7 +44,7 @@ it('drops late private text after owner changes and clears the old editor', asyn
   let finish: ((value: { formatVersion: 1; files: { path: string; content: string }[] }) => void) | undefined;
   vi.mocked(skillPackage).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   const { client, wrapper } = fixture(); await flushPromises();
-  await wrapper.findAll('button').find(button => button.text() === '编辑 review')?.trigger('click');
+  await wrapper.findAll('button').find(button => button.attributes('aria-label') === '编辑 review')?.trigger('click');
   expect(skillPackage).toHaveBeenCalledTimes(1);
   const signal = vi.mocked(skillPackage).mock.calls[0]?.[2];
   await wrapper.setProps({ owner: 'new-owner' });

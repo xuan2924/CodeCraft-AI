@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import Button from '../components/ui/Button.vue';
-import SectionTabs from '../components/ui/SectionTabs.vue';
 import { RouterLink, useRouter } from 'vue-router';
 import { Activity, ArrowRight, Terminal, UserRound } from '@lucide/vue';
 import { routes } from '../routes';
@@ -30,6 +29,7 @@ const showPasswordForm = computed(() => identity.value?.passwordChangeRequired |
 const loginValid = computed(() => validUsername(username.value) && validPassword(loginPassword.value)
   && !!captchaId.value && captchaAnswer.value.trim().length === 5);
 const passwordValid = computed(() => validPassword(currentPassword.value) && validPassword(newPassword.value));
+
 watch(() => identity.value?.id, () => {
   loginPassword.value = '';
   currentPassword.value = '';
@@ -38,136 +38,80 @@ watch(() => identity.value?.id, () => {
   logoutRequested.value = false;
   temporaryPassword.value = null;
 });
+
 async function saveThenLogout() {
   if (!identity.value || pending.value) return;
   requestSaveLogout(identity.value.id);
   await router.push({ name: 'workspace' });
 }
+
 async function submitLogin() {
   if (!loginValid.value || pending.value) return;
   try { await signIn(username.value, loginPassword.value, captchaId.value, captchaAnswer.value); }
   finally { loginPassword.value = ''; updateCaptcha('', ''); captchaEpoch.value++; }
 }
+
 async function submitPassword() {
   if (!passwordValid.value || pending.value) return;
   try { await password(currentPassword.value, newPassword.value); }
   finally { currentPassword.value = ''; newPassword.value = ''; }
 }
-
-const pipelineSteps = [
-  { step: '01', title: '需求澄清与基线分析', desc: '梳理题目约束与现有仓库结构' },
-  { step: '02', title: '真实沙箱与 AI 结对实现', desc: '在隔离工作区编码、运行与迭代' },
-  { step: '03', title: '确定性验证与四维评估', desc: '基于真实测试输出生成工程报告' },
-];
 </script>
 
 <template>
   <main
     class="account-page"
-    :class="{ 'login-layout': !identity }"
+    :class="{ 'is-login': !identity }"
   >
-    <header class="account-hero">
-      <div
-        v-if="!identity"
-        class="login-brand-row"
-      >
-        <div class="login-brand-mark">
+    <div
+      v-if="!identity"
+      class="login-shell"
+    >
+      <header class="login-head">
+        <div class="login-brand">
           <Terminal
-            :size="18"
+            :size="16"
             aria-hidden="true"
           />
+          <span>CodeCraft</span>
         </div>
-        <span
-          class="ui-badge"
-          data-tone="accent"
-        >仅受邀访问</span>
-      </div>
-      <h1>{{ identity ? '设置' : '受邀账号登录' }}</h1>
-      <SectionTabs
-        v-if="identity && !identity.passwordChangeRequired"
-        label="设置切换"
-        :active="routes.account.name"
-        :items="[
-          { name: routes.account.name, label: identity.role === 'ADMIN' ? '账号管理' : '账号设置' },
-          { name: routes.status.name, label: '服务状态' },
-        ]"
-      />
-      <p
-        v-if="!identity"
-        class="account-lead"
-      >
-        面向工程演练与评估的 AI 结对编程工作台。
-      </p>
-      <ol
-        v-if="!identity"
-        class="login-pipeline"
-        aria-label="工程演练链路"
-      >
-        <li
-          v-for="item in pipelineSteps"
-          :key="item.step"
-          class="pipeline-step"
-        >
-          <span class="pipeline-index">{{ item.step }}</span>
-          <div>
-            <strong>{{ item.title }}</strong>
-            <span>{{ item.desc }}</span>
-          </div>
-        </li>
-      </ol>
-      <RouterLink
-        v-if="!identity"
-        to="/"
-        class="status-link"
-      >
-        <Activity
-          :size="14"
-          aria-hidden="true"
-        />
-        <span>查看服务链路</span>
-        <ArrowRight
-          :size="13"
-          aria-hidden="true"
-        />
-      </RouterLink>
-    </header>
-    <section
-      class="account-body"
-      aria-label="账号操作"
-      :aria-busy="pending"
-    >
+        <h1>受邀账号登录</h1>
+      </header>
+
       <p
         v-if="error"
         role="alert"
-        class="banner banner-error failure"
+        class="inline-alert"
       >
         {{ error }}
       </p>
       <p
         v-if="notice"
         role="status"
-        class="banner banner-status"
+        class="inline-notice"
       >
         {{ notice }}
       </p>
+
       <p
         v-if="query.isPending.value"
         role="status"
-        class="banner banner-status"
+        class="inline-status"
       >
         正在检查登录状态…
       </p>
       <div
         v-else-if="query.isError.value"
-        class="panel-card session-error-card"
+        class="gate-card"
       >
         <p
           role="alert"
-          class="failure"
+          class="failure-text"
         >
           无法确认登录状态，请检查网络后重试。
         </p>
         <Button
+          size="small"
           :disabled="query.isFetching.value"
           @click="query.refetch()"
         >
@@ -175,14 +119,11 @@ const pipelineSteps = [
         </Button>
       </div>
       <form
-        v-else-if="!identity"
-        class="account-form login-form"
+        v-else
+        class="login-form"
+        :aria-busy="pending"
         @submit.prevent="submitLogin"
       >
-        <div class="login-form-header">
-          <h2>凭证登录</h2>
-          <span>由管理员分配临时账号与初始密码</span>
-        </div>
         <div class="field-group">
           <label for="login-username">账号名</label>
           <input
@@ -190,10 +131,8 @@ const pipelineSteps = [
             v-model="username"
             autocomplete="username"
             placeholder="输入受邀账号名"
-            aria-describedby="username-help"
             :disabled="pending"
           >
-          <small id="username-help">3–32 位字母、数字、下划线或连字符，不区分大小写</small>
         </div>
         <div class="field-group">
           <label for="login-password">密码</label>
@@ -203,10 +142,8 @@ const pipelineSteps = [
             type="password"
             autocomplete="current-password"
             placeholder="输入登录密码"
-            aria-describedby="password-help"
             :disabled="pending"
           >
-          <small id="password-help">8–128 位字符，空格计入密码</small>
         </div>
         <CaptchaField
           :key="captchaEpoch"
@@ -222,73 +159,154 @@ const pipelineSteps = [
         >
           登录
         </Button>
-        <p class="form-footnote">
-          不开放自助注册，请联系管理员获取临时凭证。
-        </p>
       </form>
-      <template v-else>
+
+      <footer class="login-foot">
+        <RouterLink
+          to="/"
+          class="status-link"
+        >
+          <Activity
+            :size="13"
+            aria-hidden="true"
+          />
+          <span>查看服务状态</span>
+          <ArrowRight
+            :size="12"
+            aria-hidden="true"
+          />
+        </RouterLink>
+      </footer>
+    </div>
+
+    <div
+      v-else
+      class="settings-shell"
+    >
+      <header class="settings-header">
+        <div class="header-top-row">
+          <h1>设置</h1>
+          <span class="owner-pill font-mono-num">{{ identity.username }}</span>
+        </div>
+        <nav
+          v-if="!identity.passwordChangeRequired"
+          class="ui-underline-tabs"
+          aria-label="设置切换"
+        >
+          <RouterLink
+            class="ui-underline-tab is-active"
+            aria-current="page"
+            :to="{ name: routes.account.name }"
+          >
+            {{ identity.role === 'ADMIN' ? '账号管理' : '账号设置' }}
+          </RouterLink>
+          <RouterLink
+            class="ui-underline-tab"
+            :to="{ name: routes.status.name }"
+          >
+            服务状态
+          </RouterLink>
+        </nav>
+      </header>
+
+      <section
+        class="account-body"
+        aria-label="账号操作"
+        :aria-busy="pending"
+      >
+        <p
+          v-if="error"
+          role="alert"
+          class="inline-alert"
+        >
+          {{ error }}
+        </p>
+        <p
+          v-if="notice"
+          role="status"
+          class="inline-notice"
+        >
+          {{ notice }}
+        </p>
+
         <section
-          class="panel-card profile-card"
+          class="surface-block profile-row"
           aria-label="个人资料"
         >
-          <div class="avatar">
-            <UserRound
-              :size="20"
-              aria-hidden="true"
-            />
+          <div class="profile-left">
+            <div class="avatar">
+              <UserRound
+                :size="18"
+                aria-hidden="true"
+              />
+            </div>
+            <div>
+              <h2>个人资料</h2>
+              <p class="identity-line">
+                <span>{{ identity.username }}</span>
+                <span class="role-chip">{{ identity.role === 'ADMIN' ? '管理员' : '受邀用户' }}</span>
+              </p>
+            </div>
           </div>
-          <div class="profile-meta">
-            <h2>个人资料</h2>
-            <p class="account-identity">
-              <span>{{ identity.username }}</span>
-              <span
-                class="ui-pill"
-                data-tone="accent"
-              >{{ identity.role === 'ADMIN' ? '管理员' : '受邀用户' }}</span>
-            </p>
+          <div class="profile-actions">
+            <Button
+              v-if="!showPasswordForm"
+              size="small"
+              variant="secondary"
+              :disabled="pending"
+              @click="changingPassword = true"
+            >
+              修改密码
+            </Button>
+            <Button
+              class="logout-button"
+              size="small"
+              variant="danger"
+              :disabled="pending"
+              @click="logoutRequested = true"
+            >
+              退出登录
+            </Button>
           </div>
         </section>
+
         <section
-          class="panel-card security-card"
+          class="surface-block"
           aria-label="账号安全"
         >
-          <div class="security-header">
-            <h2>账号安全</h2>
-          </div>
           <form
             v-if="showPasswordForm"
-            class="account-form security-subcard"
+            class="inner-form"
             @submit.prevent="submitPassword"
           >
             <h3>{{ identity.passwordChangeRequired ? '先修改临时密码' : '修改密码' }}</h3>
-            <p class="security-description">
-              修改后撤销所有旧登录，需要重新登录。
-            </p>
-            <div class="field-group">
-              <label for="current-password">当前密码</label>
-              <input
-                id="current-password"
-                v-model="currentPassword"
-                type="password"
-                autocomplete="current-password"
-                :disabled="pending"
-              >
-            </div>
-            <div class="field-group">
-              <label for="new-password">新密码</label>
-              <input
-                id="new-password"
-                v-model="newPassword"
-                type="password"
-                autocomplete="new-password"
-                aria-describedby="new-password-help"
-                :disabled="pending"
-              >
-              <small id="new-password-help">8–128 位字符，空格计入密码</small>
+            <div class="form-grid-2">
+              <div class="field-group">
+                <label for="current-password">当前密码</label>
+                <input
+                  id="current-password"
+                  v-model="currentPassword"
+                  type="password"
+                  autocomplete="current-password"
+                  :disabled="pending"
+                >
+              </div>
+              <div class="field-group">
+                <label for="new-password">新密码</label>
+                <input
+                  id="new-password"
+                  v-model="newPassword"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="8–128 位字符"
+                  :disabled="pending"
+                >
+              </div>
             </div>
             <div class="form-actions">
               <Button
                 type="submit"
+                size="small"
                 variant="primary"
                 :disabled="!passwordValid || pending"
                 :loading="pending"
@@ -297,6 +315,8 @@ const pipelineSteps = [
               </Button>
               <Button
                 v-if="!identity.passwordChangeRequired"
+                size="small"
+                variant="ghost"
                 :disabled="pending"
                 @click="changingPassword = false"
               >
@@ -304,113 +324,99 @@ const pipelineSteps = [
               </Button>
             </div>
           </form>
-          <template v-else>
-            <div
-              v-if="identity.role === 'ADMIN'"
-              class="admin-panel-grid"
+
+          <div
+            v-else-if="identity.role === 'ADMIN'"
+            class="ui-divide-list admin-rows"
+          >
+            <form
+              class="ui-divide-row admin-form-row"
+              @submit.prevent="create(invitedUsername)"
             >
-              <form
-                class="account-form security-subcard"
-                @submit.prevent="create(invitedUsername)"
-              >
+              <div class="admin-form-head">
                 <h3>创建受邀账号</h3>
-                <p class="security-description">
-                  仅管理账号凭证，不提供用户代码或对话浏览入口。
-                </p>
-                <div class="field-group">
+              </div>
+              <div class="admin-inline-row">
+                <div class="field-group inline-field">
                   <label for="invited-username">新账号名</label>
                   <input
                     id="invited-username"
                     v-model="invitedUsername"
                     autocomplete="off"
+                    placeholder="3–32 位字母数字、下划线或连字符"
                     :disabled="pending || unresolvedCreate"
                   >
                 </div>
                 <Button
                   type="submit"
+                  size="small"
                   variant="primary"
                   :disabled="pending || (!unresolvedCreate && !validUsername(invitedUsername))"
                   :loading="pending"
                 >
                   {{ unresolvedCreate ? '用原请求核对并重试' : '创建账号' }}
                 </Button>
-              </form>
-              <form
-                id="password-reset-form"
-                class="account-form security-subcard"
-                @submit.prevent="reset(resetTarget)"
-              >
+              </div>
+            </form>
+
+            <form
+              id="password-reset-form"
+              class="ui-divide-row admin-form-row"
+              @submit.prevent="reset(resetTarget)"
+            >
+              <div class="admin-form-head">
                 <h3>重置账号密码</h3>
-                <p class="security-description">
-                  撤销目标旧登录并强制改密；重置自己将立即退出。
-                </p>
-                <p
+                <span
                   v-if="createdUserId"
-                  class="recent-user-id"
-                >
-                  最近操作的用户标识：<code>{{ createdUserId }}</code>
-                </p>
-                <div class="field-group">
+                  class="recent-user font-mono"
+                >最近 ID：{{ createdUserId }}</span>
+              </div>
+              <div class="admin-inline-row">
+                <div class="field-group inline-field">
                   <label for="reset-target">目标用户标识</label>
                   <input
                     id="reset-target"
                     v-model="resetTarget"
                     autocomplete="off"
+                    class="font-mono"
+                    placeholder="目标用户 UUID"
                     :disabled="pending || unresolvedReset"
                   >
                 </div>
                 <Button
                   type="submit"
+                  size="small"
                   variant="danger"
                   :disabled="pending || (!unresolvedReset && !resetValid)"
                   :loading="pending"
                 >
                   {{ unresolvedReset ? '用原请求核对重置' : '确认重置密码' }}
                 </Button>
-              </form>
-            </div>
-            <div class="security-actions-bar">
-              <Button
-                :disabled="pending"
-                @click="changingPassword = true"
-              >
-                修改密码
-              </Button>
-              <Button
-                class="logout-button"
-                variant="danger"
-                :disabled="pending"
-                @click="logoutRequested = true"
-              >
-                退出登录
-              </Button>
-            </div>
-          </template>
-          <div
-            v-if="showPasswordForm"
-            class="security-actions-bar"
-          >
-            <Button
-              class="logout-button"
-              variant="danger"
-              :disabled="pending"
-              @click="logoutRequested = true"
-            >
-              退出登录
-            </Button>
+              </div>
+            </form>
           </div>
+          <p
+            v-else
+            class="security-ok-line"
+          >
+            登录凭证有效，点击上方“修改密码”可轮换当前密码。
+          </p>
+
           <section
             v-if="logoutRequested"
-            class="logout-dialog-panel"
+            class="logout-confirm-bar"
             role="dialog"
             aria-modal="true"
             aria-label="确认退出与草稿处理"
           >
-            <h3>退出前处理本地草稿</h3>
-            <p>保存后退出会进入工作区逐份处理账号草稿；保存失败或仍有未处理备份时不会退出。</p>
+            <div class="logout-copy">
+              <h3>退出前处理本地草稿</h3>
+              <p>未提交的代码草稿仅保留在当前浏览器会话，可根据需要保存后再退出。</p>
+            </div>
             <div class="form-actions">
               <Button
                 v-if="!identity.passwordChangeRequired"
+                size="small"
                 variant="primary"
                 :disabled="pending"
                 @click="saveThenLogout"
@@ -418,6 +424,7 @@ const pipelineSteps = [
                 保存后退出
               </Button>
               <Button
+                size="small"
                 variant="danger"
                 :disabled="pending"
                 @click="signOut()"
@@ -425,6 +432,8 @@ const pipelineSteps = [
                 丢弃账号草稿并退出
               </Button>
               <Button
+                size="small"
+                variant="ghost"
                 :disabled="pending"
                 @click="logoutRequested = false"
               >
@@ -433,535 +442,404 @@ const pipelineSteps = [
             </div>
           </section>
         </section>
-      </template>
-      <div
-        v-if="temporaryPassword"
-        class="panel-card credential-delivery"
-        role="status"
-      >
+      </section>
+    </div>
+
+    <div
+      v-if="temporaryPassword"
+      class="surface-block credential-delivery"
+      :class="{ 'is-login-width': !identity, 'is-settings-width': !!identity }"
+      role="status"
+    >
+      <div class="cred-head">
         <h2>临时凭证只展示这一次</h2>
-        <p>账号：<strong>{{ createdUsername }}</strong> · 用户标识：<code>{{ createdUserId }}</code></p>
-        <p class="security-description">
-          请先通过可信渠道交付，再关闭此区域。刷新或退出后不能找回明文。
-        </p>
-        <div class="field-group">
+        <span class="font-mono">{{ createdUsername }} · {{ createdUserId }}</span>
+      </div>
+      <div class="admin-inline-row">
+        <div class="field-group inline-field">
           <label for="temporary-password">临时密码</label>
           <input
             id="temporary-password"
             :value="temporaryPassword"
+            class="font-mono"
             readonly
             autocomplete="off"
             spellcheck="false"
           >
         </div>
-        <Button @click="temporaryPassword = null">
+        <Button
+          size="small"
+          variant="secondary"
+          @click="temporaryPassword = null"
+        >
           已交付，清除显示
         </Button>
       </div>
-    </section>
+    </div>
   </main>
 </template>
 
 <style scoped>
 .account-page {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 28px 32px 56px;
+  min-height: 100%;
+  min-width: 0;
 }
 
-.account-hero {
-  margin-bottom: 22px;
-}
-
-.account-hero h1 {
-  margin: 0 0 6px;
-  font-size: clamp(22px, 2.5vw, 26px);
-  font-weight: 650;
-  letter-spacing: -0.025em;
-}
-
-.account-lead {
-  margin: 0;
-  color: var(--oc-fg-muted);
-  font-size: 13.5px;
-  line-height: 1.6;
-  max-width: 62ch;
-}
-
-/* Dual-column Precision Engineering Portal (Signed-out) */
-.login-layout {
-  max-width: 940px;
-  margin: 40px auto;
-  display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
-  gap: 0;
-  padding: 0;
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border-strong);
-  border-radius: var(--radius-panel);
-  box-shadow: var(--oc-shadow-lg), var(--oc-hairline-top);
-  overflow: hidden;
-}
-
-.login-layout > header {
+.account-page.is-login {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  margin: 0;
-  padding: 36px 32px;
-  background: var(--oc-bg-subtle);
-  border-right: 1px solid var(--oc-border);
-}
-
-.login-brand-row {
-  display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 20px;
+  justify-content: center;
+  gap: 16px;
+  min-height: calc(100dvh - 40px);
+  padding: 24px 16px;
 }
 
-.login-brand-mark {
-  width: 34px;
-  height: 34px;
+.login-shell {
+  width: min(380px, 100%);
   display: grid;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border-strong);
-  color: var(--oc-accent);
-}
-
-.login-layout > header h1 {
-  font-size: clamp(24px, 2.8vw, 28px);
-  line-height: 1.2;
-  margin-bottom: 8px;
-}
-
-.login-pipeline {
-  list-style: none;
-  margin: 24px 0;
-  padding: 0;
-  display: grid;
-  gap: 12px;
-}
-
-.pipeline-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  gap: 16px;
+  padding: 24px;
+  border-radius: 12px;
   background: var(--oc-surface);
   border: 1px solid var(--oc-border);
 }
 
-.pipeline-index {
-  font-family: var(--oc-font-mono);
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--oc-accent);
-  background: var(--oc-accent-soft);
-  border: 1px solid var(--oc-border-accent);
-  border-radius: 5px;
-  padding: 2px 6px;
-  line-height: 1.4;
-  flex-shrink: 0;
-}
-
-.pipeline-step div {
+.login-head {
   display: grid;
-  gap: 2px;
-  min-width: 0;
+  gap: 8px;
 }
 
-.pipeline-step strong {
-  font-size: 13px;
+.login-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
   font-weight: 600;
-  color: var(--oc-fg);
+  color: var(--oc-fg-muted);
 }
 
-.pipeline-step span {
-  font-size: 12px;
-  color: var(--oc-fg-muted);
-  line-height: 1.45;
+.login-head h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-submit {
+  width: 100%;
+  justify-content: center;
+}
+
+.login-foot {
+  padding-top: 12px;
+  border-top: 1px solid var(--oc-border);
 }
 
 .status-link {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  margin-top: auto;
-  padding: 6px 12px;
-  width: fit-content;
-  border-radius: 999px;
-  border: 1px solid var(--oc-border-strong);
-  background: var(--oc-surface-2);
+  gap: 6px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
   text-decoration: none;
-  font-size: 12.5px;
-  font-weight: 500;
 }
 
 .status-link:hover {
   color: var(--oc-fg);
-  border-color: var(--oc-border-hover);
-  background: var(--oc-surface-hover);
 }
 
-.login-layout .account-body {
-  padding: 36px 32px;
-  align-content: center;
-}
-
-.login-form-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--oc-border);
-}
-
-.login-form-header h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.login-form-header span {
-  font-size: 12px;
-  color: var(--oc-fg-muted);
-}
-
-/* Signed-in Dual-column Engineering Panels */
-.panel-card {
-  padding: 20px 22px;
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
-  border-radius: var(--radius-panel);
-  box-shadow: var(--oc-shadow-xs), var(--oc-hairline-top);
-}
-
-.account-panel-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
-  gap: 16px;
-}
-
-.profile-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.profile-meta {
+.settings-shell {
+  max-width: 768px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
   min-width: 0;
-  flex: 1;
 }
 
-.profile-card h2,
-.quick-links-card h2,
-.security-card h2 {
-  font-size: 14.5px;
-  font-weight: 600;
-  margin: 0;
-}
-
-.avatar {
-  width: 48px;
-  height: 48px;
+.settings-header {
   display: grid;
-  place-items: center;
-  border-radius: 10px;
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border-strong);
-  color: var(--oc-accent);
-  flex-shrink: 0;
+  gap: 12px;
+  margin-bottom: 24px;
 }
 
-.account-identity {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 6px 0 0;
-  overflow-wrap: anywhere;
+.header-top-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.account-ready-note {
-  margin: 6px 0 0;
-  font-size: 12.5px;
-  color: var(--oc-fg-muted);
-}
-
-.panel-card-head {
-  display: flex;
-  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
 }
 
-.panel-card-sub {
+.settings-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.owner-pill {
   font-size: 12px;
   color: var(--oc-fg-muted);
 }
 
-.quick-links-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.quick-link-tile {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  border-radius: var(--radius-control);
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border);
-  color: var(--oc-fg);
+.ui-underline-tabs a {
   text-decoration: none;
-  font-size: 13px;
-  font-weight: 500;
-  transition:
-    background-color 150ms var(--oc-ease),
-    border-color 150ms var(--oc-ease);
-}
-
-.quick-link-tile:hover {
-  background: var(--oc-surface-hover);
-  border-color: var(--oc-border-strong);
-  color: var(--oc-fg);
-}
-
-.quick-link-tile svg {
-  color: var(--oc-accent);
-  flex-shrink: 0;
-}
-
-.security-card {
-  display: grid;
-  gap: 16px;
-}
-
-.security-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.security-description,
-.security-note {
-  color: var(--oc-fg-muted);
-  font-size: 12.5px;
-  line-height: 1.55;
-  margin: 0;
-}
-
-.security-note {
-  padding-top: 14px;
-  border-top: 1px solid var(--oc-border);
-}
-
-.admin-panel-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.security-subcard {
-  padding: 18px;
-  border-radius: 8px;
-  background: var(--oc-bg-subtle);
-  border: 1px solid var(--oc-border);
-}
-
-.security-subcard h3 {
-  margin: 0;
-  font-size: 14.5px;
-  font-weight: 600;
-}
-
-.security-actions-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-
-.logout-dialog-panel {
-  padding: 18px;
-  border-radius: 8px;
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-danger-border);
-  box-shadow: var(--oc-shadow-md);
-  display: grid;
-  gap: 10px;
-}
-
-.logout-dialog-panel h3 {
-  margin: 0;
-  font-size: 15px;
-}
-
-.logout-dialog-panel p {
-  margin: 0;
-  font-size: 13px;
-  color: var(--oc-fg-muted);
-  line-height: 1.6;
-}
-
-.session-error-card {
-  display: grid;
-  gap: 12px;
-  justify-items: start;
-}
-
-.session-error-card p {
-  margin: 0;
-  font-size: 13.5px;
-}
-
-.failure {
-  color: var(--oc-danger);
 }
 
 .account-body {
-  min-width: 0;
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 
-.account-form {
+.surface-block {
+  border-radius: 10px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  flex-wrap: wrap;
+}
+
+.profile-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
   display: grid;
-  gap: 14px;
-  max-width: 480px;
-}
-
-.login-form {
-  max-width: none;
-}
-
-.field-group {
-  display: grid;
-  gap: 6px;
-}
-
-.account-form label,
-.field-group label {
-  font-size: 13px;
-  font-weight: 550;
-  color: var(--oc-fg);
-}
-
-input {
-  width: 100%;
-  padding: 9px 11px;
-  border: 1px solid var(--oc-border-input);
-  border-radius: var(--radius-control);
-  font: inherit;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
-}
-
-small {
+  place-items: center;
+  background: var(--oc-surface-2);
   color: var(--oc-fg-muted);
-  font-size: 11.5px;
-  line-height: 1.45;
+  border: 1px solid var(--oc-border);
 }
 
-.login-submit {
-  width: 100%;
-  min-height: 38px;
-  margin-top: 2px;
-}
-
-.form-footnote {
-  margin: 0;
+.profile-left h2 {
+  margin: 0 0 2px;
   font-size: 12px;
+  font-weight: 500;
   color: var(--oc-fg-muted);
 }
 
+.identity-line {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.role-chip {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  color: var(--oc-fg-muted);
+}
+
+.profile-actions,
 .form-actions {
   display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
+}
+
+.inner-form {
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.inner-form h3,
+.admin-form-head h3,
+.logout-copy h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-form-row {
+  padding: 16px;
+  display: grid;
   gap: 10px;
 }
 
-.banner {
+.admin-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.recent-user {
+  font-size: 11.5px;
+  color: var(--oc-fg-dim);
+}
+
+.admin-inline-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.inline-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.security-ok-line {
   margin: 0;
-  padding: 10px 14px;
-  border-radius: var(--radius-control);
+  padding: 14px 16px;
   font-size: 13px;
-  line-height: 1.5;
+  color: var(--oc-fg-muted);
 }
 
-.banner-error {
-  color: var(--oc-danger);
-  background: var(--oc-danger-bg);
-  border: 1px solid var(--oc-danger-border);
+.logout-confirm-bar {
+  padding: 16px;
+  border-top: 1px solid var(--oc-border);
+  background: var(--oc-bg-subtle);
+  display: grid;
+  gap: 12px;
 }
 
-.banner-status {
-  color: var(--oc-accent);
-  background: var(--oc-accent-soft);
-  border: 1px solid var(--oc-border-accent);
-}
-
-.recent-user-id {
-  margin: 0;
-  font-size: 12px;
+.logout-copy p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
   color: var(--oc-fg-muted);
 }
 
 .credential-delivery {
-  border-left: 3px solid var(--oc-accent);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  border-color: var(--oc-accent-border);
+}
+
+.credential-delivery.is-login-width {
+  width: min(380px, 100%);
+}
+
+.credential-delivery.is-settings-width {
+  max-width: 720px;
+  margin: 0 auto 48px;
+}
+
+.cred-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cred-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cred-head span {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.field-group {
+  display: grid;
+  gap: 5px;
+}
+
+.field-group label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--oc-fg-muted);
+}
+
+.field-group input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--oc-bg-input);
+  color: var(--oc-fg);
+  border: 1px solid var(--oc-border-input);
+  font-size: 13px;
+}
+
+.inline-alert {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--oc-danger-bg);
+  color: var(--oc-danger);
+  font-size: 13px;
+}
+
+.inline-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--oc-accent-bg);
+  color: var(--oc-fg);
+  font-size: 13px;
+}
+
+.inline-status {
+  margin: 0;
+  font-size: 13px;
+  color: var(--oc-fg-muted);
+}
+
+.gate-card {
   display: grid;
   gap: 10px;
+  padding: 14px;
+  border-radius: 8px;
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+  font-size: 13px;
 }
 
-.credential-delivery h2,
-.credential-delivery p {
+.failure-text {
   margin: 0;
+  color: var(--oc-danger);
 }
 
-@media (max-width: 860px) {
-  .login-layout {
-    grid-template-columns: minmax(0, 1fr);
-    margin: 20px 16px;
-  }
-  .login-layout > header {
-    border-right: 0;
-    border-bottom: 1px solid var(--oc-border);
-    padding: 24px 20px;
-  }
-  .login-layout .account-body {
-    padding: 24px 20px;
-  }
-  .account-panel-grid,
-  .admin-panel-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 600px) {
-  .account-page:not(.login-layout) {
+@media (max-width: 640px) {
+  .settings-shell {
     padding: 20px 16px 40px;
   }
-  .quick-links-grid {
-    grid-template-columns: minmax(0, 1fr);
+  .form-grid-2 {
+    grid-template-columns: 1fr;
   }
-  .panel-card {
-    padding: 16px;
+  .admin-inline-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>
