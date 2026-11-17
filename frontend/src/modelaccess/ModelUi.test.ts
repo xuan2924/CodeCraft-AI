@@ -142,6 +142,16 @@ it('navigates real connection/model query boundaries and paginates without savin
   expect(vi.mocked(api.connections).mock.lastCall?.[0]).toBe(check.id);
   expect(api.saveConnection).not.toHaveBeenCalled(); expect(api.saveModel).not.toHaveBeenCalled(); expect(api.startCheck).not.toHaveBeenCalled();
 });
+it('auto-selects the first connection and model on load without triggering paid checks', async () => {
+  vi.mocked(api.connections).mockResolvedValue({ items: [connection], nextCursor: null });
+  vi.mocked(api.models).mockResolvedValue({ items: [model], nextCursor: null });
+  const wrapper = mount(ModelSettingsPage, { global: { plugins: [[VueQueryPlugin, { queryClient: client() }]], stubs: { RouterLink: true } } }); wrappers.push(wrapper);
+  await flushPromises(); await flushPromises();
+  expect(api.getConnection).toHaveBeenCalledWith(connection.id, expect.any(AbortSignal), 'owner-a');
+  expect(api.getModel).toHaveBeenCalledWith(connection.id, model.id, expect.any(AbortSignal), 'owner-a');
+  expect(wrapper.text()).toContain('https://example.test/v1');
+  expect(api.startCheck).not.toHaveBeenCalled();
+});
 it('requires explicit deletion confirmation and keeps the version shown when confirmation opened', async () => {
   vi.mocked(api.deleteModel).mockResolvedValue({ ...model, deleted: true });
   const wrapper = mount(DeleteConfiguration, { props: { owner: 'owner-a', kind: 'model', entity: model } }); wrappers.push(wrapper);

@@ -66,3 +66,16 @@ it('keeps the draft and reports rejected atomic saves without replaying them', a
   expect(saveSkill).toHaveBeenCalledTimes(1);
   wrapper.unmount(); client.clear();
 });
+
+it('syncs structured frontmatter inputs into SKILL.md without manual YAML editing', async () => {
+  const { client, wrapper } = fixture(); await flushPromises();
+  await wrapper.get('[data-test="new-skill"]').trigger('click');
+  const inputs = wrapper.findAll('.frontmatter-bar input');
+  await inputs[0]!.setValue('java-style');
+  await inputs[1]!.setValue('强制检查空指针与边界');
+  const raw = (wrapper.get('textarea[aria-label="SKILL.md 原文"]').element as globalThis.HTMLTextAreaElement).value;
+  expect(raw).toContain('name: java-style');
+  expect(raw).toContain('description: 强制检查空指针与边界');
+  expect(raw).toContain('在此编写任务指导。');
+  wrapper.unmount(); client.clear();
+});

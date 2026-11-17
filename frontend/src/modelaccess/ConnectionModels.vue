@@ -21,6 +21,12 @@ const list = useQuery({ queryKey: computed(() => ['model-access', props.owner, '
   queryFn: ({ signal }) => api.models(props.connection.id, cursor.value, signal, props.owner), retry: false, gcTime: 0 });
 const detail = useQuery({ queryKey: computed(() => ['model-access', props.owner, 'model', scope.value, selected.value]),
   queryFn: ({ signal }) => api.getModel(props.connection.id, selected.value!, signal, props.owner), enabled: computed(() => !!selected.value), retry: false, gcTime: 0 });
+watch(() => list.data.value?.items, (items) => {
+  if (!items?.length || form.value === 'new') return;
+  if (!selected.value || !items.some((item) => item.id === selected.value)) {
+    selected.value = items[0]!.id;
+  }
+}, { immediate: true });
 watch([list.error, detail.error], (errors) => { if (errors.some(identityFailure)) emit('unauthorized'); });
 function refresh() { void client.invalidateQueries({ queryKey: ['model-access', props.owner] }); }
 function saved(model: api.Model) { selected.value = model.id; form.value = null; notice.value = '模型已保存，检查需单独确认费用。'; refresh(); }
