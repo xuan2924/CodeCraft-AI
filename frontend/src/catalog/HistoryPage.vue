@@ -83,33 +83,33 @@ async function deleted(id: string, user: string) {
 
 <style scoped>
 .history-page {
-  max-width: 1220px;
+  max-width: 920px;
   margin: 0 auto;
-  padding: 28px 32px 56px;
+  padding: 28px 24px 56px;
   min-width: 0;
 }
 
 .history-hero {
   margin-bottom: 18px;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 14px;
+}
+
+.history-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
 .history-hero h1 {
-  margin: 0 0 6px;
-  font-size: clamp(22px, 2.4vw, 26px);
-  font-weight: 650;
-  letter-spacing: -0.025em;
-}
-
-.history-hero p {
   margin: 0;
-  color: var(--oc-fg-muted);
-  font-size: 13.5px;
-  line-height: 1.55;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 .history-hero a {
@@ -118,17 +118,17 @@ async function deleted(id: string, user: string) {
 
 .history-error {
   margin-top: 14px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: var(--radius-control);
   background: var(--oc-danger-bg);
   border: 1px solid var(--oc-danger-border);
   color: var(--oc-danger);
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .history-page {
-    padding: 20px 16px 40px;
+    padding: 18px 16px 40px;
   }
 }
 </style>

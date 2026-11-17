@@ -9,6 +9,7 @@ import StatePanel from '../components/ui/StatePanel.vue';
 import Tooltip from '../components/ui/Tooltip.vue';
 import { routes } from '../routes';
 import ExerciseRetentionEntry from './ExerciseRetentionEntry.vue';
+import { formatShortTimestamp } from '../copilot/feeConsent';
 import { history, type HistoryEntry } from './retentionApi';
 
 const props = defineProps<{ owner: string }>();
@@ -99,7 +100,7 @@ const verificationLabels: Record<string, { label: string; tone?: string }> = {
           <select v-model="status">
             <option value="all">全部</option>
             <option value="retained">保留中</option>
-            <option value="cleanup">清理中 / 失败</option>
+            <option value="cleanup">清理异常</option>
           </select>
         </label>
       </div>
@@ -196,11 +197,17 @@ const verificationLabels: Record<string, { label: string; tone?: string }> = {
                 class="muted-dash"
               >-</span>
             </td>
-            <td class="time-cell font-mono-num">
-              {{ new Date(entry.endedAt).toLocaleString() }}
+            <td
+              class="time-cell font-mono-num"
+              :title="new Date(entry.endedAt).toLocaleString()"
+            >
+              {{ formatShortTimestamp(entry.endedAt) }}
             </td>
-            <td class="time-cell font-mono-num">
-              {{ new Date(entry.retainUntil).toLocaleString() }}
+            <td
+              class="time-cell font-mono-num"
+              :title="new Date(entry.retainUntil).toLocaleString()"
+            >
+              {{ formatShortTimestamp(entry.retainUntil) }}
             </td>
             <td class="state-cell">
               <span
@@ -388,14 +395,14 @@ a {
 table {
   border-collapse: collapse;
   width: 100%;
-  min-width: 780px;
+  min-width: 680px;
   text-align: left;
   table-layout: fixed;
 }
 
 th,
 td {
-  padding: 12px 16px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--oc-border);
   vertical-align: middle;
   font-size: 13px;
@@ -404,7 +411,7 @@ td {
 th {
   color: var(--oc-fg-muted);
   font-size: 11.5px;
-  font-weight: 600;
+  font-weight: 550;
   background: rgba(255, 255, 255, 0.015);
 }
 
@@ -417,12 +424,12 @@ tbody tr {
 }
 
 tbody tr:hover {
-  background: var(--oc-surface-2);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .identity-cell {
   width: 240px;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .title-line {
@@ -462,9 +469,10 @@ tbody tr:hover {
 }
 
 .time-cell {
-  width: 165px;
+  width: 115px;
   color: var(--oc-fg-muted);
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .state-cell {

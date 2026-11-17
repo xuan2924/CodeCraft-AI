@@ -22,18 +22,21 @@ it('uses published problems and persisted account favorites without inventing pr
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'catalog', component: CatalogPage },
     { path: '/workspace', name: 'workspace', component: { template: '<div />' } }, { path: '/history', name: 'history', component: { template: '<div />' } }] });
   await router.push('/');
-  const page = mount(CatalogPage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
+  const page = mount(CatalogPage, { attachTo: document.body, global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
   await flushPromises();
   expect(page.text()).toContain('0 分钟');
   await page.get('button[aria-label="收藏题目"]').trigger('click');
   await flushPromises();
   expect(saved).toBe(true);
   await page.get('input[type="checkbox"]').setValue(true);
-  expect(page.text()).toContain('计算金额');
+  expect(page.findAll('.problem-choice')).toHaveLength(1);
+  await page.get('.problem-choice').trigger('click');
+  await flushPromises();
+  expect(document.body.textContent).toContain('计算金额');
   await page.get('button[aria-label="取消收藏"]').trigger('click');
   await flushPromises();
   expect(page.text()).toContain('没有符合筛选的题目');
-  page.unmount(); client.clear();
+  page.unmount(); document.body.innerHTML = ''; client.clear();
 });
 
 it('does not deliver an old favorite failure into a newly switched account', async () => {
@@ -87,14 +90,17 @@ it('groups multiple versions of the same problem and switches versions cleanly',
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'catalog', component: CatalogPage },
     { path: '/workspace', name: 'workspace', component: { template: '<div />' } }, { path: '/history', name: 'history', component: { template: '<div />' } }] });
   await router.push('/');
-  const page = mount(CatalogPage, { global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
+  const page = mount(CatalogPage, { attachTo: document.body, global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
   await flushPromises();
   expect(page.findAll('.problem-choice')).toHaveLength(1);
-  expect(page.text()).toContain('新版含挑战说明');
-  const v1Btn = page.findAll('button').find(b => b.text() === 'v1.0.0');
+  await page.get('.problem-choice').trigger('click');
+  await flushPromises();
+  expect(document.body.textContent).toContain('新版含挑战说明');
+  const v1Btn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.trim() === 'v1.0.0');
   expect(v1Btn).toBeDefined();
-  await v1Btn!.trigger('click');
-  expect(page.text()).toContain('旧版说明');
-  expect(page.text()).toContain('该版本执行环境不可用');
-  page.unmount(); client.clear();
+  v1Btn!.click();
+  await flushPromises();
+  expect(document.body.textContent).toContain('旧版说明');
+  expect(document.body.textContent).toContain('该版本执行环境不可用');
+  page.unmount(); document.body.innerHTML = ''; client.clear();
 });

@@ -17,14 +17,25 @@ for (const width of [1440, 390]) {
   test(`catalog long titles, unavailable versions, zero duration and pagination at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 }); await fixtures(page);
     await page.goto('/ui-tests/login-fixture.html?page=catalog');
-    await expect(page.getByRole('button', { name: '准备演练' })).toBeDisabled();
-    await expect(page.getByText('时限 0 分钟 · 服务端执行环境')).toBeVisible();
-    await expect(page.getByText('已下架的收藏题目 · 不可开始')).toBeVisible();
+    await expect(page.getByText('已下架的收藏题目')).toBeVisible();
+    await expect(page.getByText('不可开始')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.locator('.problem-choice').first().focus();
     await expect(page.getByRole('tooltip')).toContainText('购物车金额计算与边界条件');
     await page.getByLabel('搜索题目').focus();
     await page.screenshot({ path: `test-results/ui/catalog-${width}.png`, fullPage: true });
+    await page.locator('.problem-choice').first().click();
+    const drawer = page.getByRole('dialog');
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText('时限 0 分钟')).toBeVisible();
+    const startBtn = drawer.getByRole('button', { name: '准备演练' });
+    await expect(startBtn).toBeDisabled();
+    const box = await startBtn.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(1000);
+    await page.keyboard.press('Escape');
+    await expect(drawer).toBeHidden();
     await page.getByRole('button', { name: '下一页' }).focus(); await page.keyboard.press('Enter');
     await expect(page.getByText('第 2 页')).toBeVisible();
     await page.getByLabel('仅收藏').check();

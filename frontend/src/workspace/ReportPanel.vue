@@ -9,59 +9,111 @@ import WorkspaceHistory from './WorkspaceHistory.vue';
 import FeedbackComposer from './FeedbackComposer.vue';
 import { current, message } from './api';
 import * as api from './reportApi';
+
 const props = defineProps<{ owner: string; exerciseId: string }>();
 const client = useQueryClient();
 const root = computed(() => ['report', props.owner, props.exerciseId]);
-const report = useQuery({ queryKey: root, gcTime: 0, retry: false, queryFn: ({ signal }) => api.read(props.owner, props.exerciseId, signal),
-  refetchInterval: query => query.state.data && ['QUEUED', 'PREPARING', 'RUNNING', 'NOT_READY'].includes(query.state.data.state) ? 2000 : false });
-const exercise = useQuery({ queryKey: computed(() => [...root.value, 'exercise']), gcTime: 0, retry: false, queryFn: ({ signal }) => current(signal, props.exerciseId, props.owner) });
+const report = useQuery({
+  queryKey: root,
+  gcTime: 0,
+  retry: false,
+  queryFn: ({ signal }) => api.read(props.owner, props.exerciseId, signal),
+  refetchInterval: query => query.state.data && ['QUEUED', 'PREPARING', 'RUNNING', 'NOT_READY'].includes(query.state.data.state) ? 2000 : false,
+});
+const exercise = useQuery({
+  queryKey: computed(() => [...root.value, 'exercise']),
+  gcTime: 0,
+  retry: false,
+  queryFn: ({ signal }) => current(signal, props.exerciseId, props.owner),
+});
+
 const text = ref('');
 const selected = ref('');
 const selectedHistoryChange = ref('');
 const historyChange = computed(() => selectedHistoryChange.value || (selected.value.startsWith('change:') ? selected.value.slice(7) : ''));
-const evidence = useQuery({ queryKey: computed(() => [...root.value, 'evidence', report.data.value?.generation, selected.value]), gcTime: 0, retry: false,
+const evidence = useQuery({
+  queryKey: computed(() => [...root.value, 'evidence', report.data.value?.generation, selected.value]),
+  gcTime: 0,
+  retry: false,
   enabled: computed(() => !!selected.value && !!report.data.value && !report.isError.value),
-  queryFn: ({ signal }) => api.detail(props.owner, props.exerciseId, report.data.value!.generation, selected.value, signal) });
-const command = useCommand<api.Report>(() => `${props.owner}/${props.exerciseId}`, value => { client.setQueryData(root.value, value); text.value = ''; selected.value = ''; selectedHistoryChange.value = ''; }, {
-  definitiveRejection: error => error instanceof ApiError && [400, 401, 403, 404, 409, 410, 429].includes(error.status), errorMessage: message, identityFailure: () => false });
+  queryFn: ({ signal }) => api.detail(props.owner, props.exerciseId, report.data.value!.generation, selected.value, signal),
+});
+
+const command = useCommand<api.Report>(() => `${props.owner}/${props.exerciseId}`, value => {
+  client.setQueryData(root.value, value);
+  text.value = '';
+  selected.value = '';
+  selectedHistoryChange.value = '';
+}, {
+  definitiveRejection: error => error instanceof ApiError && [400, 401, 403, 404, 409, 410, 429].includes(error.status),
+  errorMessage: message,
+  identityFailure: () => false,
+});
+
 const busy = computed(() => command.pending.value || command.uncertain.value);
 const reviewBytes = computed(() => new globalThis.TextEncoder().encode(text.value).length);
 const validReview = computed(() => text.value.trim().length > 0 && reviewBytes.value <= 4096);
+
 function review(skip: boolean) {
-  if (busy.value || report.data.value?.state !== 'WAITING_REVIEW' || !skip && !validReview.value) return;
+  if (busy.value || report.data.value?.state !== 'WAITING_REVIEW' || (!skip && !validReview.value)) return;
   const { owner, exerciseId } = props;
   const content = skip ? '' : text.value;
   void command.submit((key, signal) => api.review(owner, exerciseId, skip, content, key, signal));
 }
+
 function retry() {
   const generation = report.data.value?.generation;
   if (busy.value || !generation) return;
   const { owner, exerciseId } = props;
   void command.submit((key, signal) => api.retry(owner, exerciseId, generation, key, signal));
 }
+
 const downloading = ref(false);
 const downloadError = ref('');
 const lifetime = new globalThis.AbortController();
 onScopeDispose(() => lifetime.abort());
+
 async function pdf() {
   const generation = report.data.value?.generation;
   if (generation === undefined || downloading.value) return;
-  downloading.value = true; downloadError.value = '';
+  downloading.value = true;
+  downloadError.value = '';
   try {
     const blob = await api.pdf(props.owner, props.exerciseId, generation, lifetime.signal);
     if (lifetime.signal.aborted) return;
     if (generation !== report.data.value?.generation) throw new ApiError(409, 'REVISION_CONFLICT');
     const url = globalThis.URL.createObjectURL(blob);
     const anchor = globalThis.document.createElement('a');
-    anchor.href = url; anchor.download = `codecraft-report-${generation}.pdf`; anchor.click();
+    anchor.href = url;
+    anchor.download = `codecraft-report-${generation}.pdf`;
+    anchor.click();
     globalThis.setTimeout(() => globalThis.URL.revokeObjectURL(url), 0);
-  } catch (error) { if (!lifetime.signal.aborted) downloadError.value = message(error); }
-  finally { downloading.value = false; }
+  } catch (error) {
+    if (!lifetime.signal.aborted) downloadError.value = message(error);
+  } finally {
+    downloading.value = false;
+  }
 }
+
 const dimensionNames: Record<string, string> = { CORRECTNESS: '实现正确性', QUALITY: '代码质量', VALIDATION: '验证能力', COLLABORATION: 'AI 协作' };
 const weights: Record<string, number> = { CORRECTNESS: 35, QUALITY: 25, VALIDATION: 20, COLLABORATION: 20 };
-const states: Record<string, string> = { WAITING_REVIEW: '等待回顾', NOT_READY: '等待最终冻结', QUEUED: '评价排队中', PREPARING: '正在整理证据', RUNNING: '正在评价', SUCCEEDED: '评价已生成', FAILED: '评价生成失败', UNKNOWN: '评价调用结果未知' };
-const verification: Record<string, string> = { PASSED: '最终验收通过', FAILED: '最终验收未通过', TIMED_OUT: '最终验收超时', UNAVAILABLE: '平台验收不可用', PENDING: '最终验收尚未结束' };
+const states: Record<string, string> = {
+  WAITING_REVIEW: '等待回顾',
+  NOT_READY: '等待最终冻结',
+  QUEUED: '评价排队中',
+  PREPARING: '正在整理证据',
+  RUNNING: '正在评价',
+  SUCCEEDED: '评价已生成',
+  FAILED: '评价生成失败',
+  UNKNOWN: '评价调用结果未知',
+};
+const verification: Record<string, string> = {
+  PASSED: '最终验收通过',
+  FAILED: '最终验收未通过',
+  TIMED_OUT: '最终验收超时',
+  UNAVAILABLE: '平台验收不可用',
+  PENDING: '最终验收尚未结束',
+};
 const timelineKindLabels: Record<string, string> = {
   INTERVIEWER_ASKED: '面试官交互',
   IMPLEMENTATION_STARTED: '开始实现',
@@ -70,6 +122,7 @@ const timelineKindLabels: Record<string, string> = {
   CHALLENGE_ENTERED: '进入挑战',
   EXERCISE_FROZEN: '演练冻结',
 };
+
 const traceMetrics = computed(() => {
   const trace = report.data.value?.contextTrace;
   if (!trace) return [];
@@ -82,11 +135,14 @@ const traceMetrics = computed(() => {
     { label: '代码答辩', value: trace.interviewerDefenseCount },
   ];
 });
+
 const timelineItems = computed(() => {
   const items = report.data.value?.timeline ?? [];
   return [...items].sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
 });
+
 const evidenceIdSet = computed(() => new Set((report.data.value?.evidence ?? []).map(item => item.id)));
+
 function resolveTimelineEvidence(item: api.TimelineEntry): string | null {
   if (!item.sourceId) return null;
   const candidates: string[] = [];
@@ -96,27 +152,31 @@ function resolveTimelineEvidence(item: api.TimelineEntry): string | null {
   candidates.push(item.sourceId);
   return candidates.find(candidate => evidenceIdSet.value.has(candidate)) ?? null;
 }
+
 function openTimelineNode(item: api.TimelineEntry) {
   const evidenceId = resolveTimelineEvidence(item);
   if (evidenceId) selected.value = evidenceId;
   if (item.kind === 'WORKSPACE_CHANGED' && item.sourceId) selectedHistoryChange.value = item.sourceId;
 }
+
 function timelineTone(kind: string): 'accent' | 'warning' | undefined {
   if (kind === 'CHALLENGE_ENTERED' || kind === 'EXERCISE_FROZEN') return 'warning';
   if (kind === 'WORKSPACE_CHANGED' || kind === 'TEST_COMPLETED') return 'accent';
   return undefined;
 }
+
 function formatTime(timestamp: string): string {
   const parsed = new Date(timestamp);
   return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString() : timestamp;
 }
 </script>
+
 <template>
   <StatePanel
     v-if="report.isPending.value"
     kind="loading"
     title="正在读取报告"
-    description="读取冻结结果，不会触发新的评价。"
+    description="读取冻结结果…"
   />
   <StatePanel
     v-else-if="report.isError.value"
@@ -126,72 +186,103 @@ function formatTime(timestamp: string): string {
   >
     <Button
       variant="secondary"
+      size="small"
       @click="report.refetch()"
     >
       重新读取
     </Button>
   </StatePanel>
+
   <div
     v-else-if="report.data.value"
     class="report-layout"
   >
     <section class="report-main">
       <header class="report-heading">
-        <div><h2>演练报告</h2><p>{{ states[report.data.value.state] }} · 冻结修订 {{ report.data.value.finalRevision ?? '暂无' }}</p></div>
-        <Button
-          variant="secondary"
-          :disabled="report.data.value.finalRevision === null || downloading"
-          @click="pdf"
-        >
-          {{ downloading ? '正在生成 PDF…' : '下载 PDF' }}
-        </Button>
+        <div class="heading-left">
+          <h2>演练报告</h2>
+          <p class="report-sub font-mono-num">
+            {{ states[report.data.value.state] }} · 冻结修订 {{ report.data.value.finalRevision ?? '暂无' }}
+          </p>
+        </div>
+        <div class="heading-actions">
+          <span
+            class="verdict-pill"
+            role="status"
+            :data-verdict="report.data.value.verification ?? 'PENDING'"
+          >
+            {{ verification[report.data.value.verification ?? 'PENDING'] }}
+          </span>
+          <Button
+            variant="secondary"
+            size="small"
+            :disabled="report.data.value.finalRevision === null || downloading"
+            @click="pdf"
+          >
+            {{ downloading ? '正在生成 PDF…' : '下载 PDF' }}
+          </Button>
+        </div>
       </header>
+
       <p
-        class="verification"
-        role="status"
+        v-if="report.data.value.verification === 'UNAVAILABLE'"
+        class="muted-banner"
       >
-        {{ verification[report.data.value.verification ?? 'PENDING'] }}
-      </p>
-      <p v-if="report.data.value.verification === 'UNAVAILABLE'">
         平台故障不视为代码失败。无法证实的分数留空，不构造总分。
       </p>
+
       <section
         v-if="report.data.value.state === 'WAITING_REVIEW'"
-        class="review-form"
+        class="surface-block review-form"
         aria-label="演练回顾"
       >
-        <h3>回顾你的实现与取舍</h3><p>提交后不能修改。自述补充上下文，但不能代替代码、测试或协作证据；也可以直接跳过，不自动扣分。</p>
-        <label for="report-review">实现思路、验证方法与改进点</label><textarea
+        <div class="review-head">
+          <h3>回顾你的实现与取舍</h3>
+          <span class="review-hint">提交后不可修改；亦可直接跳过</span>
+        </div>
+        <label
+          for="report-review"
+          class="sr-only"
+        >实现思路、验证方法与改进点</label>
+        <textarea
           id="report-review"
           v-model="text"
-          rows="6"
+          rows="5"
+          placeholder="总结核心思路、权衡取舍、验证方式或可改进点…"
           :disabled="busy"
           aria-describedby="review-limit"
         />
-        <p id="review-limit">
-          最多 4 KiB UTF-8 文本。当前 {{ reviewBytes }} 字节。
-        </p>
-        <div class="actions">
-          <Button
-            variant="primary"
-            :disabled="busy || !validReview"
-            @click="review(false)"
-          >
-            提交回顾并评价
-          </Button><Button
-            variant="secondary"
-            :disabled="busy"
-            @click="review(true)"
-          >
-            跳过回顾并评价
-          </Button>
+        <div class="review-foot">
+          <span
+            id="review-limit"
+            class="byte-count font-mono-num"
+          >{{ reviewBytes }} / 4096 B</span>
+          <div class="actions">
+            <Button
+              variant="ghost"
+              size="small"
+              :disabled="busy"
+              @click="review(true)"
+            >
+              跳过回顾并评价
+            </Button>
+            <Button
+              variant="primary"
+              size="small"
+              :disabled="busy || !validReview"
+              @click="review(false)"
+            >
+              提交回顾并评价
+            </Button>
+          </div>
         </div>
       </section>
+
       <template v-if="report.data.value.evaluation">
-        <section class="conclusion">
+        <section class="surface-block conclusion">
           <div class="conclusion-score-col">
-            <span class="conclusion-label">综合评价总分</span>
-            <p class="total">
+            <span class="sub-label">综合评价总分</span>
+            <p class="total font-mono-num">
               {{ report.data.value.evaluation.total ?? '暂无' }}<span> / 100</span>
             </p>
             <div
@@ -209,31 +300,37 @@ function formatTime(timestamp: string): string {
             <p>{{ report.data.value.evaluation.conclusion }}</p>
           </div>
         </section>
-        <div class="dimensions">
+
+        <div class="surface-block ui-divide-list dimensions">
           <section
             v-for="dimension in report.data.value.evaluation.dimensions"
             :key="dimension.key"
-            class="dimension"
+            class="ui-divide-row dimension"
           >
             <div class="dimension-top">
-              <h3>{{ dimensionNames[dimension.key] }}</h3>
-              <p class="score">
+              <div class="dim-left">
+                <h3>{{ dimensionNames[dimension.key] }}</h3>
+                <div
+                  class="score-bar"
+                  aria-hidden="true"
+                >
+                  <div
+                    class="score-bar-fill"
+                    :style="{ width: `${dimension.score !== null && weights[dimension.key] ? Math.min(100, Math.max(0, (dimension.score / weights[dimension.key]!) * 100)) : 0}%` }"
+                  />
+                </div>
+              </div>
+              <p class="score font-mono-num">
                 {{ dimension.score ?? '暂无' }} <span>/ {{ weights[dimension.key] }}</span>
               </p>
-            </div>
-            <div
-              class="score-bar"
-              aria-hidden="true"
-            >
-              <div
-                class="score-bar-fill"
-                :style="{ width: `${dimension.score !== null && weights[dimension.key] ? Math.min(100, Math.max(0, (dimension.score / weights[dimension.key]!) * 100)) : 0}%` }"
-              />
             </div>
             <p class="dimension-feedback">
               {{ dimension.feedback }}
             </p>
-            <div class="evidence-links">
+            <div
+              v-if="dimension.evidenceIds.length"
+              class="evidence-links"
+            >
               <Button
                 v-for="id in dimension.evidenceIds"
                 :key="id"
@@ -247,49 +344,58 @@ function formatTime(timestamp: string): string {
           </section>
         </div>
       </template>
-      <p v-else-if="report.data.value.state !== 'WAITING_REVIEW'">
-        暂未生成可发布的 AI 评价。已有最终验收结果保留，刷新页面不会重新调用模型。
+      <p
+        v-else-if="report.data.value.state !== 'WAITING_REVIEW'"
+        class="muted-banner"
+      >
+        暂未生成 AI 评价。
       </p>
-      <p v-if="report.data.value.reviewSkipped">
-        已跳过回顾；跳过不自动扣分。未参与可选挑战不扣基础分。
+
+      <p
+        v-if="report.data.value.reviewSkipped"
+        class="muted-banner"
+      >
+        已跳过回顾。
       </p>
+
       <div
         v-if="['FAILED', 'UNKNOWN'].includes(report.data.value.state)"
-        class="retry-area"
+        class="surface-block retry-area"
       >
-        <p>原因：{{ report.data.value.reason }}。重试会开启新的报告版本；结果未知的调用不会自动重复派发。</p><Button
+        <span class="retry-reason">原因：{{ report.data.value.reason }}</span>
+        <Button
           variant="primary"
+          size="small"
           :disabled="busy"
           @click="retry"
         >
           明确重试评价
         </Button>
       </div>
+
       <p
         v-if="command.error.value || downloadError"
         role="alert"
+        class="inline-alert"
       >
         {{ command.error.value || downloadError }}
       </p>
       <Button
         v-if="command.uncertain.value"
         variant="secondary"
+        size="small"
         :disabled="command.pending.value"
         @click="command.retry"
       >
         核对原请求
       </Button>
+
       <section
         v-if="report.data.value.contextTrace"
-        class="context-trace"
+        class="surface-block context-trace"
         aria-label="上下文工程与协作轨迹"
       >
-        <div class="section-head">
-          <h3>上下文工程与协作轨迹</h3>
-          <p class="section-note">
-            客观记录本场演练的引用、Skill、方向调整、旁支与面试官交互统计，仅用于复盘，不作机械扣分。
-          </p>
-        </div>
+        <h3>上下文工程与协作轨迹</h3>
         <dl class="trace-grid">
           <div
             v-for="metric in traceMetrics"
@@ -297,36 +403,36 @@ function formatTime(timestamp: string): string {
             class="trace-metric"
           >
             <dt>{{ metric.label }}</dt>
-            <dd>{{ metric.value }}</dd>
+            <dd class="font-mono-num">
+              {{ metric.value }}
+            </dd>
           </div>
         </dl>
         <div
           v-if="report.data.value.contextTrace.hintsUsed?.length"
           class="trace-hints"
         >
-          <span class="trace-hints-label">分主题提示最高等级</span>
+          <span class="sub-label">分主题提示最高等级</span>
           <div class="trace-hint-badges">
             <span
               v-for="hint in report.data.value.contextTrace.hintsUsed"
               :key="hint.topic"
-              class="ui-pill"
-              data-tone="warning"
+              class="hint-pill font-mono"
             >
               {{ hint.topic }} · L{{ hint.maxLevel }}
             </span>
           </div>
         </div>
       </section>
+
       <section
         v-if="timelineItems.length"
-        class="session-timeline"
+        class="surface-block session-timeline"
         aria-label="演练时间轴回放"
       >
-        <div class="section-head">
+        <div class="timeline-head">
           <h3>演练时间轴回放</h3>
-          <p class="section-note">
-            按时间顺序还原关键协作、变更与验证里程碑（共 {{ timelineItems.length }} 项）。
-          </p>
+          <span class="sub-label font-mono-num">{{ timelineItems.length }} 项</span>
         </div>
         <ol class="timeline-list">
           <li
@@ -336,20 +442,20 @@ function formatTime(timestamp: string): string {
           >
             <div class="timeline-meta">
               <span
-                class="ui-badge"
+                class="meta-badge"
                 :data-tone="timelineTone(item.kind)"
               >
                 {{ timelineKindLabels[item.kind] ?? item.kind }}
               </span>
               <span
                 v-if="item.revision !== null && item.revision !== undefined"
-                class="timeline-rev"
+                class="timeline-rev font-mono"
               >
                 r{{ item.revision }}
               </span>
               <time
                 :datetime="item.timestamp"
-                class="timeline-time"
+                class="timeline-time font-mono-num"
               >
                 {{ formatTime(item.timestamp) }}
               </time>
@@ -380,11 +486,14 @@ function formatTime(timestamp: string): string {
           </li>
         </ol>
       </section>
+
       <details
         v-if="exercise.data.value"
+        class="fold-block"
         :open="!!historyChange"
       >
-        <summary>查看只读代码修改历史与 Diff</summary><WorkspaceHistory
+        <summary>查看只读代码修改历史与 Diff</summary>
+        <WorkspaceHistory
           :owner="owner"
           :exercise="exercise.data.value"
           :initial-change="historyChange"
@@ -392,8 +501,13 @@ function formatTime(timestamp: string): string {
           disabled
         />
       </details>
-      <details v-if="report.data.value.reportId">
-        <summary>对此评价授权反馈</summary><FeedbackComposer
+
+      <details
+        v-if="report.data.value.reportId"
+        class="fold-block"
+      >
+        <summary>对此评价授权反馈</summary>
+        <FeedbackComposer
           :key="`${report.data.value.reportId}/${report.data.value.generation}`"
           :owner="owner"
           :exercise-id="exerciseId"
@@ -404,417 +518,361 @@ function formatTime(timestamp: string): string {
         />
       </details>
     </section>
+
     <aside
       class="report-evidence"
       aria-label="报告证据目录"
     >
-      <h2>证据目录</h2><p>版本 {{ report.data.value.generation }} · 只读回顾，不重放工具或测试。证据存在取样和保留范围限制。</p>
-      <p v-if="!report.data.value.evidence.length">
+      <div class="evidence-head">
+        <h2>证据目录</h2>
+        <span class="sub-label font-mono-num">版本 {{ report.data.value.generation }} · 只读</span>
+      </div>
+      <p
+        v-if="!report.data.value.evidence.length"
+        class="muted-note"
+      >
         尚未整理证据。
       </p>
-      <ul>
+      <ul
+        v-else
+        class="ui-divide-list evidence-list"
+      >
         <li
           v-for="item in report.data.value.evidence"
           :key="item.id"
+          class="ui-divide-row evidence-row"
         >
           <button
-            class="evidence-button"
+            type="button"
+            class="evidence-button font-mono"
             :aria-pressed="selected === item.id"
             @click="selected = item.id"
           >
             {{ item.kind }} · {{ item.source }}
-          </button><p>{{ item.summary }}{{ item.truncated ? '（原始内容已截断）' : '' }}</p>
+          </button>
+          <p class="evidence-summary">
+            {{ item.summary }}{{ item.truncated ? '（已截断）' : '' }}
+          </p>
         </li>
       </ul>
       <p
         v-if="selected && evidence.isPending.value"
         role="status"
+        class="muted-note"
       >
         正在读取证据…
-      </p><p
+      </p>
+      <p
         v-if="evidence.isError.value"
         role="alert"
+        class="inline-alert"
       >
         {{ message(evidence.error.value) }}
       </p>
       <section
         v-if="evidence.data.value && !evidence.isError.value"
+        class="evidence-viewer"
         aria-label="证据原文"
       >
-        <h3>{{ evidence.data.value.source }}</h3><pre>{{ evidence.data.value.content }}</pre>
+        <h3 class="font-mono">
+          {{ evidence.data.value.source }}
+        </h3>
+        <pre class="font-mono">{{ evidence.data.value.content }}</pre>
       </section>
     </aside>
   </div>
 </template>
+
 <style scoped>
 .report-layout {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 28px 24px 64px;
   display: grid;
-  grid-template-columns: minmax(0, 1.85fr) minmax(280px, 1fr);
+  grid-template-columns: minmax(0, 1fr) 320px;
   gap: 24px;
   align-items: start;
-}
-
-.report-main,
-.report-evidence {
   min-width: 0;
 }
 
 .report-main {
   display: grid;
-  gap: 20px;
+  gap: 16px;
+  min-width: 0;
 }
 
 .report-heading {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  align-items: center;
+  gap: 12px;
   flex-wrap: wrap;
-  padding: 20px 24px;
-  border-radius: var(--radius-panel);
+}
+
+.heading-left h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.report-sub {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--oc-fg-muted);
+}
+
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.verdict-pill {
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 999px;
   background: var(--oc-surface);
   border: 1px solid var(--oc-border);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
-}
-
-.report-heading h2 {
-  margin: 0 0 4px;
-  font-size: 24px;
-  font-weight: 650;
-}
-
-.report-heading p {
-  margin: 0;
-  font-size: 13px;
   color: var(--oc-fg-muted);
+}
+
+.verdict-pill[data-verdict="PASSED"] {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.verdict-pill[data-verdict="FAILED"],
+.verdict-pill[data-verdict="TIMED_OUT"] {
+  color: var(--oc-danger);
+  border-color: var(--oc-danger-border);
+}
+
+.muted-banner {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  font-size: 12.5px;
+  color: var(--oc-fg-muted);
+}
+
+.surface-block {
+  border-radius: 10px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ui-divide-list.surface-block {
+  padding: 0;
+  gap: 0;
+}
+
+.review-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.review-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.review-hint,
+.sub-label,
+.muted-note {
+  font-size: 12px;
+  color: var(--oc-fg-dim);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.review-form textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--oc-bg-input);
+  color: var(--oc-fg);
+  border: 1px solid var(--oc-border-input);
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.review-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.byte-count {
+  font-size: 12px;
+  color: var(--oc-fg-dim);
 }
 
 .actions {
   display: flex;
-  justify-content: flex-start;
-  gap: 10px;
   align-items: center;
-  flex-wrap: wrap;
-}
-
-p {
-  line-height: 1.65;
-  overflow-wrap: anywhere;
-}
-
-.verification {
-  margin: 0;
-  border-left: 3px solid var(--oc-accent);
-  border-top: 1px solid var(--oc-border);
-  border-right: 1px solid var(--oc-border);
-  border-bottom: 1px solid var(--oc-border);
-  border-radius: 10px;
-  padding: 12px 16px;
-  background: var(--oc-surface);
-  font-size: 13.5px;
-  font-weight: 550;
-}
-
-.review-form,
-.conclusion,
-.retry-area {
-  margin: 0;
-  padding: 24px;
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
-  border-radius: var(--radius-panel);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-sm);
+  gap: 8px;
 }
 
 .conclusion {
-  display: grid;
-  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.5fr);
+  grid-template-columns: 180px minmax(0, 1fr);
   gap: 20px;
   align-items: center;
-  background: var(--oc-surface);
 }
 
 .conclusion-score-col {
   display: grid;
   gap: 6px;
-  padding-right: 20px;
-  border-right: 1px solid var(--oc-border);
-}
-
-.conclusion-label {
-  font-size: 12px;
-  font-weight: 550;
-  color: var(--oc-fg-muted);
-}
-
-.conclusion-text-col {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.conclusion h3,
-.review-form h3 {
-  margin: 0;
-  font-size: 14.5px;
-  font-weight: 600;
-}
-
-.conclusion-text-col p,
-.review-form p {
-  margin: 0;
-  font-size: 13.5px;
-  color: var(--oc-fg-muted);
-}
-
-.review-form label {
-  display: block;
-  margin-top: 14px;
-  font-size: 13px;
-  font-weight: 550;
-}
-
-textarea {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  margin: 8px 0 10px;
-  resize: vertical;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: var(--radius-control);
-  padding: 10px 12px;
-  font: inherit;
-}
-
-textarea:focus-visible {
-  border-color: var(--oc-accent);
-  box-shadow: 0 0 0 3px var(--oc-accent-glow);
 }
 
 .total {
-  font-size: 36px;
   margin: 0;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  font-family: var(--oc-font-mono);
-  font-variant-numeric: tabular-nums;
-  color: var(--oc-fg);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.1;
 }
 
-.total span,
-.score span {
-  color: var(--oc-fg-muted);
-  font-size: 13.5px;
-  font-weight: 450;
+.total span {
+  font-size: 14px;
+  color: var(--oc-fg-dim);
+  font-weight: 400;
 }
 
 .score-bar {
-  width: 100%;
-  height: 5px;
+  height: 4px;
   border-radius: 999px;
   background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border);
   overflow: hidden;
 }
 
 .score-bar-lg {
-  height: 7px;
+  height: 6px;
 }
 
 .score-bar-fill {
   height: 100%;
-  border-radius: 999px;
   background: var(--oc-accent);
-  transition: width 260ms var(--oc-ease);
+  border-radius: 999px;
 }
 
-/* 2x2 Dimensions Dashboard */
-.dimensions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.dimension {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 18px;
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
-  border-radius: var(--radius-panel);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
-  transition: border-color 150ms var(--oc-ease);
-}
-
-.dimension:hover {
-  border-color: var(--oc-border-strong);
-}
-
-.dimension-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.dimension h3 {
-  margin: 0;
-  font-size: 13.5px;
+.conclusion-text-col h3,
+.context-trace h3,
+.timeline-head h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--oc-fg-muted);
 }
 
+.conclusion-text-col p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dimension {
+  padding: 14px 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.dimension-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.dim-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.dim-left h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+  min-width: 90px;
+}
+
+.dim-left .score-bar {
+  flex: 1;
+  max-width: 180px;
+}
+
 .score {
   margin: 0;
-  font-size: 22px;
-  font-weight: 650;
-  font-family: var(--oc-font-mono);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.score span {
+  font-size: 12px;
+  color: var(--oc-fg-dim);
+  font-weight: 400;
 }
 
 .dimension-feedback {
   margin: 0;
   font-size: 13px;
-  color: var(--oc-fg);
-  line-height: 1.55;
+  line-height: 1.6;
+  color: var(--oc-fg-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .evidence-links {
-  margin-top: auto;
-  padding-top: 8px;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-}
-
-.report-evidence {
-  position: sticky;
-  top: 24px;
-  padding: 22px;
-  border-radius: var(--radius-panel);
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-sm);
-  display: grid;
-  gap: 12px;
-}
-
-.report-evidence h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.report-evidence > p {
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--oc-fg-muted);
-}
-
-.report-evidence ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 10px;
-}
-
-.report-evidence li {
-  padding: 12px;
-  border-radius: 10px;
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border);
-  display: grid;
-  gap: 6px;
-}
-
-.report-evidence li p {
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--oc-fg-muted);
-}
-
-.evidence-button {
-  text-align: left;
-  color: var(--oc-accent);
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 550;
-  font-family: var(--oc-font-mono);
-  overflow-wrap: anywhere;
-}
-
-.evidence-button[aria-pressed="true"] {
-  color: var(--oc-fg);
-  text-decoration: underline;
-  text-underline-offset: 4px;
-}
-
-pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 460px;
-  overflow: auto;
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border);
-  border-radius: 10px;
-  padding: 14px;
-  font-size: 12.5px;
-  line-height: 1.6;
-}
-
-details {
-  padding: 14px 18px;
-  border-radius: 12px;
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
-}
-
-summary {
-  cursor: pointer;
-  font-size: 13.5px;
-  font-weight: 550;
-}
-
-h3 {
-  overflow-wrap: anywhere;
-}
-
-.context-trace,
-.session-timeline {
-  margin: 0;
-  padding: 20px 24px;
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
-  border-radius: var(--radius-panel);
-  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
-  display: grid;
-  gap: 14px;
-}
-
-.section-head {
-  display: grid;
   gap: 4px;
 }
 
-.section-head h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
+.retry-area {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.section-note {
-  margin: 0;
+.retry-reason {
   font-size: 12.5px;
-  color: var(--oc-fg-muted);
+  color: var(--oc-danger);
+}
+
+.inline-alert {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--oc-danger-bg);
+  color: var(--oc-danger);
+  font-size: 12.5px;
 }
 
 .trace-grid {
@@ -825,39 +883,29 @@ h3 {
 }
 
 .trace-metric {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: 8px;
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border);
+  background: var(--oc-bg-subtle);
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
 .trace-metric dt {
-  font-size: 12px;
-  color: var(--oc-fg-muted);
+  font-size: 11.5px;
+  color: var(--oc-fg-dim);
 }
 
 .trace-metric dd {
   margin: 0;
-  font-size: 20px;
-  font-weight: 650;
-  font-family: var(--oc-font-mono);
-  font-variant-numeric: tabular-nums;
-  color: var(--oc-fg);
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .trace-hints {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding-top: 4px;
-}
-
-.trace-hints-label {
-  font-size: 12px;
-  color: var(--oc-fg-muted);
+  flex-wrap: wrap;
 }
 
 .trace-hint-badges {
@@ -866,116 +914,203 @@ h3 {
   gap: 6px;
 }
 
+.hint-pill {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+  color: var(--oc-warning);
+}
+
+.timeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .timeline-list {
   list-style: none;
   margin: 0;
-  padding: 0 0 0 18px;
-  border-left: 2px solid var(--oc-border-strong);
+  padding: 0 0 0 14px;
+  border-left: 1px solid var(--oc-border-strong);
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .timeline-node {
-  position: relative;
-  padding: 12px 14px;
-  border-radius: 8px;
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border);
   display: grid;
-  gap: 6px;
+  gap: 4px;
+  position: relative;
 }
 
 .timeline-node::before {
   content: '';
   position: absolute;
-  left: -24px;
-  top: 16px;
-  width: 8px;
-  height: 8px;
+  left: -18px;
+  top: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
-  background: var(--oc-accent);
-  border: 2px solid var(--oc-surface);
+  background: var(--oc-border-strong);
 }
 
 .timeline-meta {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
-.timeline-rev {
+.meta-badge {
+  font-size: 11px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border);
-  font-family: var(--oc-font-mono);
-  font-size: 11.5px;
+  background: var(--oc-surface-2);
   color: var(--oc-fg-muted);
 }
 
+.timeline-rev,
 .timeline-time {
-  margin-left: auto;
-  font-family: var(--oc-font-mono);
   font-size: 11.5px;
-  color: var(--oc-fg-muted);
-}
-
-.timeline-body {
-  display: grid;
-  gap: 3px;
+  color: var(--oc-fg-dim);
 }
 
 .timeline-title {
   margin: 0;
   font-size: 13px;
-  font-weight: 550;
-  color: var(--oc-fg);
+  font-weight: 500;
 }
 
 .timeline-detail {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.fold-block {
+  border-radius: 10px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  padding: 12px 16px;
+}
+
+.fold-block summary {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--oc-fg-muted);
+  cursor: pointer;
+}
+
+.fold-block summary:hover {
+  color: var(--oc-fg);
+}
+
+.report-evidence {
+  position: sticky;
+  top: 20px;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.evidence-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.evidence-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.evidence-list {
+  border-radius: 8px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  overflow: hidden;
+}
+
+.evidence-row {
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.evidence-button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--oc-accent);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-button[aria-pressed="true"] {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.evidence-summary {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+  line-height: 1.45;
+}
+
+.evidence-viewer {
+  display: grid;
+  gap: 6px;
+}
+
+.evidence-viewer h3 {
   margin: 0;
   font-size: 12px;
   color: var(--oc-fg-muted);
 }
 
-.timeline-actions {
-  display: flex;
-  justify-content: flex-start;
+.evidence-viewer pre {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--oc-bg);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 960px) {
   .report-layout {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: 1fr;
+    padding: 20px 16px 40px;
   }
   .report-evidence {
     position: static;
   }
-}
-
-@media (max-width: 560px) {
   .conclusion {
     grid-template-columns: 1fr;
-    gap: 14px;
   }
-  .conclusion-score-col {
-    padding-right: 0;
-    padding-bottom: 12px;
-    border-right: 0;
-    border-bottom: 1px solid var(--oc-border);
-  }
-  .dimensions,
+}
+
+@media (max-width: 600px) {
   .trace-grid {
-    grid-template-columns: 1fr;
-  }
-  .review-form,
-  .conclusion,
-  .retry-area,
-  .report-heading,
-  .report-evidence,
-  .context-trace,
-  .session-timeline {
-    padding: 16px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>
