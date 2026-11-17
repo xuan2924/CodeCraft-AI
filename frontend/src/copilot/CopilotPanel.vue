@@ -21,7 +21,9 @@ import CopilotReferences from './CopilotReferences.vue';
 import { selection, type ReferencePage } from './referenceApi';
 import CopilotProjectInstructions from './CopilotProjectInstructions.vue';
 import CopilotWebResult from './CopilotWebResult.vue';
+import CopilotToolResult from './CopilotToolResult.vue';
 import CopilotMessageBody from './CopilotMessageBody.vue';
+import { isStructuredToolReceipt, splitAssistantToolCalls } from './toolPresentation';
 
 const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string; delegated?: boolean; paths?: string[]; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
 const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string]; fork: [messageId: string] }>();
@@ -37,15 +39,20 @@ const saveError = ref('');
 const handoffNotice = ref('');
 const after = ref('-1');
 const connected = ref(false);
+const transientPreview = ref<api.PreviewEvent | null>(null);
 const taskKey = computed(() => ['copilot', props.owner, props.exerciseId, 'task', props.conversationId ?? props.exerciseId]);
 const historyKey = computed(() => ['copilot', props.owner, props.exerciseId, 'messages', props.conversationId ?? props.exerciseId, after.value]);
 const latest = useQuery({ queryKey: taskKey, queryFn: ({ signal }) => api.latest(props.owner, props.exerciseId, signal, props.conversationId), retry: false, gcTime: 0, refetchInterval: 2000 });
 const history = useQuery({ queryKey: historyKey, queryFn: ({ signal }) => api.messages(props.owner, props.exerciseId, after.value, signal, props.conversationId), retry: false, gcTime: 0 });
 const task = computed(() => latest.data.value?.task);
 const running = computed(() => api.active(task.value));
+const preview = computed(() => api.resolveDisplayPreview(transientPreview.value, latest.data.value, running.value));
 watch([latest.error, history.error], (errors) => { if (errors.some(commandPolicy.identityFailure)) emit('unauthorized'); });
-watch(() => latest.data.value?.lastSequence, () => { void client.invalidateQueries({ queryKey: ['copilot', props.owner, props.exerciseId, 'messages'] }); });
-watch(scope, () => { text.value = ''; fee.value = false; selectedSkills.value = []; references.value = []; saveError.value = ''; handoffNotice.value = ''; saving.value = false; }, { flush: 'sync' });
+watch(() => latest.data.value?.lastSequence, () => {
+  transientPreview.value = null;
+  void client.invalidateQueries({ queryKey: ['copilot', props.owner, props.exerciseId, 'messages'] });
+});
+watch(scope, () => { text.value = ''; fee.value = false; selectedSkills.value = []; references.value = []; saveError.value = ''; handoffNotice.value = ''; saving.value = false; transientPreview.value = null; }, { flush: 'sync' });
 const start = useCommand<api.Task>(() => scope.value, () => {
   text.value = ''; fee.value = false; selectedSkills.value = []; references.value = []; after.value = '-1'; void latest.refetch(); void history.refetch();
 }, commandPolicy, () => emit('unauthorized'));
@@ -94,6 +101,7 @@ function stopTask() {
 }
 watch([() => props.owner, () => props.exerciseId, () => task.value?.id, running], ([owner, exercise, id, active], _old, cleanup) => {
   connected.value = false;
+  transientPreview.value = null;
   if (!id || !active) return;
   const controller = new globalThis.AbortController();
   let close = () => {};
@@ -105,15 +113,21 @@ watch([() => props.owner, () => props.exerciseId, () => task.value?.id, running]
     close = api.watchTask(exercise, id!, () => {
       if (disposed) return;
       connected.value = true;
+      transientPreview.value = null;
       void client.invalidateQueries({ queryKey: ['copilot', owner, exercise, 'task'] });
     }, () => {
       if (disposed) return;
-      connected.value = false; close();
+      connected.value = false;
+      transientPreview.value = null;
+      close();
       if (timer === undefined) timer = globalThis.setTimeout(() => { timer = undefined; connect(); }, 2000);
-    }, controller.signal);
+    }, controller.signal, (incoming) => {
+      if (disposed) return;
+      transientPreview.value = api.nextTransientPreview(transientPreview.value, incoming, id, running.value);
+    });
   }
   connect();
-  cleanup(() => { disposed = true; controller.abort(); close(); if (timer !== undefined) globalThis.clearTimeout(timer); });
+  cleanup(() => { disposed = true; transientPreview.value = null; controller.abort(); close(); if (timer !== undefined) globalThis.clearTimeout(timer); });
 }, { immediate: true });
 const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待派发', RUNNING: '正在执行', PAUSED: '已暂停，等待处理', WAITING_APPROVAL: '等待审批', WAITING_WRITE: '等待写入回执', WAITING_TEST: '等待测试确定结果', WAITING_COMMAND: '等待命令及文件同步结果', WAITING_CHILD: '等待真实子任务交接，父 worker 已释放', STOPPING: '正在停止，等待当前操作收敛', STOPPED: '已停止', SUCCEEDED: '已完成', FAILED: '失败', INTERRUPTED: '已中断，不会自动重发' };
 </script>
@@ -306,6 +320,31 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
           :text="message.text"
           :scope="`${scope}/${message.id}`"
         />
+        <CopilotToolResult
+          v-else-if="message.kind === 'TOOL' && isStructuredToolReceipt(message.text)"
+          :text="message.text"
+        />
+        <template v-else-if="message.kind === 'ASSISTANT'">
+          <CopilotMessageBody
+            v-if="splitAssistantToolCalls(message.text).body || message.thinking"
+            :text="splitAssistantToolCalls(message.text).body"
+            :thinking="message.thinking"
+          />
+          <div
+            v-if="splitAssistantToolCalls(message.text).calls.length"
+            class="assistant-tool-calls"
+            aria-label="发起的工具调用"
+          >
+            <span
+              v-for="call in splitAssistantToolCalls(message.text).calls"
+              :key="call.callId"
+              class="ui-badge tool-call-chip"
+            >
+              <code>{{ call.name }}</code>
+              <span>{{ call.label }}</span>
+            </span>
+          </div>
+        </template>
         <CopilotMessageBody
           v-else
           :text="message.text"
@@ -314,17 +353,17 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
       </article>
     </div>
     <aside
-      v-if="latest.data.value?.partial.text || latest.data.value?.partial.thinking"
+      v-if="preview"
       class="partial-preview"
       aria-label="未确认回复预览"
     >
       <h3>未确认的部分回复</h3>
       <CopilotMessageBody
-        :text="latest.data.value.partial.text"
-        :thinking="latest.data.value.partial.thinking"
+        :text="preview.text"
+        :thinking="preview.thinking"
       />
       <p>此预览不代表任务完成，也不会作为完整助手消息或工具请求执行。</p>
-      <p v-if="latest.data.value.partial.truncated || latest.data.value.partial.thinkingTruncated">
+      <p v-if="preview.truncated || preview.thinkingTruncated">
         预览已截断。完整确认的回复将在上方对话记录显示。
       </p>
     </aside>
@@ -677,6 +716,21 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
   font-size: 12px;
   font-weight: 600;
   color: var(--oc-fg);
+}
+
+.assistant-tool-calls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tool-call-chip {
+  font-size: 11.5px;
+}
+
+.tool-call-chip code {
+  color: var(--oc-accent);
+  font-size: 11.5px;
 }
 
 .partial-preview {

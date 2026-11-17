@@ -17,11 +17,12 @@ const report = useQuery({ queryKey: root, gcTime: 0, retry: false, queryFn: ({ s
 const exercise = useQuery({ queryKey: computed(() => [...root.value, 'exercise']), gcTime: 0, retry: false, queryFn: ({ signal }) => current(signal, props.exerciseId, props.owner) });
 const text = ref('');
 const selected = ref('');
-const historyChange = computed(() => selected.value.startsWith('change:') ? selected.value.slice(7) : '');
+const selectedHistoryChange = ref('');
+const historyChange = computed(() => selectedHistoryChange.value || (selected.value.startsWith('change:') ? selected.value.slice(7) : ''));
 const evidence = useQuery({ queryKey: computed(() => [...root.value, 'evidence', report.data.value?.generation, selected.value]), gcTime: 0, retry: false,
   enabled: computed(() => !!selected.value && !!report.data.value && !report.isError.value),
   queryFn: ({ signal }) => api.detail(props.owner, props.exerciseId, report.data.value!.generation, selected.value, signal) });
-const command = useCommand<api.Report>(() => `${props.owner}/${props.exerciseId}`, value => { client.setQueryData(root.value, value); text.value = ''; selected.value = ''; }, {
+const command = useCommand<api.Report>(() => `${props.owner}/${props.exerciseId}`, value => { client.setQueryData(root.value, value); text.value = ''; selected.value = ''; selectedHistoryChange.value = ''; }, {
   definitiveRejection: error => error instanceof ApiError && [400, 401, 403, 404, 409, 410, 429].includes(error.status), errorMessage: message, identityFailure: () => false });
 const busy = computed(() => command.pending.value || command.uncertain.value);
 const reviewBytes = computed(() => new globalThis.TextEncoder().encode(text.value).length);
@@ -61,6 +62,54 @@ const dimensionNames: Record<string, string> = { CORRECTNESS: '实现正确性',
 const weights: Record<string, number> = { CORRECTNESS: 35, QUALITY: 25, VALIDATION: 20, COLLABORATION: 20 };
 const states: Record<string, string> = { WAITING_REVIEW: '等待回顾', NOT_READY: '等待最终冻结', QUEUED: '评价排队中', PREPARING: '正在整理证据', RUNNING: '正在评价', SUCCEEDED: '评价已生成', FAILED: '评价生成失败', UNKNOWN: '评价调用结果未知' };
 const verification: Record<string, string> = { PASSED: '最终验收通过', FAILED: '最终验收未通过', TIMED_OUT: '最终验收超时', UNAVAILABLE: '平台验收不可用', PENDING: '最终验收尚未结束' };
+const timelineKindLabels: Record<string, string> = {
+  INTERVIEWER_ASKED: '面试官交互',
+  IMPLEMENTATION_STARTED: '开始实现',
+  WORKSPACE_CHANGED: '代码变更',
+  TEST_COMPLETED: '测试完成',
+  CHALLENGE_ENTERED: '进入挑战',
+  EXERCISE_FROZEN: '演练冻结',
+};
+const traceMetrics = computed(() => {
+  const trace = report.data.value?.contextTrace;
+  if (!trace) return [];
+  return [
+    { label: '@引用次数', value: trace.referenceCount },
+    { label: 'Skill 加载', value: trace.skillLoadCount },
+    { label: 'Steer 纠偏', value: trace.steerCount },
+    { label: 'BTW 旁支', value: trace.btwTaskCount },
+    { label: '需求澄清', value: trace.interviewerClarifyCount },
+    { label: '代码答辩', value: trace.interviewerDefenseCount },
+  ];
+});
+const timelineItems = computed(() => {
+  const items = report.data.value?.timeline ?? [];
+  return [...items].sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+});
+const evidenceIdSet = computed(() => new Set((report.data.value?.evidence ?? []).map(item => item.id)));
+function resolveTimelineEvidence(item: api.TimelineEntry): string | null {
+  if (!item.sourceId) return null;
+  const candidates: string[] = [];
+  if (item.kind === 'WORKSPACE_CHANGED') candidates.push(`change:${item.sourceId}`);
+  if (item.kind === 'INTERVIEWER_ASKED') candidates.push(`interviewer:${item.sourceId}`);
+  if (item.kind === 'TEST_COMPLETED') candidates.push(`test:${item.sourceId}`);
+  candidates.push(item.sourceId);
+  return candidates.find(candidate => evidenceIdSet.value.has(candidate)) ?? null;
+}
+function openTimelineNode(item: api.TimelineEntry) {
+  const evidenceId = resolveTimelineEvidence(item);
+  if (evidenceId) selected.value = evidenceId;
+  if (item.kind === 'WORKSPACE_CHANGED' && item.sourceId) selectedHistoryChange.value = item.sourceId;
+}
+function timelineTone(kind: string): 'accent' | 'warning' | undefined {
+  if (kind === 'CHALLENGE_ENTERED' || kind === 'EXERCISE_FROZEN') return 'warning';
+  if (kind === 'WORKSPACE_CHANGED' || kind === 'TEST_COMPLETED') return 'accent';
+  return undefined;
+}
+function formatTime(timestamp: string): string {
+  const parsed = new Date(timestamp);
+  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString() : timestamp;
+}
 </script>
 <template>
   <StatePanel
@@ -230,6 +279,107 @@ const verification: Record<string, string> = { PASSED: '最终验收通过', FAI
       >
         核对原请求
       </Button>
+      <section
+        v-if="report.data.value.contextTrace"
+        class="context-trace"
+        aria-label="上下文工程与协作轨迹"
+      >
+        <div class="section-head">
+          <h3>上下文工程与协作轨迹</h3>
+          <p class="section-note">
+            客观记录本场演练的引用、Skill、方向调整、旁支与面试官交互统计，仅用于复盘，不作机械扣分。
+          </p>
+        </div>
+        <dl class="trace-grid">
+          <div
+            v-for="metric in traceMetrics"
+            :key="metric.label"
+            class="trace-metric"
+          >
+            <dt>{{ metric.label }}</dt>
+            <dd>{{ metric.value }}</dd>
+          </div>
+        </dl>
+        <div
+          v-if="report.data.value.contextTrace.hintsUsed?.length"
+          class="trace-hints"
+        >
+          <span class="trace-hints-label">分主题提示最高等级</span>
+          <div class="trace-hint-badges">
+            <span
+              v-for="hint in report.data.value.contextTrace.hintsUsed"
+              :key="hint.topic"
+              class="ui-pill"
+              data-tone="warning"
+            >
+              {{ hint.topic }} · L{{ hint.maxLevel }}
+            </span>
+          </div>
+        </div>
+      </section>
+      <section
+        v-if="timelineItems.length"
+        class="session-timeline"
+        aria-label="演练时间轴回放"
+      >
+        <div class="section-head">
+          <h3>演练时间轴回放</h3>
+          <p class="section-note">
+            按时间顺序还原关键协作、变更与验证里程碑（共 {{ timelineItems.length }} 项）。
+          </p>
+        </div>
+        <ol class="timeline-list">
+          <li
+            v-for="(item, index) in timelineItems"
+            :key="`${item.timestamp}-${item.kind}-${item.sourceId ?? index}`"
+            class="timeline-node"
+          >
+            <div class="timeline-meta">
+              <span
+                class="ui-badge"
+                :data-tone="timelineTone(item.kind)"
+              >
+                {{ timelineKindLabels[item.kind] ?? item.kind }}
+              </span>
+              <span
+                v-if="item.revision !== null && item.revision !== undefined"
+                class="timeline-rev"
+              >
+                r{{ item.revision }}
+              </span>
+              <time
+                :datetime="item.timestamp"
+                class="timeline-time"
+              >
+                {{ formatTime(item.timestamp) }}
+              </time>
+            </div>
+            <div class="timeline-body">
+              <p class="timeline-title">
+                {{ item.title }}
+              </p>
+              <p
+                v-if="item.detail"
+                class="timeline-detail"
+              >
+                {{ item.detail }}
+              </p>
+            </div>
+            <div
+              v-if="resolveTimelineEvidence(item) || (item.kind === 'WORKSPACE_CHANGED' && item.sourceId && exercise.data.value)"
+              class="timeline-actions"
+            >
+              <Button
+                variant="ghost"
+                size="small"
+                @click="openTimelineNode(item)"
+              >
+                {{ resolveTimelineEvidence(item) ? '查看关联证据' : '查看变更 Diff' }}
+              </Button>
+            </div>
+          </li>
+        </ol>
+      </section>
       <details
         v-if="exercise.data.value"
         :open="!!historyChange"
@@ -565,7 +715,7 @@ textarea:focus-visible {
   color: var(--oc-fg-muted);
 }
 
-ul {
+.report-evidence ul {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -573,7 +723,7 @@ ul {
   gap: 10px;
 }
 
-li {
+.report-evidence li {
   padding: 12px;
   border-radius: 10px;
   background: var(--oc-surface-2);
@@ -582,7 +732,7 @@ li {
   gap: 6px;
 }
 
-li p {
+.report-evidence li p {
   margin: 0;
   font-size: 12.5px;
   color: var(--oc-fg-muted);
@@ -638,6 +788,162 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.context-trace,
+.session-timeline {
+  margin: 0;
+  padding: 20px 24px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--oc-hairline-top), var(--oc-shadow-xs);
+  display: grid;
+  gap: 14px;
+}
+
+.section-head {
+  display: grid;
+  gap: 4px;
+}
+
+.section-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.section-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--oc-fg-muted);
+}
+
+.trace-grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.trace-metric {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  display: grid;
+  gap: 4px;
+}
+
+.trace-metric dt {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.trace-metric dd {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  font-family: var(--oc-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--oc-fg);
+}
+
+.trace-hints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.trace-hints-label {
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.trace-hint-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 18px;
+  border-left: 2px solid var(--oc-border-strong);
+  display: grid;
+  gap: 12px;
+}
+
+.timeline-node {
+  position: relative;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border);
+  display: grid;
+  gap: 6px;
+}
+
+.timeline-node::before {
+  content: '';
+  position: absolute;
+  left: -24px;
+  top: 16px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--oc-accent);
+  border: 2px solid var(--oc-surface);
+}
+
+.timeline-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.timeline-rev {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--oc-bg-input);
+  border: 1px solid var(--oc-border);
+  font-family: var(--oc-font-mono);
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+
+.timeline-time {
+  margin-left: auto;
+  font-family: var(--oc-font-mono);
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+
+.timeline-body {
+  display: grid;
+  gap: 3px;
+}
+
+.timeline-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--oc-fg);
+}
+
+.timeline-detail {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.timeline-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
 @media (max-width: 900px) {
   .report-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -658,14 +964,17 @@ h3 {
     border-right: 0;
     border-bottom: 1px solid var(--oc-border);
   }
-  .dimensions {
+  .dimensions,
+  .trace-grid {
     grid-template-columns: 1fr;
   }
   .review-form,
   .conclusion,
   .retry-area,
   .report-heading,
-  .report-evidence {
+  .report-evidence,
+  .context-trace,
+  .session-timeline {
     padding: 16px;
   }
 }

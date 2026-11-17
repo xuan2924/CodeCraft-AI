@@ -45,3 +45,44 @@ it('shows access failure rather than stale private report content', async () => 
   vi.mocked(api.read).mockRejectedValue(new ApiError(403, 'RESOURCE_NOT_FOUND'));
   const wrapper = render(); await flushPromises(); expect(wrapper.text()).toContain('无法读取报告'); expect(wrapper.find('textarea').exists()).toBe(false); wrapper.unmount();
 });
+it('renders contextTrace with valid zeros, hintsUsed badges, and chronological timeline with evidence link', async () => {
+  vi.mocked(api.read).mockResolvedValue({
+    ...waiting,
+    reportId: 'report',
+    generation: 1,
+    state: 'SUCCEEDED',
+    evidence: [
+      { id: 'change:chg-1', kind: 'CHANGE', source: 'chg-1', summary: '代码变更 0 → 1', truncated: false },
+    ],
+    contextTrace: {
+      referenceCount: 2,
+      skillLoadCount: 1,
+      steerCount: 0,
+      btwTaskCount: 1,
+      interviewerClarifyCount: 3,
+      interviewerDefenseCount: 1,
+      hintsUsed: [{ topic: 'discount-rounding', maxLevel: 2 }],
+    },
+    timeline: [
+      { timestamp: '2026-11-17T03:05:00Z', kind: 'WORKSPACE_CHANGED', title: '应用 Copilot 修改提案 (r0 → r1)', detail: 'COPILOT_PATCH · 2 files', revision: '1', sourceId: 'chg-1' },
+      { timestamp: '2026-11-17T03:01:00Z', kind: 'INTERVIEWER_ASKED', title: '向面试官澄清需求', detail: 'CLARIFY', revision: '0', sourceId: 'ask-1' },
+    ],
+  });
+  vi.mocked(api.detail).mockResolvedValue({ id: 'change:chg-1', kind: 'CHANGE', source: 'chg-1', summary: '代码变更 0 → 1', truncated: false, content: '{"diff":"ok"}' });
+  const wrapper = render(); await flushPromises();
+
+  const trace = wrapper.get('[aria-label="上下文工程与协作轨迹"]');
+  expect(trace.text()).toContain('@引用次数');
+  expect(trace.text()).toContain('0');
+  expect(trace.text()).toContain('discount-rounding · L2');
+
+  const timeline = wrapper.get('[aria-label="演练时间轴回放"]');
+  const titles = timeline.findAll('.timeline-title').map(node => node.text());
+  expect(titles).toEqual(['向面试官澄清需求', '应用 Copilot 修改提案 (r0 → r1)']);
+  expect(timeline.text()).toContain('r1');
+
+  await timeline.findAll('button').find(button => button.text() === '查看关联证据')!.trigger('click');
+  await flushPromises();
+  expect(api.detail).toHaveBeenCalledWith('owner', 'exercise', 1, 'change:chg-1', expect.any(AbortSignal));
+  wrapper.unmount();
+});

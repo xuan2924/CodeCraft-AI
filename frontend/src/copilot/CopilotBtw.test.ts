@@ -45,7 +45,7 @@ it('shows incomplete streaming output and stops only the side task, never treati
   vi.mocked(api.messages).mockResolvedValue({ messages: [], nextCursor: null }); vi.mocked(api.stop).mockResolvedValue({ ...task, state: 'STOPPING', stopRequested: true });
   const view = panel(); await flushPromises(); await flushPromises();
   expect(view.get('[aria-label="旁支未确认流式回复"]').text()).toContain('Incomplete side'); expect(view.text()).not.toContain('选择此回复并预览带回');
-  expect(api.watchTask).toHaveBeenCalledWith(exercise, task.id, expect.any(Function), expect.any(Function), expect.any(AbortSignal));
+  expect(api.watchTask).toHaveBeenCalledWith(exercise, task.id, expect.any(Function), expect.any(Function), expect.any(AbortSignal), expect.any(Function));
   await button(view, '仅停止旁支').trigger('click'); await flushPromises(); expect(vi.mocked(api.stop).mock.calls[0]!.slice(0, 3)).toEqual(['owner', exercise, task.id]); expect(btw.start).not.toHaveBeenCalled();
 });
 it('ignores a late old-conversation receipt instead of clearing the new side draft', async () => {

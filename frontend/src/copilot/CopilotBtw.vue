@@ -6,8 +6,10 @@ import { commandPolicy, errorMessage } from './errors';
 import * as api from './api';
 import * as btwApi from './btwApi';
 import CopilotMessageBody from './CopilotMessageBody.vue';
+import CopilotToolResult from './CopilotToolResult.vue';
 import CopilotWebResult from './CopilotWebResult.vue';
 import CopilotUsage from './CopilotUsage.vue';
+import { isStructuredToolReceipt } from './toolPresentation';
 const props = defineProps<{ owner: string; exerciseId: string; parentConversationId: string; credential: string; disabled: boolean; mainRunning: boolean; handoffDisabled?: boolean }>();
 const emit = defineEmits<{ unauthorized: []; bringback: [text: string] }>();
 const client = useQueryClient();
@@ -22,9 +24,11 @@ const latest = useQuery({ queryKey: taskKey, enabled: computed(() => !!conversat
 const history = useQuery({ queryKey: computed(() => ['copilot', props.owner, props.exerciseId, 'messages', conversation.value, after.value]), enabled: computed(() => !!conversation.value),
   queryFn: ({ signal }) => conversation.value ? api.messages(props.owner, props.exerciseId, after.value, signal, conversation.value) : Promise.resolve({ messages: [], nextCursor: null }), retry: false, gcTime: 0 });
 const task = computed(() => latest.data.value?.task); const running = computed(() => api.active(task.value));
-watch(scope, () => { text.value = ''; fee.value = false; validation.value = ''; handoff.value = ''; sourceMessage.value = ''; after.value = '-1'; }, { flush: 'sync' });
+const transientPreview = ref<api.PreviewEvent | null>(null);
+const preview = computed(() => api.resolveDisplayPreview(transientPreview.value, latest.data.value, running.value));
+watch(scope, () => { text.value = ''; fee.value = false; validation.value = ''; handoff.value = ''; sourceMessage.value = ''; after.value = '-1'; transientPreview.value = null; }, { flush: 'sync' });
 watch([side.error, latest.error, history.error], errors => { if (errors.some(commandPolicy.identityFailure)) emit('unauthorized'); });
-watch(() => latest.data.value?.lastSequence, () => { if (conversation.value) void history.refetch(); });
+watch(() => latest.data.value?.lastSequence, () => { transientPreview.value = null; if (conversation.value) void history.refetch(); });
 const send = useCommand<api.Task>(() => scope.value, () => { text.value = ''; fee.value = false; void side.refetch(); if (conversation.value) { void latest.refetch(); void history.refetch(); } }, commandPolicy, () => emit('unauthorized'));
 const stop = useCommand<api.Task>(() => `${scope.value}/${task.value?.id}`, () => { void latest.refetch(); }, commandPolicy, () => emit('unauthorized'));
 const busy = computed(() => send.pending.value || send.uncertain.value);
@@ -42,20 +46,24 @@ function stopSide() {
   void stop.submit((key, signal) => api.stop(owner, exerciseId, id, key, signal));
 }
 watch([() => props.owner, () => props.exerciseId, conversation, () => task.value?.id, running], ([owner, exercise, sideId, id, active], _old, cleanup) => {
+  transientPreview.value = null;
   if (!sideId || !id || !active) return;
   const controller = new globalThis.AbortController();
   let close = () => {}; let disposed = false; let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
-  function refresh() { if (!disposed) void client.invalidateQueries({ queryKey: ['copilot', owner, exercise, 'task', sideId] }); }
+  function refresh() { if (!disposed) { transientPreview.value = null; void client.invalidateQueries({ queryKey: ['copilot', owner, exercise, 'task', sideId] }); } }
   function connect() {
     if (disposed) return;
     close(); close = api.watchTask(exercise, id!, refresh, () => {
       if (disposed) return;
       refresh(); close();
       if (timer === undefined) timer = globalThis.setTimeout(() => { timer = undefined; connect(); }, 2000);
-    }, controller.signal);
+    }, controller.signal, (incoming) => {
+      if (disposed) return;
+      transientPreview.value = api.nextTransientPreview(transientPreview.value, incoming, id, running.value);
+    });
   }
   connect();
-  cleanup(() => { disposed = true; controller.abort(); close(); if (timer !== undefined) globalThis.clearTimeout(timer); });
+  cleanup(() => { disposed = true; transientPreview.value = null; controller.abort(); close(); if (timer !== undefined) globalThis.clearTimeout(timer); });
 });
 function choose(message: api.Message) {
   let excerpt = ''; let bytes = 0; const encoder = new globalThis.TextEncoder();
@@ -103,6 +111,10 @@ const canBringback = computed(() => !props.disabled && !props.handoffDisabled &&
         :text="message.text"
         :scope="`${scope}/${message.id}`"
       />
+      <CopilotToolResult
+        v-else-if="message.kind === 'TOOL' && isStructuredToolReceipt(message.text)"
+        :text="message.text"
+      />
       <CopilotMessageBody
         v-else
         :text="message.text"
@@ -118,15 +130,15 @@ const canBringback = computed(() => !props.disabled && !props.handoffDisabled &&
       </button>
     </article>
     <aside
-      v-if="latest.data.value?.partial.text || latest.data.value?.partial.thinking"
+      v-if="preview"
       aria-label="旁支未确认流式回复"
     >
       <CopilotMessageBody
-        :text="latest.data.value.partial.text"
-        :thinking="latest.data.value.partial.thinking"
+        :text="preview.text"
+        :thinking="preview.thinking"
       />
       <p>未确认的部分输出，不代表成功，不可直接作为完整结论带回；已发请求仍可能收费。</p>
-      <p v-if="latest.data.value.partial.truncated || latest.data.value.partial.thinkingTruncated">
+      <p v-if="preview.truncated || preview.thinkingTruncated">
         展示预览已截断，确认回复见保留消息。
       </p>
     </aside>

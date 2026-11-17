@@ -719,6 +719,7 @@ const labels: Record<string, string> = { PREPARING: '正在准备，结果未确
                       :exercise-id="exercise.exerciseId"
                       :credential="credential"
                       :phase="exercise.state"
+                      :stage="challenge.data.value?.entered ? 'CHALLENGE' : 'BASE'"
                       :disabled="challengeBlocked || !writable || !['READY', 'ACTIVE'].includes(exercise.state) || expired || pending || !!unresolved || ending || endPrompt || logoutBusy"
                       @unauthorized="credential = ''; account.refetch()"
                     />

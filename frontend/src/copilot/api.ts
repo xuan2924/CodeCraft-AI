@@ -4,6 +4,8 @@ import type { ReferenceSelection } from './referenceApi';
 const states = ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND', 'WAITING_CHILD', 'STOPPING', 'STOPPED', 'SUCCEEDED', 'FAILED', 'INTERRUPTED'] as const;
 export interface Task { conversationId?: string; id: string; exerciseId: string; state: typeof states[number]; reason: string | null; stopRequested: boolean; createdAt: string; completedAt: string | null }
 export interface Snapshot { task: Task; lastSequence: string; textHistory: boolean; partial: { turnId: string | null; sequence: string; text: string; truncated: boolean; thinking?: string; thinkingTruncated?: boolean } }
+export interface PreviewEvent { taskId: string; turnId: string; previewEpoch: string; previewSequence: string; text: string; thinking: string; truncated: boolean; thinkingTruncated: boolean }
+export interface DisplayPreview { text: string; thinking: string; truncated: boolean; thinkingTruncated: boolean }
 export interface Message { sequence: string; id: string; taskId: string; kind: 'USER' | 'ASSISTANT' | 'TOOL'; text: string; thinking?: string }
 export interface Messages { messages: Message[]; nextCursor: string | null }
 function invalid(): never { throw new ApiError(502, 'INVALID_RESPONSE'); }
@@ -283,8 +285,78 @@ export async function decide(owner: string, taskId: string, id: string, credenti
   const result = proposal(await post(`/api/copilot-proposals/${path(id)}/decision`, { decision, reason }, signal, key, credential, owner), taskId);
   if (result.id !== id) return invalid(); return result;
 }
-export function watchTask(exercise: string, id: string, receive: (snapshot: Snapshot) => void, failed: () => void, signal: AbortSignal) {
-  return events(`/api/exercises/${path(exercise)}/copilot/tasks/${path(id)}/events`, ['copilot_snapshot'], (_type, data, cursor) => {
+export function parsePreview(value: unknown, taskId: string): PreviewEvent {
+  if (!object(value) || uuid(value.taskId) !== taskId) return invalid();
+  const turnId = uuid(value.turnId);
+  const previewEpoch = uuid(value.previewEpoch);
+  const previewSequence = sequence(value.previewSequence);
+  if (BigInt(previewSequence) < 1n) return invalid();
+  if (typeof value.text !== 'string' || value.text.length > 8192 || typeof value.truncated !== 'boolean'
+    || (value.thinkingTruncated !== undefined && typeof value.thinkingTruncated !== 'boolean')) return invalid();
+  return {
+    taskId,
+    turnId,
+    previewEpoch,
+    previewSequence,
+    text: value.text,
+    thinking: thinkingText(value.thinking, 8192),
+    truncated: value.truncated,
+    thinkingTruncated: value.thinkingTruncated ?? false,
+  };
+}
+export function nextTransientPreview(
+  current: PreviewEvent | null,
+  incoming: PreviewEvent,
+  activeTaskId: string | undefined,
+  activeRunning: boolean,
+): PreviewEvent | null {
+  if (!activeRunning || !activeTaskId || incoming.taskId !== activeTaskId) return current;
+  if (!current || current.taskId !== incoming.taskId || current.turnId !== incoming.turnId || current.previewEpoch !== incoming.previewEpoch) {
+    return incoming;
+  }
+  return BigInt(incoming.previewSequence) > BigInt(current.previewSequence) ? incoming : current;
+}
+export function resolveDisplayPreview(
+  transient: PreviewEvent | null,
+  snapshotData: Snapshot | null | undefined,
+  activeRunning: boolean,
+): DisplayPreview | null {
+  if (activeRunning && transient && transient.taskId === snapshotData?.task.id && (transient.text || transient.thinking)) {
+    return {
+      text: transient.text,
+      thinking: transient.thinking,
+      truncated: transient.truncated,
+      thinkingTruncated: transient.thinkingTruncated,
+    };
+  }
+  if (snapshotData?.partial.text || snapshotData?.partial.thinking) {
+    return {
+      text: snapshotData.partial.text,
+      thinking: snapshotData.partial.thinking ?? '',
+      truncated: snapshotData.partial.truncated,
+      thinkingTruncated: snapshotData.partial.thinkingTruncated ?? false,
+    };
+  }
+  return null;
+}
+export function watchTask(
+  exercise: string,
+  id: string,
+  receive: (snapshot: Snapshot) => void,
+  failed: () => void,
+  signal: AbortSignal,
+  onPreview?: (preview: PreviewEvent) => void,
+) {
+  return events(`/api/exercises/${path(exercise)}/copilot/tasks/${path(id)}/events`, ['copilot_snapshot', 'copilot_preview'], (type, data, cursor) => {
+    if (type === 'copilot_preview') {
+      try {
+        if (data.length > 65536) return;
+        onPreview?.(parsePreview(JSON.parse(data), id));
+      } catch {
+        // Discard malformed transient preview without disrupting authoritative snapshot stream.
+      }
+      return;
+    }
     try {
       if (data.length > 65536 || cursor.length > 512) return failed();
       const value = snapshot(JSON.parse(data), exercise);

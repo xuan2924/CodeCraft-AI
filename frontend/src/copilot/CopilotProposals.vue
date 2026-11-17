@@ -76,7 +76,7 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
       </Button>
     </div>
     <p class="proposals-note">
-      默认先审批再写入；批准不保存或覆盖本地草稿。
+      来自 edit / write / propose_changes 的整批变更均在此核对；默认先审批再写入，批准不保存或覆盖本地草稿。
     </p>
     <p
       v-if="list.isPending.value"

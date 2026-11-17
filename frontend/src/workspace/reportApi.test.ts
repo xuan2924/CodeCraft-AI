@@ -6,6 +6,31 @@ it('keeps revision zero and rejects invalid boundaries', () => {
   expect(parseReport(value).finalRevision).toBe('0');
   for (const invalid of [{ ...value, generation: 1.1 }, { ...value, state: 'invented' }, { ...value, evidence: [{}] }]) expect(() => parseReport(invalid)).toThrow('INVALID_RESPONSE');
 });
+it('parses optional timeline and contextTrace and rejects malformed trace or timeline entries', () => {
+  const withTrace = {
+    ...value,
+    timeline: [
+      { timestamp: '2026-11-17T03:00:00Z', kind: 'WORKSPACE_CHANGED', title: '应用修改 (r0 → r1)', detail: 'COPILOT_PATCH · 2 files', revision: '1', sourceId: 'chg-1' },
+    ],
+    contextTrace: {
+      referenceCount: 2,
+      skillLoadCount: 1,
+      steerCount: 0,
+      btwTaskCount: 1,
+      interviewerClarifyCount: 2,
+      interviewerDefenseCount: 1,
+      hintsUsed: [{ topic: 'discount-rounding', maxLevel: 2 }],
+    },
+  };
+  const parsed = parseReport(withTrace);
+  expect(parsed.timeline).toHaveLength(1);
+  expect(parsed.timeline![0]).toMatchObject({ kind: 'WORKSPACE_CHANGED', revision: '1', sourceId: 'chg-1' });
+  expect(parsed.contextTrace).toMatchObject({ referenceCount: 2, steerCount: 0, hintsUsed: [{ topic: 'discount-rounding', maxLevel: 2 }] });
+
+  expect(() => parseReport({ ...value, timeline: [{ timestamp: 'not-a-date', kind: 'X', title: 't' }] })).toThrow('INVALID_RESPONSE');
+  expect(() => parseReport({ ...value, contextTrace: { ...withTrace.contextTrace, referenceCount: -1 } })).toThrow('INVALID_RESPONSE');
+  expect(() => parseReport({ ...value, contextTrace: { ...withTrace.contextTrace, hintsUsed: [{ topic: 't', maxLevel: 4 }] } })).toThrow('INVALID_RESPONSE');
+});
 it('sends the backend expectedGeneration retry contract with owner, CSRF and original key', async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ code: 'OK', data: { token: 'csrf' } })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ code: 'OK', data: value })));

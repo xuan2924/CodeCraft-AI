@@ -56,7 +56,7 @@ it('renders the real child through the ordinary task UI without recursive delega
   expect(wrapper.findAll('select[id^="approval-mode-"]')).toHaveLength(1);
   expect(wrapper.text()).toContain('父 worker 已释放'); expect(wrapper.text()).toContain('不会立即改变子目标'); expect(wrapper.text()).toContain('Inspect delegated code');
   expect(wrapper.findAllComponents(CopilotProposals).map(component => component.props('taskId'))).toContain(childId);
-  expect(api.watchTask).toHaveBeenCalledWith(exercise, childId, expect.any(Function), expect.any(Function), expect.any(globalThis.AbortSignal));
+  expect(api.watchTask).toHaveBeenCalledWith(exercise, childId, expect.any(Function), expect.any(Function), expect.any(globalThis.AbortSignal), expect.any(Function));
   expect(api.messages).toHaveBeenCalledWith('owner', exercise, '-1', expect.any(globalThis.AbortSignal), conversation);
   await button(wrapper, '停止此子任务并交回结果').trigger('click'); await flushPromises();
   expect(api.stop).toHaveBeenCalledWith('owner', exercise, childId, expect.any(String), expect.any(globalThis.AbortSignal));
@@ -141,4 +141,68 @@ it('renders hostile tool text as plain text, not HTML', async () => {
   vi.mocked(api.messages).mockResolvedValue({ messages: [{ id: task.id, taskId: task.id, sequence: '1', kind: 'TOOL', text: '<script>attack()</script><img src=x onerror=attack()>' }], nextCursor: '1' });
   const wrapper = panel(); await flushPromises();
   expect(wrapper.find('script').exists()).toBe(false); expect(wrapper.find('img').exists()).toBe(false); expect(wrapper.get('pre').text()).toContain('<script>');
+});
+
+it('renders Pi-style assistant tool calls and structured tool receipts clearly', async () => {
+  vi.mocked(api.messages).mockResolvedValue({
+    messages: [
+      { id: '10000000-0000-0000-0000-000000000011', taskId: task.id, sequence: '1', kind: 'ASSISTANT', text: '先定位实现再编辑。\n工具调用：[read [c1], grep [c2], edit [c3]]' },
+      { id: '10000000-0000-0000-0000-000000000012', taskId: task.id, sequence: '2', kind: 'TOOL', text: 'read [c1]\n{"code":"OK","path":"src/Settlement.java","startLine":1,"endLine":40,"totalLines":90,"revision":"2","truncated":true}' },
+    ],
+    nextCursor: '2',
+  });
+  const wrapper = panel(); await flushPromises();
+  const callChips = wrapper.get('[aria-label="发起的工具调用"]');
+  expect(callChips.text()).toContain('read');
+  expect(callChips.text()).toContain('读取文件');
+  expect(callChips.text()).toContain('grep');
+  expect(callChips.text()).toContain('edit');
+
+  const receipt = wrapper.get('[aria-label="工具 read 回执"]');
+  expect(receipt.text()).toContain('src/Settlement.java');
+  expect(receipt.text()).toContain('L1-40 / 90');
+  expect(receipt.text()).toContain('r2');
+  expect(receipt.text()).toContain('已截断');
+});
+
+it('updates transient copilot_preview monotonically by epoch/sequence and clears it on snapshot or reconnect', async () => {
+  const epoch1 = '10000000-0000-0000-0000-0000000000a1';
+  const epoch2 = '10000000-0000-0000-0000-0000000000a2';
+  const turnId = '10000000-0000-0000-0000-0000000000b1';
+  const initialSnapshot: api.Snapshot = { task, lastSequence: '1', textHistory: false, partial: { turnId: null, sequence: '0', text: '', truncated: false } };
+  vi.mocked(api.latest).mockResolvedValue(initialSnapshot);
+  const wrapper = panel(); await flushPromises();
+
+  const onSnapshot = vi.mocked(api.watchTask).mock.calls[0]![2];
+  const onFailed = vi.mocked(api.watchTask).mock.calls[0]![3];
+  const onPreview = vi.mocked(api.watchTask).mock.calls[0]![5]!;
+
+  onPreview({ taskId: task.id, turnId, previewEpoch: epoch1, previewSequence: '2', text: 'First stream v2', thinking: 'Think v2', truncated: false, thinkingTruncated: false });
+  await flushPromises();
+  expect(wrapper.get('[aria-label="未确认回复预览"]').text()).toContain('First stream v2');
+
+  // Out-of-order lower sequence in same epoch must be ignored
+  onPreview({ taskId: task.id, turnId, previewEpoch: epoch1, previewSequence: '1', text: 'Stale v1', thinking: '', truncated: false, thinkingTruncated: false });
+  await flushPromises();
+  expect(wrapper.get('[aria-label="未确认回复预览"]').text()).toContain('First stream v2');
+  expect(wrapper.get('[aria-label="未确认回复预览"]').text()).not.toContain('Stale v1');
+
+  // New epoch resets sequence counter and replaces preview even with sequence "1"
+  onPreview({ taskId: task.id, turnId, previewEpoch: epoch2, previewSequence: '1', text: 'Retry stream', thinking: '', truncated: true, thinkingTruncated: false });
+  await flushPromises();
+  expect(wrapper.get('[aria-label="未确认回复预览"]').text()).toContain('Retry stream');
+  expect(wrapper.get('[aria-label="未确认回复预览"]').text()).toContain('预览已截断');
+
+  // Authoritative snapshot clears transient preview
+  onSnapshot({ ...initialSnapshot, partial: { turnId, sequence: '3', text: 'Snapshot partial', truncated: false } });
+  await flushPromises();
+  expect(wrapper.find('[aria-label="未确认回复预览"]').exists()).toBe(false);
+
+  // Reconnect/error clears transient preview
+  onPreview({ taskId: task.id, turnId, previewEpoch: epoch2, previewSequence: '2', text: 'Before disconnect', thinking: '', truncated: false, thinkingTruncated: false });
+  await flushPromises();
+  expect(wrapper.get('[aria-label="未确认回复预览"]').text()).toContain('Before disconnect');
+  onFailed();
+  await flushPromises();
+  expect(wrapper.find('[aria-label="未确认回复预览"]').exists()).toBe(false);
 });
