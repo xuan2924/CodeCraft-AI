@@ -65,6 +65,7 @@ public class IdentitySecurity {
             .authorizeHttpRequests(routes -> routes
                 .requestMatchers("/api/internal/status", "/api/auth/csrf", "/api/auth/captcha", "/api/auth/login", "/api/auth/logout", "/error").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .requestMatchers("/api/exercises/*/terminal/session", "/api/exercises/*/terminal/sync", "/api/exercises/*/terminal/ws", "/api/exercises/*/terminal/sessions").hasRole("USER")
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().denyAll());
         http.addFilterBefore(new OncePerRequestFilter() {
@@ -73,6 +74,11 @@ public class IdentitySecurity {
                 throws ServletException, IOException {
                 if (!"/api/internal/status".equals(request.getServletPath())) response.setHeader("Cache-Control", "no-store");
                 boolean safe = List.of("GET", "HEAD", "OPTIONS", "TRACE").contains(request.getMethod());
+                if (request.getServletPath().matches("/api/exercises/[^/]+/terminal/ws")
+                    && !settings.publicOrigin().equals(request.getHeader("Origin"))) {
+                    ApiErrorWriter.write(response, json, IdentityErrorCode.CSRF_REJECTED);
+                    return;
+                }
                 if (!safe && !IdentityHttp.trustedSource(request, settings.publicOrigin())) {
                     ApiErrorWriter.write(response, json, IdentityErrorCode.CSRF_REJECTED);
                     return;

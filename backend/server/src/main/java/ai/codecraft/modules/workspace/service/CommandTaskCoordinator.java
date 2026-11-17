@@ -72,7 +72,7 @@ public class CommandTaskCoordinator {
         var task = store.find(original.id());
         if (task.pruned()) return;
         if (task.stopRequested()) { cancel(task); return; }
-        if (claimed) { confirm(task, sandbox.startCommand(task)); return; }
+        if (claimed) { confirm(task, store.terminal(task.id()) ? sandbox.startTerminal(task) : sandbox.startCommand(task)); return; }
         if (!task.dispatched()) return;
         var snapshot = sandbox.command(task);
         if (snapshot == null) {

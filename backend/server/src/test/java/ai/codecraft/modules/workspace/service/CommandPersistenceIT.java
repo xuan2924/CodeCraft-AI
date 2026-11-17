@@ -95,7 +95,7 @@ class CommandPersistenceIT {
         var configuration = new org.apache.ibatis.session.Configuration();
         configuration.setLocalCacheScope(LocalCacheScope.STATEMENT);
         for (Class<?> mapper : List.of(CommandTaskRepository.class, ExerciseRepository.class, WorkspaceWriteRepository.class,
-            TestTaskRepository.class, StorageCapacityRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class, WorkspaceMaintenanceRepository.class)) configuration.addMapper(mapper);
+            TestTaskRepository.class, StorageCapacityRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class, WorkspaceMaintenanceRepository.class, ai.codecraft.modules.workspace.repository.TerminalRepository.class)) configuration.addMapper(mapper);
         var factory = new SqlSessionFactoryBean();
         factory.setDataSource(source); factory.setConfiguration(configuration);
         sql = new SqlSessionTemplate(factory.getObject());
@@ -132,6 +132,30 @@ class CommandPersistenceIT {
             sql.getMapper(TestTaskRepository.class), sql.getMapper(CommandTaskRepository.class), problems, mock(StorageCapacityStore.class), json, clock, data,
             new WorkspaceHistoryLedger(historyRepository, data, clock));
         store = transactional(target, CommandTaskStore.class);
+    }
+
+    @Test void terminalTicketIsConsumedOnceUnderRealTransactionsAndEpochChangesFenceIt() throws Exception {
+        var task=accept("terminal-ticket");
+        var tickets=sql.getMapper(ai.codecraft.modules.workspace.repository.TerminalRepository.class);
+        String token="t".repeat(43);
+        assertThat(tickets.ticket(task.id(),IdentitySecrets.digest(token),clock.now.plusSeconds(30))).isEqualTo(1);
+        var terminal=transactional(new TerminalStore(store,tickets,identity,secrets,sql.getMapper(WorkspaceWriteRepository.class),sql.getMapper(ExerciseRepository.class),clock),TerminalStore.class);
+        assertThat(tickets.ticket(task.id(),IdentitySecrets.digest(token),clock.now)).isEqualTo(1);
+        assertThatThrownBy(()->terminal.consume(SESSION,exercise,token)).hasMessage("TERMINAL_TICKET_INVALID");
+        assertThat(tickets.ticket(task.id(),IdentitySecrets.digest(token),clock.now.plusSeconds(30))).isEqualTo(1);
+        try(var workers=java.util.concurrent.Executors.newFixedThreadPool(2)){
+            var start=new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.Callable<Boolean> consume=()->{start.await();try{terminal.consume(SESSION,exercise,token);return true;}catch(BusinessException rejected){assertThat(rejected.errorCode()).isEqualTo(WorkspaceErrorCode.TERMINAL_TICKET_INVALID);return false;}};
+            var a=workers.submit(consume);var b=workers.submit(consume);start.countDown();
+            assertThat(java.util.List.of(a.get(10,java.util.concurrent.TimeUnit.SECONDS),b.get(10,java.util.concurrent.TimeUnit.SECONDS))).containsExactlyInAnyOrder(true,false);
+        }
+        jdbc.update("UPDATE workspace_control SET gate_epoch=4 WHERE exercise_id=?::uuid",exercise);
+        assertThatThrownBy(()->terminal.authorize(SESSION,exercise,task.id())).isInstanceOfSatisfying(BusinessException.class,error->assertThat(error.errorCode()).isEqualTo(WorkspaceErrorCode.TERMINAL_AUTHORITY_ENDED));
+        assertThat(terminal.history(SESSION,exercise)).hasSize(1);
+        assertThat(terminal.history(SESSION,exercise).getFirst().openedAt()).isEqualTo(clock.now);
+        terminal.close(task.id());
+        assertThat(terminal.history(SESSION,exercise).getFirst().closedAt()).isEqualTo(clock.now);
+        assertThat(tickets.lookup(IdentitySecrets.digest(token),exercise,SESSION,owner)).isNull();
     }
 
     @Test void receiptSurvivesChangedCredentialAndClosedGateWithoutASecondCommand() {

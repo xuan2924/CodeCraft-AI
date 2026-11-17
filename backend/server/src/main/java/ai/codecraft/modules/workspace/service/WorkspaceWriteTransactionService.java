@@ -124,6 +124,7 @@ public class WorkspaceWriteTransactionService {
             return previous;
         }
         writable(exercise, true);
+        if (writes.terminalActive(exerciseId)) throw new BusinessException(WorkspaceErrorCode.TERMINAL_BUSY);
         idle(control);
         if (!control.gateState().equals("OPEN") || control.gateEpoch() == null) throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE);
         // A new request may only pin the current Java baseline. A stale browser

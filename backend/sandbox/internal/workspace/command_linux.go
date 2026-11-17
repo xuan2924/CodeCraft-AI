@@ -40,7 +40,7 @@ func (s *Service) StartCommand(ctx context.Context, request *rpc.StartCommandReq
 	previous, err := s.executor.Query(ctx, request.ExecutionInstanceId)
 	if err == nil {
 		i := previous.Input
-		if i.Purpose != "COMMAND" || i.Command == nil || i.Command.Text != request.Command || i.Command.Directory != request.Directory ||
+		if i.Purpose != "COMMAND" || i.Command == nil || i.Command.Terminal != request.Terminal || i.Command.Text != request.Command || i.Command.Directory != request.Directory ||
 			i.ExerciseID != request.ExerciseId || i.TaskID != request.TaskId || i.WorkspaceID != request.WorkspaceInstanceId ||
 			i.Revision != request.ExpectedRevision || i.GateEpoch != request.GateEpoch || i.NotAfter.UnixMilli() != request.NotAfterUnixMillis {
 			return nil, status.Error(codes.AlreadyExists, "command identity changed")
@@ -76,7 +76,13 @@ func (s *Service) StartCommand(ctx context.Context, request *rpc.StartCommandReq
 		Image: identity.ExecutionImageDigest, PackageSHA256: identity.PackageSha256, Platform: identity.Platform,
 		Target: "bash", Subpath: request.WorkspaceInstanceId + "/command-" + request.ExecutionInstanceId + "/tree",
 		NotAfter: time.UnixMilli(request.NotAfterUnixMillis).UTC(), Limits: policy.Limits,
-		Command: &execution.CommandSpec{Text: request.Command, Directory: request.Directory}}
+		Command: &execution.CommandSpec{Text: request.Command, Directory: request.Directory, Terminal: request.Terminal}}
+	if request.Terminal {
+		if request.Command != execution.TerminalCommand || request.Directory != "." {
+			return nil, status.Error(codes.InvalidArgument, "invalid terminal command")
+		}
+		input.Limits.TimeoutSeconds = 7200 // Idle and original grant deadlines remain independently enforced.
+	}
 	if err = execution.ValidateCommand(input); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid development command")
 	}
@@ -217,6 +223,33 @@ func (s *Service) completeCommand(ctx context.Context, result execution.Result) 
 		return err
 	}
 	defer release()
+	// Deletion fences publication before stopping processes. Its cleanup callback
+	// must still settle the command owner, otherwise deletion would wait forever
+	// on CopyCleanup while instance() correctly refuses the tombstoned workspace.
+	parent, err := s.rawInstance(result.Input.WorkspaceID, false)
+	if err != nil {
+		return err
+	}
+	defer syscall.Close(parent)
+	marker, markerErr := readPath(parent, "deleted")
+	if markerErr == nil {
+		if string(marker) != result.Input.WorkspaceID || !result.Quiescent || result.FinishedAt == nil {
+			return errors.New("invalid deleted command cleanup")
+		}
+		record, fd, err := openCommand(parent, result.Input.WorkspaceID, result.Input.ExecutionID)
+		if err != nil {
+			return err
+		}
+		defer syscall.Close(fd)
+		if !sameCommandInput(record.Input, result.Input) {
+			return errors.New("deleted command identity changed")
+		}
+		record.Synchronization, record.Reason = "REJECTED", "WORKSPACE_DELETED"
+		return saveCommand(fd, record)
+	}
+	if !errors.Is(markerErr, syscall.ENOENT) {
+		return markerErr
+	}
 	_, err = s.synchronizeCommandLocked(ctx, result)
 	if err != nil {
 		return err

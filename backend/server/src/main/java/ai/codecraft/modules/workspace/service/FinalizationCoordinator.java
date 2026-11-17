@@ -20,10 +20,11 @@ public class FinalizationCoordinator {
     private final TestTaskCoordinator tests;
     private final SandboxWorkspaceGateway sandbox;
     private final StorageCapacityService capacity;
+    private final ai.codecraft.modules.workspace.stream.TerminalConnections terminals;
 
     public FinalizationCoordinator(FinalizationStore store, WorkspaceCoordinationStore coordination,
-        WorkspaceWriteCoordinator fences, TestTaskCoordinator tests, SandboxWorkspaceGateway sandbox, StorageCapacityService capacity) {
-        this.store = store; this.coordination = coordination; this.fences = fences; this.tests = tests; this.sandbox = sandbox; this.capacity = capacity;
+        WorkspaceWriteCoordinator fences, TestTaskCoordinator tests, SandboxWorkspaceGateway sandbox, StorageCapacityService capacity, ai.codecraft.modules.workspace.stream.TerminalConnections terminals) {
+        this.store = store; this.coordination = coordination; this.fences = fences; this.tests = tests; this.sandbox = sandbox; this.capacity = capacity; this.terminals = terminals;
     }
 
     @Scheduled(fixedDelay = 1000)
@@ -44,6 +45,7 @@ public class FinalizationCoordinator {
         store.attempted(exerciseId);
         FinalizationEntity value = store.find(exerciseId);
         if (value == null) return;
+        terminals.closeExercise(exerciseId);
         if (value.frozenEpoch() == null) {
             String fence = store.ensureFence(exerciseId);
             fences.drive(fence);

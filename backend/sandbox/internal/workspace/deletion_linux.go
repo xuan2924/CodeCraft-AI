@@ -48,6 +48,9 @@ func (s *Service) DeleteWorkspace(ctx context.Context, request *rpc.QueryWorkspa
 	if err = syscall.Fsync(fd); err != nil {
 		return nil, storageError(err)
 	}
+	if err := s.quiesceTerminals(ctx, request.WorkspaceInstanceId); err != nil {
+		return nil, err
+	}
 	if s.executor != nil {
 		after := ""
 		for {

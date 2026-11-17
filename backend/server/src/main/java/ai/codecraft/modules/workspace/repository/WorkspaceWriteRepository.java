@@ -13,6 +13,8 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface WorkspaceWriteRepository {
+    @Select("SELECT EXISTS (SELECT 1 FROM workspace_command WHERE exercise_id=#{id}::uuid AND terminal AND NOT pruned AND (NOT quiescent OR synchronization='PENDING' OR snapshot->>'cleanup' IS DISTINCT FROM 'SUCCEEDED' OR snapshot->>'copyCleanup' IS DISTINCT FROM 'SUCCEEDED'))")
+    boolean terminalActive(String id);
     String CONTROL = "exercise_id::text, generation, gate_epoch, gate_state, credential_hash, transition_id::text, fence_id::text";
     String TRANSITION = "id::text, exercise_id::text, kind, expected_epoch, phase, target_hash";
     String MUTATION = "operation_id::text, payload, gate_epoch, not_after, dispatched, revision, changed, failure_code";

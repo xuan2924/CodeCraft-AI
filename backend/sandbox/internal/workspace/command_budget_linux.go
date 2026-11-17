@@ -75,38 +75,61 @@ func (s *Service) commandBudget(ctx context.Context, input execution.Input) erro
 	}
 	defer root.Close()
 	var bytes int64
+	budget := int64(maxCommandWorkingBytes)
+	if input.Command != nil && input.Command.Terminal && input.Limits.WorkMiB > 0 {
+		budget = min(budget, input.Limits.WorkMiB*1024*1024)
+	}
 	entries := 0
-	return fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, cause error) error {
-		if cause != nil {
-			if path != "." && os.IsNotExist(cause) {
-				return nil // A live rename/remove is not a zero-byte storage snapshot.
+	scan := func(root *os.Root) error {
+		return fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, cause error) error {
+			if cause != nil {
+				if path != "." && os.IsNotExist(cause) {
+					return nil // A live rename/remove is not a zero-byte storage snapshot.
+				}
+				return cause
 			}
-			return cause
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		entries++
-		if entries > maxCommandWorkingEntries {
-			return execution.ErrCommandOutputLimit
-		}
-		if entry.IsDir() {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			entries++
+			if entries > maxCommandWorkingEntries {
+				return execution.ErrCommandOutputLimit
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			info, err := entry.Info()
+			if os.IsNotExist(err) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if info.Size() < 0 || info.Size() > budget {
+				return execution.ErrCommandOutputLimit
+			}
+			bytes += info.Size()
+			if bytes > budget {
+				return execution.ErrCommandOutputLimit
+			}
 			return nil
-		}
-		info, err := entry.Info()
-		if os.IsNotExist(err) {
-			return nil
-		}
+		})
+	}
+	if err := scan(root); err != nil {
+		return err
+	}
+	if input.Command != nil && input.Command.Terminal {
+		cacheFD, err := directory(parent, "dev-cache", false)
 		if err != nil {
 			return err
 		}
-		if info.Size() < 0 || info.Size() > maxCommandWorkingBytes {
-			return execution.ErrCommandOutputLimit
+		defer syscall.Close(cacheFD)
+		cache, err := os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", cacheFD))
+		if err != nil {
+			return err
 		}
-		bytes += info.Size()
-		if bytes > maxCommandWorkingBytes {
-			return execution.ErrCommandOutputLimit
-		}
-		return nil
-	})
+		defer cache.Close()
+		return scan(cache)
+	}
+	return nil
 }

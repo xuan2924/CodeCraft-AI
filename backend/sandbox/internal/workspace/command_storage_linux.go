@@ -23,12 +23,13 @@ import (
 // Only tree/ is mounted writable. Base files, hashes and synchronization receipts
 // remain outside the command container's filesystem capability.
 type commandRecord struct {
-	Input           execution.Input      `json:"input"`
-	BaseHashes      map[string]string    `json:"baseHashes"`
-	FinalHashes     map[string]string    `json:"finalHashes"`
-	Synchronization string               `json:"synchronization"`
-	Reason          string               `json:"reason,omitempty"`
-	Mutation        *rpc.MutationReceipt `json:"mutation,omitempty"`
+	TerminalSyncRequested bool                 `json:"terminalSyncRequested,omitempty"`
+	Input                 execution.Input      `json:"input"`
+	BaseHashes            map[string]string    `json:"baseHashes"`
+	FinalHashes           map[string]string    `json:"finalHashes"`
+	Synchronization       string               `json:"synchronization"`
+	Reason                string               `json:"reason,omitempty"`
+	Mutation              *rpc.MutationReceipt `json:"mutation,omitempty"`
 }
 
 func (s *Service) prepareCommandLocked(ctx context.Context, input execution.Input) (result error) {
@@ -37,6 +38,28 @@ func (s *Service) prepareCommandLocked(ctx context.Context, input execution.Inpu
 		return err
 	}
 	defer syscall.Close(fd)
+	if input.Command.Terminal {
+		cache, err := directory(fd, "dev-cache", true)
+		if err != nil {
+			return err
+		}
+		for _, name := range []string{"home", "maven", "npm", "go-build", "go-mod"} {
+			child, createErr := directory(cache, name, true)
+			if createErr != nil {
+				syscall.Close(cache)
+				return createErr
+			}
+			syscall.Close(child)
+		}
+		syncErr := syscall.Fsync(cache)
+		syscall.Close(cache)
+		if syncErr != nil {
+			return syncErr
+		}
+		if err := syscall.Fsync(fd); err != nil {
+			return err
+		}
+	}
 	existing, commandFD, err := openCommand(fd, input.WorkspaceID, input.ExecutionID)
 	if err == nil {
 		syscall.Close(commandFD)
@@ -327,12 +350,16 @@ func (s *Service) synchronizeCommandLocked(ctx context.Context, result execution
 		record.Synchronization = "UNCHANGED"
 		return record, saveCommand(fd, record)
 	}
+	if result.Input.Command != nil && result.Input.Command.Terminal && !record.TerminalSyncRequested {
+		record.Synchronization, record.Reason = "CONFLICT", "TERMINAL_DRAFT"
+		return record, saveCommand(fd, record)
+	}
 	batch := &rpc.ApplyBatchRequest{WorkspaceInstanceId: result.Input.WorkspaceID, RequestId: result.Input.ExecutionID, OperationId: result.Input.TaskID,
 		ExpectedRevision: result.Input.Revision, GateEpoch: result.Input.GateEpoch, NotAfterUnixMillis: result.Input.NotAfter.UnixMilli()}
 	for _, change := range changes.Changes {
 		batch.Changes = append(batch.Changes, change.Change)
 	}
-	receipt, err := s.applyBatchLocked(ctx, batch)
+	receipt, err := s.applyBatchLocked(ctx, batch, result.Input.ExecutionID)
 	if err == nil {
 		record.Synchronization, record.Mutation = "SYNCED", receipt
 	} else {

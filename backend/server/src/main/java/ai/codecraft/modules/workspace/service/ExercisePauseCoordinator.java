@@ -16,11 +16,12 @@ public class ExercisePauseCoordinator {
     private final CommandTaskStore commands;
     private final CommandTaskCoordinator commandCoordinator;
     private final FinalizationStore finals;
+    private final ai.codecraft.modules.workspace.stream.TerminalConnections terminals;
 
     public ExercisePauseCoordinator(ExercisePauseStore store, WorkspaceCoordinationStore workspace, WorkspaceWriteCoordinator fences,
-        TestTaskCoordinator tests, CommandTaskStore commands, CommandTaskCoordinator commandCoordinator, FinalizationStore finals) {
+        TestTaskCoordinator tests, CommandTaskStore commands, CommandTaskCoordinator commandCoordinator, FinalizationStore finals, ai.codecraft.modules.workspace.stream.TerminalConnections terminals) {
         this.store = store; this.workspace = workspace; this.fences = fences; this.tests = tests;
-        this.commands = commands; this.commandCoordinator = commandCoordinator; this.finals = finals;
+        this.commands = commands; this.commandCoordinator = commandCoordinator; this.finals = finals; this.terminals = terminals;
     }
 
     @Scheduled(fixedDelay = 1000)
@@ -39,6 +40,7 @@ public class ExercisePauseCoordinator {
         var pause = store.find(id);
         if (exercise == null || pause == null) return;
         if ("PAUSING".equals(exercise.state())) {
+            terminals.closeExercise(id);
             // Expiry wins even when Go is unavailable and the close receipt remains unknown.
             finals.expire(id);
             if (!"PAUSING".equals(workspace.exercise(id).state())) { store.superseded(id); return; }

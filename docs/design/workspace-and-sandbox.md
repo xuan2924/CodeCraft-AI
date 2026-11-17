@@ -42,6 +42,26 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 - Java 在事务内先预留额度，待副作用完成后再以 Go 返回的带 `meterEpoch` 与单调序号快照结算，乱序快照不会错误拉低已占账本。
 - 已结束演练默认保留 30 天，每用户最多保留 20 场历史；删除时先在 Java 撤销访问，再由后台按指数退避重试清理物理目录。
 
+### 5. 个人 Dev 会话与交互 PTY
+
+- **复用执行所有权**：终端是 `workspace_command` 的受信任 terminal 模式，不建立第二套准入、额度或恢复账本。每场演练至多一个活跃 Dev 容器，并占用平台执行槽位；权威测试、旧 commands 返回原有 `*_SLOT_BUSY`，编辑器/提案写入返回 `TERMINAL_BUSY`。调用者须先显式同步或结束终端，再重试，不能静默覆盖。
+- **文件与缓存**：仅挂载独立 `command-*/tree` 到 `/project`，绝不挂载工作区根、commit、base 或收据。额外屏蔽镜像 `/opt/acceptance`。每工作区 `dev-cache` 持久挂载到 `/cache`（Maven/npm/home），继承原 CPU/内存/PID/seccomp/Egress 隔离。缓存计入原 512 MiB 账本，不享配额豁免；树和缓存合计按 `min(WorkMiB,128 MiB)` 及 20,000 条目监控，仍是周期性监测而非文件系统硬配额。
+- **显式提交**：`sync` 先在原 gateEpoch/revision 授权下持久记录提交意图，再停止整个容器；确认所有进程退出后，按普通命令的受保护路径、链接、文件数/大小规则校验并原子提交。提交后结束本会话；新会话从已提交 revision 重建，复用缓存，不复活 shell/后台进程。
+- **默认保留草稿**：Ctrl+D、断网、主动关闭、暂停、交卷及撤权不隐式 sync。有修改则记录 `CONFLICT / TERMINAL_DRAFT`，可通过原 commands changes 接口读取并人工恢复；无修改为 `UNCHANGED`。已明确请求 sync 的会话仍必须在最终发布时再次通过 gate/revision 校验；关门后拒绝旧授权发布。
+- **关门与崩溃**：CloseGate 先持久关闭，再等待终端强杀、进程静默与容器清理证明，才返回成功；重放也重复核查。Freeze 使用同一屏障，DeleteWorkspace 先写墓碑，终端清理回调在墓碑下只能拒绝提交并收敛。15s 内无法确认则返回不可用，不能把失败当完成。Java 暂停/收尾主动关闭对应 WS；身份撤销由持续鉴权及 Go gate 双重收敛。Go 重启不续接旧 PTY，按原登记停止/清理并保留草稿。
+- **真实 PTY**：Docker `Tty + OpenStdin` 提供控制终端，原始字节保留 Ctrl+C/Ctrl+D，resize 使用 Docker resize 触发 SIGWINCH。单次附着；输入/输出片段至多 16 KiB，队列有界，背压终止会话。未附着 30s、输入空闲 5min、总运行 2h 或原授权/演练到期任一先到即终止；heartbeat 不续租写权限或输入空闲期限。
+
+#### HTTP / WebSocket 对接契约（不涉及前端实现）
+
+1. `POST /api/exercises/{id}/terminal/session`，JSON `{ "expectedRevision": "7" }`；携带现有 Cookie、CSRF、`X-Operation-Credential`、`Idempotency-Key`。返回 `commandId / ticket / webSocketPath / protocol / gateEpoch / expiresAt`，票据最多 30s，仅保存散列。
+2. 使用返回路径建 WS，subprotocols 为 `["codecraft.terminal.v1", "ticket.<ticket>"]`。服务端只回显第一个协议；禁止把票据放 URL/query。握手必须有精确匹配 `publicOrigin` 的 Origin，并核验 Cookie 身份、原 session/authVersion、exercise、当前 gateEpoch 后事务性一次消费。
+3. 输入使用 binary 帧；控制帧为 `{"type":"resize","cols":100,"rows":40}`、`{"type":"heartbeat"}`、`{"type":"sync"}`。初始窗口 80×24、TERM 固定 xterm-256color；建议 30s 内发送一次 heartbeat，WS 传输空闲上限 60s。
+4. 输出 binary 是合并 PTY 字节；文本为 `opened`、`error` 或 `exit`。exit 包含字符串 revision、state、synchronization/reason 及 exitCode/hasExitCode；强制停止时可能没有正常 shell 退出码，不将缺失值解释为成功。
+5. 也可 `POST /api/exercises/{id}/terminal/sync`，JSON `{ "commandId": "..." }`，遵循 Cookie/CSRF 与原终端授权。202 表示已请求收敛，不保证当场完成；使用原 `/commands/{commandId}` 查询确认静默、同步及 Java revision 投影完成后再开新会话。已结束的草稿不会由该接口偷偷重新提交。
+6. `GET /api/exercises/{id}/terminal/sessions` 返回最近 100 条归属用户审计摘要（创建、握手、关闭、状态与同步 revision），不返回票据/输入正文；同步同时进入原 BASH 变更历史。
+
+M2-3 扩展点为 Go `ConfigureTerminalEnvironment`：仅允许受信任进程侧 provider 注入 `ANTHROPIC_BASE_URL`、`OPENAI_BASE_URL`、`CODECRAFT_PROXY_TOKEN`，不从浏览器/proto 接收环境覆盖，不进入 Input/恢复标签/应用日志。当前默认不注入任何模型凭据。
+
 ## 关键源码入口
 
 - Java 题包与存储：`ProblemPublicationReader.java`、`WorkspaceWriteService.java`、`WorkspaceAiOperationService.java`、`WorkspaceHistoryService.java`、`StorageCapacityService.java`

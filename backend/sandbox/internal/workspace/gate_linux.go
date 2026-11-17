@@ -40,6 +40,9 @@ func (s *Service) CloseGate(ctx context.Context, request *rpc.CloseGateRequest) 
 			if gate.Epoch-1 != request.ExpectedEpoch {
 				return nil, status.Error(codes.AlreadyExists, "transition payload changed")
 			}
+			if err := s.quiesceTerminals(ctx, request.WorkspaceInstanceId); err != nil {
+				return nil, err
+			}
 			return gate, nil
 		}
 	}
@@ -56,6 +59,9 @@ func (s *Service) CloseGate(ctx context.Context, request *rpc.CloseGateRequest) 
 	gate := &rpc.GateResponse{WorkspaceInstanceId: request.WorkspaceInstanceId, TransitionId: request.TransitionId, Epoch: current + 1, State: "CLOSED"}
 	if err = publishGate(ctx, fd, gate); err != nil {
 		return nil, storageError(err)
+	}
+	if err := s.quiesceTerminals(ctx, request.WorkspaceInstanceId); err != nil {
+		return nil, err
 	}
 	return gate, nil
 }

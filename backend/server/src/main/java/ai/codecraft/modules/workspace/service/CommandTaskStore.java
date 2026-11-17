@@ -60,6 +60,9 @@ public class CommandTaskStore {
         this.commands = commands; this.problems = problems; this.capacity = capacity; this.json = json; this.clock = clock; this.data = data; this.history = history;
     }
 
+    @Transactional(readOnly = true)
+    public boolean terminal(String id) { return commands.terminal(id); }
+
     @Transactional
     public CommandTaskEntity previous(String session, String exercise, String key, CommandStartRequest input) {
         owned(identity.authorizePrivateDelivery(session).userId(), exercise);

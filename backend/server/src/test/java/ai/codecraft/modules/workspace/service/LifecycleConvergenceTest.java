@@ -191,7 +191,7 @@ class LifecycleConvergenceTest {
         }
 
         FinalizationCoordinator coordinator() {
-            return new FinalizationCoordinator(store, coordination, new WorkspaceWriteCoordinator(coordination, sandbox, codec), mock(TestTaskCoordinator.class), sandbox, mock(StorageCapacityService.class));
+            return new FinalizationCoordinator(store, coordination, new WorkspaceWriteCoordinator(coordination, sandbox, codec), mock(TestTaskCoordinator.class), sandbox, mock(StorageCapacityService.class), mock(ai.codecraft.modules.workspace.stream.TerminalConnections.class));
         }
         GateResponse closed() { calls.add("close"); return gate(finalization.id(), 3, "CLOSED"); }
         WorkspaceControlEntity control(long epoch, String gate, String holder, String transition, String fence) {

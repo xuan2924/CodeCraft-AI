@@ -62,6 +62,7 @@ import org.springframework.stereotype.Component;
 public class SandboxWorkspaceGateway {
     private final ManagedChannel channel;
     private final WorkspaceStorageGrpc.WorkspaceStorageBlockingStub stub;
+    private final WorkspaceStorageGrpc.WorkspaceStorageStub streaming;
 
     public SandboxWorkspaceGateway(WorkspaceProperties properties) {
         channel = ManagedChannelBuilder.forAddress(properties.sandboxHost(), properties.sandboxPort()).usePlaintext()
@@ -69,6 +70,7 @@ public class SandboxWorkspaceGateway {
         Metadata metadata = new Metadata();
         metadata.put(Metadata.Key.of("x-codecraft-internal-key", Metadata.ASCII_STRING_MARSHALLER), properties.rpcKey());
         stub = WorkspaceStorageGrpc.newBlockingStub(channel).withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
+        streaming = WorkspaceStorageGrpc.newStub(channel).withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
     }
 
     public StorageMeasurement measureStorage(StorageScope scope) {
@@ -112,12 +114,22 @@ public class SandboxWorkspaceGateway {
         return page;
     }
 
-    public CommandSnapshot startCommand(CommandTaskEntity task) {
-        return client().startCommand(StartCommandRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+    public io.grpc.stub.StreamObserver<ai.codecraft.workspace.v1.TerminalClientFrame> terminal(
+        io.grpc.stub.ClientResponseObserver<ai.codecraft.workspace.v1.TerminalClientFrame, ai.codecraft.workspace.v1.TerminalServerFrame> observer) {
+        return streaming.withDeadlineAfter(2, TimeUnit.HOURS).attachTerminal(observer);
+    }
+
+    public CommandSnapshot startCommand(CommandTaskEntity task) { return startCommand(task, false); }
+    public CommandSnapshot startTerminal(CommandTaskEntity task) { return startCommand(task, true); }
+
+    private CommandSnapshot startCommand(CommandTaskEntity task, boolean terminal) {
+        return client().startCommand(StartCommandRequest.newBuilder().setTerminal(terminal).setExerciseId(task.exerciseId()).setTaskId(task.id())
             .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId())
             .setExpectedRevision(task.revision()).setGateEpoch(task.gateEpoch()).setNotAfterUnixMillis(task.notAfter().toEpochMilli())
             .setHostEpoch(task.hostEpoch()).setCommand(task.commandText()).setDirectory(task.workingDirectory()).build());
     }
+
+    public CommandSnapshot syncTerminal(CommandTaskEntity task) { return client().syncTerminal(commandIdentity(task)); }
 
     public CommandSnapshot command(CommandTaskEntity task) {
         try { return client().queryCommand(commandIdentity(task)); }

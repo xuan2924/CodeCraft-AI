@@ -133,6 +133,10 @@ func (r *Runner) recoverExecution(ctx context.Context, record Result, monitor In
 		}
 		return r.complete(ctx, record, record.State, record.Reason, nil)
 	}
+	if record.Input.Command != nil && record.Input.Command.Terminal {
+		// A process restart never revives a browser's old interactive authority.
+		return r.fenceStart(ctx, record, &tailLog{limit: record.Input.Limits.LogBytes, chunks: record.Logs, dropped: record.DroppedBytes}, nil)
+	}
 	if inspected.State == nil {
 		return record, errors.New("recovery process state unavailable")
 	}

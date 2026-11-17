@@ -51,6 +51,8 @@ const (
 	WorkspaceStorage_ListExecutions_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/ListExecutions"
 	WorkspaceStorage_ReconcileTask_FullMethodName           = "/codecraft.workspace.v1.WorkspaceStorage/ReconcileTask"
 	WorkspaceStorage_WatchTask_FullMethodName               = "/codecraft.workspace.v1.WorkspaceStorage/WatchTask"
+	WorkspaceStorage_AttachTerminal_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/AttachTerminal"
+	WorkspaceStorage_SyncTerminal_FullMethodName            = "/codecraft.workspace.v1.WorkspaceStorage/SyncTerminal"
 )
 
 // WorkspaceStorageClient is the client API for WorkspaceStorage service.
@@ -98,6 +100,10 @@ type WorkspaceStorageClient interface {
 	ListExecutions(ctx context.Context, in *ExecutionInventoryRequest, opts ...grpc.CallOption) (*ExecutionInventory, error)
 	ReconcileTask(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*TestTaskSnapshot, error)
 	WatchTask(ctx context.Context, in *WatchTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TaskEvent], error)
+	// Attach only to an already admitted terminal command. Java owns browser authority.
+	AttachTerminal(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TerminalClientFrame, TerminalServerFrame], error)
+	// Explicit opt-in commit request, fenced by the original gate/revision authority.
+	SyncTerminal(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*CommandSnapshot, error)
 }
 
 type workspaceStorageClient struct {
@@ -437,6 +443,29 @@ func (c *workspaceStorageClient) WatchTask(ctx context.Context, in *WatchTaskReq
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type WorkspaceStorage_WatchTaskClient = grpc.ServerStreamingClient[TaskEvent]
 
+func (c *workspaceStorageClient) AttachTerminal(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TerminalClientFrame, TerminalServerFrame], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &WorkspaceStorage_ServiceDesc.Streams[1], WorkspaceStorage_AttachTerminal_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[TerminalClientFrame, TerminalServerFrame]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type WorkspaceStorage_AttachTerminalClient = grpc.BidiStreamingClient[TerminalClientFrame, TerminalServerFrame]
+
+func (c *workspaceStorageClient) SyncTerminal(ctx context.Context, in *QueryTaskRequest, opts ...grpc.CallOption) (*CommandSnapshot, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CommandSnapshot)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_SyncTerminal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkspaceStorageServer is the server API for WorkspaceStorage service.
 // All implementations must embed UnimplementedWorkspaceStorageServer
 // for forward compatibility.
@@ -482,6 +511,10 @@ type WorkspaceStorageServer interface {
 	ListExecutions(context.Context, *ExecutionInventoryRequest) (*ExecutionInventory, error)
 	ReconcileTask(context.Context, *QueryTaskRequest) (*TestTaskSnapshot, error)
 	WatchTask(*WatchTaskRequest, grpc.ServerStreamingServer[TaskEvent]) error
+	// Attach only to an already admitted terminal command. Java owns browser authority.
+	AttachTerminal(grpc.BidiStreamingServer[TerminalClientFrame, TerminalServerFrame]) error
+	// Explicit opt-in commit request, fenced by the original gate/revision authority.
+	SyncTerminal(context.Context, *QueryTaskRequest) (*CommandSnapshot, error)
 	mustEmbedUnimplementedWorkspaceStorageServer()
 }
 
@@ -587,6 +620,12 @@ func (UnimplementedWorkspaceStorageServer) ReconcileTask(context.Context, *Query
 }
 func (UnimplementedWorkspaceStorageServer) WatchTask(*WatchTaskRequest, grpc.ServerStreamingServer[TaskEvent]) error {
 	return status.Error(codes.Unimplemented, "method WatchTask not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) AttachTerminal(grpc.BidiStreamingServer[TerminalClientFrame, TerminalServerFrame]) error {
+	return status.Error(codes.Unimplemented, "method AttachTerminal not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) SyncTerminal(context.Context, *QueryTaskRequest) (*CommandSnapshot, error) {
+	return nil, status.Error(codes.Unimplemented, "method SyncTerminal not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) mustEmbedUnimplementedWorkspaceStorageServer() {}
 func (UnimplementedWorkspaceStorageServer) testEmbeddedByValue()                          {}
@@ -1178,6 +1217,31 @@ func _WorkspaceStorage_WatchTask_Handler(srv interface{}, stream grpc.ServerStre
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type WorkspaceStorage_WatchTaskServer = grpc.ServerStreamingServer[TaskEvent]
 
+func _WorkspaceStorage_AttachTerminal_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(WorkspaceStorageServer).AttachTerminal(&grpc.GenericServerStream[TerminalClientFrame, TerminalServerFrame]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type WorkspaceStorage_AttachTerminalServer = grpc.BidiStreamingServer[TerminalClientFrame, TerminalServerFrame]
+
+func _WorkspaceStorage_SyncTerminal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).SyncTerminal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_SyncTerminal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).SyncTerminal(ctx, req.(*QueryTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // WorkspaceStorage_ServiceDesc is the grpc.ServiceDesc for WorkspaceStorage service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1309,12 +1373,22 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "ReconcileTask",
 			Handler:    _WorkspaceStorage_ReconcileTask_Handler,
 		},
+		{
+			MethodName: "SyncTerminal",
+			Handler:    _WorkspaceStorage_SyncTerminal_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "WatchTask",
 			Handler:       _WorkspaceStorage_WatchTask_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "AttachTerminal",
+			Handler:       _WorkspaceStorage_AttachTerminal_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "workspace.proto",

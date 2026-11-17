@@ -7,6 +7,9 @@ import (
 	"unicode/utf8"
 )
 
+// TerminalCommand is the fixed development shell; raw input is delivered via PTY.
+const TerminalCommand = "exec /bin/bash --noprofile --norc -i"
+
 // ErrCommandOutputLimit stops a development process whose retained copy exceeds its budget.
 var ErrCommandOutputLimit = errors.New("command output exceeds workspace budget")
 
@@ -24,6 +27,9 @@ func ValidateCommand(input Input) error {
 	}
 	if strings.TrimSpace(command.Text) == "" || len(command.Text) > 4096 || !utf8.ValidString(command.Text) || strings.ContainsRune(command.Text, 0) {
 		return errors.New("invalid command text")
+	}
+	if command.Terminal && (command.Text != TerminalCommand || command.Directory != ".") {
+		return errors.New("terminal command must use the fixed interactive shell")
 	}
 	directory := command.Directory
 	if directory == "" || len(directory) > 1024 || !utf8.ValidString(directory) || strings.ContainsAny(directory, "\\\x00\r\n") || path.IsAbs(directory) || path.Clean(directory) != directory || directory == ".." || strings.HasPrefix(directory, "../") {

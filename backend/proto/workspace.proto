@@ -46,6 +46,10 @@ service WorkspaceStorage {
   rpc ListExecutions(ExecutionInventoryRequest) returns (ExecutionInventory);
   rpc ReconcileTask(QueryTaskRequest) returns (TestTaskSnapshot);
   rpc WatchTask(WatchTaskRequest) returns (stream TaskEvent);
+  // Attach only to an already admitted terminal command. Java owns browser authority.
+  rpc AttachTerminal(stream TerminalClientFrame) returns (stream TerminalServerFrame);
+  // Explicit opt-in commit request, fenced by the original gate/revision authority.
+  rpc SyncTerminal(QueryTaskRequest) returns (CommandSnapshot);
 }
 
 message ProblemIdentity {
@@ -219,6 +223,33 @@ message StartCommandRequest {
   string host_epoch = 8;
   string command = 9;
   string directory = 10;
+  bool terminal = 11;
+}
+
+message TerminalOpen {
+  QueryTaskRequest identity = 1;
+  uint64 gate_epoch = 2;
+  uint32 cols = 3;
+  uint32 rows = 4;
+  string term = 5;
+}
+message TerminalSize { uint32 cols = 1; uint32 rows = 2; }
+message TerminalClientFrame {
+  oneof frame {
+    TerminalOpen open = 1;
+    bytes stdin = 2;
+    TerminalSize resize = 3;
+    bool heartbeat = 4;
+    bool sync = 5;
+  }
+}
+message TerminalServerFrame {
+  oneof frame {
+    bool opened = 1;
+    bytes output = 2;
+    CommandSnapshot exit = 3;
+    string error = 4;
+  }
 }
 message CommandSnapshot {
   TestTaskSnapshot execution = 1;

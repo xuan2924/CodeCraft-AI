@@ -27,7 +27,9 @@ type commandFixture struct {
 	tree    string
 }
 
-func newCommandFixture(t *testing.T) commandFixture {
+func newCommandFixture(t *testing.T) commandFixture { return newCommandFixtureMode(t, false) }
+
+func newCommandFixtureMode(t *testing.T, terminal bool) commandFixture {
 	t.Helper()
 	workspace := "10000000-0000-0000-0000-000000000001"
 	executionID := "10000000-0000-0000-0000-000000000002"
@@ -55,7 +57,10 @@ func newCommandFixture(t *testing.T) commandFixture {
 	}
 	input := execution.Input{Purpose: "COMMAND", ExerciseID: workspace, TaskID: executionID, ExecutionID: executionID, WorkspaceID: workspace,
 		Revision: snapshot.Revision, GateEpoch: opened.Epoch, NotAfter: time.Now().Add(time.Minute),
-		Command: &execution.CommandSpec{Text: "simulated command", Directory: "."}}
+		Command: &execution.CommandSpec{Text: "simulated command", Directory: ".", Terminal: terminal}}
+	if terminal {
+		input.Command.Text = execution.TerminalCommand
+	}
 	release, err := service.enter(ctx)
 	if err != nil {
 		t.Fatal(err)

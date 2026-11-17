@@ -31,7 +31,7 @@ func (s *Service) ApplyBatch(ctx context.Context, request *rpc.ApplyBatchRequest
 	return s.applyBatchLocked(ctx, request)
 }
 
-func (s *Service) applyBatchLocked(ctx context.Context, request *rpc.ApplyBatchRequest) (*rpc.MutationReceipt, error) {
+func (s *Service) applyBatchLocked(ctx context.Context, request *rpc.ApplyBatchRequest, terminalOwner ...string) (*rpc.MutationReceipt, error) {
 	fingerprint, err := mutationFingerprint(request)
 	if err != nil {
 		return nil, err
@@ -56,6 +56,13 @@ func (s *Service) applyBatchLocked(ctx context.Context, request *rpc.ApplyBatchR
 			return nil, storageError(err)
 		}
 		return receipt, nil
+	}
+	publishingExecution := ""
+	if len(terminalOwner) == 1 {
+		publishingExecution = terminalOwner[0]
+	}
+	if s.executor != nil && s.executor.TerminalBusy(ctx, request.WorkspaceInstanceId, publishingExecution) {
+		return nil, status.Error(codes.ResourceExhausted, "terminal owns workspace; sync or close it before writing")
 	}
 	gates, err := gateRecords(fd, request.WorkspaceInstanceId)
 	if err != nil {

@@ -35,26 +35,29 @@ var ErrConflict = errors.New("execution input conflict")
 // Runner exclusively owns one private registry and one Docker namespace. Pending
 // registrations block new work after restart; recovery must not blindly rerun them.
 type Runner struct {
-	docker         *client.Client
-	root           string
-	volume         string
-	inputPrefix    string
-	owner          string
-	epoch          string
-	lock           *os.File
-	mu             sync.Mutex
-	stateMu        sync.Mutex // Orders durable intent and result publication.
-	blocked        bool
-	running        bool
-	active         map[string]Input
-	concurrency    int
-	commandNetwork string
-	coordinator    string
-	proxyURL       string
-	closed         bool
-	done           chan struct{}
-	tasks          map[string]string
-	now            func() time.Time // Authorization only; process timeout timers remain real.
+	docker              *client.Client
+	root                string
+	volume              string
+	inputPrefix         string
+	owner               string
+	epoch               string
+	lock                *os.File
+	mu                  sync.Mutex
+	terminalMu          sync.Mutex
+	terminals           map[string]*Terminal
+	terminalEnvironment func(context.Context, Input) ([]string, error)
+	stateMu             sync.Mutex // Orders durable intent and result publication.
+	blocked             bool
+	running             bool
+	active              map[string]Input
+	concurrency         int
+	commandNetwork      string
+	coordinator         string
+	proxyURL            string
+	closed              bool
+	done                chan struct{}
+	tasks               map[string]string
+	now                 func() time.Time // Authorization only; process timeout timers remain real.
 }
 
 // New acquires process ownership and checks inventory before admitting work.
@@ -368,7 +371,7 @@ func (r *Runner) persistOrdered(result Result) error {
 	if result.Intent != "" {
 		// The first durable intent owns its reason, including authority expiry.
 		result.Reason = map[string]string{"STOPPED": "user_stop", "TIMED_OUT": "platform_deadline"}[result.Intent]
-		if result.Intent == "STOPPED" && intentReason == "command_authority_ended" {
+		if result.Intent == "STOPPED" && (intentReason == "command_authority_ended" || intentReason == "terminal_idle_or_disconnected") {
 			result.Reason = intentReason
 		}
 		if result.FinishedAt == nil {
@@ -440,13 +443,17 @@ func validateInput(input Input) error {
 		return errors.New("invalid task ownership")
 	}
 	limits := input.Limits
+	timeoutLimit := int64(600)
+	if input.Command != nil && input.Command.Terminal {
+		timeoutLimit = 7200
+	}
 	if !uuid.MatchString(input.ExecutionID) || !uuid.MatchString(input.WorkspaceID) || !strings.HasPrefix(input.Image, "sha256:") || !sha256.MatchString(strings.TrimPrefix(input.Image, "sha256:")) || !sha256.MatchString(input.PackageSHA256) || input.Platform != "linux/amd64" || input.NotAfter.IsZero() {
 		return errors.New("invalid fixed execution input")
 	}
 	if input.Command == nil && input.Purpose != "COMMAND" && ((input.Target != "base" && input.Target != "challenge") || input.Subpath != input.WorkspaceID+"/copy-"+input.ExecutionID+"/tree") {
 		return errors.New("input must identify exactly one stable copy")
 	}
-	if limits.CPUs < 1 || limits.CPUs > 16 || limits.MemoryMiB < 64 || limits.MemoryMiB > 8192 || limits.PIDs < 16 || limits.PIDs > 1024 || limits.WorkMiB < 1 || limits.WorkMiB > 1024 || limits.TmpMiB < 1 || limits.TmpMiB > 1024 || limits.ShmMiB < 1 || limits.ShmMiB > 128 || limits.TimeoutSeconds < 1 || limits.TimeoutSeconds > 600 || limits.LogBytes < 1 || limits.LogBytes > 1048576 {
+	if limits.CPUs < 1 || limits.CPUs > 16 || limits.MemoryMiB < 64 || limits.MemoryMiB > 8192 || limits.PIDs < 16 || limits.PIDs > 1024 || limits.WorkMiB < 1 || limits.WorkMiB > 1024 || limits.TmpMiB < 1 || limits.TmpMiB > 1024 || limits.ShmMiB < 1 || limits.ShmMiB > 128 || limits.TimeoutSeconds < 1 || limits.TimeoutSeconds > timeoutLimit || limits.LogBytes < 1 || limits.LogBytes > 1048576 {
 		return errors.New("invalid execution resource limits")
 	}
 	if input.Command != nil || input.Purpose == "COMMAND" {

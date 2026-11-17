@@ -68,7 +68,7 @@ public interface DeletionRepository {
     void clearStreams(String id);
     @Update("UPDATE workspace_test_task SET snapshot = jsonb_set(snapshot, '{logs}', '[]') WHERE exercise_id = #{id}::uuid")
     void eraseTestBodies(String id);
-    @Update("UPDATE workspace_command SET command_text='[removed]',working_directory='.',session_hash=repeat('0',64),snapshot=NULL,pruned=true WHERE exercise_id=#{id}::uuid")
+    @Update("UPDATE workspace_command SET command_text='[removed]',working_directory='.',session_hash=repeat('0',64),snapshot=NULL,pruned=true,terminal_ticket_hash=NULL WHERE exercise_id=#{id}::uuid")
     void eraseCommandBodies(String id);
     @Delete("DELETE FROM workspace_final_task WHERE task_id IN (SELECT id FROM workspace_test_task WHERE exercise_id = #{id}::uuid)")
     void clearFinalTasks(String id);

@@ -140,7 +140,7 @@ class FinalizationStoreTest {
         when(sandbox.freeze("workspace", "final", 3)).thenThrow(Status.UNAVAILABLE.asRuntimeException()).thenReturn(receipt);
         WorkspaceCoordinationStore coordination = new WorkspaceCoordinationStore(fixture.writes, fixture.exercises, fixture.json, mock(WorkspaceHistoryLedger.class));
         WorkspaceWriteCoordinator fences = new WorkspaceWriteCoordinator(coordination, sandbox, mock(WorkspaceBatchCodec.class));
-        FinalizationCoordinator coordinator = new FinalizationCoordinator(fixture.service(), coordination, fences, mock(TestTaskCoordinator.class), sandbox, mock(StorageCapacityService.class));
+        FinalizationCoordinator coordinator = new FinalizationCoordinator(fixture.service(), coordination, fences, mock(TestTaskCoordinator.class), sandbox, mock(StorageCapacityService.class), mock(ai.codecraft.modules.workspace.stream.TerminalConnections.class));
         assertThrows(RuntimeException.class, () -> coordinator.drive("exercise"));
         assertNull(fixture.service().find("exercise").deadlineAt());
         fixture.clock.now = START.plusSeconds(10);

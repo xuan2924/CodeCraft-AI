@@ -35,6 +35,11 @@ func (s *Service) Freeze(ctx context.Context, request *rpc.CloseGateRequest) (*r
 		return nil, status.Error(codes.FailedPrecondition, "closed gate required")
 	}
 	current := gates[len(gates)-1]
+	if current.State == "CLOSED" || current.State == "FROZEN" {
+		if err := s.quiesceTerminals(ctx, request.WorkspaceInstanceId); err != nil {
+			return nil, err
+		}
+	}
 	if current.State == "FROZEN" {
 		if current.TransitionId != request.TransitionId || current.Epoch-1 != request.ExpectedEpoch {
 			return nil, status.Error(codes.AlreadyExists, "freeze identity changed")

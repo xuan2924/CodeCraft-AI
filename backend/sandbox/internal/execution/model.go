@@ -55,6 +55,7 @@ type Input struct {
 // CommandSpec describes an explicitly authorized development command. It is not
 // an authority test target and cannot grant access to a published workspace tree.
 type CommandSpec struct {
+	Terminal  bool   `json:"terminal,omitempty"`
 	Text      string `json:"text"`
 	Directory string `json:"directory"`
 }

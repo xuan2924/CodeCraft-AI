@@ -12,6 +12,8 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface CommandTaskRepository {
+    @Select("SELECT terminal FROM workspace_command WHERE id=#{id}::uuid")
+    boolean terminal(String id);
     String IDENTITY = "id::text, exercise_id::text, user_id::text, workspace_instance_id::text, execution_instance_id::text, session_hash, actor_auth_version, request_key, fingerprint, command_text, working_directory, revision, gate_epoch, not_after, host_epoch, state, dispatched, stop_requested, quiescent, synchronization, ";
     String TAIL = ", state_version, pruning, pruned, created_at, completed_at";
     String COLUMNS = IDENTITY + "snapshot::text" + TAIL;
@@ -47,7 +49,9 @@ public interface CommandTaskRepository {
     void checked(@Param("id") String id, @Param("now") Instant now);
     @Update("""
         UPDATE workspace_command SET state=#{state},quiescent=#{quiescent},synchronization=#{synchronization},snapshot=#{snapshot}::jsonb,
-            state_version=#{version},completed_at=#{completed},last_checked_at=#{now}
+            state_version=#{version},completed_at=#{completed},last_checked_at=#{now},
+            terminal_closed_at=CASE WHEN terminal AND #{quiescent} THEN coalesce(terminal_closed_at,#{now}) ELSE terminal_closed_at END,
+            terminal_ticket_hash=CASE WHEN terminal AND #{quiescent} THEN NULL ELSE terminal_ticket_hash END
         WHERE id=#{id}::uuid AND NOT pruned AND state_version<=#{version}
         """)
     void observed(@Param("id") String id, @Param("state") String state, @Param("quiescent") boolean quiescent,
@@ -65,6 +69,6 @@ public interface CommandTaskRepository {
     List<CommandTaskEntity> pressureCandidates(String exercise);
     @Update("UPDATE workspace_command SET pruning=true,last_checked_at=#{now} WHERE id=#{id}::uuid AND NOT pruned AND quiescent AND synchronization IN ('SYNCED','UNCHANGED')")
     int beginPruning(@Param("id") String id, @Param("now") Instant now);
-    @Update("UPDATE workspace_command SET pruning=false,pruned=true,snapshot=NULL WHERE id=#{id}::uuid AND quiescent AND synchronization IN ('SYNCED','UNCHANGED')")
+    @Update("UPDATE workspace_command SET pruning=false,pruned=true,snapshot=NULL,terminal_ticket_hash=NULL WHERE id=#{id}::uuid AND quiescent AND synchronization IN ('SYNCED','UNCHANGED')")
     void pruned(String id);
 }

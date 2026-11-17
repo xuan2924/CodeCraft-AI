@@ -203,6 +203,12 @@ func (r *Runner) register(ctx context.Context, input Input, prepare func() error
 }
 
 func (r *Runner) finished(ctx context.Context, result Result) {
+	r.terminalMu.Lock()
+	if terminal := r.terminals[result.Input.ExecutionID]; terminal != nil {
+		terminal.finish()
+		delete(r.terminals, result.Input.ExecutionID)
+	}
+	r.terminalMu.Unlock()
 	if result.Quiescent && result.Cleanup == "SUCCEEDED" {
 		if err := r.removeNetwork(ctx, result.Input); err != nil {
 			result.Cleanup = "FAILED"
@@ -253,7 +259,10 @@ func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonito
 		return record, r.persist(record)
 	}
 	networkCall, stopNetwork := context.WithTimeout(ctx, 5*time.Second)
-	networkErr := r.prepareNetwork(networkCall, input)
+	environment, networkErr := r.terminalGrant(networkCall, input)
+	if networkErr == nil {
+		networkErr = r.prepareNetwork(networkCall, input)
+	}
 	stopNetwork()
 	if networkErr != nil {
 		record.State, record.Reason, record.Quiescent, record.Cleanup = "INTERRUPTED", "network_setup_failed", true, "SUCCEEDED"
@@ -262,6 +271,7 @@ func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonito
 		return record, errors.Join(networkErr, r.persist(record))
 	}
 	config, host := r.containerConfig(input)
+	config.Env = append(config.Env, environment...)
 	// An immutable Engine-side owner receipt survives loss of both local files.
 	// It can recover identity for interruption/cleanup, never a passing grade.
 	receipt, receiptErr := json.Marshal(recoveryReceipt{Input: input, StartedAt: record.StartedAt, Version: 1, CounterUncertain: true})
@@ -296,7 +306,7 @@ func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonito
 	}
 	call, cancel = context.WithTimeout(ctx, 5*time.Second)
 	startup := beginExecutionStage(input, "attach_start")
-	attached, err := r.docker.ContainerAttach(call, created.ID, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	attached, err := r.docker.ContainerAttach(call, created.ID, container.AttachOptions{Stream: true, Stdout: true, Stderr: true, Stdin: input.Command != nil && input.Command.Terminal})
 	cancel()
 	if err != nil {
 		startup.end("failed")
@@ -305,8 +315,18 @@ func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonito
 	defer attached.Close()
 	logs := &tailLog{limit: input.Limits.LogBytes}
 	drained := make(chan error, 1)
+	var terminal *Terminal
+	if input.Command != nil && input.Command.Terminal {
+		terminal = r.newTerminal(input, attached.Conn)
+	}
 	go func() {
-		_, err := stdcopy.StdCopy(channelWriter{logs, "stdout"}, channelWriter{logs, "stderr"}, attached.Reader)
+		var err error
+		if terminal != nil {
+			_, err = io.Copy(io.MultiWriter(channelWriter{logs, "stdout"}, terminal), attached.Reader)
+			terminal.finish()
+		} else {
+			_, err = stdcopy.StdCopy(channelWriter{logs, "stdout"}, channelWriter{logs, "stderr"}, attached.Reader)
+		}
 		drained <- err
 	}()
 	// The owner always joins this goroutine, even if the daemon stops responding.
@@ -409,6 +429,14 @@ func (r *Runner) containerConfig(input Input) (*container.Config, *container.Hos
 		host.Mounts[0].Target, host.Mounts[0].ReadOnly = "/project", false
 		cache := fmt.Sprintf("rw,nosuid,nodev,size=%dm,uid=10001,gid=10001", limits.WorkMiB)
 		host.Tmpfs["/cache"] = cache // Project build directories must remain removable (e.g. mvn clean).
+		if input.Command.Terminal {
+			config.Tty, config.OpenStdin, config.AttachStdin = true, true, true
+			config.Env = append(config.Env, "TERM=xterm-256color")
+			delete(host.Tmpfs, "/cache")
+			host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: r.volume, Target: "/cache", VolumeOptions: &mount.VolumeOptions{NoCopy: true, Subpath: r.inputPrefix + input.WorkspaceID + "/dev-cache"}})
+			// The development image must not expose its bundled authority tests.
+			host.Tmpfs["/opt/acceptance"] = "ro,nosuid,nodev,noexec,size=1m"
+		}
 	}
 	return config, host
 }
@@ -429,6 +457,9 @@ func (r *Runner) observe(ctx context.Context, record *Result, logs *tailLog, mon
 		}
 		if intent != "" {
 			return intent, "user_stop"
+		}
+		if record.Input.Command != nil && record.Input.Command.Terminal && r.terminalExpired(record.Input.ExecutionID) {
+			return "STOPPED", "terminal_idle_or_disconnected"
 		}
 		if monitor != nil {
 			if err := monitor(ctx, record.Input); err != nil {
