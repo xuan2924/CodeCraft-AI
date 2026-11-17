@@ -65,6 +65,18 @@ class ModelSdkClientFactoryTest {
         }
     }
 
+    @ParameterizedTest
+    @EnumSource(ModelThinkingMode.class)
+    void anthropicEnablesNativePromptCachingRegardlessOfThinkingMode(ModelThinkingMode mode) {
+        try (var transport = new BoundedModelHttpClientBuilder(8192, 1024)) {
+            var client = factory.create(target(ModelProtocol.ANTHROPIC, ModelProviderPreset.CUSTOM, mode), new ModelInvocationLimitsDTO(2048, null), transport);
+            var parameters = assertInstanceOf(AnthropicChatRequestParameters.class, client.defaultRequestParameters());
+            assertEquals(true, parameters.cacheSystemMessages());
+            assertEquals(true, parameters.cacheTools());
+            assertEquals(true, parameters.cacheAutomatically());
+        }
+    }
+
     @Test
     void knownReasoningReplayGapFailsExplicitlyWithoutProtocolFallback() {
         try (var transport = new BoundedModelHttpClientBuilder(8192, 1024)) {

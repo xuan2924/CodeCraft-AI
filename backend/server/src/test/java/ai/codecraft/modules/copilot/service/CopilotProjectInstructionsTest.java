@@ -56,6 +56,24 @@ class CopilotProjectInstructionsTest {
         var next = instructions.prepare(ticket("new-task"));
         assertThat(previous.sources()).hasSize(1); assertThat(previous.sources().getFirst().content()).isEqualTo("old");
         assertThat(next.revision()).isEqualTo("8"); assertThat(next.sources().getFirst().content()).isEqualTo("new");
+        assertThat(instructions.payloads(previous)).isNotEqualTo(instructions.payloads(next));
+    }
+    @Test void identicalGuidanceAcrossRevisionsProducesCacheStablePayloads() throws Exception {
+        snapshot("7", List.of("AGENTS.md")); file("AGENTS.md", "7", "stable guidance");
+        var previous = instructions.prepare(ticket("task"));
+        snapshot("8", List.of("AGENTS.md")); file("AGENTS.md", "8", "stable guidance");
+        var next = instructions.prepare(ticket("task"));
+
+        assertThat(instructions.payloads(previous)).isEqualTo(instructions.payloads(next));
+        var payload = (UserMessage) ChatMessageDeserializer.messageFromJson(instructions.payloads(next).getFirst());
+        assertThat(payload.singleText()).startsWith("Project instructions from saved workspace snapshot.");
+        var guidance = new ObjectMapper().readTree(payload.singleText().split("\n", 2)[1]);
+        assertThat(guidance.size()).isEqualTo(2);
+        assertThat(guidance.has("sources")).isTrue();
+        assertThat(guidance.path("scopeTruncated").asBoolean()).isFalse();
+        assertThat(instructions.decode(instructions.encode(previous)).revision()).isEqualTo("7");
+        assertThat(instructions.decode(instructions.encode(next)).revision()).isEqualTo("8");
+        assertThat(instructions.encode(previous)).isNotEqualTo(instructions.encode(next));
     }
     @Test void missingOversizedAndReadFailuresAreExplicitWithoutPartialGuidance() throws Exception {
         snapshot("7", List.of("src/AGENTS.md", "src/main/AGENTS.md", "src/main/Main.java"));

@@ -58,6 +58,7 @@ public class ModelSdkClientFactory {
         boolean thinking = model.thinkingMode() == ModelThinkingMode.ON;
         var builder = AnthropicStreamingChatModel.builder().baseUrl(baseUrl).apiKey(target.credential()).modelName(model.modelId())
             .maxTokens(limits.outputTokens()).temperature(model.temperature()).httpClientBuilder(http).returnThinking(true).sendThinking(thinking)
+            .cacheSystemMessages(true).cacheTools(true).cacheAutomatically(true)
             .logRequests(false).logResponses(false).logger(NOPLogger.NOP_LOGGER);
         if (thinking) {
             int budget = limits.thinkingBudgetTokens() != null ? limits.thinkingBudgetTokens() : model.thinkingBudgetTokens() == null ? 1024 : model.thinkingBudgetTokens();
