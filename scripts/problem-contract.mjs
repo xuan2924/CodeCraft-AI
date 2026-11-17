@@ -85,10 +85,20 @@ export async function validatePackage(directory, nested = false) {
     }
     assert.equal(manifest.expectedReference.failures + manifest.expectedReference.errors
         + manifest.expectedReference.skipped, 0);
-    for (const required of ['README.md', 'Dockerfile', 'initial/pom.xml',
-        'initial/src/main/java/interview/CartTotal.java',
-        'reference/src/main/java/interview/CartTotal.java', 'acceptance/CartTotalTest.java']) {
+    for (const required of ['README.md', 'Dockerfile', 'initial/pom.xml']) {
         assert(files.has(required), `Missing ${required}`);
+    }
+    const fileList = [...files];
+    assert(fileList.some((path) => path.startsWith('initial/src/main/java/') && path.endsWith('.java')),
+        'Missing Java sources under initial/src/main/java/');
+    assert(fileList.some((path) => path.startsWith('reference/src/main/java/') && path.endsWith('.java')),
+        'Missing Java sources under reference/src/main/java/');
+    if (manifest.execution?.suite) {
+        const expectedAcceptance = `acceptance/${manifest.execution.suite.split('.').at(-1)}.java`;
+        assert(files.has(expectedAcceptance), `Missing ${expectedAcceptance}`);
+    } else {
+        assert(fileList.some((path) => path.startsWith('acceptance/') && path.endsWith('.java')),
+            'Missing acceptance Java tests');
     }
     return { manifest, packageSha256: hash.digest('hex') };
 }

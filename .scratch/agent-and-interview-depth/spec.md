@@ -88,6 +88,25 @@
   }
   ```
 
+### 4. Copilot 流式实时预览 SSE 契约（Ticket 06）
+- `/api/exercises/{exercise}/copilot/tasks/{task}/events` 新增非持久瞬时事件 `copilot_preview`（**不带 SSE `id:` 字段，绝不推进持久 `cursor` 或浏览器的 `Last-Event-ID`**）：
+  ```json
+  {
+    "taskId": "uuid",
+    "turnId": "uuid",
+    "previewEpoch": "uuid",
+    "previewSequence": "5",
+    "text": "...",
+    "thinking": "...",
+    "truncated": false,
+    "thinkingTruncated": false
+  }
+  ```
+  - `previewEpoch` 为 **UUID 字符串**（同一轮流式调用固定，换 epoch 时重置 `previewSequence` 比对并覆盖）；
+  - `previewSequence` 为 **十进制字符串**（从 `"1"` 起单调递增）；
+  - `text` 与 `thinking` 为**有界全文替换预览（非增量 delta）**。
+- 前端需将 `copilot_preview` 保存在组件瞬态预览状态中（严禁混入权威 `partial.sequence`），仅对当前运行中 `taskId + turnId` 按 `previewEpoch` 变更或同 epoch 下 `BigInt/整数 previewSequence` 单调上升覆盖渲染；重连、切换任务/对话、收到 `copilot_snapshot`（以权威 snapshot 字段覆盖/清空旧 turn 预览）或进入终态时丢弃内存超前预览，保持 REST 与 `copilot_snapshot` 的唯一权威性。
+
 ---
 
 ## 任务与依赖矩阵

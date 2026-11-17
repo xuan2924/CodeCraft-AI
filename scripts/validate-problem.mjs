@@ -131,12 +131,13 @@ ${measure}`);
     assert.equal(probe.exitCode, 0, probe.log);
     assert(!probe.timedOut && probe.log.includes('ISOLATION_OK'));
 
+    const suiteName = manifest.execution?.suite ?? 'interview.CartTotalTest';
     for (const variant of ['initial', 'reference']) {
         const source = resolve(snapshot, variant, 'src');
         const result = await run(variant, `cp -R /input /work/src || exit 90
 ${maven}
 status=$?
-grep '<testsuite ' /work/target/surefire-reports/TEST-interview.CartTotalTest.xml || exit 91
+grep '<testsuite ' /work/target/surefire-reports/TEST-${suiteName}.xml || exit 91
 ${measure}
 exit "$status"`, source);
         assert(!result.timedOut && !result.oomKilled, JSON.stringify(result));

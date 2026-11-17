@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "order-settlement-engine",
+  "version": "1.0.0",
+  "challenge": "challenge",
+  "execution": {
+    "suite": "settlement.OrderSettlementEngineTest",
+    "tests": [
+      "settlesSingleLineWithoutCoupon",
+      "allocatesPercentageAndThresholdWithLargestRemainderAndConservesCents",
+      "appliesPercentageBeforeThresholdAndChecksThresholdOnPostPercentSubtotal",
+      "zeroPriceLineNeverGetsDiscountOrNegativePayable",
+      "handlesLargeAmountsWithoutLongOrDoublePrecisionLoss",
+      "rejectsInvalidOrderInputsAndDetectsTotalOverflow",
+      "replaysIdenticalIdempotentRequestWithoutReexecuting",
+      "rejectsSameIdempotencyKeyWithDifferentParameters",
+      "allowsRetryAfterFailedAttemptWithoutPoisoningIdempotencyKey",
+      "enforcesSingleExecutionUnderConcurrentSameIdempotencyKey"
+    ]
+  },
+  "title": "订单促销分摊与幂等结算引擎",
+  "durationSeconds": 3600,
+  "requirements": "README.md",
+  "initial": "initial",
+  "reference": "reference",
+  "acceptance": "acceptance",
+  "editableRoots": ["src/main/java", "src/test/java"],
+  "symlinks": "forbidden",
+  "targets": ["base"],
+  "expectedInitial": {"tests": 10, "failures": 7, "errors": 0, "skipped": 0},
+  "expectedReference": {"tests": 10, "failures": 0, "errors": 0, "skipped": 0},
+  "runtime": {
+    "platform": "linux/amd64",
+    "cpus": 1,
+    "memoryMiB": 768,
+    "pids": 128,
+    "workMiB": 128,
+    "tmpMiB": 64,
+    "shmMiB": 16,
+    "timeoutSeconds": 60,
+    "logBytes": 1048576,
+    "globalConcurrency": 1
+  }
+}
