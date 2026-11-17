@@ -100,6 +100,27 @@ public class CopilotRunner {
                     if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Copilot worker interrupted");
                     if (store.steerAtBoundary(id, worker)) continue loop;
                     var requests = assistant.toolExecutionRequests();
+                    int exploreEnd = position;
+                    while ("MAIN".equals(current.lane()) && exploreEnd < requests.size() && exploreEnd < position + 3
+                        && tools.explore(requests.get(exploreEnd).name(), requests.get(exploreEnd).arguments())) exploreEnd++;
+                    if (exploreEnd > position + 1) {
+                        var window = requests.subList(position, exploreEnd);
+                        var admitted = capacity.admit(current.sessionHash(), current.exerciseId(), measurement -> store.beginExploreTools(id, worker, batch.id(), window, measurement));
+                        if (admitted.isEmpty()) {
+                            if (store.steerAtBoundary(id, worker)) continue loop;
+                            var stopped = store.current(id, worker);
+                            if (stopped != null && stopped.stopRequested()) store.finish(id, worker, "STOPPED", "USER_STOP");
+                            return;
+                        }
+                        var outcome = tools.executeExplorations(current, worker, admitted);
+                        if (outcome.waiting()) return;
+                        for (var tool : admitted) {
+                            if (!store.completeTool(id, worker, tool, ChatMessageSerializer.messageToJson(ToolExecutionResultMessage.from(
+                                requests.get(tool.position()), outcome.body())), tool.position() + 1 == requests.size())) return;
+                        }
+                        position = exploreEnd - 1;
+                        continue;
+                    }
                     int end = position;
                     while (end < requests.size() && end < position + 4) {
                         var entry = CopilotToolCatalog.find(requests.get(end).name());

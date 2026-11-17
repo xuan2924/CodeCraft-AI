@@ -23,7 +23,6 @@ public class CopilotDelegationLifecycle {
     /** Parent ownership is already locked; normal child recovery converges its proposals/tests/commands. */
     @Transactional(propagation = Propagation.MANDATORY)
     public void stop(String parent) {
-        var pending = delegations.pending(parent);
-        if (pending != null) tasks.stop(pending.childTaskId(), clock.instant());
+        for (var pending : delegations.pendingAll(parent)) tasks.stop(pending.childTaskId(), clock.instant());
     }
 }

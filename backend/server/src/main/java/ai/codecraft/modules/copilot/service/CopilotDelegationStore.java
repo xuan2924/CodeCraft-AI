@@ -2,6 +2,8 @@ package ai.codecraft.modules.copilot.service;
 
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.copilot.model.dto.CopilotDelegationResponse;
+import ai.codecraft.modules.copilot.model.dto.CopilotDelegationInputDTO;
+import java.util.ArrayList;
 import ai.codecraft.modules.copilot.model.dto.CopilotTaskResponse;
 import ai.codecraft.modules.copilot.model.dto.CopilotDelegationResultDTO;
 import ai.codecraft.modules.copilot.model.entity.CopilotDelegationEntity;
@@ -54,23 +56,34 @@ public class CopilotDelegationStore {
     }
 
     @Transactional
-    public void start(String parentId, String worker, String toolId, String goal, String context, StorageMeasurement measurement) {
+    public void startBatch(String parentId, String worker, List<CopilotDelegationInputDTO> inputs, StorageMeasurement measurement) {
+        if (inputs.isEmpty() || inputs.size() > 3 || inputs.stream().anyMatch(input -> !Set.of("EXPLORE", "EXECUTE").contains(input.mode()))
+            || inputs.size() > 1 && inputs.stream().anyMatch(input -> !"EXPLORE".equals(input.mode()))) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
         var parent = execution.current(parentId, worker);
-        var tool = tasks.toolById(toolId);
         if (parent == null || parent.stopRequested() || !"MAIN".equals(parent.lane()) || !"RUNNING".equals(parent.state())
-            || tool == null || !parentId.equals(tool.taskId()) || !"delegate_task".equals(tool.name()) || !"RUNNING".equals(tool.state())
             || !authorized(parent) || ended(parent)) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
-        if (delegations.count(parentId) >= 8) throw new BusinessException(CopilotErrorCode.COPILOT_DELEGATION_LIMIT);
-        if (delegations.pending(parentId) != null || delegations.find(toolId) != null) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
-        String conversation = UUID.randomUUID().toString();
-        String projection = projection(parent, context);
-        operations.reserve(parent.sessionHash(), parent.exerciseId(), conversation, "COPILOT_DELEGATION", measurement, 128 * 1024);
-        conversations.insert(conversation, parent.exerciseId(), "child:" + toolId, clock.instant());
-        var child = starts.acceptDelegated(parent, toolId, conversation, goal, projection, measurement);
-        delegations.insert(new CopilotDelegationEntity(toolId, parent.exerciseId(), parentId, child.id(), conversation, goal,
-            "WAITING", null, null, clock.instant(), null));
-        execution.parkChild(parentId, worker, toolId);
-        operations.settle(parent.exerciseId(), conversation, true);
+        if (delegations.count(parentId) + inputs.size() > 8) throw new BusinessException(CopilotErrorCode.COPILOT_DELEGATION_LIMIT);
+        if (delegations.pending(parentId) != null) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
+        var turn = tasks.latestTurn(parentId);
+        for (int index = 0; index < inputs.size(); index++) {
+            var input = inputs.get(index);
+            var tool = tasks.toolById(input.toolId());
+            if (turn == null || !"TOOLS".equals(turn.state()) || tool == null || !parentId.equals(tool.taskId())
+                || !turn.id().equals(tool.turnId()) || tool.position() != turn.toolPosition() + index || !"delegate_task".equals(tool.name())
+                || !"RUNNING".equals(tool.state()) || delegations.find(tool.id()) != null) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
+        }
+        for (int index = 0; index < inputs.size(); index++) {
+            var input = inputs.get(index);
+            String conversation = UUID.randomUUID().toString();
+            String projection = projection(parent, input.context());
+            operations.reserve(parent.sessionHash(), parent.exerciseId(), conversation, "COPILOT_DELEGATION", measurement, 128 * 1024);
+            conversations.insert(conversation, parent.exerciseId(), "child:" + input.toolId(), clock.instant());
+            var child = starts.acceptDelegated(parent, input.toolId(), conversation, input.goal(), projection, measurement, input.mode());
+            delegations.insert(new CopilotDelegationEntity(input.toolId(), parent.exerciseId(), parentId, child.id(), conversation, input.goal(),
+                "WAITING", null, null, clock.instant(), null, input.mode(), "EXPLORE".equals(input.mode()) ? index + 1 : null));
+            operations.settle(parent.exerciseId(), conversation, true);
+        }
+        execution.parkChildren(parentId, worker, inputs.stream().map(CopilotDelegationInputDTO::toolId).toList());
     }
 
     @Transactional
@@ -83,7 +96,7 @@ public class CopilotDelegationStore {
             var child = children.get(row.childTaskId());
             if (child == null || !owner.userId().equals(child.userId()) || !owner.exerciseId().equals(child.exerciseId())
                 || !owner.exerciseId().equals(row.exerciseId()) || !row.conversationId().equals(child.conversationId())
-                || !"CHILD".equals(child.lane())) throw new BusinessException(CopilotErrorCode.COPILOT_NOT_FOUND);
+                || !("EXPLORE".equals(row.mode()) ? "EXPLORE" : "CHILD").equals(child.lane())) throw new BusinessException(CopilotErrorCode.COPILOT_NOT_FOUND);
             var view = new CopilotTaskResponse(child.id(), child.exerciseId(), child.state(), child.reason(), child.stopRequested(),
                 child.createdAt(), child.completedAt(), child.conversationId());
             return new CopilotDelegationResponse(row.toolId(), row.parentTaskId(), row.conversationId(), row.goal(), row.state(), view,
@@ -98,16 +111,35 @@ public class CopilotDelegationStore {
         if (initial == null) return;
         identity.lockResourceOwner(initial.userId());
         var parent = tasks.find(parentId);
-        var binding = delegations.pending(parentId);
-        if (binding == null || parent.workerId() != null) return;
+        var bindings = delegations.pendingAll(parentId);
+        if (bindings.isEmpty() || parent.workerId() != null) return;
         boolean ended = ended(parent);
         if (!parent.stopRequested() && (ended || !authorized(parent))) {
             tasks.haltIdle(parentId, ended ? "EXERCISE_ENDED" : "AUTHORIZATION_ENDED");
             parent = tasks.find(parentId);
         }
         if (parent.stopRequested()) lifecycle.stop(parentId);
-        var child = tasks.find(binding.childTaskId());
-        if (child == null || !TERMINAL.contains(child.state())) return;
+        var children = new ArrayList<CopilotTaskEntity>();
+        for (var binding : bindings) {
+            var child = tasks.find(binding.childTaskId());
+            if (child == null || !TERMINAL.contains(child.state())) return;
+            children.add(child);
+        }
+        // Resolve the entire window before publishing any tool receipt; all work stays in this owner-locked transaction.
+        var payloads = new ArrayList<String>();
+        for (int index = 0; index < bindings.size(); index++) {
+            String payload = result(parent, bindings.get(index), children.get(index));
+            payloads.add(payload);
+            if (delegations.resolve(bindings.get(index).toolId(), payload, clock.instant()) != 1) throw new IllegalStateException("Delegation receipt was not committed");
+        }
+        for (int index = 0; index < bindings.size(); index++) {
+            var binding = bindings.get(index);
+            execution.resolveWaitingTool(parentId, binding.toolId(), payloads.get(index));
+            delegations.resultMessage(binding.toolId(), tasks.toolById(binding.toolId()).resultMessageId());
+        }
+    }
+
+    private String result(CopilotTaskEntity parent, CopilotDelegationEntity binding, CopilotTaskEntity child) {
         var source = delegations.lastMessage(child.id(), "ASSISTANT");
         String text = "";
         if (source != null) {
@@ -116,12 +148,9 @@ public class CopilotDelegationStore {
         }
         var exercise = workspace.exercise(parent.exerciseId());
         String revision = exercise == null || exercise.revision() == null ? null : exercise.revision().toString();
-        String payload = encode(new CopilotDelegationResultDTO(child.id(), binding.conversationId(), child.state(), child.reason(),
+        return encode(new CopilotDelegationResultDTO(child.id(), binding.conversationId(), child.state(), child.reason(),
             source == null ? null : source.id(), CopilotContextPlanner.prefix(text, 16384), CopilotContextPlanner.bytes(text) > 16384, revision,
             "Last retained assistant text only; not hidden thinking. Failure/stop does not undo committed workspace effects. Inspect child history and current revision before further edits."));
-        if (delegations.resolve(binding.toolId(), payload, clock.instant()) != 1) throw new IllegalStateException("Delegation receipt was not committed");
-        execution.resolveWaitingTool(parentId, binding.toolId(), payload);
-        delegations.resultMessage(binding.toolId(), tasks.toolById(binding.toolId()).resultMessageId());
     }
 
     private String projection(CopilotTaskEntity parent, String context) {

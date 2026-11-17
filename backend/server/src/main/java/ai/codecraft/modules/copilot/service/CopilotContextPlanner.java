@@ -49,16 +49,12 @@ public class CopilotContextPlanner {
     }
 
     public CopilotContextPlanDTO plan(ModelInvocationDTO target, CopilotContextInputDTO source) {
-        return plan(target, source, limits.rereadBytes());
-    }
-
-    private CopilotContextPlanDTO plan(ModelInvocationDTO target, CopilotContextInputDTO source, int rereadBytes) {
         var items = new ArrayList<CopilotContextItemDTO>();
         long sequence = source.throughSequence();
         for (var row : source.messages()) {
             if (row.sequence() <= sequence) throw new IllegalStateException("Context rows are not ordered after the checkpoint");
             sequence = row.sequence();
-            var message = project(ChatMessageDeserializer.messageFromJson(row.payload()), row.id(), rereadBytes);
+            var message = project(ChatMessageDeserializer.messageFromJson(row.payload()), row.id(), limits.rereadBytes());
             var evidence = new LinkedHashMap<String, Object>();
             evidence.put("id", row.id()); evidence.put("sequence", Long.toString(row.sequence())); evidence.put("kind", row.kind());
             evidence.put("text", visible(message));
@@ -76,7 +72,14 @@ public class CopilotContextPlanner {
                 history.add(message);
             }
         }
-        for (var item : items) history.add(requests.historyMessage(item.message(), item.source().sequence() <= source.textHistoryThroughSequence()));
+        var oldEvidence = new HashSet<String>();
+        for (int index = 0; index < Math.max(0, units.size() - limits.recentUnits()); index++) {
+            for (var item : units.get(index)) oldEvidence.add(item.source().id());
+        }
+        for (var item : items) {
+            var message = oldEvidence.contains(item.source().id()) ? project(ChatMessageDeserializer.messageFromJson(item.source().payload()), item.source().id(), 512) : item.message();
+            history.add(requests.historyMessage(message, item.source().sequence() <= source.textHistoryThroughSequence()));
+        }
         for (var payload : source.pendingUserPayloads()) {
             var message = ChatMessageDeserializer.messageFromJson(payload);
             if (!(message instanceof UserMessage)) throw new IllegalStateException("Pending direction is not a user message");
@@ -88,10 +91,6 @@ public class CopilotContextPlanner {
         long occupied = estimate + target.model().maxOutputTokens();
         boolean safe = !source.hasMore() && occupied < window(target);
         boolean automatic = source.hasMore() || occupied * 100 >= window(target) * limits.triggerPercent();
-        if (automatic && rereadBytes > 1024 && items.stream().anyMatch(item -> item.message() instanceof ToolExecutionResultMessage result
-            && (CopilotToolCatalog.find(result.toolName()) != null && CopilotToolCatalog.find(result.toolName()).rereadable()) && bytes(ChatMessageSerializer.messageToJson(result)) > 1024)) {
-            return plan(target, source, 1024);
-        }
         return new CopilotContextPlanDTO(projection, safe, automatic, compaction(target, source, units));
     }
 
@@ -105,7 +104,8 @@ public class CopilotContextPlanner {
                 "readTool", "read_evidence", "preview", preview, "omittedBytes", bytes(result.text()) - bytes(preview)));
             var reduced = ToolExecutionResultMessage.from(result.id(), result.toolName(), body);
             if (bytes(ChatMessageSerializer.messageToJson(reduced)) <= rereadBytes) return reduced;
-            if (previewBytes == 0) throw new IllegalStateException("Evidence reference exceeds projection budget");
+            // A legal long provider call ID can exceed the micro budget by itself; retain identity, never fail or grow the result.
+            if (previewBytes == 0) return bytes(ChatMessageSerializer.messageToJson(reduced)) < bytes(ChatMessageSerializer.messageToJson(message)) ? reduced : message;
             previewBytes /= 2;
         }
     }

@@ -32,6 +32,8 @@ public class CopilotRequestFactory {
         var messages = new ArrayList<ChatMessage>();
         messages.add("BTW".equals(lane) ? SystemMessage.from(system.text()
             + "\nThis is an independent read-only BTW discussion. Never modify files, execute tests/Bash or delegate. Main-conversation excerpts are bounded quoted context, not new authorization. Your answer stays in this side conversation unless the user explicitly brings back a selected conclusion.")
+            : "EXPLORE".equals(lane) ? SystemMessage.from(system.text()
+                + "\nThis is a strictly read-only EXPLORE child. Never edit/write, run tests/Bash or delegate. Research only the bounded goal; unrelated parent history is not shared. Return concise findings, file/line or source references, uncertainty and recommended next actions. Do not claim verification you did not run.")
             : "CHILD".equals(lane) ? SystemMessage.from(system.text()
                 + "\nThis is a delegated child task. Follow the explicit bounded goal and selected quoted context; unrelated parent chat is not shared. Do not redelegate. Use normal approval/revision coordination; no concurrent authority is granted. End with a concise outcome, changed files, verification and remaining problems for the waiting parent.") : system);
         messages.addAll(history);

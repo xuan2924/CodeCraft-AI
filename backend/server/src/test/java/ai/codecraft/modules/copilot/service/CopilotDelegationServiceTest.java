@@ -22,6 +22,8 @@ class CopilotDelegationServiceTest {
         var service = new CopilotDelegationService(store, capacity, json);
         var parent = mock(CopilotTaskEntity.class);
         for (String input : List.of("{", "null", "[]", "{}", "{\"goal\":42}", "{\"goal\":\" \"}",
+            "{\"goal\":\"a\",\"mode\":\"WRITE\"}", "{\"goal\":\"a\",\"mode\":null}", "{\"goal\":\"a\",\"unknown\":true}",
+            "{\"goal\":\"a\",\"mode\":\"EXPLORE\",\"mode\":\"EXECUTE\"}", "{\"goal\":\"a\"}{}",
             json.writeValueAsString(Map.of("goal", "汉".repeat(1366))),
             json.writeValueAsString(Map.of("goal", "bounded", "context", "🧩".repeat(2049))),
             json.writeValueAsString(Map.of("goal", "nul\0goal")))) {
@@ -43,6 +45,12 @@ class CopilotDelegationServiceTest {
             assertThat(CopilotToolPolicy.allows("BTW", tool)).isFalse();
         }
         assertThat(CopilotToolPolicy.allows("BTW", "delegate_task")).isFalse();
+        for (String tool : List.of("edit", "write", "propose_changes", "bash", "run_tests", "delegate_task")) {
+            assertThat(CopilotToolPolicy.allows("EXPLORE", tool)).isFalse();
+        }
+        for (String tool : List.of("read", "grep", "find", "read_source", "read_evidence", "load_skill", "web_search", "web_read", "view_file")) {
+            assertThat(CopilotToolPolicy.allows("EXPLORE", tool)).isTrue();
+        }
         assertThat(CopilotToolPolicy.allows("unknown", "view_file")).isFalse();
     }
 }

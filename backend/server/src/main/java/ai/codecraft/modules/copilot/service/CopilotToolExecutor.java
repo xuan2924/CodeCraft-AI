@@ -13,6 +13,7 @@ import ai.codecraft.modules.copilot.model.entity.CopilotToolEntity;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
+import java.util.List;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -61,6 +62,16 @@ public class CopilotToolExecutor {
         }
         return result.waiting() ? new ToolOutcome.Suspended() : new ToolOutcome.Completed(ToolOutcome.classify(json.readTree(result.body())), result.body());
     }
+    public boolean explore(String name, String arguments) { return delegations.explore(name, arguments); }
+
+    public ToolOutcome executeExplorations(CopilotTaskEntity task, String worker, List<CopilotToolEntity> tools) throws JsonProcessingException {
+        if (!"MAIN".equals(task.lane()) || tools.isEmpty() || tools.size() > 3 || tools.stream().anyMatch(tool -> !explore(tool.name(), tool.arguments()))) {
+            return new ToolOutcome.Completed(ToolOutcome.Code.DENIED, "{\"code\":\"DELEGATION_NOT_ALLOWED\"}");
+        }
+        var result = delegations.executeBatch(task, worker, tools);
+        return result.waiting() ? new ToolOutcome.Suspended() : new ToolOutcome.Completed(ToolOutcome.classify(json.readTree(result.body())), result.body());
+    }
+
     private CopilotToolExecutionDTO executePrepared(CopilotTaskEntity task, String worker, CopilotToolEntity tool) throws JsonProcessingException, InterruptedException {
         if (!CopilotToolPolicy.allows(task.lane(), tool.name())) return new CopilotToolExecutionDTO(false,
             json.writeValueAsString(Map.of("code", "BTW".equals(task.lane()) ? "BTW_READ_ONLY" : "DELEGATION_NOT_ALLOWED",

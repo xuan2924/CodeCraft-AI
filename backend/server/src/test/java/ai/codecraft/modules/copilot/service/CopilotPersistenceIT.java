@@ -1207,10 +1207,10 @@ class CopilotPersistenceIT {
     }
 
     @Test
-    void steerDuringReadPreservesItsResultButNeverStartsTheRemainingTool() throws Exception {
+    void steerDuringReadPreservesItsResultButNeverStartsTheFollowingCommand() throws Exception {
         var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         var first = ToolExecutionRequest.builder().id("started-read").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
-        var second = ToolExecutionRequest.builder().id("unstarted-read").name("view_file").arguments(first.arguments()).build();
+        var second = ToolExecutionRequest.builder().id("unstarted-command").name("bash").arguments("{\"command\":\"pwd\",\"directory\":\".\"}").build();
         var snapshot = files.read(SESSION, exercise, "src/Main.java");
         when(files.read(SESSION, exercise, "src/Main.java")).thenAnswer(call -> {
             steers.accept(SESSION, task.id(), CONTROL, "during-read", new CopilotSteerRequest("Change direction"));
@@ -1223,8 +1223,33 @@ class CopilotPersistenceIT {
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         var results = repository.context(exercise).stream().filter(value -> value.kind().equals("TOOL")).toList();
         assertThat(results).hasSize(2); assertThat(results.getFirst().payload()).contains("started-read", "OK");
-        assertThat(results.getLast().payload()).contains("unstarted-read", "NOT_EXECUTED", "STEER_SUPERSEDED");
+        assertThat(results.getLast().payload()).contains("unstarted-command", "NOT_EXECUTED", "STEER_SUPERSEDED");
         verify(files, times(2)).read(SESSION, exercise, "src/Main.java"); // Includes the fixture snapshot read above.
+    }
+
+    @Test
+    void steerDrainsAnAdmittedReadWindowButDoesNotStartTheFollowingCommand() throws Exception {
+        var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
+        var first = ToolExecutionRequest.builder().id("first-read").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
+        var second = ToolExecutionRequest.builder().id("second-read").name("view_file").arguments(first.arguments()).build();
+        var command = ToolExecutionRequest.builder().id("unstarted-command").name("bash").arguments("{\"command\":\"pwd\",\"directory\":\".\"}").build();
+        var snapshot = files.read(SESSION, exercise, "src/Main.java");
+        when(files.read(SESSION, exercise, "src/Main.java")).thenAnswer(call -> {
+            steers.accept(SESSION, task.id(), CONTROL, "during-window", new CopilotSteerRequest("Change direction"));
+            return snapshot;
+        });
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(first, second, command))).build(), 100),
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Replanned")).build(), 100));
+        runner.run(task.id(), UUID.randomUUID().toString());
+        var results = repository.context(exercise).stream().filter(value -> value.kind().equals("TOOL")).toList();
+        assertThat(results).hasSize(3);
+        assertThat(results.get(0).payload()).contains("first-read", "OK");
+        assertThat(results.get(1).payload()).contains("second-read", "OK");
+        assertThat(results.get(2).payload()).contains("unstarted-command", "NOT_EXECUTED", "STEER_SUPERSEDED");
+        assertThat(commandTools.recent(SESSION, task.id(), 0).commands()).isEmpty();
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(data.quiescent(exercise)).isTrue();
     }
 
     @Test
@@ -1500,7 +1525,7 @@ class CopilotPersistenceIT {
     @Test
     void stoppingDuringOneReadKeepsItsResultPairsTheRemainingCallsAndDoesNotStartAnotherRequest() throws Exception {
         var first = ToolExecutionRequest.builder().id("first").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
-        var second = ToolExecutionRequest.builder().id("second").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
+        var second = ToolExecutionRequest.builder().id("second").name("bash").arguments("{\"command\":\"pwd\",\"directory\":\".\"}").build();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(first, second))).build(), 100));
         var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
         assertThatThrownBy(() -> startTask(SESSION, exercise, CONTROL, "another", "Do not queue", true, measurement)).hasMessage("COPILOT_BUSY");
@@ -1593,6 +1618,129 @@ class CopilotPersistenceIT {
         assertThat(repository.context(exercise)).noneMatch(message -> message.payload().contains("Side question") || message.payload().contains("Side conclusion"));
         assertThat(jdbc.queryForObject("SELECT count(*) FROM workspace_command WHERE exercise_id=?::uuid", Integer.class, exercise)).isZero();
         assertThat(usage.currentInConversation(SESSION, exercise, side.conversationId()).totals()).anyMatch(total -> "2".equals(total.calls()));
+    }
+
+    @Test
+    void exploreWindowStartsThreeReadOnlyChildrenAndPublishesOrderedReceiptsOnlyAfterAllConverge() throws Exception {
+        var parent = beginExplorations(3);
+        var bindings = sql.getMapper(CopilotDelegationRepository.class).pendingAll(parent.id());
+        assertThat(bindings).hasSize(3).extracting(row -> row.exploreSlot()).containsExactly(1, 2, 3);
+        assertThat(repository.find(parent.id()).state()).isEqualTo("WAITING_CHILD");
+        assertThat(repository.activeLane(exercise, "CHILD")).isFalse();
+        String baseline = repository.planningRevision(parent.id());
+        for (var binding : bindings) {
+            var child = repository.find(binding.childTaskId());
+            assertThat(child.lane()).isEqualTo("EXPLORE");
+            assertCode(() -> startTask(SESSION, exercise, CONTROL, "upgrade-" + child.id(), "Escape", true, List.of(), measurement, child.conversationId()), "COPILOT_INVALID_REQUEST");
+        }
+        assertThatThrownBy(() -> jdbc.update("UPDATE copilot_delegation SET explore_slot=1 WHERE tool_id=?::uuid", bindings.get(1).toolId()))
+            .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
+            ChatRequest request = call.getArgument(1);
+            assertThat(request.parameters().toolSpecifications()).extracting(tool -> tool.name())
+                .contains("read", "grep", "web_read", "load_skill").doesNotContain("edit", "write", "propose_changes", "bash", "run_tests", "delegate_task");
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.builder().text("Exploration finding").thinking("private-explore-thinking").build()).build(), 100);
+        });
+        runner.run(bindings.get(2).childTaskId(), UUID.randomUUID().toString());
+        delegations.recover(parent.id());
+        assertThat(repository.find(parent.id()).state()).isEqualTo("WAITING_CHILD");
+        assertThat(repository.context(exercise)).noneMatch(row -> "TOOL".equals(row.kind()));
+        runner.run(bindings.get(0).childTaskId(), UUID.randomUUID().toString());
+        runner.run(bindings.get(1).childTaskId(), UUID.randomUUID().toString());
+        delegations.recover(parent.id()); delegations.recover(parent.id());
+        assertThat(repository.find(parent.id()).state()).isEqualTo("QUEUED");
+        assertThat(repository.planningRevision(parent.id())).isEqualTo(baseline);
+        var receipts = repository.context(exercise).stream().filter(row -> "TOOL".equals(row.kind())).toList();
+        assertThat(receipts).hasSize(3);
+        for (int index = 0; index < receipts.size(); index++) {
+            var result = (ToolExecutionResultMessage) ChatMessageDeserializer.messageFromJson(receipts.get(index).payload());
+            assertThat(result.id()).isEqualTo("explore-" + index);
+            assertThat(result.text()).contains(bindings.get(index).childTaskId(), "Exploration finding").doesNotContain("private-explore-thinking");
+        }
+        assertThat(delegations.list(SESSION, parent.id())).hasSize(3);
+        doAnswer(call -> {
+            ChatRequest request = call.getArgument(1);
+            assertThat(request.messages().stream().filter(ToolExecutionResultMessage.class::isInstance).map(ToolExecutionResultMessage.class::cast))
+                .extracting(result -> result.id()).containsExactly("explore-0", "explore-1", "explore-2");
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Parent synthesized findings")).build(), 100);
+        }).when(driver).call(any(), any(), any(), anyInt(), any());
+        runner.run(parent.id(), UUID.randomUUID().toString());
+        assertThat(repository.find(parent.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(data.quiescent(exercise)).isTrue();
+    }
+
+    @Test
+    void exploreParentStopAndExpiryCascadeToEveryPendingChild() throws Exception {
+        var parent = beginExplorations(3);
+        var bindings = sql.getMapper(CopilotDelegationRepository.class).pendingAll(parent.id());
+        tasks.stop(SESSION, parent.id(), "stop-all-explorers");
+        delegations.recover(parent.id()); execution.recover(parent.id());
+        assertThat(bindings).allSatisfy(binding -> assertThat(repository.find(binding.childTaskId()).state()).isEqualTo("STOPPED"));
+        assertThat(repository.find(parent.id()).state()).isEqualTo("STOPPED");
+        assertThat(data.quiescent(exercise)).isTrue();
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void exploreExpiryStopsAllQueuedChildrenAndSettlesTheParent() throws Exception {
+        var parent = beginExplorations(3);
+        var bindings = sql.getMapper(CopilotDelegationRepository.class).pendingAll(parent.id());
+        clock.now = clock.instant().plusSeconds(1801);
+        delegations.recover(parent.id()); execution.recover(parent.id());
+        assertThat(bindings).allSatisfy(binding -> assertThat(repository.find(binding.childTaskId()).state()).isEqualTo("STOPPED"));
+        assertThat(repository.find(parent.id()).reason()).isEqualTo("EXERCISE_ENDED");
+        assertThat(data.quiescent(exercise)).isTrue();
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void exploreRecoveryDoesNotReplayAnUnknownChildAndWaitsForItsSiblings() throws Exception {
+        var parent = beginExplorations(3);
+        var bindings = sql.getMapper(CopilotDelegationRepository.class).pendingAll(parent.id());
+        String child = bindings.getFirst().childTaskId();
+        String worker = UUID.randomUUID().toString();
+        assertThat(execution.claim(child, worker)).isNotNull();
+        assertThat(execution.beginModel(child, worker, contexts.beforeModel(child, worker), measurement)).isNotNull();
+        clock.now = clock.instant().plusSeconds(130);
+        execution.recover(child);
+        delegations.recover(parent.id());
+        assertThat(repository.find(parent.id()).state()).isEqualTo("WAITING_CHILD");
+        for (var binding : bindings.subList(1, 3)) tasks.stop(SESSION, binding.childTaskId(), "stop-" + binding.childTaskId());
+        delegations.recover(parent.id()); delegations.recover(parent.id());
+        assertThat(repository.find(parent.id()).state()).isEqualTo("QUEUED");
+        assertThat(delegations.list(SESSION, parent.id())).anyMatch(row -> row.resultPayload().contains("MODEL_RESULT_UNKNOWN"));
+        assertThat(repository.context(exercise).stream().filter(row -> "TOOL".equals(row.kind()))).hasSize(3);
+        verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void exploreWindowsRespectThreeConcurrentAndEightTotalIncludingAtomicLimitFailure() throws Exception {
+        var parent = beginExplorations(9);
+        var bindings = sql.getMapper(CopilotDelegationRepository.class);
+        for (int window = 0; window < 2; window++) {
+            var pending = bindings.pendingAll(parent.id());
+            assertThat(pending).hasSize(3);
+            for (var binding : pending) tasks.stop(SESSION, binding.childTaskId(), "stop-" + binding.childTaskId());
+            delegations.recover(parent.id());
+            if (window == 0) runner.run(parent.id(), UUID.randomUUID().toString());
+        }
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Quota reached")).build(), 100));
+        runner.run(parent.id(), UUID.randomUUID().toString());
+        assertThat(bindings.count(parent.id())).isEqualTo(6);
+        assertThat(repository.find(parent.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(repository.context(exercise).stream().filter(row -> "TOOL".equals(row.kind()))).hasSize(9);
+        assertThat(repository.context(exercise)).anyMatch(row -> row.payload().contains("COPILOT_DELEGATION_LIMIT"));
+        assertThat(data.quiescent(exercise)).isTrue();
+    }
+
+    private CopilotTaskResponse beginExplorations(int count) throws Exception {
+        var parent = startTask(SESSION, exercise, CONTROL, "explore-parent", "Parent research goal", true, measurement);
+        var requests = new ArrayList<ToolExecutionRequest>();
+        for (int index = 0; index < count; index++) requests.add(ToolExecutionRequest.builder().id("explore-" + index).name("delegate_task")
+            .arguments("{\"mode\":\"EXPLORE\",\"goal\":\"Explore area " + index + "\",\"context\":\"Selected pointer\"}").build());
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(requests)).build(), 100));
+        runner.run(parent.id(), UUID.randomUUID().toString());
+        return parent;
     }
 
     @Test

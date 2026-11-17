@@ -70,6 +70,17 @@ class CopilotToolExecutorTest {
         verify(preparation, never()).prepare(any(), any(), eq("edit"), any());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"edit", "write", "propose_changes", "run_tests", "bash", "delegate_task"})
+    void exploreLaneCannotReachEffectsOrAcquireAWriteBaseline(String name) throws Exception {
+        var result = (ToolOutcome.Completed) executor.execute(task("EXPLORE"), "worker", tool(name, "{}"));
+        assertThat(result.outcomeCode()).isEqualTo(ToolOutcome.Code.DENIED);
+        verify(tasks, never()).planningRevision(any());
+        verify(preparation, never()).prepare(any(), any(), any(), any());
+        verify(tests, never()).execute(any(), any(), any());
+        verify(commands, never()).execute(any(), any(), any());
+    }
+
     @Test void diagnosticEditFailureCompletesRatherThanCrashesTheTask() throws Exception {
         when(tasks.planningRevision("task")).thenReturn("7");
         when(preparation.prepare(any(), any(), eq("edit"), any())).thenThrow(new CopilotEditException("EDIT_AMBIGUOUS_MATCH", "a", 42));

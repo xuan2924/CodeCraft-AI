@@ -32,6 +32,46 @@ class CopilotContextPlannerTest {
         new CopilotProperties(2, 262144, 1048576, 16, 3, Duration.ofSeconds(130)));
     private final ToolExecutionRequest call = ToolExecutionRequest.builder().id("read-1").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
 
+    @Test void microCompactionFoldsOnlyOldCompleteUnitsBeforeTheAutomaticThreshold() {
+        var recentCall = ToolExecutionRequest.builder().id("recent-read").name("read").arguments("{}").build();
+        var rows = List.of(row(1, UserMessage.from("goal")), row(2, AiMessage.builder().thinking("keep-old-thinking").toolExecutionRequests(List.of(call)).build()),
+            row(3, ToolExecutionResultMessage.from(call, "old-content".repeat(100))),
+            row(4, AiMessage.builder().thinking("keep-recent-thinking").toolExecutionRequests(List.of(recentCall)).build()),
+            row(5, ToolExecutionResultMessage.from(recentCall, "recent-content".repeat(100))));
+        var plan = planner.plan(target(100000, ModelThinkingMode.OFF), input(rows, false));
+        var messages = plan.projection().request().messages();
+        var old = (ToolExecutionResultMessage) messages.get(3);
+        assertThat(CopilotContextPlanner.bytes(ChatMessageSerializer.messageToJson(old))).isLessThanOrEqualTo(512);
+        assertThat(old.text()).contains(rows.get(2).id(), "read_evidence");
+        assertThat(old.id()).isEqualTo(call.id());
+        assertThat((ToolExecutionResultMessage) messages.getLast()).isEqualTo(ToolExecutionResultMessage.from(recentCall, "recent-content".repeat(100)));
+        assertThat(((AiMessage) messages.get(2)).thinking()).isEqualTo("keep-old-thinking");
+        assertThat(((AiMessage) messages.get(4)).thinking()).isEqualTo("keep-recent-thinking");
+        assertThat(rows.get(2).payload()).contains("old-content".repeat(100));
+        assertThat(plan.safe()).isTrue();
+        assertThat(plan.automaticNeeded()).isFalse();
+    }
+
+    @Test void microCompactionPreservesLongProviderCallIdsEvenWhenThePointerExceeds512Bytes() {
+        var longCall = ToolExecutionRequest.builder().id("x".repeat(256)).name("read_source").arguments("{}").build();
+        var rows = List.of(row(1, AiMessage.from(List.of(longCall))), row(2, ToolExecutionResultMessage.from(longCall, "large source".repeat(300))),
+            row(3, AiMessage.from("recent")));
+        var messages = planner.plan(target(100000, ModelThinkingMode.OFF), input(rows, false)).projection().request().messages();
+        var result = (ToolExecutionResultMessage) messages.get(2);
+        assertThat(result.id()).isEqualTo(longCall.id());
+        assertThat(result.text()).contains(rows.get(1).id(), "read_evidence");
+        assertThat(CopilotContextPlanner.bytes(ChatMessageSerializer.messageToJson(result))).isLessThan(1024);
+    }
+
+    @Test void microCompactionDoesNotFoldRecentUnitsOrEffectfulResults() {
+        var write = ToolExecutionRequest.builder().id("write").name("write").arguments("{}").build();
+        var rows = List.of(row(1, AiMessage.from(List.of(write))), row(2, ToolExecutionResultMessage.from(write, "confirmed".repeat(100))),
+            row(3, AiMessage.from(List.of(call))), row(4, ToolExecutionResultMessage.from(call, "recent".repeat(200))));
+        var messages = planner.plan(target(100000, ModelThinkingMode.OFF), input(rows, false)).projection().request().messages();
+        assertThat(((ToolExecutionResultMessage) messages.get(2)).text()).isEqualTo("confirmed".repeat(100));
+        assertThat(((ToolExecutionResultMessage) messages.getLast()).text()).isEqualTo("recent".repeat(200));
+    }
+
     @Test void longWebEvidenceUsesOriginalMessageIdentityForRetainedPaging() {
         var request = ToolExecutionRequest.builder().id("web").name("web_read").arguments("{\"url\":\"https://example.com\"}").build();
         var rows = List.of(row(1, UserMessage.from("read docs")), row(2, AiMessage.from(List.of(request))),

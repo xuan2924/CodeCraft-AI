@@ -2,6 +2,11 @@ package ai.codecraft.modules.copilot.service;
 
 import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.copilot.model.dto.CopilotDelegationResponse;
+import ai.codecraft.modules.copilot.model.dto.CopilotDelegationInputDTO;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import java.util.ArrayList;
+import java.util.Set;
 import ai.codecraft.modules.copilot.model.dto.CopilotToolExecutionDTO;
 import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotToolEntity;
@@ -28,13 +33,24 @@ public class CopilotDelegationService {
     }
 
     public CopilotToolExecutionDTO execute(CopilotTaskEntity parent, String worker, CopilotToolEntity tool) throws JsonProcessingException {
+        return executeBatch(parent, worker, List.of(tool));
+    }
+
+    public boolean explore(String name, String arguments) {
+        if (!"delegate_task".equals(name)) return false;
+        try { return "EXPLORE".equals(parse("", arguments).mode()); }
+        catch (BusinessException | JsonProcessingException invalid) { return false; }
+    }
+
+    public CopilotToolExecutionDTO executeBatch(CopilotTaskEntity parent, String worker, List<CopilotToolEntity> tools) throws JsonProcessingException {
         try {
-            JsonNode input = json.readerFor(JsonNode.class).readValue(tool.arguments());
-            if (input == null || !input.isObject()) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
-            String goal = text(input, "goal", GOAL_BYTES, true);
-            String context = text(input, "context", CONTEXT_BYTES, false);
+            var inputs = new ArrayList<CopilotDelegationInputDTO>();
+            for (var tool : tools) inputs.add(parse(tool.id(), tool.arguments()));
+            if (inputs.isEmpty() || inputs.size() > 3 || inputs.size() > 1 && inputs.stream().anyMatch(input -> !"EXPLORE".equals(input.mode()))) {
+                throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+            }
             capacity.admit(parent.sessionHash(), parent.exerciseId(), measurement -> {
-                store.start(parent.id(), worker, tool.id(), goal, context, measurement);
+                store.startBatch(parent.id(), worker, inputs, measurement);
                 return true;
             });
             return new CopilotToolExecutionDTO(true, null);
@@ -47,6 +63,18 @@ public class CopilotDelegationService {
 
     public void recover(String parent) { store.recover(parent); }
     public List<CopilotDelegationResponse> list(String session, String parent) { return store.list(session, parent); }
+
+    private CopilotDelegationInputDTO parse(String tool, String arguments) throws JsonProcessingException {
+        if (arguments == null || CopilotContextPlanner.bytes(arguments) > MAX_ARGUMENT_BYTES) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+        JsonNode input = json.readerFor(JsonNode.class).with(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+            .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readValue(arguments);
+        if (input == null || !input.isObject()) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+        var fields = input.fieldNames();
+        while (fields.hasNext()) if (!Set.of("goal", "context", "mode").contains(fields.next())) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+        String mode = input.has("mode") ? text(input, "mode", 16, true) : "EXECUTE";
+        if (!Set.of("EXECUTE", "EXPLORE").contains(mode)) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
+        return new CopilotDelegationInputDTO(tool, text(input, "goal", GOAL_BYTES, true), text(input, "context", CONTEXT_BYTES, false), mode);
+    }
 
     private String text(JsonNode input, String field, int limit, boolean required) {
         JsonNode value = input.get(field);

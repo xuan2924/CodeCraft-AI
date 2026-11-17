@@ -8,6 +8,7 @@ import ai.codecraft.modules.copilot.model.dto.CopilotReferencesPreparedDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotDeliveryDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotPartialResponse;
 import java.util.List;
+import java.util.Set;
 import ai.codecraft.modules.copilot.model.entity.CopilotMessageEntity;
 import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
@@ -107,9 +108,10 @@ public class CopilotTaskStore {
     /** Admission is called only inside the owner-locked, authorized original tool transaction. */
     @Transactional(propagation = Propagation.MANDATORY)
     public CopilotTaskResponse acceptDelegated(CopilotTaskEntity parent, String tool, String conversation, String goal,
-        String projection, StorageMeasurement measurement) {
+        String projection, StorageMeasurement measurement, String mode) {
+        if (!List.of("EXECUTE", "EXPLORE").contains(mode)) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST);
         return acceptWithReferences(parent.sessionHash(), parent.exerciseId(), null, "delegation:" + tool, goal, true, List.of(),
-            measurement, conversation, List.of(), new CopilotReferencesPreparedDTO(List.of(), ""), "CHILD", projection);
+            measurement, conversation, List.of(), new CopilotReferencesPreparedDTO(List.of(), ""), "EXPLORE".equals(mode) ? "EXPLORE" : "CHILD", projection);
     }
 
     private CopilotTaskResponse acceptWithReferences(String session, String exercise, String controlHash, String key, String text,
@@ -117,7 +119,7 @@ public class CopilotTaskStore {
         List<CopilotReferenceSelectionDTO> selections, CopilotReferencesPreparedDTO prepared, String lane, String projection) {
         var grant = identity.authorizeMutation(session);
         exercises.find(session, exercise);
-        if (!"CHILD".equals(lane)) control.checkControl(exercise, controlHash);
+        if (!Set.of("CHILD", "EXPLORE").contains(lane)) control.checkControl(exercise, controlHash);
         validateStart(key, text, feeAcknowledged, selected);
         String fingerprint = references.requestFingerprint(text, selections);
         var previous = tasks.receipt(exercise, key);
@@ -125,7 +127,7 @@ public class CopilotTaskStore {
             checkReplay(previous, conversation, fingerprint, grant.userId(), selected);
             return describe(previous);
         }
-        if (tasks.activeLane(exercise, lane) || ("MAIN".equals(lane) ? contexts.active(exercise) : contexts.activeInConversation(conversation))) throw new BusinessException(CopilotErrorCode.COPILOT_BUSY);
+        if ((!"EXPLORE".equals(lane) && tasks.activeLane(exercise, lane)) || ("MAIN".equals(lane) ? contexts.active(exercise) : contexts.activeInConversation(conversation))) throw new BusinessException(CopilotErrorCode.COPILOT_BUSY);
         models.resolveForCall(session, exercise);
         references.validateAdmission(session, exercise, prepared);
         String id = UUID.randomUUID().toString();

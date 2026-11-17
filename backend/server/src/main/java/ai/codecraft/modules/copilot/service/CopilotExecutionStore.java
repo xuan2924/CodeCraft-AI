@@ -264,6 +264,14 @@ public class CopilotExecutionStore {
         return beginTools(id, worker, turnId, requests, measurement);
     }
 
+    @Transactional
+    public List<CopilotToolEntity> beginExploreTools(String id, String worker, String turnId, List<ToolExecutionRequest> requests, StorageMeasurement measurement) {
+        if (requests.isEmpty() || requests.size() > 3 || requests.stream().anyMatch(request -> !"delegate_task".equals(request.name()))) {
+            throw new IllegalArgumentException("Not a bounded exploration window");
+        }
+        return beginTools(id, worker, turnId, requests, measurement);
+    }
+
     private List<CopilotToolEntity> beginTools(String id, String worker, String turnId, List<ToolExecutionRequest> requests, StorageMeasurement measurement) {
         var task = owned(id, worker);
         if (task == null || task.stopRequested() || steers.unstaged(id)) return List.of();
@@ -305,8 +313,17 @@ public class CopilotExecutionStore {
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
-    public void parkChild(String id, String worker, String toolId) {
-        parkTool(id, worker, toolId, "WAITING_CHILD", "CHILD_RUNNING", false);
+    public void parkChildren(String id, String worker, List<String> toolIds) {
+        var task = owned(id, worker);
+        if (task == null || task.stopRequested() || toolIds.isEmpty() || toolIds.size() > 3) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
+        for (String toolId : toolIds) {
+            var tool = tasks.toolById(toolId);
+            if (tool == null || !id.equals(tool.taskId()) || !"RUNNING".equals(tool.state()) || tasks.waitTool(toolId, "WAITING_CHILD") != 1) {
+                throw new IllegalStateException("Child tool did not acquire its durable wait state");
+            }
+        }
+        if (tasks.park(id, worker, "WAITING_CHILD", "CHILD_RUNNING") != 1) throw new IllegalStateException("Parent did not park");
+        signals.changed(id);
     }
 
     @Transactional
