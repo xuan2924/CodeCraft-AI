@@ -47,6 +47,30 @@ class ProblemChallengePublicationTest {
         assertThatThrownBy(() -> reader.describe(version(artifact))).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void publishedSuiteAndControlledInstructionFilesAreNotCartSpecific() throws Exception {
+        var artifact = publication();
+        artifact.remove("challenge");
+        ((ObjectNode) artifact.path("receipt")).remove("challenge");
+        ((ObjectNode) artifact.path("manifest")).remove("challenge");
+        ((ObjectNode) artifact.path("manifest").path("execution")).put("suite", "interview.OrderSettlementTest");
+        ((ObjectNode) artifact.path("acceptanceFiles")).removeAll().put("OrderSettlementTest.java", "order tests");
+        ((ObjectNode) artifact.path("initialFiles")).put("AGENTS.md", "root policy").put("src/main/java/orders/AGENTS.md", "module policy");
+        sign(artifact);
+        assertThat(reader.describe(version(artifact)).acceptanceFiles()).containsOnlyKeys("OrderSettlementTest.java");
+        ((ObjectNode) artifact.path("initialFiles")).put("outside/secret.txt", "not allowed");
+        sign(artifact);
+        assertThatThrownBy(() -> reader.describe(version(artifact))).hasMessage("Invalid maintainer publication contract");
+    }
+
+    @Test
+    void configuredSuiteMustHaveItsOwnPublishedAcceptanceSource() throws Exception {
+        var artifact = publication();
+        ((ObjectNode) artifact.path("manifest").path("execution")).put("suite", "interview.MissingTest");
+        sign(artifact);
+        assertThatThrownBy(() -> reader.describe(version(artifact))).hasMessage("Invalid maintainer publication contract");
+    }
+
     private ProblemVersionEntity version(ObjectNode artifact) {
         return new ProblemVersionEntity("version", "cart", "1.1.0", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", artifact.toString());
     }

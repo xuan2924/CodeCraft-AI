@@ -8,9 +8,11 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.when;
 
 import ai.codecraft.modules.modelaccess.gateway.ModelCallDriver;
+import ai.codecraft.infrastructure.tasks.TaskWakeup;
 import ai.codecraft.modules.modelaccess.model.ModelThinkingMode;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCallResultDTO;
 import ai.codecraft.modules.modelaccess.model.dto.ModelConfigurationResponse;
@@ -76,7 +78,7 @@ class EvaluationReportWorkerTest {
             var request = ArgumentCaptor.forClass(ChatRequest.class);
             verify(driver).call(eq(target), request.capture(), any(), eq(65536), eq(now.plusSeconds(120)));
             assertThat(request.getValue().parameters().toolSpecifications()).isNullOrEmpty();
-            assertThat(ChatMessageSerializer.messagesToJson(request.getValue().messages())).contains("Bound evaluator", "UNAVAILABLE", "frozen revision: 7")
+            assertThat(ChatMessageSerializer.messagesToJson(request.getValue().messages())).contains("Bound evaluator", "UNAVAILABLE", "frozen revision: 7", "TIMELINE", "CONTEXT_TRACE", "Never mechanically penalize")
                 .doesNotContain("platform-secret", "ciphertext", "session");
         } finally { worker.close(); }
     }
@@ -114,5 +116,14 @@ class EvaluationReportWorkerTest {
             worker.run("exercise");
             verify(store).complete(eq(ticket), any(), eq(raw), isNull(), isNull(), eq(false));
         } finally { worker.close(); }
+    }
+    @Test
+    void wakeupOnlyDiscoversItsOwnLane() {
+        var worker = mock(EvaluationReportWorker.class);
+        doCallRealMethod().when(worker).wake(any());
+        worker.wake(new TaskWakeup(TaskWakeup.Lane.COPILOT));
+        verify(worker, never()).discover();
+        worker.wake(new TaskWakeup(TaskWakeup.Lane.EVALUATION));
+        verify(worker).discover();
     }
 }

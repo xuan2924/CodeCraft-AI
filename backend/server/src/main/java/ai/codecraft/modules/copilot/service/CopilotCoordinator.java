@@ -4,6 +4,8 @@ import ai.codecraft.modules.copilot.config.CopilotProperties;
 import ai.codecraft.modules.copilot.repository.CopilotTaskRepository;
 import ai.codecraft.modules.copilot.repository.CopilotCompactionRepository;
 import jakarta.annotation.PreDestroy;
+import ai.codecraft.infrastructure.tasks.TaskWakeup;
+import org.springframework.context.event.EventListener;
 import java.time.Clock;
 import java.util.Set;
 import java.util.UUID;
@@ -35,17 +37,24 @@ public class CopilotCoordinator implements AutoCloseable {
     private final CopilotCompactionExecution summaries;
     private final CopilotCompactionRunner summaryRunner;
     private final Clock clock;
+    private final CopilotActivitySignals signals;
     private final ThreadPoolExecutor workers;
     private final Set<String> active = ConcurrentHashMap.newKeySet();
     private final ConcurrentMap<String, WorkerThread> threads = new ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    public CopilotCoordinator(CopilotTaskRepository tasks, CopilotExecutionStore store, CopilotRunner runner, CopilotProperties limits, Clock clock, CopilotProposalStore proposals, CopilotTestTools tests, CopilotAutoApproval automatic, CopilotCompactionRepository contexts, CopilotCompactionExecution summaries, CopilotCompactionRunner summaryRunner, CopilotCommandService commands, CopilotFollowupService followups, CopilotDelegationService delegations) {
+    public CopilotCoordinator(CopilotTaskRepository tasks, CopilotExecutionStore store, CopilotRunner runner, CopilotProperties limits, Clock clock, CopilotProposalStore proposals, CopilotTestTools tests, CopilotAutoApproval automatic, CopilotCompactionRepository contexts, CopilotCompactionExecution summaries, CopilotCompactionRunner summaryRunner, CopilotCommandService commands, CopilotFollowupService followups, CopilotDelegationService delegations, CopilotActivitySignals signals) {
+        this.signals = signals;
         this.commands = commands; this.followups = followups; this.delegations = delegations;
         this.tasks = tasks; this.store = store; this.runner = runner; this.clock = clock; this.proposals = proposals; this.tests = tests; this.automatic = automatic;
         this.contexts = contexts; this.summaries = summaries; this.summaryRunner = summaryRunner;
         workers = new ThreadPoolExecutor(limits.workers(), limits.workers(), 0, TimeUnit.SECONDS, new SynchronousQueue<>(),
             Thread.ofPlatform().name("copilot-", 0).factory(), new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    @EventListener
+    public void wake(TaskWakeup event) {
+        if (event.lane() == TaskWakeup.Lane.COPILOT) dispatch();
     }
 
     @Scheduled(fixedDelay = 500)
@@ -103,7 +112,11 @@ public class CopilotCoordinator implements AutoCloseable {
         threads.put(id, workerThread);
         try { if (!closed.get()) work.run(); }
         catch (RuntimeException failure) { LOG.warn("Copilot worker awaiting recovery ({})", failure.getClass().getSimpleName()); }
-        finally { workerThread.clear(); threads.remove(id, workerThread); active.remove(id); }
+        finally {
+            workerThread.clear(); threads.remove(id, workerThread); active.remove(id);
+            // A park/continuation commit can notify before this worker releases its local slot.
+            if (!closed.get()) signals.wake();
+        }
     }
 
     /** Prevent a late stop from interrupting the pool thread after it has been reused by another task. */

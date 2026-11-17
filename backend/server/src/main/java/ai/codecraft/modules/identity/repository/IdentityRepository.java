@@ -83,19 +83,6 @@ public interface IdentityRepository {
     @Delete("DELETE FROM identity_anonymous_csrf WHERE token_hash = #{hash}")
     void deleteAnonymous(String hash);
 
-    @Delete("DELETE FROM identity_rate_limit WHERE window_start <= CAST(#{now} AS timestamptz) - interval '1 minute'")
-    void expireRates(Instant now);
-
-    @Select("SELECT count(*) FROM identity_rate_limit")
-    int rateCount();
-
-    @Select("SELECT COALESCE((SELECT attempts FROM identity_rate_limit WHERE bucket_hash = #{hash}), 0)")
-    int attempts(String hash);
-
-    @Insert("INSERT INTO identity_rate_limit VALUES(#{hash}, #{now}, 1) "
-        + "ON CONFLICT (bucket_hash) DO UPDATE SET attempts = identity_rate_limit.attempts + 1")
-    void attempt(String hash, Instant now);
-
     @Select("SELECT fingerprint, operation_id::text, result_user_id::text FROM identity_receipt "
         + "WHERE actor_id = CAST(#{actor} AS uuid) AND action = #{action} "
         + "AND target = #{target} AND idempotency_key = #{key}")

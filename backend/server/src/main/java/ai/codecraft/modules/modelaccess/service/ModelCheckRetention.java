@@ -19,7 +19,7 @@ public class ModelCheckRetention {
         this.checks = checks; this.service = service; this.clock = clock;
     }
 
-    @Scheduled(fixedDelay = 60000)
+    @Scheduled(fixedDelay = 60000, scheduler = "maintenanceScheduler")
     public void clean() {
         try {
             for (var id : checks.retentionCandidates(clock.instant().minus(ModelCheckRetentionService.RETENTION))) service.deleteExpired(id);

@@ -29,7 +29,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
@@ -37,7 +36,6 @@ import org.springframework.stereotype.Component;
 /** Pure, bounded preparation. Never call this codec while holding a database transaction. */
 @Component
 public class CopilotContextPlanner {
-    private static final Set<String> REREADABLE = Set.of("view_file", "glob_files", "grep_code", "read_evidence", "load_skill", "web_search", "web_read", "read_source");
     private final CopilotRequestFactory requests;
     private final CopilotContextProperties limits;
     private final ObjectMapper json;
@@ -91,14 +89,14 @@ public class CopilotContextPlanner {
         boolean safe = !source.hasMore() && occupied < window(target);
         boolean automatic = source.hasMore() || occupied * 100 >= window(target) * limits.triggerPercent();
         if (automatic && rereadBytes > 1024 && items.stream().anyMatch(item -> item.message() instanceof ToolExecutionResultMessage result
-            && REREADABLE.contains(result.toolName()) && bytes(ChatMessageSerializer.messageToJson(result)) > 1024)) {
+            && (CopilotToolCatalog.find(result.toolName()) != null && CopilotToolCatalog.find(result.toolName()).rereadable()) && bytes(ChatMessageSerializer.messageToJson(result)) > 1024)) {
             return plan(target, source, 1024);
         }
         return new CopilotContextPlanDTO(projection, safe, automatic, compaction(target, source, units));
     }
 
     private ChatMessage project(ChatMessage message, String id, int rereadBytes) {
-        if (!(message instanceof ToolExecutionResultMessage result) || !REREADABLE.contains(result.toolName())
+        if (!(message instanceof ToolExecutionResultMessage result) || !(CopilotToolCatalog.find(result.toolName()) != null && CopilotToolCatalog.find(result.toolName()).rereadable())
             || bytes(ChatMessageSerializer.messageToJson(message)) <= rereadBytes) return message;
         int previewBytes = rereadBytes / 2;
         while (true) {

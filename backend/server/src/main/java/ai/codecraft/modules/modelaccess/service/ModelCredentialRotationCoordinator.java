@@ -27,7 +27,7 @@ public class ModelCredentialRotationCoordinator {
         if (enabled && activeKey.isEmpty()) throw new IllegalArgumentException("Credential rotation requires an active encryption key");
     }
 
-    @Scheduled(fixedDelay = 60000)
+    @Scheduled(fixedDelay = 60000, scheduler = "maintenanceScheduler")
     public synchronized void rotateBatch() {
         if (!enabled) return;
         final List<ModelCredentialRotationCandidateDTO> candidates;

@@ -51,7 +51,7 @@ class FeedbackStoreTest {
         when(identity.authorizePrivateDelivery("admin")).thenReturn(admin);
         when(exercises.find("exercise")).thenReturn(new ExerciseEntity("exercise", "owner", "problem", "instance", "prepare", "ENDED", 7L, "[]", 1, now, now, null, null, null, null));
         when(repository.live("exercise", now)).thenReturn(true);
-        when(reports.view("session", "exercise")).thenReturn(new ExerciseReportResponse("exercise", TARGET, 2, "FAILED", "7", "UNAVAILABLE", null, true, "platform-version", 3, "INVALID_RESPONSE", null, List.of()));
+        when(reports.view("session", "exercise")).thenReturn(new ExerciseReportResponse("exercise", TARGET, 2, "FAILED", "7", "UNAVAILABLE", null, true, "platform-version", 3, "INVALID_RESPONSE", null, List.of(), List.of(), null));
         when(reports.encode(any())).thenAnswer(call -> new ObjectMapper().writeValueAsString(call.getArgument(0, Object.class)));
         when(secrets.fingerprint(anyString())).thenAnswer(call -> HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(call.getArgument(0, String.class).getBytes(StandardCharsets.UTF_8))));
     }

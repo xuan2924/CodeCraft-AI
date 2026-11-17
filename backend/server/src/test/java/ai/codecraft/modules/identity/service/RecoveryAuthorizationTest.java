@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import ai.codecraft.infrastructure.ratelimit.SlidingWindowRateLimiter;
 import ai.codecraft.modules.identity.model.entity.SessionEntity;
 import ai.codecraft.modules.identity.model.entity.UserEntity;
 import ai.codecraft.modules.identity.repository.IdentityRepository;
@@ -20,7 +21,7 @@ class RecoveryAuthorizationTest {
         Instant now = Instant.parse("2026-01-01T00:00:00Z");
         var repository = mock(IdentityRepository.class);
         var service = new IdentityTransactionService(repository, Clock.fixed(now, ZoneOffset.UTC),
-            mock(IdentityRevocationNotifier.class), mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class));
+            mock(IdentityRevocationNotifier.class), mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class), mock(SlidingWindowRateLimiter.class));
         var valid = new SessionEntity("session", "owner", 1, "csrf", now, now, false);
         when(repository.session("session")).thenReturn(valid);
         when(repository.lockUser("owner")).thenReturn(new UserEntity("owner", "alice", "hash", "USER", false, 1));

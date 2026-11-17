@@ -1,6 +1,7 @@
 package ai.codecraft.modules.workspace.stream;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.infrastructure.stream.TransientTaskStreamHub;
 import ai.codecraft.modules.identity.model.dto.IdentityRevokedEventDTO;
 import ai.codecraft.modules.workspace.config.TaskStreamProperties;
 import ai.codecraft.modules.workspace.model.dto.TaskStreamBatchDTO;
@@ -34,11 +35,15 @@ public final class TaskEventTransport {
     private final TaskStreamProperties limits;
     private final Set<Connection> connections = new HashSet<>();
     private final ThreadPoolExecutor workers;
-    public TaskEventTransport(TaskStreamStore store, TaskStreamProperties limits) {
+    private final AutoCloseable notificationSubscription;
+    public TaskEventTransport(TaskStreamStore store, TaskStreamProperties limits, TransientTaskStreamHub notifications) {
         this.store = store; this.limits = limits;
         workers = new ThreadPoolExecutor(limits.connections(), limits.connections(), 30, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(limits.connections()), Thread.ofPlatform().name("task-stream-", 0).factory(), new ThreadPoolExecutor.AbortPolicy());
         workers.allowCoreThreadTimeOut(true);
+        notificationSubscription = notifications.subscribe(task -> {
+            for (Connection connection : snapshot()) if (connection.task.equals(task)) connection.schedule();
+        });
     }
     public void open(String session, String exercise, String task, String after, String lastEvent,
         HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -65,7 +70,7 @@ public final class TaskEventTransport {
             connection.start(request.startAsync(), response.getOutputStream());
         } catch (RuntimeException | IOException error) { connection.close(); throw error; }
     }
-    @Scheduled(fixedDelayString = "${workspace.stream.poll-millis:1000}")
+    @Scheduled(fixedDelay = 5000)
     public void poll() {
         for (Connection connection : snapshot()) connection.schedule();
     }
@@ -80,6 +85,8 @@ public final class TaskEventTransport {
     public void shutdown() {
         for (Connection connection : snapshot()) connection.close();
         workers.shutdownNow();
+        try { notificationSubscription.close(); }
+        catch (Exception ignored) { /* The process-local subscription has no external resources. */ }
     }
     private final class Connection implements WriteListener, AsyncListener {
         private final String session;
@@ -88,6 +95,7 @@ public final class TaskEventTransport {
         private final String user;
         private final TaskStreamSource source;
         private final AtomicBoolean busy = new AtomicBoolean();
+        private final AtomicBoolean dirty = new AtomicBoolean();
         private String cursor;
         private AsyncContext context;
         private ServletOutputStream output;
@@ -106,9 +114,21 @@ public final class TaskEventTransport {
             output.setWriteListener(this);
         }
         void schedule() {
+            dirty.set(true);
+            submit();
+        }
+        private void submit() {
             if (!busy.compareAndSet(false, true)) return;
-            try { workers.execute(() -> { try { tick(); } finally { busy.set(false); } }); }
-            catch (RuntimeException rejected) { busy.set(false); close(); }
+            try {
+                workers.execute(() -> {
+                    try { dirty.set(false); tick(); }
+                    finally {
+                        busy.set(false);
+                        // Coalescing must not lose a commit arriving during an in-flight read.
+                        if (dirty.get()) submit();
+                    }
+                });
+            } catch (RuntimeException rejected) { busy.set(false); close(); }
         }
         private synchronized void tick() {
             if (closed || !started) return;

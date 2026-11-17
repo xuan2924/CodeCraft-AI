@@ -1,5 +1,8 @@
 package ai.codecraft.modules.identity.service;
 
+import ai.codecraft.infrastructure.ratelimit.RateLimitPolicy;
+import ai.codecraft.infrastructure.ratelimit.SlidingWindowRateLimiter;
+import java.time.Duration;
 import ai.codecraft.modules.identity.model.dto.AuthenticatedIdentityDTO;
 import ai.codecraft.modules.identity.model.dto.CreatedAccountResponse;
 import ai.codecraft.modules.identity.model.dto.PasswordResetResponse;
@@ -25,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class IdentityTransactionService {
+    private final SlidingWindowRateLimiter rateLimiter;
     private final IdentityRepository mapper;
     private final Clock clock;
     private final IdentityRevocationNotifier revocations;
@@ -32,7 +36,8 @@ public class IdentityTransactionService {
     private final IdentityRevocationBarrier barrier;
 
     public IdentityTransactionService(IdentityRepository mapper, Clock clock, IdentityRevocationNotifier revocations,
-                                      RevocationIntentRepository intents, IdentityRevocationBarrier barrier) {
+                                      RevocationIntentRepository intents, IdentityRevocationBarrier barrier, SlidingWindowRateLimiter rateLimiter) {
+        this.rateLimiter = rateLimiter;
         this.mapper = mapper;
         this.clock = clock;
         this.revocations = revocations;
@@ -164,20 +169,10 @@ public class IdentityTransactionService {
         mapper.createAnonymous(hash, csrf, clock.instant().plus(IdentityPolicy.ANONYMOUS_LIMIT));
     }
 
-    @Transactional
     public boolean admit(String accountBucket, String addressBucket) {
-        mapper.admissionLock();
-        Instant now = clock.instant();
-        mapper.expireRates(now);
-        int account = mapper.attempts(accountBucket);
-        int address = mapper.attempts(addressBucket);
-        // A bounded admission table also rejects distinct-name/IP floods before hashing.
-        int newBuckets = (account == 0 ? 1 : 0) + (address == 0 ? 1 : 0);
-        if (mapper.rateCount() + newBuckets > IdentityPolicy.RATE_BUCKET_CAPACITY) return false;
-        boolean accepted = account < IdentityPolicy.ATTEMPTS_PER_MINUTE && address < IdentityPolicy.ATTEMPTS_PER_MINUTE;
-        if (account < IdentityPolicy.ATTEMPTS_PER_MINUTE) mapper.attempt(accountBucket, now);
-        if (address < IdentityPolicy.ATTEMPTS_PER_MINUTE) mapper.attempt(addressBucket, now);
-        return accepted;
+        return rateLimiter.admit(List.of(
+            new RateLimitPolicy("identity", accountBucket, Duration.ofMinutes(1), IdentityPolicy.ATTEMPTS_PER_MINUTE),
+            new RateLimitPolicy("identity", addressBucket, Duration.ofMinutes(1), IdentityPolicy.ATTEMPTS_PER_MINUTE)));
     }
 
     @Transactional

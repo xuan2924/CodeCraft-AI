@@ -29,7 +29,7 @@ public class InterviewerController {
     public ResponseEntity<ApiResponse<InterviewerTaskResponse>> ask(@PathVariable UUID exercise, @RequestBody InterviewerRequest input,
         @RequestHeader(value = "Idempotency-Key", required = false) String key,
         @RequestHeader(value = "X-Operation-Credential", required = false) String credential, HttpServletRequest request) {
-        return ResponseEntity.accepted().body(ApiResponse.success(interviewer.ask(IdentityHttp.sessionHash(request), exercise.toString(), key, credential, input.text())));
+        return ResponseEntity.accepted().body(ApiResponse.success(interviewer.ask(IdentityHttp.sessionHash(request), exercise.toString(), key, credential, input)));
     }
     @GetMapping("/api/exercises/{exercise}/interviewer/tasks")
     public ApiResponse<List<InterviewerTaskResponse>> history(@PathVariable UUID exercise, @RequestParam(required = false) UUID before, HttpServletRequest request) {

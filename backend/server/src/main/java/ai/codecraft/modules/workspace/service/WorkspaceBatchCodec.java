@@ -65,7 +65,8 @@ public class WorkspaceBatchCodec {
     public static void validatePath(String path) {
         if (path == null || path.length() > 4096 || !path.matches("[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*")
             || List.of(path.split("/")).stream().anyMatch(part -> part.equals(".") || part.equals(".."))) invalid();
-        if (!path.startsWith("src/main/java/") && !path.startsWith("src/test/java/")) throw new BusinessException(WorkspaceErrorCode.PATH_FORBIDDEN);
+        if (path.equals("AGENTS.md") || path.endsWith("/AGENTS.md")
+            || !path.startsWith("src/main/java/") && !path.startsWith("src/test/java/")) throw new BusinessException(WorkspaceErrorCode.PATH_FORBIDDEN);
     }
 
     /** Validates text without interpreting it and returns its UTF-8 storage size. */

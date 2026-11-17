@@ -74,7 +74,7 @@ public class CopilotProposalStore {
         if (!prepared.workspaceInstanceId().equals(exercise.workspaceInstanceId()) || exercise.revision() == null
             || !prepared.revision().equals(exercise.revision().toString())) throw new BusinessException(WorkspaceErrorCode.REVISION_CONFLICT);
         var tool = tasks.toolById(toolId);
-        if (tool == null || !taskId.equals(tool.taskId()) || !"propose_changes".equals(tool.name())) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
+        if (tool == null || !taskId.equals(tool.taskId()) || !CopilotToolCatalog.proposal(tool.name())) throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_STATE);
         String fingerprint = secrets.fingerprint(prepared.workspaceInstanceId() + "\n" + prepared.batchPayload());
         if (proposals.rejected(taskId, fingerprint)) return false;
         String id = UUID.randomUUID().toString();

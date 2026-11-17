@@ -1,6 +1,8 @@
 package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.infrastructure.tasks.TaskWakeup;
+import ai.codecraft.infrastructure.tasks.TaskWakeupPublisher;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.platformagent.model.PlatformRole;
@@ -43,12 +45,14 @@ public class ExerciseReportStore {
     private final IdentitySecrets secrets;
     private final ObjectMapper json;
     private final Clock clock;
+    private final TaskWakeupPublisher wakeups;
+    private final ReportTimelineReader timeline;
 
     public ExerciseReportStore(ExerciseReportRepository reports, ExerciseRepository exercises, FinalizationRepository finals,
         IdentityTransactionService identity, PlatformBindingService platform, StorageCapacityStore capacity, IdentitySecrets secrets,
-        @Qualifier("workspaceJson") ObjectMapper json, Clock clock) {
+        @Qualifier("workspaceJson") ObjectMapper json, Clock clock, ReportTimelineReader timeline, TaskWakeupPublisher wakeups) {
         this.reports = reports; this.exercises = exercises; this.finals = finals; this.identity = identity; this.platform = platform;
-        this.capacity = capacity; this.secrets = secrets; this.json = json; this.clock = clock;
+        this.capacity = capacity; this.secrets = secrets; this.json = json; this.clock = clock; this.timeline = timeline; this.wakeups = wakeups;
     }
     @Transactional
     public ExerciseReportResponse view(String session, String exercise) {
@@ -96,6 +100,7 @@ public class ExerciseReportStore {
         var report = new ExerciseReportEntity(exercise, id, current.userId(), session, version.id(), frozen.finalRevision(), frozen.verification(), frozen.resultTaskId(),
             input.skip(), input.text(), id, 1, "QUEUED", 0, null, null, null, null, null, clock.instant(), clock.instant());
         reports.insert(report);
+        wakeups.afterCommit(TaskWakeup.Lane.EVALUATION);
         return describe(current, report);
     }
     @Transactional
@@ -115,6 +120,7 @@ public class ExerciseReportStore {
         var operation = operation(current, id, "REPORT_RETRY", key, fingerprint);
         capacity.admit(operation, measurement, GROWTH); exercises.insertOperation(operation);
         if (reports.retry(exercise, generation, session, id, clock.instant()) != 1) throw new IllegalStateException("Report retry lost owner lock");
+        wakeups.afterCommit(TaskWakeup.Lane.EVALUATION);
         return describe(current, reports.find(exercise));
     }
     @Transactional(readOnly = true)
@@ -191,6 +197,7 @@ public class ExerciseReportStore {
     }
     private void finish(ExerciseReportEntity report, String state, String evaluation, String reason) {
         reports.finish(report.exerciseId(), report.generation(), state, evaluation, reason, clock.instant());
+        if ("QUEUED".equals(state)) wakeups.afterCommit(TaskWakeup.Lane.EVALUATION);
         if (!"QUEUED".equals(state)) exercises.operationState(report.operationId(), "SUCCEEDED".equals(state) ? "SUCCEEDED" : "REJECTED");
     }
     private WorkspaceOperationEntity operation(ExerciseEntity current, String id, String kind, String key, String input) {
@@ -201,7 +208,7 @@ public class ExerciseReportStore {
             var frozen = finals.find(exercise.id());
             return new ExerciseReportResponse(exercise.id(), null, 0, "ENDED".equals(exercise.state()) && frozen != null && frozen.finalRevision() != null ? "WAITING_REVIEW" : "NOT_READY",
                 frozen == null || frozen.finalRevision() == null ? null : frozen.finalRevision().toString(), frozen == null ? "PENDING" : frozen.verification(),
-                frozen == null ? null : frozen.resultTaskId(), null, null, 0, null, null, List.of());
+                frozen == null ? null : frozen.resultTaskId(), null, null, 0, null, null, List.of(), timeline.timeline(exercise.id()), timeline.contextTrace(exercise.id()));
         }
         EvaluationReportDTO evaluation = null;
         if (report.evaluation() != null) {
@@ -210,7 +217,7 @@ public class ExerciseReportStore {
         }
         return new ExerciseReportResponse(exercise.id(), report.id(), report.generation(), report.state(), Long.toString(report.finalRevision()), report.verification(), report.finalTestId(),
             report.reviewSkipped(), report.platformVersionId(), report.attempts(), report.reason(), evaluation,
-            evidence(report).stream().map(item -> new ReportEvidenceSummaryDTO(item.id(), item.kind(), item.source(), item.summary(), item.truncated())).toList());
+            evidence(report).stream().map(item -> new ReportEvidenceSummaryDTO(item.id(), item.kind(), item.source(), item.summary(), item.truncated())).toList(), timeline.timeline(exercise.id()), timeline.contextTrace(exercise.id()));
     }
     private ExerciseEntity owned(String user, String exercise) {
         var current = exercises.find(exercise);

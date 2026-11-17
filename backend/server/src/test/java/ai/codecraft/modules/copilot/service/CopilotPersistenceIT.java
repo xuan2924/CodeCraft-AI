@@ -22,6 +22,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.infrastructure.stream.TransientTaskStreamHub;
+import ai.codecraft.infrastructure.tasks.TaskWakeupPublisher;
+import ai.codecraft.modules.workspace.service.ReportTimelineReader;
+import ai.codecraft.infrastructure.ratelimit.SlidingWindowRateLimiter;
 import ai.codecraft.modules.copilot.config.CopilotProperties;
 import ai.codecraft.modules.copilot.repository.CopilotUsageRepository;
 import ai.codecraft.modules.skills.repository.SkillSnapshotRepository;
@@ -363,7 +367,7 @@ class CopilotPersistenceIT {
         jdbc.update("INSERT INTO identity_user(id,username,password_hash,role,password_change_required) VALUES(?::uuid,?,'fixture','USER',false)", owner, "u_" + owner.substring(0, 20));
         identity = mock(IdentityTransactionService.class);
         var locks = proxy(new IdentityTransactionService(sql.getMapper(IdentityRepository.class), clock, mock(IdentityRevocationNotifier.class),
-            mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class)), IdentityTransactionService.class);
+            mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class), mock(SlidingWindowRateLimiter.class)), IdentityTransactionService.class);
         doAnswer(call -> { locks.lockResourceOwner(call.getArgument(0)); return null; }).when(identity).lockResourceOwner(anyString());
         var grant = new SessionAuthorizationDTO(owner, "USER", false, 1, clock.instant().plusSeconds(3600));
         when(identity.authorizeMutation(SESSION)).thenAnswer(call -> { locks.lockResourceOwner(owner); return grant; });
@@ -410,11 +414,11 @@ class CopilotPersistenceIT {
         when(platformBindings.version(exercise, PlatformRole.EVALUATOR)).thenReturn(new PlatformVersionEntity(UUID.randomUUID().toString(), PlatformRole.EVALUATOR,
             "{}", "PUBLISHED", 1, 1, "fixture", "fixture", "fixture", clock.instant(), clock.instant()));
         reports = proxy(new ExerciseReportStore(sql.getMapper(ExerciseReportRepository.class), exercises, sql.getMapper(FinalizationRepository.class), identity,
-            platformBindings, capacityStore, secrets, json, clock), ExerciseReportStore.class);
+            platformBindings, capacityStore, secrets, json, clock, mock(ReportTimelineReader.class), mock(TaskWakeupPublisher.class)), ExerciseReportStore.class);
         when(platformBindings.version(exercise, PlatformRole.INTERVIEWER)).thenReturn(new PlatformVersionEntity(UUID.randomUUID().toString(), PlatformRole.INTERVIEWER,
             "{}", "PUBLISHED", 1, 1, "fixture", "fixture", "fixture", clock.instant(), clock.instant()));
         interviewer = proxy(new InterviewerStore(sql.getMapper(InterviewerRepository.class), exercises, identity, coordination, platformBindings,
-            mock(ExerciseModelService.class), capacityStore, secrets, clock), InterviewerStore.class);
+            mock(ExerciseModelService.class), capacityStore, secrets, clock, mock(TaskWakeupPublisher.class), new TransientTaskStreamHub()), InterviewerStore.class);
         feedback = proxy(new FeedbackStore(sql.getMapper(FeedbackRepository.class), exercises, reports, interviewer, identity, secrets, capacityStore, clock), FeedbackStore.class);
         maintenance = proxy(new WorkspaceMaintenanceStore(sql.getMapper(WorkspaceMaintenanceRepository.class), exercises,
             sql.getMapper(DeletionRepository.class), identity, clock, budget, data, historyRepository), WorkspaceMaintenanceStore.class);
@@ -429,7 +433,7 @@ class CopilotPersistenceIT {
         exerciseFinalization = proxy(new FinalizationStore(sql.getMapper(FinalizationRepository.class), exercises, writes,
             sql.getMapper(TestTaskRepository.class), streams, executionProblems, identity, secrets, clock,
             new FinalizationProperties(3, 600, 5, 30), new FinalVerificationPolicy(clock), json, capacityStore), FinalizationStore.class);
-        var publisher = proxy(new TaskStreamPublisher(streams, json, clock), TaskStreamPublisher.class);
+        var publisher = proxy(new TaskStreamPublisher(streams, json, clock, new TransientTaskStreamHub()), TaskStreamPublisher.class);
         childExecutions = proxy(new TestTaskStore(identity, secrets, exercises, writes, sql.getMapper(TestTaskRepository.class), executionProblems, clock, json,
             streams, publisher, sql.getMapper(FinalizationRepository.class), budget, maintenance, capacityStore), TestTaskStore.class);
         childLifecycle = proxy(new CopilotTestLifecycle(sql.getMapper(CopilotTestRepository.class), childExecutions), CopilotTestLifecycle.class);
@@ -450,14 +454,14 @@ class CopilotPersistenceIT {
         files = mock(ExerciseService.class);
         references = new CopilotReferences(files, mock(TestTaskService.class), mock(CommandTaskService.class), coordination, secrets, json);
         var delegationLifecycle = proxy(new CopilotDelegationLifecycle(sql.getMapper(CopilotDelegationRepository.class), repository, clock), CopilotDelegationLifecycle.class);
-        tasks = proxy(new CopilotTaskStore(repository, identity, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class), skillSnapshots, conversations, commandLifecycle, references, delegationLifecycle), CopilotTaskStore.class);
+        tasks = proxy(new CopilotTaskStore(repository, identity, lifecycle, coordination, selection, operations, clock, sql.getMapper(CopilotProposalRepository.class), childLifecycle, sql.getMapper(CopilotSteerRepository.class), sql.getMapper(CopilotCompactionRepository.class), skillSnapshots, conversations, commandLifecycle, references, delegationLifecycle, mock(CopilotActivitySignals.class)), CopilotTaskStore.class);
         var contextRepository = sql.getMapper(CopilotCompactionRepository.class);
         compactions = proxy(new CopilotCompactionStore(contextRepository, repository, identity, secrets, lifecycle, coordination, operations, clock, conversations), CopilotCompactionStore.class);
         var callEvidence = new CopilotCallEvidence(new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator()));
         summaryExecution = proxy(new CopilotCompactionExecution(contextRepository, repository, sql.getMapper(CopilotSteerRepository.class), identity, coordination, operations, selection, limits, clock, callEvidence), CopilotCompactionExecution.class);
         var contextLimits = new CopilotContextProperties(80, 4, 8192, 4096, 8192, 512, 2048);
         execution = proxy(new CopilotExecutionStore(repository, identity, coordination, selection, operations, limits, clock, contextRepository,
-            sql.getMapper(CopilotProposalRepository.class), secrets, childLifecycle, sql.getMapper(CopilotSteerRepository.class), callEvidence, skillSnapshots, commandLifecycle, delegationLifecycle), CopilotExecutionStore.class);
+            sql.getMapper(CopilotProposalRepository.class), secrets, sql.getMapper(CopilotTestRepository.class), sql.getMapper(CopilotSteerRepository.class), callEvidence, skillSnapshots, sql.getMapper(CopilotCommandRepository.class), sql.getMapper(CopilotDelegationRepository.class), childExecutions, childCommands, mock(CopilotActivitySignals.class)), CopilotExecutionStore.class);
         var requestFactory = new CopilotRequestFactory();
         var planner = new CopilotContextPlanner(requestFactory, contextLimits, json, limits);
         contextPreparation = proxy(new CopilotContextPreparation(contextRepository, sql.getMapper(CopilotSteerRepository.class),
@@ -509,8 +513,8 @@ class CopilotPersistenceIT {
         evidenceStore = proxy(new CopilotEvidenceStore(repository, contextRepository, identity, coordination, clock, skillSnapshots, sql.getMapper(CopilotDelegationRepository.class)), CopilotEvidenceStore.class);
         var evidenceTools = new CopilotEvidenceTools(evidenceStore, json);
         webTools = mock(CopilotWebTools.class);
-        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(evidenceStore, json), commandTools, webTools, new CopilotReferenceService(references, conversations, json), delegations);
-        runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts);
+        executor = new CopilotToolExecutor(new CopilotReadTools(files, json), new CopilotProposalPreparation(files, codec, json), proposals, json, testTools, evidenceTools, new CopilotSkillTools(evidenceStore, json), commandTools, webTools, new CopilotReferenceService(references, conversations, json), delegations, repository);
+        runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts, new TransientTaskStreamHub(), json);
     }
 
     @Test
@@ -773,7 +777,7 @@ class CopilotPersistenceIT {
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("All older source pages compacted")).build(), 100);
         });
         var task = startTask(SESSION, exercise, CONTROL, "paged-history", "Continue the original goal", true, measurement);
-        new CopilotRunner(execution, capacity, driver, executor, limits, calls, context).run(task.id(), UUID.randomUUID().toString());
+        new CopilotRunner(execution, capacity, driver, executor, limits, calls, context, new TransientTaskStreamHub(), json).run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         assertThat(summaries.get()).isEqualTo(2); assertThat(chats.get()).isEqualTo(1);
         assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("2");
@@ -1035,7 +1039,7 @@ class CopilotPersistenceIT {
         assertThat(tasks.projectInstructions(SESSION, task.id())).isEqualTo(payload);
         // Tied timestamps and reverse UUID order must not drop the most recently executed path.
         for (int position = 0; position < 33; position++) {
-            jdbc.update("INSERT INTO copilot_tool(id,turn_id,task_id,exercise_id,position,call_id,name,arguments,state,created_at) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?,?,'view_file',?,'SUCCEEDED',?)",
+            jdbc.update("INSERT INTO copilot_tool(id,turn_id,task_id,exercise_id,position,call_id,name,arguments,state,created_at,outcome_code) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?,?,'view_file',?,'SUCCEEDED',?,'OK')",
                 String.format("00000000-0000-0000-0000-%012d", 33 - position), dispatched.turn().id(), task.id(), exercise,
                 position, "read-" + position, "{\"path\":\"src/" + position + "/Main.java\"}", Timestamp.from(clock.instant()));
         }
@@ -1072,7 +1076,7 @@ class CopilotPersistenceIT {
                 .containsExactly("Original goal", "First adjustment", "Second adjustment");
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Adjusted response")).build(), 100);
         });
-        var rebuilt = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts);
+        var rebuilt = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts, new TransientTaskStreamHub(), json);
         rebuilt.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         assertThat(steers.list(SESSION, task.id(), 0).items()).extracting(value -> value.state()).containsExactly("APPLIED", "APPLIED");
@@ -1105,7 +1109,7 @@ class CopilotPersistenceIT {
                 });
             return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Explanation only")).build(), 100);
         });
-        new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts).run(task.id(), UUID.randomUUID().toString());
+        new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts, new TransientTaskStreamHub(), json).run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED"); assertThat(workspace.applies.get()).isZero();
         verify(files, times(2)).read(SESSION, exercise, ProposalWorkspace.PATH);
     }
@@ -1195,7 +1199,7 @@ class CopilotPersistenceIT {
         when(factory.create(any(), any(), any())).thenReturn(model);
         var streamLimits = new ModelCallProperties(Duration.ofSeconds(5), Duration.ofSeconds(5), 1, 8388608, 65536, 262144);
         try (var actualDriver = new ModelCallDriver(factory, streamLimits, clock)) {
-            new CopilotRunner(execution, capacity, actualDriver, executor, limits, calls, contexts).run(task.id(), UUID.randomUUID().toString());
+            new CopilotRunner(execution, capacity, actualDriver, executor, limits, calls, contexts, new TransientTaskStreamHub(), json).run(task.id(), UUID.randomUUID().toString());
         }
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED"); assertThat(callsMade.get()).isEqualTo(2);
         verify(files, never()).read(anyString(), anyString(), anyString());
@@ -1397,6 +1401,41 @@ class CopilotPersistenceIT {
     }
 
     @Test
+    void planningBaselinePersistsConflictsAndRefreshesOnlyAfterSuccessfulRead() throws Exception {
+        String instance = files.find(SESSION, exercise).workspaceInstanceId();
+        String preparation = files.find(SESSION, exercise).preparationOperationId();
+        var task = startTask(SESSION, exercise, CONTROL, "baseline", "Inspect and test", true, measurement);
+        var round = new AtomicInteger();
+        when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
+            int step = round.getAndIncrement();
+            if (step == 0) return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(
+                ToolExecutionRequest.builder().id("denied-read").name("read").arguments("{\"path\":\"private/AGENTS.md\"}").build(),
+                ToolExecutionRequest.builder().id("good-read").name("read").arguments("{\"path\":\"src/Main.java\"}").build()))).build(), 100);
+            if (step == 1) {
+                assertThat(repository.planningRevision(task.id())).isEqualTo("1");
+                assertThat(repository.instructionPaths(task.id())).containsExactly("{\"path\":\"src/Main.java\"}");
+                jdbc.update("UPDATE workspace_exercise SET revision=2 WHERE id=?::uuid", exercise);
+                when(files.find(SESSION, exercise)).thenReturn(new ExerciseResponse(exercise, "problem", instance, preparation, "ACTIVE", "2", "1", List.of("src/Main.java"), clock.instant(), clock.instant().plusSeconds(1800), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, clock.instant()));
+                when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(new WorkspaceFileResponse(instance, "2", "src/Main.java", "class Main { int manual; }"));
+                return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(
+                    ToolExecutionRequest.builder().id("stale-test").name("run_tests").arguments("{\"target\":\"base\"}").build()))).build(), 100);
+            }
+            if (step == 2) {
+                assertThat(repository.planningRevision(task.id())).isEqualTo("1");
+                return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(
+                    ToolExecutionRequest.builder().id("refresh-read").name("read").arguments("{\"path\":\"src/Main.java\"}").build()))).build(), 100);
+            }
+            assertThat(repository.planningRevision(task.id())).isEqualTo("2");
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("External change inspected; no stale test started.")).build(), 100);
+        });
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(repository.find(task.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(jdbc.queryForList("SELECT outcome_code FROM copilot_tool WHERE task_id=?::uuid ORDER BY created_at,call_id", String.class, task.id()))
+            .containsExactlyInAnyOrder("DENIED", "OK", "CONFLICT", "OK");
+        assertThat(repository.planningRevision(task.id())).isEqualTo("2");
+    }
+
+    @Test
     void serialToolResultsArePairedAndDurableAndDuplicateAdmissionDoesNotRepeatPaidCalls() throws Exception {
         var view = ToolExecutionRequest.builder().id("read-1").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
         var glob = ToolExecutionRequest.builder().id("glob-1").name("glob_files").arguments("{\"pattern\":\"**/*.java\"}").build();
@@ -1485,14 +1524,17 @@ class CopilotPersistenceIT {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void partialResponsesStaySeparateFromConfirmedMessagesAndSurviveInterruptedCalls(boolean completes) throws Exception {
+        var hub = new TransientTaskStreamHub();
+        runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts, hub, json);
         var task = startTask(SESSION, exercise, CONTROL, "start", "Inspect", true, measurement);
         doAnswer(call -> {
             Consumer<String> partial = call.getArgument(5);
             partial.accept("Unconfirmed reply, not tool arguments");
             Consumer<String> thinking = call.getArgument(6);
             thinking.accept("Unconfirmed thinking");
-            assertThat(tasks.delivery(SESSION, task.id()).partial().thinking()).isEqualTo("Unconfirmed thinking");
-            assertThat(tasks.delivery(SESSION, task.id()).partial().text()).contains("Unconfirmed reply");
+            assertThat(tasks.delivery(SESSION, task.id()).partial().thinking()).isEmpty();
+            assertThat(tasks.delivery(SESSION, task.id()).partial().text()).isEmpty();
+            assertThat(new String(hub.latest(task.id()).frame(), StandardCharsets.UTF_8)).contains("Unconfirmed thinking", "Unconfirmed reply");
             assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("RUNNING");
             assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).hasSize(1);
             verify(files, never()).read(any(), any(), any());
@@ -1537,7 +1579,7 @@ class CopilotPersistenceIT {
         var turns = new AtomicInteger();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
             ChatRequest request = call.getArgument(1);
-            assertThat(request.parameters().toolSpecifications()).extracting(tool -> tool.name()).doesNotContain("bash", "run_tests", "propose_changes").contains("view_file", "web_search");
+            assertThat(request.parameters().toolSpecifications()).extracting(tool -> tool.name()).doesNotContain("bash", "run_tests", "propose_changes").contains("read", "web_search");
             if (turns.getAndIncrement() == 0) {
                 assertThat(ChatMessageSerializer.messagesToJson(request.messages())).contains("Main goal", "Main saved answer", "Side question", "Read-only main-conversation projection").doesNotContain("private-main-thinking");
                 return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(ToolExecutionRequest.builder().id("forbidden").name("bash").arguments("{\"command\":\"touch bad\",\"directory\":\".\",\"expected_revision\":\"1\"}").build()))).build(), 100);
@@ -1564,7 +1606,7 @@ class CopilotPersistenceIT {
             boolean child = request.messages().stream().anyMatch(message -> message instanceof UserMessage user && user.singleText().startsWith("Child goal"));
             String payload = ChatMessageSerializer.messagesToJson(request.messages());
             if (child) {
-                assertThat(request.parameters().toolSpecifications()).extracting(tool -> tool.name()).contains("bash", "propose_changes", "run_tests").doesNotContain("delegate_task");
+                assertThat(request.parameters().toolSpecifications()).extracting(tool -> tool.name()).contains("bash", "edit", "write", "run_tests").doesNotContain("delegate_task");
                 assertThat(payload).contains("Parent goal", "Relevant pointers").doesNotContain("Unrelated main chat", "private-parent-thinking");
                 if (childTurns.getAndIncrement() == 0) return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(
                     ToolExecutionRequest.builder().id("forbidden-recursion").name("delegate_task").arguments("{\"goal\":\"Grandchild\"}").build()))).build(), 100);
@@ -1857,7 +1899,7 @@ class CopilotPersistenceIT {
         var page = references.page(SESSION, exercise, "CODE", "src/Main.java", null, 0, 5);
         var selected = new CopilotReferenceSelectionDTO(page.kind(), page.source(), page.version(), page.offset(), page.limit(), page.fingerprint());
         var input = new CopilotStartRequest("Inspect reference", true, List.of(), exercise, List.of(selected));
-        var service = new CopilotTaskService(tasks, capacity, json, references);
+        var service = new CopilotTaskService(tasks, capacity, json, references, new TransientTaskStreamHub());
         var accepted = service.start(SESSION, exercise, CONTROL, "reference-start", input);
         assertThat(repository.context(exercise).getFirst().payload()).contains("Verified reference excerpts", "src/Main.java", "class");
         doThrow(new IllegalStateException("Source is no longer reachable")).when(files).read(SESSION, exercise, "src/Main.java");
@@ -2774,7 +2816,7 @@ class CopilotPersistenceIT {
         var workspace = new ProposalWorkspace(); workspace.loseApplyResponse = true;
         var task = beginProposal(workspace, true);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
-        try (var coordinator = new CopilotCoordinator(repository, execution, runner, limits, clock, proposals, testTools, automatic, sql.getMapper(CopilotCompactionRepository.class), summaryExecution, summaryRunner, commandTools, mock(CopilotFollowupService.class), delegations)) {
+        try (var coordinator = new CopilotCoordinator(repository, execution, runner, limits, clock, proposals, testTools, automatic, sql.getMapper(CopilotCompactionRepository.class), summaryExecution, summaryRunner, commandTools, mock(CopilotFollowupService.class), delegations, mock(CopilotActivitySignals.class))) {
             coordinator.dispatch();
             await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("WAITING_WRITE"));
         }
@@ -2921,7 +2963,7 @@ class CopilotPersistenceIT {
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
         assertThat(proposalViews.detail(SESSION, proposal).files().getFirst().before()).isEqualTo("class Main {}");
         assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).hasSize(3);
-        runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts);
+        runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts, new TransientTaskStreamHub(), json);
         var approve = new CopilotProposalDecisionRequest("APPROVE", null);
         assertThat(proposals.decide(SESSION, proposal, CONTROL, "approve", approve, measurement).state()).isEqualTo("APPLYING");
         assertThat(proposals.decide(SESSION, proposal, "obsolete", "approve", approve, measurement).state()).isEqualTo("APPLYING");
@@ -3076,7 +3118,7 @@ class CopilotPersistenceIT {
             assertThat(retained.thinking()).isEqualTo("opaque-fixture-thinking");
             assertThat(retained.attributes()).containsAllEntriesOf(protocolAttributes(protocol));
         }
-        new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts).run(task.id(), UUID.randomUUID().toString());
+        new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts, new TransientTaskStreamHub(), json).run(task.id(), UUID.randomUUID().toString());
         verify(driver, times(1)).call(any(), any(), any(), anyInt(), any());
     }
 
@@ -3151,7 +3193,7 @@ class CopilotPersistenceIT {
             if ("AUTO".equals(decision)) automatic.apply(task.id());
             else proposals.decide(SESSION, proposal, CONTROL, "live-decision", new CopilotProposalDecisionRequest(decision, "REJECT".equals(decision) ? "Fixture rejection" : null), measurement);
             writeCoordinator.recover(); proposals.recoverTask(task.id());
-            new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts).run(task.id(), UUID.randomUUID().toString());
+            new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts, new TransientTaskStreamHub(), json).run(task.id(), UUID.randomUUID().toString());
             assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).anySatisfy(message -> assertThat(message.payload()).isEqualTo(retainedAssistant));
             assertThat(tasks.find(SESSION, task.id()).state()).as("live continuation reason: %s", tasks.find(SESSION, task.id()).reason()).isEqualTo("SUCCEEDED");
             assertThat(workspace.applies.get()).isEqualTo("REJECT".equals(decision) ? 0 : 1);
@@ -3558,7 +3600,7 @@ class CopilotPersistenceIT {
 
     private CopilotTaskResponse beginBash(String command, String directory) throws Exception {
         var request = ToolExecutionRequest.builder().id("bash-first").name("bash")
-            .arguments(json.writeValueAsString(Map.of("expected_revision", "1", "command", command, "directory", directory))).build();
+            .arguments(json.writeValueAsString(Map.of("command", command, "directory", directory))).build();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(request))).build(), 100),
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Command result understood.")).build(), 100));
@@ -3569,7 +3611,7 @@ class CopilotPersistenceIT {
     }
 
     private CopilotTaskResponse beginTestAttempt(boolean repeat) throws Exception {
-        var first = ToolExecutionRequest.builder().id("test-first").name("run_tests").arguments("{\"expected_revision\":\"1\",\"target\":\"base\"}").build();
+        var first = ToolExecutionRequest.builder().id("test-first").name("run_tests").arguments("{\"target\":\"base\"}").build();
         var second = ToolExecutionRequest.builder().id("test-repeat").name("run_tests").arguments(first.arguments()).build();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(repeat ? List.of(first, second) : List.of(first))).build(), 100),
@@ -3624,7 +3666,7 @@ class CopilotPersistenceIT {
 
     private void invalidateOriginalAuthorizationUsingRealProxy() {
         var actual = proxy(new IdentityTransactionService(sql.getMapper(IdentityRepository.class), clock, mock(IdentityRevocationNotifier.class),
-            mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class)), IdentityTransactionService.class);
+            mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class), mock(SlidingWindowRateLimiter.class)), IdentityTransactionService.class);
         // The fixture grant has no real session row: exercise actual transactional denial, not a mock-only throw.
         when(identity.authorization(SESSION)).thenAnswer(call -> actual.authorization(SESSION));
         when(identity.tryAuthorizeMutation(SESSION)).thenAnswer(call -> actual.tryAuthorizeMutation(SESSION));

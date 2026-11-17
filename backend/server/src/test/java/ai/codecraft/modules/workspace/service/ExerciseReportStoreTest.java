@@ -8,9 +8,12 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.infrastructure.tasks.TaskWakeup;
+import ai.codecraft.infrastructure.tasks.TaskWakeupPublisher;
 import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
@@ -34,6 +37,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class ExerciseReportStoreTest {
+    private final TaskWakeupPublisher wakeups = mock(TaskWakeupPublisher.class);
     private final Instant now = Instant.parse("2026-01-01T00:00:00Z");
     private final ExerciseReportRepository reports = mock(ExerciseReportRepository.class);
     private final ExerciseRepository exercises = mock(ExerciseRepository.class);
@@ -42,7 +46,7 @@ class ExerciseReportStoreTest {
     private final PlatformBindingService platform = mock(PlatformBindingService.class);
     private final StorageCapacityStore capacity = mock(StorageCapacityStore.class);
     private final IdentitySecrets secrets = mock(IdentitySecrets.class);
-    private final ExerciseReportStore store = new ExerciseReportStore(reports, exercises, finals, identity, platform, capacity, secrets, new ObjectMapper(), Clock.fixed(now, ZoneOffset.UTC));
+    private final ExerciseReportStore store = new ExerciseReportStore(reports, exercises, finals, identity, platform, capacity, secrets, new ObjectMapper(), Clock.fixed(now, ZoneOffset.UTC), mock(ReportTimelineReader.class), wakeups);
 
     @BeforeEach
     void authorize() {
@@ -69,6 +73,7 @@ class ExerciseReportStoreTest {
         assertThat(store.view("session", "exercise").state()).isEqualTo("WAITING_REVIEW");
         verify(reports, never()).insert(any());
         verify(capacity, never()).admit(any(), any(), anyLong());
+        verify(wakeups, never()).afterCommit(any());
     }
     @Test
     void reviewRequiresConfirmedFrozenRevisionAndRejectsInvalidSkipOrOversizedText() {
@@ -101,11 +106,13 @@ class ExerciseReportStoreTest {
         when(reports.find("exercise")).thenReturn(first);
         store.complete(first, null, "bad json", "usage", "EVALUATION_INVALID_RESPONSE", true);
         verify(reports).finish("exercise", 1, "QUEUED", null, "EVALUATION_INVALID_RESPONSE", now);
+        verify(wakeups).afterCommit(TaskWakeup.Lane.EVALUATION);
         var last = report("RUNNING", 3, 1, now.plusSeconds(10));
         when(reports.find("exercise")).thenReturn(last);
         store.complete(last, null, "bad json", "usage", "EVALUATION_INVALID_RESPONSE", true);
         verify(reports).finish("exercise", 1, "FAILED", null, "EVALUATION_INVALID_RESPONSE", now);
         verify(exercises).operationState("operation", "REJECTED");
+        verify(wakeups).afterCommit(TaskWakeup.Lane.EVALUATION);
     }
     @Test
     void deletedOrRevokedOwnerCannotPublishLateEvaluation() {
@@ -127,5 +134,14 @@ class ExerciseReportStoreTest {
     void evidenceLookupRequiresTheExactGeneration() {
         when(reports.find("exercise")).thenReturn(report("SUCCEEDED", 1, 2, null));
         assertThatThrownBy(() -> store.evidence("session", "exercise", 1, "file:7:Main.java")).hasMessage("REVISION_CONFLICT");
+    }
+    @Test
+    void initialReviewAndExplicitRetryWakeEvaluationDiscovery() {
+        store.review("session", "exercise", "key", new ReportReviewRequest(true, ""), null);
+        verify(wakeups).afterCommit(TaskWakeup.Lane.EVALUATION);
+        when(reports.find("exercise")).thenReturn(report("FAILED", 3, 1, now));
+        when(reports.retry(anyString(), anyLong(), anyString(), anyString(), any())).thenReturn(1);
+        store.retry("session", "exercise", "retry", 1, null);
+        verify(wakeups, times(2)).afterCommit(TaskWakeup.Lane.EVALUATION);
     }
 }

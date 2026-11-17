@@ -1,6 +1,7 @@
 package ai.codecraft.modules.copilot.service;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.modules.modelaccess.model.dto.ModelCallResultDTO;
 import ai.codecraft.modules.copilot.config.CopilotProperties;
 import ai.codecraft.modules.copilot.model.dto.CopilotCompactionPlanDTO;
 import ai.codecraft.modules.copilot.model.dto.CopilotCompactionReceiptDTO;
@@ -73,9 +74,12 @@ public class CopilotCompactionRunner {
                 var dispatch = capacity.admit(ticket.sessionHash(), ticket.exerciseId(),
                     measurement -> execution.begin(id, worker, prepared, candidate, ids, measurement));
                 if (dispatch == null) continue;
-                var result = driver.call(dispatch.target(), dispatch.request(),
-                    new ModelInvocationLimitsDTO(candidate.outputTokens(), dispatch.target().model().thinkingBudgetTokens()),
-                    Math.min(limits.responseBytes(), calls.maxDecodedBytes()), dispatch.call().notAfter(), new PartialCapture(id, worker, dispatch.call().id()));
+                ModelCallResultDTO result;
+                try (var capture = new PartialCapture(id, worker, dispatch.call().id())) {
+                    result = driver.call(dispatch.target(), dispatch.request(),
+                        new ModelInvocationLimitsDTO(candidate.outputTokens(), dispatch.target().model().thinkingBudgetTokens()),
+                        Math.min(limits.responseBytes(), calls.maxDecodedBytes()), dispatch.call().notAfter(), capture);
+                }
                 var receipt = receipt(id, candidate, ticket.summaryId(), result.response());
                 if (!execution.complete(id, worker, dispatch.call().id(), receipt)) return;
                 repair = true;
@@ -126,22 +130,28 @@ public class CopilotCompactionRunner {
             plan.replacedBytes(), plan.outputTokens(), maximum);
     }
 
-    private final class PartialCapture implements Consumer<String> {
+    private final class PartialCapture implements Consumer<String>, AutoCloseable {
         private final String id;
         private final String worker;
         private final String call;
         private final StringBuilder text = new StringBuilder();
         private int persisted;
-        private long lastFlush;
+        private long lastFlush = System.nanoTime();
         PartialCapture(String id, String worker, String call) { this.id = id; this.worker = worker; this.call = call; }
         @Override public void accept(String chunk) {
             if (chunk == null || chunk.isEmpty()) return;
+            if ((long) text.length() + chunk.length() > limits.responseBytes()) throw new IllegalArgumentException("Summary preview exceeds bound");
             text.append(chunk);
             long now = System.nanoTime();
-            if (lastFlush == 0 || text.length() - persisted >= 2048 || now - lastFlush >= 200_000_000L) {
-                execution.partial(id, worker, call, ChatMessageSerializer.messageToJson(AiMessage.from(text.toString())));
-                persisted = text.length(); lastFlush = now;
-            }
+            if (now - lastFlush >= 2_000_000_000L) flush(now);
         }
+        private void flush(long now) {
+            if (text.length() != persisted) {
+                execution.partial(id, worker, call, ChatMessageSerializer.messageToJson(AiMessage.from(text.toString())));
+                persisted = text.length();
+            }
+            lastFlush = now;
+        }
+        @Override public void close() { flush(System.nanoTime()); }
     }
 }

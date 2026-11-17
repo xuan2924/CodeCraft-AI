@@ -19,6 +19,19 @@ public interface CopilotTaskRepository {
     String TURN = "id::text,task_id::text,exercise_id::text,ordinal,state,connection_id::text,model_configuration_id::text,connection_configuration_version,model_configuration_version,protocol,model_id,context_window,assistant_message_id::text,tool_position,created_at,not_after,completed_at,error_code";
     String MESSAGE = "sequence,id::text,task_id::text,exercise_id::text,kind,payload,created_at";
 
+    @Update("UPDATE copilot_task SET reference_count=#{count} WHERE id=#{id}::uuid")
+    void referenceCount(String id, int count);
+    @Select("SELECT message.payload FROM copilot_tool tool JOIN copilot_message message ON message.id=tool.result_message_id WHERE tool.turn_id=(SELECT id FROM copilot_turn WHERE task_id=#{id}::uuid ORDER BY ordinal DESC LIMIT 1) AND tool.name IN ('read','view_file') AND tool.outcome_code='OK' ORDER BY tool.position DESC LIMIT 1")
+    String latestReadResult(String id);
+    @Select("SELECT planning_revision::text FROM copilot_task WHERE id=#{id}::uuid")
+    String planningRevision(String id);
+    @Update("UPDATE copilot_task SET planning_revision=greatest(planning_revision,#{revision}::bigint) WHERE id=#{id}::uuid")
+    void updatePlanningRevision(String id, String revision);
+    @Update("UPDATE copilot_task SET planning_revision=#{revision}::bigint WHERE id=#{id}::uuid AND planning_revision IS NULL")
+    void initializePlanningRevision(String id, String revision);
+    @Update("UPDATE copilot_tool SET outcome_code=#{code} WHERE id=#{id}::uuid AND completed_at IS NOT NULL")
+    void outcome(String id, String code);
+
     @Update("UPDATE copilot_turn SET price_snapshot=#{snapshot} WHERE id=#{id}::uuid AND state='DISPATCHED'")
     void recordPrice(String id, String snapshot);
     @Select("SELECT price_snapshot FROM copilot_turn WHERE id=#{id}::uuid")
@@ -141,7 +154,7 @@ public interface CopilotTaskRepository {
           #{connectionConfigurationVersion},#{modelConfigurationVersion},#{protocol},#{modelId},#{contextWindow},#{createdAt},#{notAfter})
         """)
     void turn(CopilotTurnEntity turn);
-    @Select("SELECT tool.arguments FROM copilot_tool tool JOIN copilot_turn turn ON turn.id=tool.turn_id WHERE tool.task_id=#{task}::uuid AND tool.name='view_file' AND tool.state='SUCCEEDED' ORDER BY turn.ordinal DESC,tool.position DESC LIMIT 32")
+    @Select("SELECT tool.arguments FROM copilot_tool tool JOIN copilot_turn turn ON turn.id=tool.turn_id WHERE tool.task_id=#{task}::uuid AND tool.name IN ('read','view_file') AND tool.state='SUCCEEDED' AND tool.outcome_code='OK' ORDER BY turn.ordinal DESC,tool.position DESC LIMIT 32")
     List<String> instructionPaths(String task);
     @Update("UPDATE copilot_turn SET project_instructions=#{payload} WHERE id=#{turn}::uuid")
     void recordProjectInstructions(String turn, String payload);

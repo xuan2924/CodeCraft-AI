@@ -1,5 +1,7 @@
 package ai.codecraft.modules.modelaccess.service;
 
+import ai.codecraft.infrastructure.ratelimit.SlidingWindowRateLimiter;
+
 import ai.codecraft.modules.platformagent.service.PlatformBindingService;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -143,7 +145,7 @@ class ModelConnectionPersistenceIT {
         jdbc.update("INSERT INTO identity_user(id,username,password_hash,role,password_change_required) VALUES (?::uuid,?,'fixture','USER',false)", owner, "u_" + owner.substring(0, 20));
         var identity = mock(IdentityTransactionService.class);
         var locks = transactional(new IdentityTransactionService(sql.getMapper(IdentityRepository.class), clock, mock(IdentityRevocationNotifier.class),
-            mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class)), IdentityTransactionService.class);
+            mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class), mock(SlidingWindowRateLimiter.class)), IdentityTransactionService.class);
         doAnswer(call -> { locks.lockResourceOwner(call.getArgument(0)); return null; }).when(identity).lockResourceOwner(anyString());
         var grant = new SessionAuthorizationDTO(owner, "USER", false, 1, NOW.plusSeconds(3600));
         when(identity.authorization("session")).thenReturn(grant);

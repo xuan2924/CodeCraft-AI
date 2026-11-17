@@ -13,7 +13,6 @@ public final class IdentityPolicy {
     public static final Duration ANONYMOUS_LIMIT = Duration.ofMinutes(15);
     public static final int ANONYMOUS_CAPACITY = 1000;
     public static final int ATTEMPTS_PER_MINUTE = 5;
-    public static final int RATE_BUCKET_CAPACITY = 2000;
 
     private IdentityPolicy() { }
 

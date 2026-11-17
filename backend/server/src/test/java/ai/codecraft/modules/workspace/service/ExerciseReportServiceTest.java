@@ -22,7 +22,7 @@ class ExerciseReportServiceTest {
     private final ExerciseReportService service = new ExerciseReportService(store, mock(StorageCapacityService.class), renderer,
         new PlatformAgentProperties(1, 120, 300, 3, 300, 1800, 30));
     private ExerciseReportResponse snapshot(long generation, String state) {
-        return new ExerciseReportResponse("exercise", "report", generation, state, "0", "UNAVAILABLE", null, true, "version", 1, null, null, List.of());
+        return new ExerciseReportResponse("exercise", "report", generation, state, "0", "UNAVAILABLE", null, true, "version", 1, null, null, List.of(), List.of(), null);
     }
     @Test
     void staleGenerationAndForeignOwnerCannotRenderPrivateBytes() throws Exception {

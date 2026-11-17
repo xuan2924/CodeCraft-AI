@@ -47,6 +47,15 @@ public class ReportEvidenceCollector {
             evidence.add(new ReportEvidenceDTO("test:" + result.taskId(), "FINAL_TEST", result.taskId(),
                 "最终验收 " + result.state() + "，冻结修订 " + result.revision() + "，目标 " + result.target(), reports.encode(facts), false));
         }
+        var trace = reports.view(session, exercise);
+        evidence.add(item("timeline", "TIMELINE", exercise, "保留的客观演练时间轴（按时间排序）",
+            reports.encode(trace.timeline().stream().limit(64).toList()), 8192));
+        evidence.add(item("context-trace", "CONTEXT_TRACE", exercise, "客观上下文使用记录，不代表质量或扣分依据",
+            reports.encode(trace.contextTrace()), 8192));
+        evidence.add(new ReportEvidenceDTO("trace-policy", "SCOPE", exercise, "上下文证据解释边界",
+            "Timeline samples at most 64 retained events; pruned test history may be absent. Legacy reference counts default to zero. "
+                + "Use objective evidence for COLLABORATION and VALIDATION. Never mechanically penalize proposal rejection rate, AI usage volume or hint counts. "
+                + "Clarify/defense and hint usage count only successful published answers; steer counts applied corrections; skill counts successful loads.", true));
         var paths = frozen.paths().stream().sorted().toList();
         for (String path : paths.stream().limit(16).toList()) {
             var file = exercises.read(session, exercise, path);

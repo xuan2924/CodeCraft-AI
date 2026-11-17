@@ -3,6 +3,7 @@ package ai.codecraft.modules.workspace.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -11,6 +12,7 @@ import static org.mockito.Mockito.when;
 import ai.codecraft.modules.copilot.service.CopilotConversationService;
 import ai.codecraft.modules.copilot.service.CopilotTaskService;
 import ai.codecraft.modules.workspace.model.dto.ExerciseResponse;
+import ai.codecraft.modules.workspace.model.dto.ExerciseReportResponse;
 import ai.codecraft.modules.workspace.model.dto.ReportEvidenceDTO;
 import ai.codecraft.modules.workspace.model.dto.WorkspaceFileResponse;
 import ai.codecraft.modules.workspace.model.dto.WorkspaceHistoryResponse;
@@ -57,10 +59,13 @@ class ReportEvidenceCollectorTest {
         when(exercises.read("session", "exercise", "Main.java")).thenReturn(file);
         when(requirements.published("exercise")).thenReturn("只使用当前阶段的公开需求");
         when(history.recent("session", "exercise", Long.MAX_VALUE)).thenReturn(new WorkspaceHistoryResponse("exercise", List.of(), null));
+        var trace = mock(ExerciseReportResponse.class);
+        when(reports.view("session", "exercise")).thenReturn(trace);
+        when(reports.encode(any())).thenReturn("{}");
         var evidence = collector.collect(ticket(null));
         var source = evidence.stream().filter(value -> value.kind().equals("FILE")).findFirst().orElseThrow();
         assertThat(source.truncated()).isTrue(); assertThat(source.content().getBytes(StandardCharsets.UTF_8).length).isLessThanOrEqualTo(4096);
         assertThat(source.content()).doesNotContain("�");
-        assertThat(evidence).extracting(ReportEvidenceDTO::kind).contains("SELF_REVIEW", "SCOPE", "REQUIREMENTS");
+        assertThat(evidence).extracting(ReportEvidenceDTO::kind).contains("SELF_REVIEW", "SCOPE", "REQUIREMENTS", "TIMELINE", "CONTEXT_TRACE");
     }
 }

@@ -15,6 +15,7 @@ import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
+import ai.codecraft.infrastructure.ratelimit.SlidingWindowRateLimiter;
 import ai.codecraft.modules.identity.service.IdentityRevocationNotifier;
 import ai.codecraft.modules.identity.service.IdentityRevocationBarrier;
 import ai.codecraft.modules.identity.repository.IdentityRepository;
@@ -138,7 +139,7 @@ class WorkspaceRetentionPersistenceIT {
         var authorization = new SessionAuthorizationDTO(owner, "USER", false, 1, clock.now.plusSeconds(60));
         when(identity.authorization("session")).thenReturn(authorization);
         var ownerLocks = transactional(new IdentityTransactionService(sql.getMapper(IdentityRepository.class), clock,
-            mock(IdentityRevocationNotifier.class), mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class)), IdentityTransactionService.class);
+            mock(IdentityRevocationNotifier.class), mock(RevocationIntentRepository.class), mock(IdentityRevocationBarrier.class), mock(SlidingWindowRateLimiter.class)), IdentityTransactionService.class);
         org.mockito.Mockito.doAnswer(call -> { ownerLocks.lockResourceOwner(call.getArgument(0)); return null; }).when(identity).lockResourceOwner(anyString());
         when(identity.authorizeMutation("session")).thenAnswer(call -> { ownerLocks.lockResourceOwner(owner); return authorization; });
         when(identity.authorizePrivateDelivery("session")).thenAnswer(call -> { ownerLocks.lockResourceOwner(owner); return authorization; });

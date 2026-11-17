@@ -1,11 +1,15 @@
 package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.infrastructure.stream.TransientTaskStreamHub;
+import ai.codecraft.infrastructure.tasks.TaskWakeup;
+import ai.codecraft.infrastructure.tasks.TaskWakeupPublisher;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.platformagent.model.PlatformRole;
 import ai.codecraft.modules.platformagent.service.PlatformBindingService;
 import ai.codecraft.modules.workspace.model.dto.InterviewerDispatchDTO;
+import ai.codecraft.modules.workspace.model.dto.InterviewerRequest;
 import ai.codecraft.modules.workspace.model.dto.InterviewerTaskResponse;
 import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
@@ -34,48 +38,63 @@ public class InterviewerStore {
     private final StorageCapacityStore capacity;
     private final IdentitySecrets secrets;
     private final Clock clock;
+    private final TaskWakeupPublisher wakeups;
+    private final TransientTaskStreamHub streams;
 
     public InterviewerStore(InterviewerRepository tasks, ExerciseRepository exercises, IdentityTransactionService identity,
         WorkspaceCoordinationStore coordination, PlatformBindingService platform, ExerciseModelService models,
-        StorageCapacityStore capacity, IdentitySecrets secrets, Clock clock) {
+        StorageCapacityStore capacity, IdentitySecrets secrets, Clock clock, TaskWakeupPublisher wakeups, TransientTaskStreamHub streams) {
         this.tasks = tasks; this.exercises = exercises; this.identity = identity; this.coordination = coordination;
-        this.platform = platform; this.models = models; this.capacity = capacity; this.secrets = secrets; this.clock = clock;
+        this.platform = platform; this.models = models; this.capacity = capacity; this.secrets = secrets; this.clock = clock; this.wakeups = wakeups; this.streams = streams;
     }
 
     @Transactional
     public InterviewerTaskResponse existing(String session, String exercise, String key, String question) {
+        return existing(session, exercise, key, new InterviewerRequest(question));
+    }
+
+    @Transactional
+    public InterviewerTaskResponse existing(String session, String exercise, String key, InterviewerRequest input) {
         owned(session, exercise);
-        validate(key, question);
+        validate(key, input);
         var previous = tasks.receipt(exercise, key);
-        if (previous != null && !previous.question().equals(question)) fail(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
+        if (previous != null && !same(previous, input)) fail(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
         return previous == null ? null : describe(previous);
     }
 
     @Transactional
     public InterviewerTaskResponse accept(String session, String id, String key, String credential, String question, StorageMeasurement measurement) {
+        return accept(session, id, key, credential, new InterviewerRequest(question), measurement);
+    }
+
+    @Transactional
+    public InterviewerTaskResponse accept(String session, String id, String key, String credential, InterviewerRequest input, StorageMeasurement measurement) {
         var auth = identity.authorizeMutation(session);
         var exercise = requireOwner(auth.userId(), id);
-        validate(key, question);
+        validate(key, input);
         var previous = tasks.receipt(id, key);
         if (previous != null) {
-            if (!previous.question().equals(question)) fail(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
+            if (!same(previous, input)) fail(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
             return describe(previous);
         }
         coordination.checkControl(id, IdentitySecrets.digest(credential));
         exercise = exercises.find(id);
-        if (!answering(exercise)) fail(WorkspaceErrorCode.INVALID_STATE);
+        if (!answering(exercise) || "DEFENSE".equals(input.mode()) && !"ACTIVE".equals(exercise.state())) fail(WorkspaceErrorCode.INVALID_STATE);
         if ("READY".equals(exercise.state())) models.requireReady(session, id);
         if (tasks.active(id) || tasks.count(id) >= 200) fail(WorkspaceErrorCode.INVALID_STATE);
         var version = platform.version(id, PlatformRole.INTERVIEWER);
         String taskId = UUID.randomUUID().toString();
         var operation = new WorkspaceOperationEntity(taskId, auth.userId(), id, exercise.workspaceInstanceId(), "INTERVIEWER", id,
-            key, secrets.fingerprint(question), "PENDING", clock.instant());
+            key, secrets.fingerprint(input.mode() + ":" + input.topic() + ":" + input.text()), "PENDING", clock.instant());
         capacity.admit(operation, measurement, 131072);
         exercises.insertOperation(operation);
-        var task = new InterviewerTaskEntity(taskId, id, auth.userId(), session, IdentitySecrets.digest(credential), key, question,
-            null, "QUEUED", null, version.id(), exercise.state(), exercise.revision(), clock.instant(),
+        var task = new InterviewerTaskEntity(taskId, id, auth.userId(), session, IdentitySecrets.digest(credential), key, input.text(),
+            null, "QUEUED", null, version.id(), exercise.state(), stage(id), input.mode(), input.topic(),
+            "HINT".equals(input.mode()) ? Math.min(3, tasks.successfulHints(id, input.topic()) + 1) : 1, exercise.revision(), clock.instant(),
             earlier(clock.instant().plusSeconds(300), auth.expiresAt()), null, null);
         tasks.insert(task);
+        wakeups.afterCommit(TaskWakeup.Lane.INTERVIEWER);
+        streams.afterCommit(task.id());
         return describe(task);
     }
 
@@ -117,7 +136,8 @@ public class InterviewerStore {
         Instant deadline = earlier(clock.instant().plusSeconds(120), auth.expiresAt());
         if (exercise.deadlineAt() != null) deadline = earlier(deadline, exercise.deadlineAt());
         if (tasks.claim(id, deadline) != 1) return null;
-        return new InterviewerDispatchDTO(id, task.exerciseId(), task.question(), task.phase(), version, deadline);
+        streams.afterCommit(id);
+        return new InterviewerDispatchDTO(id, task.exerciseId(), task.question(), task.phase(), task.stage(), exercise.revision(), task.mode(), task.topic(), task.hintLevel(), task.sessionHash(), version, deadline);
     }
 
     @Transactional
@@ -151,11 +171,12 @@ public class InterviewerStore {
         catch (BusinessException stale) { return false; }
         // Refresh after the control lock to serialize with pause, end and takeover.
         exercise = exercises.find(task.exerciseId());
-        return answering(exercise) && task.phase().equals(exercise.state());
+        return answering(exercise) && task.phase().equals(exercise.state()) && task.stage().equals(stage(task.exerciseId()));
     }
 
     private void complete(InterviewerTaskEntity task, String answer, String error, String usage) {
         tasks.finish(task.id(), answer, error, clock.instant(), usage);
+        streams.afterCommit(task.id());
         exercises.operationState(task.id(), error == null ? "SUCCEEDED" : "REJECTED");
     }
 
@@ -170,7 +191,13 @@ public class InterviewerStore {
         return exercise != null && ("READY".equals(exercise.state()) || "ACTIVE".equals(exercise.state())
             && exercise.deadlineAt() != null && clock.instant().isBefore(exercise.deadlineAt()));
     }
-    private void validate(String key, String question) {
+    private String stage(String exercise) { return exercises.challengeEntered(exercise) ? "CHALLENGE" : "BASE"; }
+    private boolean same(InterviewerTaskEntity task, InterviewerRequest input) {
+        return task.question().equals(input.text()) && task.mode().equals(input.mode()) && task.topic().equals(input.topic());
+    }
+    private void validate(String key, InterviewerRequest input) {
+        String question = input.text();
+        if (!List.of("CLARIFY", "HINT", "DEFENSE").contains(input.mode()) || !input.topic().matches("[A-Za-z0-9_-]{1,64}")) fail(WorkspaceErrorCode.INVALID_REQUEST);
         if (key == null || !key.matches("[A-Za-z0-9_.:-]{1,128}") || question == null || question.isBlank()
             || question.getBytes(StandardCharsets.UTF_8).length > 4096 || question.codePoints().anyMatch(c -> c >= 0xD800 && c <= 0xDFFF)) fail(WorkspaceErrorCode.INVALID_REQUEST);
     }
@@ -178,6 +205,6 @@ public class InterviewerStore {
     private static void fail(WorkspaceErrorCode code) { throw new BusinessException(code); }
     private InterviewerTaskResponse describe(InterviewerTaskEntity task) {
         return new InterviewerTaskResponse(task.id(), task.exerciseId(), task.question(), task.answer(), task.state(), task.reason(), task.platformVersionId(),
-            task.phase(), task.revision() == null ? null : task.revision().toString(), task.createdAt(), task.completedAt());
+            task.phase(), task.stage(), task.mode(), task.topic(), task.hintLevel(), task.revision() == null ? null : task.revision().toString(), task.createdAt(), task.completedAt());
     }
 }

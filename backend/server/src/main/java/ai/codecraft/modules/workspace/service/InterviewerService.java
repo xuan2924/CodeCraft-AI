@@ -2,6 +2,7 @@ package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.model.dto.InterviewerTaskResponse;
+import ai.codecraft.modules.workspace.model.dto.InterviewerRequest;
 import ai.codecraft.modules.workspace.model.dto.TaskStreamBatchDTO;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,8 +20,11 @@ public class InterviewerService {
         this.store = store; this.capacity = capacity; this.identity = identity; this.json = json;
     }
     public InterviewerTaskResponse ask(String session, String exercise, String key, String credential, String text) {
-        var previous = store.existing(session, exercise, key, text);
-        return previous != null ? previous : capacity.admit(session, exercise, measurement -> store.accept(session, exercise, key, credential, text, measurement));
+        return ask(session, exercise, key, credential, new InterviewerRequest(text));
+    }
+    public InterviewerTaskResponse ask(String session, String exercise, String key, String credential, InterviewerRequest input) {
+        var previous = store.existing(session, exercise, key, input);
+        return previous != null ? previous : capacity.admit(session, exercise, measurement -> store.accept(session, exercise, key, credential, input, measurement));
     }
     public List<InterviewerTaskResponse> history(String session, String exercise, String before) { return store.history(session, exercise, before); }
     public InterviewerTaskResponse find(String session, String exercise, String id) { return store.find(session, exercise, id); }

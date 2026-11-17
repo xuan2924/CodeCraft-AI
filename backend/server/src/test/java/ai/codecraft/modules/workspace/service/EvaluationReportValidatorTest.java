@@ -14,6 +14,8 @@ class EvaluationReportValidatorTest {
         new ReportEvidenceDTO("test:final", "FINAL_TEST", "final", "冻结修订验收通过", "PASSED", false),
         new ReportEvidenceDTO("file:7:Main.java", "FILE", "Main.java", "冻结文件", "class Main {}", false),
         new ReportEvidenceDTO("message:1", "COPILOT_MESSAGE", "message-1", "已记录的审查反馈", "请补充溢出边界测试", false),
+        new ReportEvidenceDTO("trace", "CONTEXT_TRACE", "exercise", "Objective usage", "{}", false),
+        new ReportEvidenceDTO("timeline", "TIMELINE", "exercise", "Objective timeline", "[]", false),
         new ReportEvidenceDTO("review", "SELF_REVIEW", "review", "用户自述", "I did well", false));
     private final String valid = """
         {"verification":"PASSED","total":86,"conclusion":"完成主要需求，仍可加强边界验证。","dimensions":[
@@ -54,5 +56,12 @@ class EvaluationReportValidatorTest {
     void selfReviewAloneCannotSupportAScoreAndDuplicateJsonFieldsAreRejected() {
         assertThatThrownBy(() -> validator.validate(valid.replace("[\"test:final\"]", "[\"review\"]"), "PASSED", evidence)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> validator.validate(valid.replace("\"total\":86", "\"total\":86,\"total\":86"), "PASSED", evidence)).isInstanceOf(IllegalArgumentException.class);
+    }
+    @Test
+    void objectiveTraceAndTimelineCanSupportCollaborationAndValidationNotCodeCorrectness() {
+        String traced = valid.replace("[\"message:1\",\"review\"]", "[\"trace\",\"timeline\"]");
+        assertThat(validator.validate(traced, "PASSED", evidence).total()).isEqualTo(86);
+        assertThatThrownBy(() -> validator.validate(valid.replace("test:final", "timeline"), "PASSED", evidence))
+            .isInstanceOf(IllegalArgumentException.class);
     }
 }

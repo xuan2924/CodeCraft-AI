@@ -4,6 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.codecraft.modules.identity.config.IdentityBootstrap;
+import ai.codecraft.infrastructure.ratelimit.RateLimitPolicy;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.datasource.init.ScriptUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import ai.codecraft.fixture.CaptchaFixture;
 import ai.codecraft.modules.identity.service.CaptchaService;
 import ai.codecraft.modules.identity.config.IdentitySettings;
@@ -76,6 +82,7 @@ class IdentityIT {
     private static final String NEW_PASSWORD = "changed-password-only";
     @LocalServerPort private int port;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private PlatformTransactionManager transactions;
     @Autowired private ObjectMapper json;
     @Autowired private IdentityTransactionService store;
     @Autowired private IdentitySecrets secrets;
@@ -112,7 +119,7 @@ class IdentityIT {
         clock.at(START);
         notifications.events.clear();
         notifications.fail = false;
-        jdbc.execute("TRUNCATE platform_exercise_binding, platform_agent_check, platform_agent_command, platform_agent_version, problem_favorite, identity_captcha, workspace_task_event, workspace_task_stream, workspace_test_stop, workspace_test_task, workspace_mutation, workspace_transition, workspace_control, workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, identity_user");
+        jdbc.execute("TRUNCATE platform_exercise_binding, platform_agent_check, platform_agent_command, platform_agent_version, problem_favorite, identity_captcha, workspace_task_event, workspace_task_stream, workspace_test_stop, workspace_test_task, workspace_mutation, workspace_transition, workspace_control, workspace_operation, workspace_exercise, identity_revocation_intent, identity_receipt, identity_session, identity_anonymous_csrf, identity_rate_limit, sliding_window_rate_limit, identity_user");
         jdbc.execute("UPDATE platform_agent_role SET current_version=NULL,revision=0");
         store.bootstrap("admin_test", secrets.hash(PASSWORD));
     }
@@ -355,6 +362,64 @@ class IdentityIT {
             assertThat(store.admit(secrets.fingerprint("account"), secrets.fingerprint("address", "ip" + index))).isTrue();
         }
         assertThat(store.admit(secrets.fingerprint("account"), secrets.fingerprint("address", "new-ip"))).isFalse();
+    }
+
+    @Test
+    void legacyMigrationPreservesRuntimeBucketHashesCountsAndOriginalExpiry() {
+        // Run the real migration against seeded legacy data in an isolated, rolled-back schema.
+        new TransactionTemplate(transactions).executeWithoutResult(status -> {
+            status.setRollbackOnly();
+            String schema = "rate_migration_" + UUID.randomUUID().toString().replace("-", "");
+            jdbc.execute("CREATE SCHEMA " + schema);
+            jdbc.execute("SET LOCAL search_path TO " + schema);
+            jdbc.execute("CREATE TABLE identity_rate_limit (bucket_hash varchar(64) PRIMARY KEY, "
+                + "window_start timestamptz NOT NULL, attempts integer NOT NULL)");
+            String account = secrets.fingerprint("legacy-account");
+            String address = secrets.fingerprint("legacy-address");
+            Instant accountStart = START.minusSeconds(20);
+            Instant addressStart = START.minusSeconds(45);
+            jdbc.update("INSERT INTO identity_rate_limit VALUES (?, ?, ?), (?, ?, ?)",
+                account, Timestamp.from(accountStart), 3, address, Timestamp.from(addressStart), 5);
+            jdbc.execute((ConnectionCallback<Void>) connection -> {
+                ScriptUtils.executeSqlScript(connection,
+                    new ClassPathResource("db/migration/V59__sliding_window_rate_limit.sql"));
+                return null;
+            });
+            String accountBucket = new RateLimitPolicy("identity", account, Duration.ofMinutes(1), 5).bucket();
+            String addressBucket = new RateLimitPolicy("identity", address, Duration.ofMinutes(1), 5).bucket();
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM sliding_window_rate_limit", Integer.class)).isEqualTo(8);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM sliding_window_rate_limit "
+                + "WHERE bucket_hash = ? AND expires_at = ?", Integer.class,
+                accountBucket, Timestamp.from(accountStart.plusSeconds(60)))).isEqualTo(3);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM sliding_window_rate_limit "
+                + "WHERE bucket_hash = ? AND expires_at = ?", Integer.class,
+                addressBucket, Timestamp.from(addressStart.plusSeconds(60)))).isEqualTo(5);
+        });
+    }
+
+    @Test
+    void slidingAdmissionCommitsIndependentlyAndDoesNotResetAtFirstAttemptBoundary() {
+        assertThatThrownBy(() -> new TransactionTemplate(transactions).execute(status -> {
+            assertThat(store.admit("sliding-account", "sliding-address")).isTrue();
+            throw new IllegalStateException("later login failure");
+        })).isInstanceOf(IllegalStateException.class);
+        clock.at(START.plusSeconds(59));
+        for (int index = 0; index < 4; index++) {
+            assertThat(store.admit("sliding-account", "sliding-address")).isTrue();
+        }
+        clock.at(START.plusSeconds(60));
+        assertThat(store.admit("sliding-account", "sliding-address")).isTrue();
+        assertThat(store.admit("sliding-account", "sliding-address")).isFalse();
+        clock.at(START.plusSeconds(119));
+        assertThat(store.admit("sliding-account", "sliding-address")).isTrue();
+    }
+
+    @Test
+    void concurrentSlidingAdmissionCannotOverspend() {
+        List<CompletableFuture<Boolean>> calls = IntStream.range(0, 20)
+            .mapToObj(ignored -> CompletableFuture.supplyAsync(() -> store.admit("parallel-account", "parallel-address")))
+            .toList();
+        assertThat(calls.stream().map(CompletableFuture::join).filter(Boolean::booleanValue).count()).isEqualTo(5);
     }
 
     @Test

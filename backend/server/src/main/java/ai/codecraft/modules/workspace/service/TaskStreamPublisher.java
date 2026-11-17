@@ -1,5 +1,6 @@
 package ai.codecraft.modules.workspace.service;
 
+import ai.codecraft.infrastructure.stream.TransientTaskStreamHub;
 import ai.codecraft.modules.workspace.model.dto.TestLogResponse;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
 import ai.codecraft.modules.workspace.model.entity.TaskStreamEntity;
@@ -21,8 +22,9 @@ public class TaskStreamPublisher {
     private final TaskStreamRepository streams;
     private final ObjectMapper json;
     private final Clock clock;
-    public TaskStreamPublisher(TaskStreamRepository streams, ObjectMapper json, Clock clock) {
-        this.streams = streams; this.json = json; this.clock = clock;
+    private final TransientTaskStreamHub notifications;
+    public TaskStreamPublisher(TaskStreamRepository streams, ObjectMapper json, Clock clock, TransientTaskStreamHub notifications) {
+        this.streams = streams; this.json = json; this.clock = clock; this.notifications = notifications;
     }
     @Transactional
     public void checkpoint(TestTaskResponse before, TestTaskResponse after) {
@@ -53,6 +55,7 @@ public class TaskStreamPublisher {
         streams.advance(after.taskId(), sequence);
         streams.trim(after.taskId());
         streams.retained(after.taskId());
+        notifications.afterCommit(after.taskId());
     }
     private long append(List<TaskEventEntity> batch, TaskStreamEntity stream, TestTaskResponse task, long previous, String type, Map<String, Object> payload) {
         long sequence = Math.addExact(previous, 1);

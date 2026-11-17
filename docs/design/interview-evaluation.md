@@ -53,11 +53,17 @@
 
 ### 面试官问答持久任务
 
-- `POST /api/exercises/{id}/interviewer/tasks`：`{text}`，4 KiB UTF-8，要求会话/CSRF、当前操作凭证及幂等键。仅 `READY/ACTIVE` 可受理；READY 复核个人模型准备检查，但使用演练绑定的 INTERVIEWER 平台模型，平台承担费用。零提问仍可直接开始。每场最多 200 条，最多一条在途；不加入 Copilot 对话、不授予任何工具或阶段迁移权限。
+- `POST /api/exercises/{id}/interviewer/tasks`：`{text, mode?, topic?}`，text 为 4 KiB UTF-8，要求会话/CSRF、当前操作凭证及幂等键。仅 `READY/ACTIVE` 可受理；READY 复核个人模型准备检查，但使用演练绑定的 INTERVIEWER 平台模型，平台承担费用。零提问仍可直接开始。每场最多 200 条，最多一条在途；不加入 Copilot 对话、不授予任何工具或阶段迁移权限。
 - GET 同路径按 `before` UUID 倒序每页 20 条读取只读历史；GET `/{task}` 读取快照；`/{task}/events` 使用现有有界 SSE 传输、持续身份校验、快照游标与 reset 语义。刷新、重连和重复 POST 不调用模型，不自动重放未知调用。
 - 受理保留提问、阶段、平台配置身份；派发时固定当前公开题面（不读取 manifest 的隐藏挑战）、必要的绑定平台指令/Skill 和调用价格快照，不混入私人 Skill、Copilot 对话或凭证。每场容量统一预留 128 KiB/请求，输出上限 16 KiB，历史及用量行随演练计量和删除。
 - `QUEUED → RUNNING → SUCCEEDED/FAILED`。队列期限 300 秒，单次调用上限 120 秒且不超过会话和作答截止；先持久化 RUNNING 再调用，无重派发路径。重启后超时 RUNNING 标为 `INTERVIEWER_RESULT_UNKNOWN`；未知不自动重发。派发和提交均在 owner/control 锁下复核原会话、凭证、阶段和生命周期。阶段切换、接管、暂停或结束使迟到文本不公开为有效回答，已知用量仍单独保存。
 - 暂停意图同事务取消 QUEUED 问题，RUNNING 等待有界调用收敛或到期标未知；未知不产生代码副作用，不回滚已知费用。暂停确认的领域静默检查包括面试官任务。历史只读不要求操作凭证。
+
+### 有状态面试官上下文
+
+- `mode` 默认为 `CLARIFY`，可选 `HINT/DEFENSE`；`topic` 默认为 `general`，限 1–64 个 ASCII 字母数字、下划线或连字符。幂等身份包含 text/mode/topic；同键不同意图拒绝。
+- 任务快照及 SSE 保留 `phase=READY/ACTIVE` 生命周期语义，新增正交 `stage=BASE/CHALLENGE`、`mode`、`topic`、`hintLevel`。提示等级为 1–3；HINT 按本演练/主题已成功发布的提示数计算并封顶 3，失败和重放不升级，非 HINT 使用 1 作为兼容默认值。
+- 派发最多注入最近 8 轮已完成问答及当前阶段、修订和最近受控测试摘要。DEFENSE 仅 ACTIVE 可用；事务外读取有界已保存源码和最近变更作为不可信证据，不能从证据获得修改权限，不混入 Copilot 私有历史。
 
 ## 可选挑战
 
@@ -129,6 +135,12 @@ AI 报告发布前校验结构、等级、证据引用实际存在、各维度�
 - 评价在持久任务中异步执行，QUEUED → PREPARING（仅只读取证）→ RUNNING（已持久派发）→ SUCCEEDED/FAILED/UNKNOWN。取证和模型请求在数据库事务外进行，派发与结果提交在 owner 锁下复核身份、删除、冻结修订、绑定版本和 generation。已派发的未知调用不重新发送，截止后标 UNKNOWN，用户显式重试才开始新 generation。确定无有效报告的结构/证据校验失败最多自动重生成两次（共三次），保留已知用量与原因；未知结果不走自动重生成。
 - 发布必须恰有四个已知维度，分数为范围内整数或 null，非空反馈、真实证据引用。非空分数必须有非自述证据；正确性数值还必须引用当前冻结最终验收。总分仅在四项均有依据且最终验收可用时为四项之和；平台验收 UNAVAILABLE/PENDING 时不得发布总分。结构化 `verification` 必须等于确定性事实；此校验不能保证所有自由文本主观判断正确。
 - 报告、回顾、证据摘要、原始有界评价及尝试/用量随演练计量与删除；普通调用前预留总预算，删除先撤销读写并等待在途调用有界收敛，未知调用不重发。报告 PDF 按本人请求从同一 generation 快照现生成，不留永久缓存或公开 URL，发送前再次核对归属/删除与版本；只含评分、结论和关键证据摘要，未完成明确标记，不补假分数。
+
+### 时间轴与客观上下文轨迹
+
+报告读取增加 `timeline` 与 `contextTrace`，不因查询启动任何模型或测试。时间轴按时间和稳定来源身份确定排序，条目为 `{timestamp,kind,title,detail,revision,sourceId}`，包含问答、开始实现、代码变更、测试完成、挑战进入和最终冻结；版本为十进制字符串。
+
+`contextTrace` 包含 `referenceCount/skillLoadCount/steerCount/btwTaskCount/interviewerClarifyCount/interviewerDefenseCount` 及 `hintsUsed:[{topic,maxLevel}]`。引用数来自服务端验证后保存的计数，不解析用户可伪造的消息标记；历史无可信计数的引用记为 0，不补造。Skill 统计实际加载，纠偏统计实际生效，提示仅统计成功发布。时间轴与轨迹进入有界评价证据，采样/截断明确标示；禁止按提示次数、AI 使用量或提案拒绝率机械扣分。
 
 ## 反馈
 

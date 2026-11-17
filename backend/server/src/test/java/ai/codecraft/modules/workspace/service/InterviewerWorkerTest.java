@@ -7,9 +7,11 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.when;
 
 import ai.codecraft.modules.modelaccess.gateway.ModelCallDriver;
+import ai.codecraft.infrastructure.tasks.TaskWakeup;
 import ai.codecraft.modules.modelaccess.model.ModelThinkingMode;
 import ai.codecraft.modules.modelaccess.model.dto.ModelCallResultDTO;
 import ai.codecraft.modules.modelaccess.model.dto.ModelConfigurationResponse;
@@ -48,7 +50,7 @@ class InterviewerWorkerTest {
         var target = new ModelInvocationDTO(null, model, "platform-secret");
         var version = new PlatformVersionEntity("version", PlatformRole.INTERVIEWER, "definition", "PUBLISHED", 1, 1, "key", "nonce", "ciphertext", now, now);
         var definition = new PlatformDefinitionDTO(null, model, "Bound platform instruction", List.of(), "INTERVIEW_V1");
-        when(store.claim("task")).thenReturn(new InterviewerDispatchDTO("task", "exercise", "What must I implement?", "READY", version, now.plusSeconds(120)), null);
+        when(store.claim("task")).thenReturn(new InterviewerDispatchDTO("task", "exercise", "What must I implement?", "READY", "BASE", 0L, "CLARIFY", "general", 1, "session", version, now.plusSeconds(120)), null);
         when(bindings.invocation(version)).thenReturn(target);
         when(definitions.decode("definition")).thenReturn(definition);
         when(definitions.instructions(PlatformRole.INTERVIEWER, definition)).thenReturn("Bound platform instruction");
@@ -57,7 +59,7 @@ class InterviewerWorkerTest {
         when(store.recordPrice("task", "{\"price\":null}")).thenReturn(true);
         when(driver.call(eq(target), any(), any(), anyInt(), any())).thenReturn(new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Implement the published requirements.")).build(), 64));
         var worker = new InterviewerWorker(store, bindings, definitions, driver, usage, requirements, Clock.fixed(now, ZoneOffset.UTC),
-            new PlatformAgentProperties(1, 120, 300, 3, 300, 1800, 30));
+            new PlatformAgentProperties(1, 120, 300, 3, 300, 1800, 30), mock(InterviewerContextCollector.class));
         try {
             worker.run("task");
             worker.run("task");
@@ -71,5 +73,14 @@ class InterviewerWorkerTest {
             verify(store).finish("task", "Implement the published requirements.", null, null);
             verify(bindings, never()).bind(any());
         } finally { worker.close(); }
+    }
+    @Test
+    void wakeupOnlyDiscoversItsOwnLane() {
+        var worker = mock(InterviewerWorker.class);
+        doCallRealMethod().when(worker).wake(any());
+        worker.wake(new TaskWakeup(TaskWakeup.Lane.COPILOT));
+        verify(worker, never()).discover();
+        worker.wake(new TaskWakeup(TaskWakeup.Lane.INTERVIEWER));
+        verify(worker).discover();
     }
 }

@@ -13,6 +13,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.AntPathMatcher;
 import ai.codecraft.modules.workspace.model.dto.ExerciseResponse;
@@ -32,19 +34,22 @@ public class CopilotReadTools {
     }
 
     public ReadToolResultDTO execute(String session, String exercise, String name, String input) {
-        if (!Set.of("view_file", "grep_code", "glob_files").contains(name == null ? "" : name)) return failure("TOOL_UNSUPPORTED");
+        boolean legacySearch = "grep_code".equals(name);
+        name = CopilotToolCatalog.canonical(name == null ? "" : name);
+        if (!Set.of("read", "grep", "find").contains(name)) return failure("TOOL_UNSUPPORTED");
         if (input == null || input.getBytes(StandardCharsets.UTF_8).length > MAX_ARGUMENT_BYTES) return failure("INVALID_ARGUMENTS");
         try {
             JsonNode value = arguments.readTree(input);
             if (value == null || !value.isObject()) return failure("INVALID_ARGUMENTS");
-            var allowed = "view_file".equals(name) ? Set.of("path", "start_line", "end_line") : Set.of("pattern");
+            var allowed = "read".equals(name) ? Set.of("path", "start_line", "end_line") : "find".equals(name) ? Set.of("pattern") : Set.of("pattern", "path_prefix", "is_regex", "literal", "context_lines", "limit");
             var fields = value.fieldNames();
             while (fields.hasNext()) if (!allowed.contains(fields.next())) return failure("INVALID_ARGUMENTS");
-            if (!"view_file".equals(name)) return search(session, exercise, name, value);
+            if (!"read".equals(name)) return search(session, exercise, name, value, legacySearch);
             if (!value.path("path").isTextual()) return failure("INVALID_ARGUMENTS");
             int first = line(value, "start_line", 1);
             int last = line(value, "end_line", first + MAX_LINES - 1);
-            if (first < 1 || last < first || last - first >= MAX_LINES) return failure("INVALID_ARGUMENTS");
+            if (first < 1 || last < first) return failure("INVALID_ARGUMENTS");
+            last = (int) Math.min(last, (long) first + MAX_LINES - 1);
             var snapshot = exercises.find(session, exercise);
             String path = value.path("path").textValue();
             if (!snapshot.paths().contains(path)) return failure("PATH_NOT_ALLOWED");
@@ -56,20 +61,41 @@ public class CopilotReadTools {
             boolean truncated = false;
             for (int index = first - 1; index < Math.min(last, lines.length); index++) {
                 String row = path + ":" + (index + 1) + ": " + lines[index];
-                int size = row.getBytes(StandardCharsets.UTF_8).length;
-                if (size > MAX_RESULT_BYTES - bytes) { truncated = true; break; }
+                int size = row.getBytes(StandardCharsets.UTF_8).length + 1;
+                if (size > MAX_RESULT_BYTES - 160 - bytes) { truncated = true; break; }
                 result.add(row); bytes += size;
             }
-            return new ReadToolResultDTO("OK", file.revision(), result, truncated || last < lines.length);
+            boolean more = truncated || last < lines.length;
+            if (truncated && result.isEmpty()) result.add("[Line " + first + " exceeds the byte limit; use read_source with kind FILE and byte pagination]");
+            else if (more) result.add("[Showing lines " + first + "-" + (first + result.size() - 1) + " of " + lines.length
+                + ". Use start_line=" + (first + result.size()) + " to continue]");
+            return new ReadToolResultDTO("OK", file.revision(), result, more);
         } catch (IOException malformed) { return failure("INVALID_ARGUMENTS"); }
         catch (BusinessException rejected) { return failure(rejected.errorCode().code()); }
     }
 
-    private ReadToolResultDTO search(String session, String exercise, String name, JsonNode value) {
+    private ReadToolResultDTO search(String session, String exercise, String name, JsonNode value, boolean legacySearch) {
         if (!value.path("pattern").isTextual()) return failure("INVALID_ARGUMENTS");
         String pattern = value.path("pattern").textValue();
         if (pattern.isEmpty() || pattern.length() > 512) return failure("INVALID_ARGUMENTS");
-        boolean glob = "glob_files".equals(name);
+        boolean glob = "find".equals(name);
+        for (String key : List.of("is_regex", "literal")) if (value.has(key) && !value.path(key).isBoolean()) return failure("INVALID_ARGUMENTS");
+        if (value.has("path_prefix") && !value.path("path_prefix").isTextual()) return failure("INVALID_ARGUMENTS");
+        String prefix = value.path("path_prefix").asText("");
+        if (prefix.startsWith("/") || prefix.contains("..") || prefix.contains("\\")) return failure("INVALID_ARGUMENTS");
+        int context = line(value, "context_lines", legacySearch ? 0 : 2);
+        int limit = line(value, "limit", MAX_LINES);
+        if (context < 0 || context > 10 || limit < 1 || limit > MAX_LINES) return failure("INVALID_ARGUMENTS");
+        boolean regex = value.path("is_regex").asBoolean(false);
+        if (regex && value.path("literal").asBoolean(false)) return failure("INVALID_ARGUMENTS");
+        Pattern expression = null;
+        if (regex) {
+            // Deliberately restricted Java regex subset: no groups, alternation, backreferences or repeated quantifiers.
+            if (pattern.chars().anyMatch(c -> "(){}|".indexOf(c) >= 0) || pattern.contains("\\") || pattern.chars().filter(c -> c == '*' || c == '+' || c == '?').count() > 1
+                || !pattern.startsWith("^") && pattern.chars().anyMatch(c -> c == '*' || c == '+' || c == '?')) return failure("INVALID_ARGUMENTS");
+            try { expression = Pattern.compile(pattern); }
+            catch (PatternSyntaxException invalid) { return failure("INVALID_ARGUMENTS"); }
+        }
         if (glob && (!pattern.matches("[A-Za-z0-9_./*?-]+") || pattern.startsWith("/")
             || List.of(pattern.split("/")).stream().anyMatch(part -> part.equals("..") || part.equals(".")))) return failure("INVALID_ARGUMENTS");
         ExerciseResponse snapshot = exercises.find(session, exercise);
@@ -77,27 +103,40 @@ public class CopilotReadTools {
         int bytes = 0;
         var matcher = new AntPathMatcher();
         matcher.setCachePatterns(false);
+        int matches = 0;
         for (String path : snapshot.paths().stream().sorted().toList()) {
+            if (!path.startsWith(prefix)) continue;
             if (Thread.currentThread().isInterrupted()) return failure("CANCELLED");
             if (glob) {
                 if (!matcher.match(pattern, path)) continue;
                 int size = path.getBytes(StandardCharsets.UTF_8).length;
-                if (result.size() >= MAX_LINES || size > MAX_RESULT_BYTES - bytes) return new ReadToolResultDTO("OK", snapshot.revision(), result, true);
+                if (result.size() >= MAX_LINES || size > MAX_RESULT_BYTES - 160 - bytes) return truncated(snapshot.revision(), result);
                 result.add(path); bytes += size;
             } else {
                 var file = exercises.read(session, exercise, path);
                 if (!file.revision().equals(snapshot.revision()) || !file.workspaceInstanceId().equals(snapshot.workspaceInstanceId())) return failure("REVISION_CONFLICT");
                 String[] lines = file.content().split("\\n", -1);
+                int emittedThrough = -1;
                 for (int index = 0; index < lines.length; index++) {
-                    if (!lines[index].contains(pattern)) continue;
-                    String row = path + ":" + (index + 1) + ": " + lines[index];
-                    int size = row.getBytes(StandardCharsets.UTF_8).length;
-                    if (result.size() >= MAX_LINES || size > MAX_RESULT_BYTES - bytes) return new ReadToolResultDTO("OK", snapshot.revision(), result, true);
-                    result.add(row); bytes += size;
+                    if (Thread.currentThread().isInterrupted()) return failure("CANCELLED");
+                    if (regex && lines[index].length() > 65536) return truncated(snapshot.revision(), result);
+                    if (!(regex ? expression.matcher(lines[index]).find() : lines[index].contains(pattern))) continue;
+                    if (++matches > limit) return truncated(snapshot.revision(), result);
+                    for (int rowIndex = Math.max(emittedThrough + 1, index - context); rowIndex <= Math.min(lines.length - 1, index + context); rowIndex++) {
+                        String row = path + ":" + (rowIndex + 1) + ": " + lines[rowIndex];
+                        int size = row.getBytes(StandardCharsets.UTF_8).length + 1;
+                        if (result.size() >= MAX_LINES || size > MAX_RESULT_BYTES - 160 - bytes) return truncated(snapshot.revision(), result);
+                        result.add(row); bytes += size; emittedThrough = rowIndex;
+                    }
                 }
             }
         }
         return new ReadToolResultDTO("OK", snapshot.revision(), result, false);
+    }
+
+    private ReadToolResultDTO truncated(String revision, List<String> result) {
+        result.add("[Results truncated; narrow pattern or path_prefix to continue]");
+        return new ReadToolResultDTO("OK", revision, result, true);
     }
 
     private int line(JsonNode value, String key, int fallback) {

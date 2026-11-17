@@ -59,10 +59,10 @@ public class EvaluationReportValidator {
                     var item = directory.get(id);
                     if (item == null || ids.contains(id)) throw invalid();
                     ids.add(id);
-                    objective |= Set.of("FILE", "CHANGE", "FINAL_TEST", "COPILOT_MESSAGE", "INTERVIEWER_MESSAGE").contains(item.kind());
+                    objective |= Set.of("FILE", "CHANGE", "FINAL_TEST", "COPILOT_MESSAGE", "INTERVIEWER_MESSAGE", "TIMELINE", "CONTEXT_TRACE").contains(item.kind());
                     finalTest |= "FINAL_TEST".equals(item.kind());
                     sourceCode |= "FILE".equals(item.kind());
-                    collaboration |= Set.of("COPILOT_MESSAGE", "INTERVIEWER_MESSAGE", "CHANGE").contains(item.kind());
+                    collaboration |= Set.of("COPILOT_MESSAGE", "INTERVIEWER_MESSAGE", "CHANGE", "TIMELINE", "CONTEXT_TRACE").contains(item.kind());
                 }
                 if (score != null && (!objective
                     || key.equals("CORRECTNESS") && (!finalTest || Set.of("UNAVAILABLE", "PENDING").contains(verification))

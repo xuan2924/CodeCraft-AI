@@ -1,6 +1,9 @@
 package ai.codecraft.modules.copilot.service;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.infrastructure.stream.TransientTaskStreamHub;
+import ai.codecraft.modules.modelaccess.model.dto.ModelCallResultDTO;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import ai.codecraft.modules.copilot.config.CopilotProperties;
 import ai.codecraft.modules.copilot.model.exception.CopilotErrorCode;
 import ai.codecraft.modules.modelaccess.config.ModelCallProperties;
@@ -28,10 +31,14 @@ public class CopilotRunner {
     private final CopilotProperties limits;
     private final ModelCallProperties calls;
     private final CopilotContextService contexts;
+    private final TransientTaskStreamHub notifications;
+    private final ObjectMapper json;
 
     public CopilotRunner(CopilotExecutionStore store, StorageCapacityService capacity, ModelCallDriver driver,
-        CopilotToolExecutor tools, CopilotProperties limits, ModelCallProperties calls, CopilotContextService contexts) {
+        CopilotToolExecutor tools, CopilotProperties limits, ModelCallProperties calls, CopilotContextService contexts,
+        TransientTaskStreamHub notifications, ObjectMapper json) {
         this.store = store; this.capacity = capacity; this.driver = driver; this.tools = tools; this.limits = limits; this.calls = calls; this.contexts = contexts;
+        this.notifications = notifications; this.json = json;
     }
 
     public void run(String id, String worker) {
@@ -57,9 +64,12 @@ public class CopilotRunner {
                     var dispatch = capacity.admit(task.sessionHash(), task.exerciseId(), measurement -> store.beginModel(id, worker, prepared, measurement));
                     if (dispatch == null) continue;
                     var target = dispatch.target();
-                    var preview = new PartialCapture(id, worker, dispatch.turn().id());
-                    var result = driver.call(target, dispatch.request(), new ModelInvocationLimitsDTO(target.model().maxOutputTokens(), target.model().thinkingBudgetTokens()),
-                        Math.min(limits.responseBytes(), calls.maxDecodedBytes()), dispatch.turn().notAfter(), preview::text, preview::thinking);
+                    ModelCallResultDTO result;
+                    try (var preview = new CopilotPartialCapture(id, dispatch.turn().id(), notifications, json,
+                        (text, thinking) -> store.partial(id, worker, dispatch.turn().id(), text, thinking), limits.responseBytes())) {
+                        result = driver.call(target, dispatch.request(), new ModelInvocationLimitsDTO(target.model().maxOutputTokens(), target.model().thinkingBudgetTokens()),
+                            Math.min(limits.responseBytes(), calls.maxDecodedBytes()), dispatch.turn().notAfter(), preview::text, preview::thinking);
+                    }
                     assistant = result.response().aiMessage();
                     validate(assistant);
                     if (!store.completeModel(id, worker, dispatch.turn().id(), ChatMessageSerializer.messageToJson(assistant), assistant.hasToolExecutionRequests(), result.response().tokenUsage())) return;
@@ -113,28 +123,6 @@ public class CopilotRunner {
             if (task != null) store.finish(id, worker, task.stopRequested() ? "STOPPED" : "INTERRUPTED", task.stopRequested() ? "USER_STOP" : store.interruptionReason(id, worker));
         } finally { if (wasInterrupted) Thread.currentThread().interrupt(); }
     }
-    private final class PartialCapture {
-        private final String task;
-        private final String worker;
-        private final String turn;
-        private final StringBuilder text = new StringBuilder();
-        private final StringBuilder thinking = new StringBuilder();
-        private int persisted;
-        private long lastFlush;
-        PartialCapture(String task, String worker, String turn) { this.task = task; this.worker = worker; this.turn = turn; }
-        void text(String chunk) { append(text, chunk); }
-        void thinking(String chunk) { append(thinking, chunk); }
-        private void append(StringBuilder destination, String chunk) {
-            if (chunk == null || chunk.isEmpty()) return;
-            boolean first = destination.isEmpty();
-            destination.append(chunk);
-            int size = text.length() + thinking.length();
-            long now = System.nanoTime();
-            if (first || lastFlush == 0 || size - persisted >= 2048 || now - lastFlush >= 200_000_000L) {
-                store.partial(task, worker, turn, text.toString(), thinking.toString()); persisted = size; lastFlush = now;
-            }
-        }
-    }
     private void validate(AiMessage message) {
         if (message == null || !message.hasToolExecutionRequests() && (message.text() == null || message.text().isBlank())) invalidResponse();
         if (message.toolExecutionRequests().size() > limits.batchTools()) invalidResponse();
@@ -142,12 +130,8 @@ public class CopilotRunner {
         for (var call : message.toolExecutionRequests()) {
             if (call.id() == null || call.id().isBlank() || call.id().length() > 256 || !ids.add(call.id()) || call.name() == null || call.name().isBlank()
                 || call.name().length() > 128 || call.arguments() == null) invalidResponse();
-            int argumentLimit = switch (call.name()) {
-                case "propose_changes" -> CopilotProposalPreparation.MAX_ARGUMENT_BYTES;
-                case "bash" -> CopilotCommandService.MAX_ARGUMENT_BYTES;
-                case "delegate_task" -> CopilotDelegationService.MAX_ARGUMENT_BYTES;
-                default -> 4096;
-            };
+            var definition = CopilotToolCatalog.find(call.name());
+            int argumentLimit = definition == null ? 4096 : definition.maxArgBytes();
             if (call.arguments().getBytes(StandardCharsets.UTF_8).length > argumentLimit) invalidResponse();
         }
     }

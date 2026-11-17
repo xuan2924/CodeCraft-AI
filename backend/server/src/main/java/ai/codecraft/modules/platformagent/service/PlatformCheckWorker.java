@@ -59,7 +59,7 @@ public class PlatformCheckWorker {
         } catch (RuntimeException failure) { LOG.warn("Platform check discovery failed: {}", failure.getClass().getSimpleName()); }
     }
 
-    @Scheduled(fixedDelay = 60000)
+    @Scheduled(fixedDelay = 60000, scheduler = "maintenanceScheduler")
     public void reclaim() {
         try {
             agents.reclaimCredentials();

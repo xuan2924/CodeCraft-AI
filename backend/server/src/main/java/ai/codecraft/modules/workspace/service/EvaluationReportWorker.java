@@ -1,6 +1,8 @@
 package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.modules.modelaccess.gateway.ModelCallDriver;
+import ai.codecraft.infrastructure.tasks.TaskWakeup;
+import org.springframework.context.event.EventListener;
 import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationLimitsDTO;
 import ai.codecraft.modules.modelaccess.service.ModelUsageAccounting;
 import ai.codecraft.modules.platformagent.config.PlatformAgentProperties;
@@ -49,6 +51,11 @@ public class EvaluationReportWorker {
         workers = new ThreadPoolExecutor(policy.workers(), policy.workers(), 0, TimeUnit.SECONDS, new SynchronousQueue<>(),
             Thread.ofPlatform().name("evaluator-", 0).factory(), new ThreadPoolExecutor.AbortPolicy());
     }
+    @EventListener
+    public void wake(TaskWakeup event) {
+        if (event.lane() == TaskWakeup.Lane.EVALUATION) discover();
+    }
+
     @Scheduled(fixedDelay = 1000)
     public void discover() {
         try {
@@ -79,9 +86,11 @@ public class EvaluationReportWorker {
                     + "Return ONLY JSON, no markdown: {verification,total,conclusion,dimensions:[{key,score,feedback,evidenceIds}]}. "
                     + "Exactly four dimensions: CORRECTNESS integer 0..35, QUALITY 0..25, VALIDATION 0..20, COLLABORATION 0..20. "
                     + "Use null scores if evidence is insufficient, never invent zeros. Non-null scores need relevant non-self-review evidence IDs. "
-                    + "CORRECTNESS must cite the frozen FINAL_TEST; QUALITY must cite FILE; COLLABORATION must cite recorded messages or CHANGE. "
+                    + "CORRECTNESS must cite the frozen FINAL_TEST; QUALITY must cite FILE; COLLABORATION must cite recorded messages, CHANGE, TIMELINE or CONTEXT_TRACE. "
                     + "Only use saved evidence IDs. Feedback and conclusion must be nonempty; feedback should state specific limitations and actionable improvements. "
                     + "Do not infer unrecorded actions from code alone. Respect truncated/sample evidence. Self-review is not independent verification. "
+                    + "TIMELINE and CONTEXT_TRACE are objective context for COLLABORATION and VALIDATION, not measures of quality by themselves. "
+                    + "Never mechanically penalize proposal rejection rates, AI usage volume or hint usage counts. "
                     + "Skipped review and nonparticipation in optional challenge incur no automatic penalty. Platform faults are not code failures. "
                     + "When verification is UNAVAILABLE or PENDING, correctness score and total MUST be null. "
                     + "Otherwise total is the exact sum only when all four scores exist; if any score is null, total must be null. "

@@ -11,7 +11,7 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface InterviewerRepository {
-    String COLUMNS = "id::text,exercise_id::text,user_id::text,session_hash,control_hash,request_key,question,answer,state,reason,platform_version_id::text,phase,revision,created_at,deadline_at,completed_at,usage_receipt";
+    String COLUMNS = "id::text,exercise_id::text,user_id::text,session_hash,control_hash,request_key,question,answer,state,reason,platform_version_id::text,phase,stage,mode,topic,hint_level,revision,created_at,deadline_at,completed_at,usage_receipt";
     @Select("SELECT " + COLUMNS + " FROM workspace_interviewer_task WHERE id=#{id}::uuid")
     InterviewerTaskEntity find(String id);
     @Select("SELECT " + COLUMNS + " FROM workspace_interviewer_task WHERE exercise_id=#{exercise}::uuid AND request_key=#{key}")
@@ -24,7 +24,13 @@ public interface InterviewerRepository {
     List<String> pending(Instant now);
     @Select("SELECT " + COLUMNS + " FROM workspace_interviewer_task WHERE exercise_id=#{exercise}::uuid AND (#{before}::uuid IS NULL OR (created_at,id)<(SELECT created_at,id FROM workspace_interviewer_task WHERE exercise_id=#{exercise}::uuid AND id=#{before}::uuid)) ORDER BY created_at DESC,id DESC LIMIT 20")
     List<InterviewerTaskEntity> history(String exercise, String before);
-    @Insert("INSERT INTO workspace_interviewer_task(id,exercise_id,user_id,session_hash,control_hash,request_key,question,state,platform_version_id,phase,revision,created_at,deadline_at) VALUES(#{id}::uuid,#{exerciseId}::uuid,#{userId}::uuid,#{sessionHash},#{controlHash},#{requestKey},#{question},'QUEUED',#{platformVersionId}::uuid,#{phase},#{revision},#{createdAt},#{deadlineAt})")
+    @Select("SELECT count(*) FROM workspace_interviewer_task WHERE exercise_id=#{exercise}::uuid AND mode='HINT' AND topic=#{topic} AND state='SUCCEEDED'")
+    int successfulHints(String exercise, String topic);
+    @Select("SELECT " + COLUMNS + " FROM workspace_interviewer_task WHERE exercise_id=#{exercise}::uuid AND state='SUCCEEDED' ORDER BY created_at DESC,id DESC LIMIT 8")
+    List<InterviewerTaskEntity> completedHistory(String exercise);
+    @Select("SELECT concat('state=',state,', target=',target,', revision=',revision) FROM workspace_test_task WHERE exercise_id=#{exercise}::uuid ORDER BY created_at DESC,id DESC LIMIT 1")
+    String latestTest(String exercise);
+    @Insert("INSERT INTO workspace_interviewer_task(id,exercise_id,user_id,session_hash,control_hash,request_key,question,state,platform_version_id,phase,stage,mode,topic,hint_level,revision,created_at,deadline_at) VALUES(#{id}::uuid,#{exerciseId}::uuid,#{userId}::uuid,#{sessionHash},#{controlHash},#{requestKey},#{question},'QUEUED',#{platformVersionId}::uuid,#{phase},#{stage},#{mode},#{topic},#{hintLevel},#{revision},#{createdAt},#{deadlineAt})")
     void insert(InterviewerTaskEntity task);
     @Update("UPDATE workspace_interviewer_task SET price_snapshot=#{price} WHERE id=#{id}::uuid AND state='RUNNING' AND price_snapshot IS NULL")
     int price(String id, String price);

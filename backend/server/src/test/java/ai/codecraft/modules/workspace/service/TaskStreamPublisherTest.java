@@ -1,5 +1,6 @@
 package ai.codecraft.modules.workspace.service;
 
+import ai.codecraft.infrastructure.stream.TransientTaskStreamHub;
 import ai.codecraft.modules.workspace.model.dto.TestLogResponse;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
 import ai.codecraft.modules.workspace.model.entity.TaskEventEntity;
@@ -34,7 +35,7 @@ class TaskStreamPublisherTest {
         }).when(database).appendBatch(eq("task"), anyList());
         Instant now = Instant.parse("2026-01-01T00:00:00Z");
         ObjectMapper json = new ObjectMapper();
-        TaskStreamPublisher publisher = new TaskStreamPublisher(database, json, Clock.fixed(now, ZoneOffset.UTC));
+        TaskStreamPublisher publisher = new TaskStreamPublisher(database, json, Clock.fixed(now, ZoneOffset.UTC), new TransientTaskStreamHub());
         String output = "x".repeat(65536) + "最后一行😀";
         publisher.checkpoint(snapshot(List.of(), false), snapshot(List.of(new TestLogResponse("stderr", output)), true));
         assertThat(sizes).containsExactly(64, 4);

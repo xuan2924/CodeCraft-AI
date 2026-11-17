@@ -158,12 +158,16 @@ public class ProblemPublicationReader {
             require(!receipt.path("challenge").path("imageId").equals(receipt.path("imageId")));
             validate(challengeArtifact(artifact));
         } else require(!artifact.has("challenge") && !receipt.has("challenge"));
-        require(artifact.path("initialFiles").has("pom.xml") && artifact.path("acceptanceFiles").has("CartTotalTest.java"));
+        String suite = manifest.path("execution").path("suite").asText();
+        String suiteFile = suite.substring(suite.lastIndexOf('.') + 1) + ".java";
+        require(artifact.path("initialFiles").has("pom.xml") && (suite.isEmpty()
+            ? artifact.path("acceptanceFiles").properties().stream().anyMatch(entry -> entry.getKey().endsWith("Test.java"))
+            : artifact.path("acceptanceFiles").has(suiteFile)));
         for (String section : List.of("initialFiles", "acceptanceFiles")) {
             require(artifact.path(section).isObject());
             artifact.path(section).properties().forEach(entry -> {
                 require(validPath(entry.getKey()) && entry.getValue().isTextual() && entry.getValue().asText().indexOf(0) < 0);
-                if (section.equals("initialFiles")) require(entry.getKey().equals("pom.xml")
+                if (section.equals("initialFiles")) require(entry.getKey().equals("pom.xml") || entry.getKey().equals("AGENTS.md") || entry.getKey().endsWith("/AGENTS.md")
                     || entry.getKey().startsWith("src/main/java/") || entry.getKey().startsWith("src/test/java/"));
             });
         }

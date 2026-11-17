@@ -52,9 +52,12 @@ public class CopilotTaskStore {
     private final CopilotReferences references;
     private final CopilotDelegationLifecycle delegations;
 
+    private final CopilotActivitySignals signals;
+
     public CopilotTaskStore(CopilotTaskRepository tasks, IdentityTransactionService identity,
         ExerciseTransactionService exercises, WorkspaceCoordinationStore control, ExerciseModelService models,
-        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCompactionRepository contexts, SkillSnapshots skills, CopilotConversationStore conversations, CopilotCommandLifecycle commands, CopilotReferences references, CopilotDelegationLifecycle delegations) {
+        WorkspaceAiOperationService operations, Clock clock, CopilotProposalRepository proposals, CopilotTestLifecycle tests, CopilotSteerRepository steers, CopilotCompactionRepository contexts, SkillSnapshots skills, CopilotConversationStore conversations, CopilotCommandLifecycle commands, CopilotReferences references, CopilotDelegationLifecycle delegations, CopilotActivitySignals signals) {
+        this.signals = signals;
         this.conversations = conversations; this.commands = commands; this.references = references; this.delegations = delegations;
         this.tasks = tasks; this.identity = identity; this.exercises = exercises;
         this.control = control; this.models = models; this.operations = operations; this.clock = clock; this.proposals = proposals; this.tests = tests; this.steers = steers; this.contexts = contexts; this.skills = skills;
@@ -129,6 +132,8 @@ public class CopilotTaskStore {
         operations.reserve(session, exercise, id, "COPILOT_START", measurement, Math.addExact(START_CREDIT + 2L * (prepared.payload() + projection).getBytes(StandardCharsets.UTF_8).length, skills.additionalBytes(grant.userId(), exercise)));
         var task = new CopilotTaskEntity(id, exercise, grant.userId(), session, key, fingerprint, "QUEUED", null, false, null, null, clock.instant(), null, conversation, lane);
         tasks.insert(task);
+        signals.changed(id);
+        tasks.referenceCount(id, prepared.pages().size());
         skills.pin(grant.userId(), id, exercise, selected);
         tasks.message(new CopilotMessageEntity(0, UUID.randomUUID().toString(), id, exercise, "USER",
             ChatMessageSerializer.messageToJson(UserMessage.from(text + prepared.payload() + projection)), clock.instant()));
@@ -189,6 +194,7 @@ public class CopilotTaskStore {
         var task = authorize(session, id);
         validateKey(key);
         tasks.stop(task.id(), clock.instant());
+        signals.changed(id);
         tests.stop(task.id());
         commands.stop(task.id());
         delegations.stop(task.id());
