@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
+import { Terminal } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
@@ -21,17 +22,35 @@ const before = ref<string | null>(null);
 const rejection = ref('');
 let notifiedRevision = 0n;
 watch(scope, () => { selected.value = ''; before.value = null; rejection.value = ''; notifiedRevision = 0n; }, { flush: 'sync' });
-const head = useQuery({ queryKey: computed(() => [...root.value, 'history', null]), retry: false, gcTime: 0, refetchInterval: 2000,
-  queryFn: ({ signal }) => api.page(props.owner, props.exerciseId, props.task.id, null, signal) });
-const older = useQuery({ queryKey: computed(() => [...root.value, 'history', before.value]), enabled: computed(() => before.value !== null), retry: false, gcTime: 0,
-  queryFn: ({ signal }) => api.page(props.owner, props.exerciseId, props.task.id, before.value, signal) });
+const head = useQuery({
+  queryKey: computed(() => [...root.value, 'history', null]),
+  retry: false,
+  gcTime: 0,
+  refetchInterval: 2000,
+  queryFn: ({ signal }) => api.page(props.owner, props.exerciseId, props.task.id, null, signal),
+});
+const older = useQuery({
+  queryKey: computed(() => [...root.value, 'history', before.value]),
+  enabled: computed(() => before.value !== null),
+  retry: false,
+  gcTime: 0,
+  queryFn: ({ signal }) => api.page(props.owner, props.exerciseId, props.task.id, before.value, signal),
+});
 const page = computed(() => before.value === null ? head.data.value : older.data.value);
 const detailKey = (id: string) => [...root.value, 'detail', id];
-const detail = useQuery({ queryKey: computed(() => detailKey(selected.value)), enabled: computed(() => !!selected.value), retry: false, gcTime: 0,
+const detail = useQuery({
+  queryKey: computed(() => detailKey(selected.value)),
+  enabled: computed(() => !!selected.value),
+  retry: false,
+  gcTime: 0,
   queryFn: async ({ signal }) => {
-    const { owner, exerciseId, task } = props; const id = selected.value; const key = detailKey(id);
+    const { owner, exerciseId, task } = props;
+    const id = selected.value;
+    const key = detailKey(id);
     return api.latest(client.getQueryData<api.CommandProposal>(key), await api.detail(owner, exerciseId, task.id, id, signal));
-  }, refetchInterval: query => query.state.data?.state === 'RESOLVED' ? false : 1000 });
+  },
+  refetchInterval: query => query.state.data?.state === 'RESOLVED' ? false : 1000,
+});
 watch(() => head.data.value?.commands, values => { if (!selected.value && values?.length) selected.value = values[0]!.id; });
 watch(selected, () => { rejection.value = ''; });
 const options = computed(() => {
@@ -43,15 +62,23 @@ const options = computed(() => {
 });
 const current = computed(() => detail.data.value);
 const executionKey = computed(() => ['workspace-commands', props.owner, props.exerciseId, current.value?.workspaceInstanceId ?? '', 'detail', current.value?.commandTaskId ?? '']);
-const output = useQuery({ queryKey: executionKey, enabled: computed(() => !!current.value?.commandTaskId), retry: false, gcTime: 0,
+const output = useQuery({
+  queryKey: executionKey,
+  enabled: computed(() => !!current.value?.commandTaskId),
+  retry: false,
+  gcTime: 0,
   queryFn: async ({ signal }) => {
-    const source = current.value!; const owner = props.owner; const key = executionKey.value;
+    const source = current.value!;
+    const owner = props.owner;
+    const key = executionKey.value;
     const value = await execution.detail(owner, source.exerciseId, source.workspaceInstanceId, source.commandTaskId!, signal);
     if (value.command !== source.command || value.directory !== source.directory || value.revision !== source.baseRevision) throw new ApiError(502, 'INVALID_RESPONSE');
     return execution.latest(client.getQueryData<execution.CommandTask>(key), value);
-  }, refetchInterval: query => (query.state.error instanceof ApiError && query.state.error.status === 410)
+  },
+  refetchInterval: query => (query.state.error instanceof ApiError && query.state.error.status === 410)
     || (query.state.data?.quiescent && query.state.data.synchronization !== 'PENDING'
-      && query.state.data.cleanup === 'SUCCEEDED' && query.state.data.copyCleanup === 'SUCCEEDED') ? false : 1000 });
+      && query.state.data.cleanup === 'SUCCEEDED' && query.state.data.copyCleanup === 'SUCCEEDED') ? false : 1000,
+});
 const visibleOutput = computed(() => output.data.value ?? current.value?.result?.result ?? null);
 watch([head.error, older.error, detail.error, output.error], failures => { if (failures.some(commandPolicy.identityFailure)) emit('unauthorized'); });
 watch([head.data, detail.data, output.data], () => {
@@ -72,73 +99,83 @@ const canDecide = computed(() => !props.disabled && !!props.credential && !props
 const rejectionBytes = computed(() => new globalThis.TextEncoder().encode(rejection.value).length);
 function decide(kind: 'APPROVE' | 'REJECT') {
   if (!canDecide.value || !current.value || (kind === 'REJECT' && rejectionBytes.value > 2048)) return;
-  const { owner, exerciseId, task } = props; const id = current.value.id;
+  const { owner, exerciseId, task } = props;
+  const id = current.value.id;
   const input: api.Decision = { decision: kind, reason: kind === 'REJECT' ? rejection.value : null };
   void decision.submit((key, signal) => api.decide(owner, exerciseId, task.id, id, input, key, props.credential, signal));
 }
+const visible = computed(() => options.value.length > 0 || head.isError.value || older.isError.value
+  || detail.isError.value || !!decision.error.value || decision.uncertain.value);
 </script>
 
 <template>
   <section
+    v-if="visible"
     class="copilot-commands"
     aria-label="Copilot Bash 命令"
     :data-pending="current?.state === 'PENDING' && current.mode === 'ASK' ? 'true' : undefined"
   >
-    <h3>Copilot 开发命令</h3>
-    <p
-      v-if="head.isPending.value"
-      role="status"
-    >
-      正在读取命令提案…
-    </p>
+    <div class="cmd-head">
+      <Terminal
+        :size="13"
+        aria-hidden="true"
+      />
+      <h3>Copilot 命令</h3>
+    </div>
+
     <p
       v-if="head.isError.value"
       role="alert"
+      class="cmd-err"
     >
-      {{ errorMessage(head.error.value) }} <Button @click="head.refetch()">
-        重试命令历史
+      {{ errorMessage(head.error.value) }}
+      <Button
+        variant="ghost"
+        size="small"
+        @click="head.refetch()"
+      >
+        重试
       </Button>
     </p>
-    <p v-if="head.data.value?.commands.length === 0">
-      此任务尚未提出 Bash 命令。
-    </p>
-    <label v-if="options.length">选择命令<select
+
+    <select
+      v-if="options.length > 1 || before || page?.nextBefore"
       v-model="selected"
       aria-label="选择 Copilot Bash 命令"
+      class="cmd-select font-mono-num"
     >
       <option
         v-for="item in options"
         :key="item.id"
         :value="item.id"
-      >#{{ item.sequence }} · {{ item.state }} · {{ item.command.slice(0, 80) }}</option>
-    </select></label>
-    <Button
-      v-if="page?.nextBefore"
-      :disabled="older.isFetching.value"
-      @click="before = page!.nextBefore"
+      >
+        #{{ item.sequence }} · {{ item.state }} · {{ item.command.slice(0, 80) }}
+      </option>
+    </select>
+
+    <div
+      v-if="page?.nextBefore || before"
+      class="actions"
     >
-      更早的命令提案
-    </Button>
-    <Button
-      v-if="before"
-      @click="before = null"
-    >
-      返回最近命令
-    </Button>
-    <p
-      v-if="before && older.isPending.value"
-      role="status"
-    >
-      正在读取更早的命令…
-    </p>
-    <p
-      v-if="older.isError.value"
-      role="alert"
-    >
-      {{ errorMessage(older.error.value) }} <Button @click="older.refetch()">
-        重试历史页
+      <Button
+        v-if="page?.nextBefore"
+        variant="ghost"
+        size="small"
+        :disabled="older.isFetching.value"
+        @click="before = page!.nextBefore"
+      >
+        更早命令
       </Button>
-    </p>
+      <Button
+        v-if="before"
+        variant="ghost"
+        size="small"
+        @click="before = null"
+      >
+        最近命令
+      </Button>
+    </div>
+
     <p
       v-if="selected && detail.isPending.value"
       role="status"
@@ -148,28 +185,35 @@ function decide(kind: 'APPROVE' | 'REJECT') {
     <p
       v-if="detail.isError.value"
       role="alert"
+      class="cmd-err"
     >
-      {{ errorMessage(detail.error.value) }} <Button @click="detail.refetch()">
-        核对命令状态
+      {{ errorMessage(detail.error.value) }}
+      <Button
+        variant="ghost"
+        size="small"
+        @click="detail.refetch()"
+      >
+        重试
       </Button>
     </p>
+
     <template v-if="current">
-      <p>{{ current.mode }} · 登记模式版本 {{ current.modeVersion }} · 基线修订 {{ current.baseRevision }}</p>
-      <pre>/project/{{ current.directory }} $ {{ current.command }}</pre>
+      <pre class="cmd-line">/project/{{ current.directory }} $ {{ current.command }}</pre>
       <p
         v-if="current.state === 'PENDING'"
         role="status"
       >
-        {{ current.mode === 'AUTO' ? '正在按登记的 AUTO 模式核对准入。' : '等待批准具体命令；批准不代表预先批准未知文件 Diff。' }}
+        {{ current.mode === 'AUTO' ? '按 AUTO 模式核对准入中' : '等待批准命令' }} · 基线 r{{ current.baseRevision }}
       </p>
       <template v-if="current.state === 'PENDING' && current.mode === 'ASK'">
-        <label>拒绝理由（可选）<textarea
+        <textarea
           v-model="rejection"
           aria-label="命令拒绝理由"
+          placeholder="拒绝理由（可选）…"
           :disabled="!canDecide"
           maxlength="2048"
-        /></label>
-        <small>{{ rejectionBytes }} / 2048 UTF-8 字节</small>
+          rows="2"
+        />
         <div class="actions">
           <Button
             variant="primary"
@@ -193,7 +237,7 @@ function decide(kind: 'APPROVE' | 'REJECT') {
         v-if="current.state === 'WAITING'"
         role="status"
       >
-        等待所属命令与文件变化收敛。上方“停止 Copilot”会联动此命令，不停止独立手动命令。
+        等待命令与文件同步收敛…
       </p>
       <p
         v-if="current.result"
@@ -202,24 +246,18 @@ function decide(kind: 'APPROVE' | 'REJECT') {
         {{ current.result.code }}<span v-if="current.result.reason"> · {{ current.result.reason }}</span>
       </p>
       <p
-        v-if="current.commandTaskId && output.isPending.value"
-        role="status"
-      >
-        正在读取实际命令输出…
-      </p>
-      <p
         v-if="output.isError.value"
         role="alert"
+        class="cmd-err"
       >
-        {{ workspaceMessage(output.error.value) }} <Button @click="output.refetch()">
-          核对原执行记录
+        {{ workspaceMessage(output.error.value) }}
+        <Button
+          variant="ghost"
+          size="small"
+          @click="output.refetch()"
+        >
+          重试
         </Button>
-      </p>
-      <p v-if="!output.data.value && current.result?.result">
-        下方为父工具保留的输出节选，不是重新执行；完整执行记录可能已按历史策略清理。
-      </p>
-      <p v-if="!output.data.value && current.result?.logTruncated">
-        模型节选省略 {{ current.result.omittedLogBytes }} 字节，与原始输出缺失分别记录。
       </p>
       <CommandOutput
         v-if="visibleOutput"
@@ -228,18 +266,21 @@ function decide(kind: 'APPROVE' | 'REJECT') {
         @unauthorized="emit('unauthorized')"
       />
     </template>
+
     <p
       v-if="decision.error.value"
       role="alert"
+      class="cmd-err"
     >
       {{ decision.error.value }}
     </p>
     <Button
       v-if="decision.uncertain.value"
+      size="small"
       :disabled="decision.pending.value"
       @click="decision.retry()"
     >
-      核对原命令决定（不会批准其他历史项）
+      核对原命令决定
     </Button>
   </section>
 </template>
@@ -249,8 +290,8 @@ function decide(kind: 'APPROVE' | 'REJECT') {
   display: grid;
   gap: 8px;
   min-width: 0;
-  border: 1px solid var(--oc-border);
-  border-radius: var(--radius-control);
+  border: 1px solid var(--oc-border-strong);
+  border-radius: 8px;
   background: var(--oc-surface-2);
   padding: 10px 12px;
 }
@@ -260,40 +301,50 @@ function decide(kind: 'APPROVE' | 'REJECT') {
   border-left: 3px solid var(--oc-warning);
 }
 
+.cmd-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--oc-fg);
+}
+
 h3 {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 
-p, small {
+p {
   margin: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--oc-fg-muted);
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
-label {
-  display: grid;
-  gap: 5px;
-  font-size: 12px;
+.cmd-err {
+  color: var(--oc-danger);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
-pre {
+.cmd-line {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;
-  padding: 8px 10px;
-  border-radius: var(--radius-control);
-  background: var(--oc-bg-input);
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: var(--oc-bg-subtle);
   border: 1px solid var(--oc-border);
-  font-size: 12px;
+  font-size: 11.5px;
+  color: var(--oc-fg);
 }
 
-textarea, select {
+textarea, .cmd-select {
   width: 100%;
-  padding: 6px 10px;
-  font-size: 12.5px;
+  padding: 5px 8px;
+  font-size: 12px;
 }
 
 .actions {

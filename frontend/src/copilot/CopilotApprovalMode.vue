@@ -1,253 +1,410 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
+import { Check, ChevronDown, ShieldAlert, ShieldCheck } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
+import Dialog from '../components/ui/Dialog.vue';
 import { useCommand } from '../api/useCommand';
 import * as api from './api';
 import { commandPolicy, errorMessage } from './errors';
+import { formatShortTimestamp } from './feeConsent';
 
-const props = defineProps<{ owner: string; exerciseId: string; credential: string; disabled: boolean }>();
+const props = withDefaults(defineProps<{
+  owner: string;
+  exerciseId: string;
+  credential: string;
+  disabled: boolean;
+  compact?: boolean;
+}>(), {
+  compact: false,
+});
 const emit = defineEmits<{ unauthorized: [] }>();
 const client = useQueryClient();
 const key = computed(() => ['copilot-approval-mode', props.owner, props.exerciseId]);
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.credential}`);
-const current = useQuery({ queryKey: key, queryFn: ({ signal }) => api.approvalMode(props.owner, props.exerciseId, signal), retry: false, gcTime: 0, refetchInterval: 5000 });
-const desired = ref<api.ApprovalMode>('ASK');
-const consent = ref(false);
+const current = useQuery({
+  queryKey: key,
+  queryFn: ({ signal }) => api.approvalMode(props.owner, props.exerciseId, signal),
+  retry: false,
+  gcTime: 0,
+  refetchInterval: 5000,
+});
+const open = ref(false);
+const auditOpen = ref(false);
+const host = ref<globalThis.HTMLElement>();
 const labels: Record<api.ApprovalMode, string> = { ASK: '逐次审批', AUTO: '自动审批' };
 const command = useCommand<api.ApprovalChange>(() => scope.value, () => {
-  consent.value = false;
-  // A command receipt may be historical after another tab changed mode. Read current state, never paint its receipt as current.
   void client.invalidateQueries({ queryKey: key.value, exact: true });
 }, commandPolicy, () => emit('unauthorized'));
-watch(() => current.data.value?.version, () => {
-  if (current.data.value && !command.pending.value && !command.uncertain.value) desired.value = current.data.value.mode;
-});
-watch(scope, () => { desired.value = 'ASK'; consent.value = false; }, { flush: 'sync' });
-watch(desired, () => { consent.value = false; });
+
+watch(scope, () => { open.value = false; }, { flush: 'sync' });
 watch(current.error, (failure) => { if (commandPolicy.identityFailure(failure)) emit('unauthorized'); });
+
 const editable = computed(() => !props.disabled && !!props.credential && !!current.data.value && !current.isError.value
   && !command.pending.value && !command.uncertain.value);
-async function change() {
-  if (!editable.value || !current.data.value || desired.value === 'AUTO' && !consent.value) return;
+
+async function selectMode(mode: api.ApprovalMode) {
+  open.value = false;
+  if (!editable.value || !current.data.value || current.data.value.mode === mode) return;
   const { owner, exerciseId, credential } = props;
-  const mode = desired.value; const version = current.data.value.version;
+  const version = current.data.value.version;
   await command.submit((requestKey, signal) => api.changeApprovalMode(owner, exerciseId, credential, mode, version, requestKey, signal));
 }
+
+function handleDocumentClick(event: globalThis.MouseEvent) {
+  if (!open.value) return;
+  if (host.value && event.target instanceof globalThis.Node && !host.value.contains(event.target)) {
+    open.value = false;
+  }
+}
+
+onMounted(() => globalThis.document.addEventListener('click', handleDocumentClick));
+onBeforeUnmount(() => globalThis.document.removeEventListener('click', handleDocumentClick));
+
+defineExpose({ openAudit: () => { auditOpen.value = true; } });
 </script>
 
 <template>
-  <section
+  <div
+    ref="host"
+    class="approval-wrap"
     aria-label="Copilot 审批模式"
-    class="approval-mode"
   >
-    <div class="approval-head">
-      <div class="approval-title">
-        <h3>审批模式</h3>
+    <button
+      type="button"
+      class="mode-pill-trigger"
+      :class="{ 'is-auto': current.data.value?.mode === 'AUTO', 'is-error': current.isError.value }"
+      :aria-expanded="open"
+      aria-haspopup="menu"
+      :disabled="current.isPending.value"
+      @click="open = !open"
+    >
+      <component
+        :is="current.data.value?.mode === 'AUTO' ? ShieldAlert : ShieldCheck"
+        :size="12"
+        aria-hidden="true"
+      />
+      <span>{{ current.isPending.value ? '模式读取中' : current.isError.value ? '模式异常' : labels[current.data.value?.mode ?? 'ASK'] }}</span>
+      <ChevronDown
+        :size="11"
+        aria-hidden="true"
+      />
+    </button>
+
+    <div
+      v-if="open"
+      class="mode-popover"
+      role="menu"
+      aria-label="切换审批模式"
+    >
+      <div
+        v-if="current.isError.value"
+        role="alert"
+        class="mode-popover-alert"
+      >
+        <span>{{ errorMessage(current.error.value) }}</span>
+        <Button
+          variant="ghost"
+          size="small"
+          @click="current.refetch()"
+        >
+          重试
+        </Button>
+      </div>
+      <template v-else>
+        <button
+          type="button"
+          role="menuitemradio"
+          class="mode-option"
+          :aria-checked="current.data.value?.mode === 'ASK'"
+          :disabled="!editable"
+          @click="selectMode('ASK')"
+        >
+          <div class="mode-option-copy">
+            <strong>逐次审批</strong>
+            <small>每次修改前先核对 Diff</small>
+          </div>
+          <Check
+            v-if="current.data.value?.mode === 'ASK'"
+            :size="13"
+            class="mode-check"
+            aria-hidden="true"
+          />
+        </button>
+        <button
+          type="button"
+          role="menuitemradio"
+          class="mode-option"
+          :aria-checked="current.data.value?.mode === 'AUTO'"
+          :disabled="!editable"
+          @click="selectMode('AUTO')"
+        >
+          <div class="mode-option-copy">
+            <strong>自动审批</strong>
+            <small>合法修改自动应用，保留 Diff 记录</small>
+          </div>
+          <Check
+            v-if="current.data.value?.mode === 'AUTO'"
+            :size="13"
+            class="mode-check"
+            aria-hidden="true"
+          />
+        </button>
+      </template>
+      <div class="mode-popover-foot">
         <span
           v-if="current.data.value"
-          role="status"
-          class="ui-pill"
-          :data-tone="current.data.value.mode === 'AUTO' ? 'warning' : 'accent'"
+          class="font-mono-num"
+        >v{{ current.data.value.version }}</span>
+        <button
+          type="button"
+          class="audit-link"
+          @click="open = false; auditOpen = true"
         >
-          {{ current.isError.value ? '上次确认' : '已生效' }}：{{ labels[current.data.value.mode] }} · 模式版本 {{ current.data.value.version }}
-        </span>
+          变更记录 ({{ current.data.value?.history.length ?? 0 }})
+        </button>
       </div>
-      <Button
-        variant="ghost"
-        size="small"
-        :disabled="current.isFetching.value"
-        @click="current.refetch()"
-      >
-        重新读取模式
-      </Button>
     </div>
-    <p
-      v-if="current.isPending.value"
-      role="status"
+
+    <div
+      v-if="command.error.value || command.uncertain.value"
+      class="mode-inline-notice"
     >
-      正在读取服务端审批模式…
-    </p>
-    <p
-      v-if="current.isError.value"
-      role="alert"
-      class="approval-alert"
-    >
-      {{ errorMessage(current.error.value) }}
-    </p>
-    <div class="approval-controls">
-      <label
-        :for="`approval-mode-${exerciseId}`"
-        class="sr-only"
-      >期望审批模式（确认前不生效）</label>
-      <select
-        :id="`approval-mode-${exerciseId}`"
-        v-model="desired"
-        :disabled="!editable"
-      >
-        <option value="ASK">
-          逐次审批（ask for approve）
-        </option>
-        <option value="AUTO">
-          自动审批（auto）
-        </option>
-      </select>
+      <span
+        v-if="command.error.value"
+        role="alert"
+        class="mode-notice-err"
+      >{{ command.error.value }}</span>
       <Button
         v-if="command.uncertain.value"
+        variant="secondary"
         size="small"
         :disabled="command.pending.value || disabled"
         @click="command.retry"
       >
         核对原模式切换
       </Button>
-      <Button
-        v-else
-        variant="secondary"
-        size="small"
-        :disabled="!editable || desired === 'AUTO' && !consent"
-        :loading="command.pending.value"
-        @click="change"
-      >
-        确认审批模式
-      </Button>
     </div>
-    <label
-      v-if="desired === 'AUTO'"
-      class="approval-consent"
-    ><input
-      v-model="consent"
-      type="checkbox"
-      :disabled="!editable"
-    >我允许本场后续登记的合法修改自动应用，仍可查看 Diff 与结果。</label>
-    <p
-      v-if="command.error.value"
-      role="alert"
-      class="approval-alert"
+
+    <Dialog
+      v-model:open="auditOpen"
+      title="审批模式变更记录"
+      description="仅免除逐次人工批准，不扩大文件、测试或命令权限。已登记提案保持原模式。"
     >
-      {{ command.error.value }}
-    </p>
-    <p
-      v-if="command.uncertain.value"
-      role="status"
-    >
-      切换结果未确认，只能核对原键与原内容；当前模式读取不代表原请求已收敛。
-    </p>
-    <details
-      v-if="current.data.value"
-      class="approval-details"
-    >
-      <summary>模式规则与最近 20 次变更记录（{{ current.data.value.history.length }}）</summary>
-      <p>默认逐次审批。auto 只免除修改的逐次批准，不扩大文件、测试或网络权限，不保存或覆盖本地草稿。已登记提案保持原模式。</p>
-      <h4>最近保留的 20 次模式确认</h4>
-      <p v-if="!current.data.value.history.length">
-        尚无模式确认记录，使用默认逐次审批。
-      </p>
-      <ol v-else>
-        <li
-          v-for="item in current.data.value.history"
-          :key="item.id"
+      <div
+        v-if="current.data.value"
+        class="audit-dialog-body"
+      >
+        <p class="audit-summary font-mono-num">
+          当前生效：{{ labels[current.data.value.mode] }} · 版本 {{ current.data.value.version }}
+        </p>
+        <p
+          v-if="!current.data.value.history.length"
+          class="audit-empty"
         >
-          版本 {{ item.version }} · 本人：{{ labels[item.previousMode] }} → {{ labels[item.mode] }} ·
-          <time :datetime="item.createdAt">{{ new Date(item.createdAt).toLocaleString() }}</time>
-        </li>
-      </ol>
-    </details>
-  </section>
+          尚无模式变更记录，当前使用默认逐次审批。
+        </p>
+        <ol
+          v-else
+          class="audit-list"
+        >
+          <li
+            v-for="item in current.data.value.history"
+            :key="item.id"
+          >
+            <span class="font-mono-num">v{{ item.version }}</span>
+            <span>{{ labels[item.previousMode] }} → {{ labels[item.mode] }}</span>
+            <time
+              class="font-mono-num"
+              :datetime="item.createdAt"
+            >{{ formatShortTimestamp(item.createdAt) }}</time>
+          </li>
+        </ol>
+      </div>
+    </Dialog>
+  </div>
 </template>
+
 <style scoped>
-.approval-mode {
-  padding: 10px 12px;
-  border-radius: var(--radius-control);
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border);
-  display: grid;
-  gap: 8px;
+.approval-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.approval-head {
+.mode-pill-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--oc-fg-muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms var(--oc-ease), color 120ms var(--oc-ease);
+}
+
+.mode-pill-trigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--oc-fg);
+}
+
+.mode-pill-trigger.is-auto {
+  color: var(--oc-warning);
+  background: var(--oc-warning-bg);
+}
+
+.mode-pill-trigger.is-error {
+  color: var(--oc-danger);
+  background: var(--oc-danger-bg);
+}
+
+.mode-pill-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mode-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 45;
+  width: 248px;
+  padding: 6px;
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+  border: 1px solid var(--oc-border-strong);
+  box-shadow: var(--oc-shadow-md);
+  display: grid;
+  gap: 3px;
+}
+
+.mode-option {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  flex-wrap: wrap;
-}
-
-.approval-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-h3, h4 {
-  margin: 0;
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.approval-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.approval-controls select {
-  flex: 1 1 170px;
-  min-width: 0;
-  padding: 5px 9px;
-  font-size: 12.5px;
-}
-
-.approval-consent {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  font-size: 12px;
-  color: var(--oc-fg-muted);
-}
-
-.approval-details {
-  font-size: 11.5px;
-  color: var(--oc-fg-muted);
-}
-
-.approval-details summary {
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--oc-fg);
+  text-align: left;
   cursor: pointer;
 }
 
-.approval-details p,
-.approval-details h4 {
-  margin-top: 6px;
+.mode-option:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
 }
 
-.approval-alert {
-  color: var(--oc-danger);
+.mode-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  border: 0;
+.mode-option-copy {
+  display: grid;
+  gap: 1px;
 }
 
-p, li {
-  margin: 0;
-  overflow-wrap: anywhere;
-  line-height: 1.5;
-  font-size: 12px;
+.mode-option-copy strong {
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.mode-option-copy small {
+  font-size: 11px;
   color: var(--oc-fg-muted);
 }
 
-ol {
-  margin: 6px 0 0;
-  padding-left: 18px;
+.mode-check {
+  color: var(--oc-accent);
+  flex-shrink: 0;
+}
+
+.mode-popover-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--oc-border);
+  font-size: 11px;
+  color: var(--oc-fg-dim);
+}
+
+.audit-link {
+  border: 0;
+  background: transparent;
+  color: var(--oc-fg-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.audit-link:hover {
+  color: var(--oc-fg);
+}
+
+.mode-popover-alert {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--oc-danger);
   display: grid;
   gap: 4px;
+}
+
+.mode-inline-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mode-notice-err {
+  font-size: 11px;
+  color: var(--oc-danger);
+}
+
+.audit-dialog-body {
+  display: grid;
+  gap: 12px;
+}
+
+.audit-summary {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--oc-fg);
+}
+
+.audit-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--oc-fg-muted);
+}
+
+.audit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  border-top: 1px solid var(--oc-border);
+}
+
+.audit-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--oc-border);
+  font-size: 12px;
+  color: var(--oc-fg-muted);
 }
 </style>

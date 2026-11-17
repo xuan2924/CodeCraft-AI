@@ -21,8 +21,7 @@ it('separates actual occupancy from in-flight credit and reserved finalization s
   expect(view!.text()).toContain('300.0 MiB');
   expect(view!.text()).toContain('20.0 MiB');
   expect(view!.text()).toContain('256.0 MiB');
-  expect(view!.text()).toContain('普通新增空间不足');
-  expect(view!.text()).toContain('停止、对账、结束和删除');
+  expect(view!.text()).toContain('普通新增空间已满');
 });
 
 it('never treats malformed responses or ambiguous failures as zero space or authoritative deletion', async () => {

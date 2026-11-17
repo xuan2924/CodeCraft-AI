@@ -51,7 +51,7 @@ it('shows authoritative pruning and distinguishes cleanup still in progress', as
   view = mount(WorkspaceTests, { props: { owner: 'owner', exercise, credential: '' }, global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
   await flushPromises(); await flushPromises();
   expect(view.text()).toContain('已精简 6 条');
-  expect(view.text()).toContain('2 条仍在后台清理');
+  expect(view.text()).toContain('2 条后台清理中');
   expect(view.text()).not.toContain('尚未交付');
 });
 

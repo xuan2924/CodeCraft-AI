@@ -121,6 +121,7 @@ const rows = computed<FlatRow[]>(() => {
         data-testid="workspace-file"
         class="tree-row tree-file"
         :style="{ paddingLeft: `${22 + row.depth * 12}px` }"
+        :aria-label="row.path"
         :aria-pressed="selected === row.path"
         :title="row.path"
         @click="emit('select', row.path)"

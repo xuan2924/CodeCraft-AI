@@ -19,8 +19,7 @@ beforeEach(() => { vi.resetAllMocks(); vi.useFakeTimers({ toFake: ['Date', 'setI
 afterEach(() => { wrappers.splice(0).forEach((wrapper) => wrapper.unmount()); clients.splice(0).forEach((client) => client.clear()); vi.useRealTimers(); });
 it('labels the immutable revision and opens its exact original test without starting work', async () => {
   const wrapper = panel(); await flushPromises();
-  expect(wrapper.text()).toContain('版本 1'); expect(wrapper.text()).toContain('等待确定结果');
-  expect(wrapper.text()).toContain('不包含当前草稿或后续保存');
+  expect(wrapper.text()).toContain('r1'); expect(wrapper.text()).toContain('执行中');
   await wrapper.get('button').trigger('click');
   expect(wrapper.emitted('inspect')).toEqual([[record.testTaskId]]);
   expect(api.tests).toHaveBeenCalledTimes(1);
@@ -40,5 +39,5 @@ it('does not display a late result from the previous account', async () => {
   const wrapper = panel(); await flushPromises();
   await wrapper.setProps({ owner: 'other-owner' }); await flushPromises();
   finish([record]); await flushPromises();
-  expect(wrapper.text()).not.toContain('版本 1'); expect(wrapper.text()).toContain('尚未启动测试');
+  expect(wrapper.text()).not.toContain('r1'); expect(wrapper.find('button').exists()).toBe(false);
 });

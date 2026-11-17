@@ -31,14 +31,14 @@ afterEach(() => { wrappers.splice(0).forEach((view) => view.unmount()); clients.
 it('distinguishes reception from effective dispatch and never paints a local edit as applied', async () => {
   let done!: (value: api.Steer) => void;
   vi.mocked(api.sendSteer).mockReturnValue(new Promise((resolve) => { done = resolve; }));
-  const view = panel(); await flushPromises(); expect(view.text()).toContain('当前页没有方向调整记录');
+  const view = panel(); await flushPromises(); expect(view.text()).toContain('暂无记录');
   await view.get('textarea').setValue(receipt.text); await button(view, '发送方向调整').trigger('click');
-  expect(view.text()).not.toContain('已生效：'); expect(view.get('textarea').attributes('disabled')).toBeDefined();
+  expect(view.text()).not.toContain('已生效'); expect(view.get('textarea').attributes('disabled')).toBeDefined();
   vi.mocked(api.steers).mockResolvedValue({ items: [receipt], nextCursor: null }); done(receipt); await flushPromises(); await flushPromises();
-  expect(view.text()).toContain('已接收，等待安全点与下一次请求'); expect(view.text()).not.toContain('已生效：');
+  expect(view.text()).toContain('已接收，等待安全点'); expect(view.text()).not.toContain('已生效');
   vi.mocked(api.steers).mockResolvedValue({ items: [{ ...receipt, state: 'APPLIED', turnId: taskId, completedAt: receipt.createdAt }], nextCursor: null });
   await view.setProps({ state: 'SUCCEEDED' }); await flushPromises();
-  expect(view.text()).toContain('已生效：已纳入模型请求'); expect(api.start).not.toHaveBeenCalled();
+  expect(view.text()).toContain('已生效'); expect(api.start).not.toHaveBeenCalled();
 });
 
 it('retries only the original instruction and key, including receipt lookup after the task stopped', async () => {
@@ -74,7 +74,7 @@ it('renders instruction text without HTML and observes without reposting', async
 
 it('shows terminal and read-only states without creating another task', async () => {
   const ended = panel('SUCCEEDED'); await flushPromises();
-  expect(ended.text()).toContain('不会自动创建新任务'); expect(ended.get('textarea').attributes('disabled')).toBeDefined();
+  expect(ended.text()).toContain('当前任务不能接收新方向调整'); expect(ended.get('textarea').attributes('disabled')).toBeDefined();
   const readonly = panel('RUNNING', true); await flushPromises();
   expect(readonly.get('textarea').attributes('disabled')).toBeDefined(); expect(button(readonly, '发送方向调整').attributes('disabled')).toBeDefined();
   expect(api.sendSteer).not.toHaveBeenCalled(); expect(api.start).not.toHaveBeenCalled();

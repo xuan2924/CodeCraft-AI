@@ -1,20 +1,28 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useMediaQuery } from '@vueuse/core';
-import { PanelLeftClose, PanelLeftOpen, TerminalSquare } from '@lucide/vue';
+import { ChevronDown, ChevronUp } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
-import Tooltip from '../components/ui/Tooltip.vue';
 import ResizablePanels from '../components/ui/ResizablePanels.vue';
 
+defineProps<{ leftHidden?: boolean }>();
+
 const compact = useMediaQuery('(max-width: 1100px)');
-const focused = ref(false);
-const tool = ref('commands');
+type ToolTab = 'commands' | 'tests' | 'history' | 'storage';
+const tool = ref<ToolTab>('commands');
 const toolsOpen = ref(true);
+defineExpose({
+  openTool(tab: ToolTab) {
+    tool.value = tab;
+    toolsOpen.value = true;
+  },
+});
 const toolTabs = [
-  { id: 'commands', label: '命令与历史' },
+  { id: 'commands', label: '终端' },
   { id: 'tests', label: '验证输出' },
+  { id: 'history', label: '变更历史' },
   { id: 'storage', label: '数据容量' },
-];
+] as const;
 </script>
 
 <template>
@@ -22,36 +30,15 @@ const toolTabs = [
     class="workbench"
     :class="{ compact }"
   >
-    <div class="workbench-toolbar">
-      <div class="toolbar-title">
-        <span class="toolbar-dot" />
-        <h2>实现工作台</h2>
-      </div>
-      <Tooltip text="专注模式只收起题目，不停止 AI 任务，不暂停演练。">
-        <Button
-          variant="ghost"
-          size="small"
-          :aria-pressed="focused"
-          @click="focused = !focused"
-        >
-          <component
-            :is="focused ? PanelLeftOpen : PanelLeftClose"
-            :size="14"
-            aria-hidden="true"
-          />
-          <span>{{ focused ? '退出专注，显示全部面板' : '专注实现，收起题目' }}</span>
-        </Button>
-      </Tooltip>
-    </div>
     <div class="workbench-viewport">
       <ResizablePanels
         first-label="题目与文件面板"
         second-label="实现与协作面板"
         resize-label="调整题目面板宽度"
         :direction="compact ? 'vertical' : 'horizontal'"
-        :first-size="22"
+        :first-size="20"
         :min-size="14"
-        :first-hidden="focused"
+        :first-hidden="!!leftHidden"
       >
         <template #first>
           <div class="pane files">
@@ -71,11 +58,11 @@ const toolTabs = [
               <div class="editor-stack">
                 <ResizablePanels
                   first-label="源码编辑器"
-                  second-label="命令与验证终端"
+                  second-label="终端与输出面板"
                   resize-label="调整终端面板高度"
                   direction="vertical"
-                  :first-size="66"
-                  :min-size="15"
+                  :first-size="68"
+                  :min-size="18"
                   :second-hidden="!toolsOpen"
                 >
                   <template #first>
@@ -109,13 +96,14 @@ const toolTabs = [
                           variant="ghost"
                           size="small"
                           :aria-expanded="toolsOpen"
+                          aria-label="收起终端面板"
                           @click="toolsOpen = false"
                         >
-                          <TerminalSquare
-                            :size="13"
+                          <ChevronDown
+                            :size="14"
                             aria-hidden="true"
                           />
-                          <span>收起终端面板</span>
+                          <span>收起</span>
                         </Button>
                       </div>
                       <div
@@ -129,10 +117,6 @@ const toolTabs = [
                         tabindex="0"
                       >
                         <slot :name="tab.id" />
-                        <slot
-                          v-if="tab.id === 'commands'"
-                          name="tools"
-                        />
                       </div>
                     </div>
                   </template>
@@ -141,18 +125,30 @@ const toolTabs = [
                   v-if="!toolsOpen"
                   class="terminal-collapsed-bar"
                 >
+                  <div class="collapsed-tabs">
+                    <button
+                      v-for="tab in toolTabs"
+                      :key="tab.id"
+                      type="button"
+                      class="collapsed-tab-btn"
+                      @click="tool = tab.id; toolsOpen = true"
+                    >
+                      {{ tab.label }}
+                    </button>
+                  </div>
                   <Button
                     class="terminal-toggle"
                     variant="ghost"
                     size="small"
                     :aria-expanded="toolsOpen"
+                    aria-label="展开终端面板"
                     @click="toolsOpen = true"
                   >
-                    <TerminalSquare
-                      :size="13"
+                    <ChevronUp
+                      :size="14"
                       aria-hidden="true"
                     />
-                    <span>展开终端面板</span>
+                    <span>展开终端</span>
                   </Button>
                 </div>
               </div>
@@ -171,158 +167,92 @@ const toolTabs = [
 
 <style scoped>
 .workbench {
-  min-width: 0;
+  flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  flex: 1;
   background: var(--oc-bg);
-}
-
-.workbench-toolbar {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 36px;
-  padding: 4px 12px;
-  background: var(--oc-bg-subtle);
-  border-bottom: 1px solid var(--oc-border);
-}
-
-.toolbar-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.toolbar-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--oc-accent);
-}
-
-.workbench-toolbar h2 {
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--oc-fg-muted);
-  font-weight: 600;
 }
 
 .workbench-viewport {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.pane {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background: var(--oc-bg);
 }
 
-.workbench-viewport > :deep(.ui-splitter) {
-  height: 100%;
-}
-
-.workbench-viewport :deep(.ui-splitter-handle) {
-  position: relative;
-  flex: 0 0 5px;
-  background: transparent;
-}
-
-.workbench-viewport :deep(.ui-splitter-handle::after) {
-  content: '';
-  display: block;
-  width: 1px;
-  height: 100%;
-  border-radius: 0;
-  background: var(--oc-border);
-}
-
-.workbench-viewport :deep(.ui-splitter-handle[data-orientation="vertical"]::after) {
-  width: 100%;
-  height: 1px;
-}
-
-.workbench-viewport :deep(.ui-splitter-handle:hover),
-.workbench-viewport :deep(.ui-splitter-handle:focus-visible) {
-  background: var(--oc-accent-soft);
-}
-
-.workbench-viewport :deep(.ui-splitter-handle:hover::after),
-.workbench-viewport :deep(.ui-splitter-handle:focus-visible::after) {
-  background: var(--oc-accent);
-  transform: none;
-}
-
-.pane {
-  min-width: 0;
-  height: 100%;
-  overflow: auto;
-  overflow-wrap: anywhere;
-}
-
-.files,
-.assistant {
+.pane.files {
   background: var(--oc-bg-subtle);
-  padding: 0;
 }
 
-.editor {
-  background: var(--oc-bg);
-  padding: 0;
-  display: flex;
-  flex-direction: column;
+.pane.assistant {
+  background: var(--oc-bg-subtle);
 }
 
 .editor-stack {
-  display: flex;
-  flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--oc-bg);
-}
-
-.editor-stack > :deep(.ui-splitter) {
-  flex: 1;
-  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .tools {
   height: 100%;
+  min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--oc-bg-subtle);
-  overflow: hidden;
 }
 
 .tools-header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 10px 0 6px;
-  flex-shrink: 0;
+  height: 34px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--oc-border);
-  background: var(--oc-surface);
+  background: var(--oc-bg-subtle);
 }
 
 .tool-tabs {
   display: flex;
-  gap: 2px;
+  align-items: center;
+  gap: 14px;
+  height: 100%;
   min-width: 0;
+  overflow-x: auto;
 }
 
 .tool-tabs button {
   position: relative;
-  padding: 8px 10px;
-  background: none;
+  height: 100%;
+  padding: 0 2px;
   border: 0;
-  border-bottom: 2px solid transparent;
+  background: transparent;
   color: var(--oc-fg-muted);
   font-size: 12px;
-  font-weight: 550;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  transition: color 140ms var(--oc-ease), border-color 140ms var(--oc-ease);
+  border-bottom: 2px solid transparent;
+  transition: color 120ms var(--oc-ease), border-color 120ms var(--oc-ease);
 }
 
 .tool-tabs button:hover {
@@ -335,38 +265,95 @@ const toolTabs = [
 }
 
 .tool-content {
-  padding: 12px;
-  overflow: auto;
-  min-height: 0;
   flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  align-content: start;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-toggle {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  min-height: 24px;
+  padding: 2px 6px;
 }
 
 .terminal-collapsed-bar {
   flex-shrink: 0;
+  height: 32px;
   display: flex;
-  justify-content: flex-end;
-  padding: 3px 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
   border-top: 1px solid var(--oc-border);
-  background: var(--oc-surface);
+  background: var(--oc-bg-subtle);
 }
 
-.terminal-toggle {
+.collapsed-tabs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.collapsed-tab-btn {
+  border: 0;
+  background: transparent;
+  color: var(--oc-fg-muted);
   font-size: 12px;
-  min-height: 26px;
-  padding: 2px 8px;
+  padding: 2px 4px;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
-.compact .workbench-viewport {
-  flex: none;
-  height: 1650px;
-  min-height: 1000px;
+.collapsed-tab-btn:hover {
+  color: var(--oc-fg);
 }
 
-.compact .pane {
-  min-height: 140px;
+.workbench.compact {
+  height: auto;
+}
+
+.workbench.compact .workbench-viewport {
+  display: block;
+  overflow: visible;
+  height: auto;
+}
+
+.workbench.compact :deep(.ui-splitter) {
+  display: flex;
+  flex-direction: column !important;
+  height: auto !important;
+}
+
+.workbench.compact :deep(.ui-splitter-panel) {
+  flex: none !important;
+  width: 100% !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+.workbench.compact :deep(.ui-splitter-handle) {
+  display: none;
+}
+
+.workbench.compact :deep(.pane.files) {
+  max-height: 360px;
+  overflow: auto;
+  border-bottom: 1px solid var(--oc-border);
+}
+
+.workbench.compact :deep(.editor-stack) {
+  min-height: 460px;
+  border-bottom: 1px solid var(--oc-border);
+}
+
+.workbench.compact :deep(.pane.assistant) {
+  height: 560px;
+  min-height: 460px;
 }
 </style>

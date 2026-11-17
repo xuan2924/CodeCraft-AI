@@ -18,8 +18,8 @@ it('shows persisted source scope and read failure distinctly, rendering instruct
     { path: 'src/AGENTS.md', scope: 'src', status: 'READ_FAILED', content: null },
   ] });
   const wrapper = panel(); await flushPromises();
-  expect(wrapper.text()).toContain('正式修订 r7'); expect(wrapper.text()).toContain('作用域 src');
-  expect(wrapper.text()).toContain('读取失败，未加载'); expect(wrapper.text()).toContain('部分规则未加载');
+  expect(wrapper.text()).toContain('最近派发修订 r7'); expect(wrapper.text()).toContain('src/AGENTS.md');
+  expect(wrapper.text()).toContain('读取失败'); expect(wrapper.text()).toContain('部分规则未加载');
   expect(wrapper.text()).toContain('<script>instruction</script>'); expect(wrapper.find('script').exists()).toBe(false);
 });
 it('isolates delayed old task sources from a new empty conversation', async () => {
@@ -27,5 +27,5 @@ it('isolates delayed old task sources from a new empty conversation', async () =
   vi.mocked(projectInstructions).mockImplementation(() => new Promise(resolve => { complete = resolve; }));
   const wrapper = panel(); await flushPromises(); await wrapper.setProps({ taskId: null });
   complete({ exerciseId: 'exercise', revision: '7', scopeTruncated: false, sources: [{ path: 'AGENTS.md', scope: '.', status: 'LOADED', content: 'old-private' }] });
-  await flushPromises(); expect(wrapper.text()).not.toContain('old-private'); expect(wrapper.text()).toContain('New 不继承');
+  await flushPromises(); expect(wrapper.text()).not.toContain('old-private'); expect(wrapper.text()).toContain('尚无已派发请求的指令快照');
 });

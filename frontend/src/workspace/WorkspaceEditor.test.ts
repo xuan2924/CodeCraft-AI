@@ -286,6 +286,7 @@ it('locks the affected editor while deletion is unresolved so new typing cannot 
   vi.mocked(api.save).mockImplementationOnce(() => new Promise(() => {}));
   try {
     const page = render(); await flushPromises();
+    await page.get('button[aria-label="管理文件"]').trigger('click');
     await page.findAll('button').find((button) => button.text() === '删除文件')!.trigger('click');
     await flushPromises();
     expect(page.get('textarea').element.readOnly).toBe(true);
@@ -298,6 +299,7 @@ it('locks a pending rename until its original receipt confirms the new path', as
   vi.mocked(api.operation).mockResolvedValueOnce({ exerciseId: 'exercise', operationId: 'rename-operation', state: 'SUCCEEDED', revision: '1', changed: true, failureCode: null });
   try {
     const page = render(); await flushPromises();
+    await page.get('button[aria-label="管理文件"]').trigger('click');
     await page.get('#file-destination').setValue('src/main/java/Renamed.java');
     await page.findAll('button').find((button) => button.text() === '重命名文件')!.trigger('click');
     await flushPromises();
@@ -321,6 +323,7 @@ it('preserves the source buffer and unlocks it after a rejected rename receipt',
   vi.mocked(api.operation).mockResolvedValueOnce({ exerciseId: 'exercise', operationId: 'rename-operation', state: 'REJECTED', revision: null, changed: null, failureCode: 'FILE_EXISTS' });
   try {
     const page = render(); await flushPromises();
+    await page.get('button[aria-label="管理文件"]').trigger('click');
     await page.get('#file-destination').setValue('src/main/java/Existing.java');
     await page.findAll('button').find((button) => button.text() === '重命名文件')!.trigger('click');
     await flushPromises();

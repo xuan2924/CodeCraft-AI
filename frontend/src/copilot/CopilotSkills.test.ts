@@ -16,7 +16,8 @@ it('aborts and hides late private snapshot text after task or owner changes', as
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = mount(CopilotSkills, { props: { owner: 'owner', taskId: 'task', disabled: false, modelValue: [] }, global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
   await flushPromises();
-  await wrapper.findAll('button').find(button => button.text() === '查看 guide 留存原文')?.trigger('click');
+  await wrapper.get('.snapshot-drawer summary').trigger('click');
+  await wrapper.findAll('button').find(button => button.text().includes('查看原文'))?.trigger('click');
   await flushPromises();
   expect(snapshotPackage).toHaveBeenCalledTimes(1);
   const signal = vi.mocked(snapshotPackage).mock.calls[0]?.[3];
@@ -32,9 +33,8 @@ it('distinguishes task catalog from loaded guidance and emits explicit next-task
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = mount(CopilotSkills, { props: { owner: 'owner', taskId: 'task', disabled: false, modelValue: [] }, global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
   await flushPromises();
-  expect(wrapper.text()).toContain('清单不等于正文已加载');
-  expect(wrapper.text()).toContain('未显式加载');
-  await wrapper.get('input[type="checkbox"]').setValue(true);
+  expect(wrapper.text()).toContain('按需读取');
+  await wrapper.get('.skill-option-row').trigger('click');
   expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([['10000000-0000-0000-0000-000000000001']]);
   wrapper.unmount(); client.clear();
 });

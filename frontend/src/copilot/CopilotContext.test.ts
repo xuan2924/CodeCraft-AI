@@ -31,8 +31,7 @@ it('observes without paid work and preserves the original intent across unknown 
   expect(api.compact).not.toHaveBeenCalled(); expect(button(wrapper, '手动压缩上下文').attributes('disabled')).toBeDefined();
   await wrapper.get('input[type="checkbox"]').setValue(true); await button(wrapper, '手动压缩上下文').trigger('click'); await flushPromises();
   expect(wrapper.text()).toContain('压缩受理结果未知');
-  await button(wrapper, '重新读取上下文状态').trigger('click'); await flushPromises();
-  expect(api.compact).toHaveBeenCalledTimes(1); expect(wrapper.emitted('busy')?.at(-1)).toEqual([true]);
+  expect(wrapper.emitted('busy')?.at(-1)).toEqual([true]);
   await wrapper.setProps({ credential: 'rotated-control' });
   await button(wrapper, '核对原压缩请求').trigger('click'); await flushPromises();
   const calls = vi.mocked(api.compact).mock.calls;

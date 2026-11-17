@@ -19,22 +19,20 @@ function enter() {
   void command.submit((key, signal) => api.enter(owner, exercise, key, props.credential, signal));
 }
 </script>
+
 <template>
   <section
     v-if="state.available"
     aria-label="预设挑战"
-    class="challenge-panel"
+    class="challenge-section"
   >
     <div class="challenge-head">
-      <h2>{{ state.entered ? '挑战已发布' : '可选挑战' }}</h2>
-      <span class="challenge-pill">{{ state.entered ? '已进入' : '单轮可选' }}</span>
+      <h2>{{ state.entered ? '进阶挑战' : '可选进阶挑战' }}</h2>
+      <span class="challenge-badge">{{ state.entered ? '已进入' : '可开启' }}</span>
     </div>
-    <p class="challenge-desc">
-      至多一轮，与基础阶段共用剩余时限。未参与不扣基础分；进入不会修改已保存代码。
-    </p>
     <template v-if="state.entered && state.publishedChallenge">
-      <p class="challenge-meta">
-        进入时的基础验收修订：{{ state.enteredRevision }}。最终验收包含基础回归与挑战。
+      <p class="challenge-meta font-mono-num">
+        基线修订 r{{ state.enteredRevision }}
       </p>
       <pre class="challenge-text">{{ state.publishedChallenge.requirements }}</pre>
       <details
@@ -42,13 +40,13 @@ function enter() {
         :key="path"
         class="challenge-details"
       >
-        <summary>挑战验收源码：{{ path }}</summary>
+        <summary>{{ path }}</summary>
         <pre class="challenge-text">{{ content }}</pre>
       </details>
     </template>
     <template v-else>
       <p class="challenge-desc">
-        当前保存版本基础验收通过且 AI 任务收敛后可进入；进入后不能退回基础阶段。
+        当前保存版本基础验收通过且 AI 任务完成后可进入（进入后不可退回）。
       </p>
       <Button
         variant="secondary"
@@ -77,72 +75,63 @@ function enter() {
     </Button>
   </section>
 </template>
+
 <style scoped>
-.challenge-panel {
-  border: 1px solid var(--oc-border);
-  border-left: 3px solid var(--oc-accent);
-  border-radius: var(--radius-control);
-  padding: 12px 14px;
-  margin: 0;
-  background: var(--oc-surface);
+.challenge-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--oc-border);
   display: grid;
   gap: 8px;
-  flex-shrink: 0;
 }
 
 .challenge-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
 
-.challenge-panel h2 {
+.challenge-section h2 {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
 }
 
-.challenge-pill {
+.challenge-badge {
   font-size: 11px;
-  font-weight: 550;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--oc-accent-soft);
-  border: 1px solid var(--oc-border-accent);
   color: var(--oc-accent);
 }
 
 .challenge-desc,
 .challenge-meta {
   margin: 0;
-  font-size: 12.5px;
-  color: var(--oc-fg-muted);
+  font-size: 12px;
   line-height: 1.5;
+  color: var(--oc-fg-muted);
 }
 
 .challenge-text {
-  margin: 2px 0 0;
-  padding: 10px 12px;
+  margin: 0;
+  padding: 10px;
   border-radius: var(--radius-control);
-  background: var(--oc-bg-input);
+  background: var(--oc-bg);
   border: 1px solid var(--oc-border);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 18rem;
-  overflow: auto;
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-x: auto;
 }
 
 .challenge-details summary {
-  cursor: pointer;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
+  cursor: pointer;
 }
 
 .challenge-error {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--oc-danger);
 }
 </style>

@@ -1,62 +1,134 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { FileCode2, Search, Terminal, TestTube2 } from '@lucide/vue';
+import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { commandPolicy } from './errors';
 import { preview, sources, type ReferenceSource, type ReferenceKind, type ReferencePage } from './referenceApi';
+
 const props = defineProps<{ owner: string; exerciseId: string; conversationId: string; disabled: boolean; paths?: string[] }>();
 const selected = defineModel<ReferencePage[]>({ required: true });
-const emit = defineEmits<{ unauthorized: [] }>();
+const emit = defineEmits<{ unauthorized: []; attached: [] }>();
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.conversationId}`);
-const kind = ref<ReferenceKind>('FILE'); const source = ref(''); const page = ref<ReferencePage | null>(null);
-const options = ref<ReferenceSource[]>([]); const nextSources = ref<string | null>(null); const loadedSources = ref(false);
+const kind = ref<ReferenceKind>('FILE');
+const search = ref('');
+const source = ref('');
+const page = ref<ReferencePage | null>(null);
+const options = ref<ReferenceSource[]>([]);
+const nextSources = ref<string | null>(null);
+const loadedSources = ref(false);
 function resetSources() { options.value = []; nextSources.value = null; loadedSources.value = false; source.value = ''; }
 const pageEnd = computed(() => page.value ? page.value.offset + new globalThis.TextEncoder().encode(page.value.text).length : 0);
-const pending = ref(false); const error = ref(''); const notice = ref(''); const range = ref<[number, number]>([0, 0]);
-let controller: globalThis.AbortController | null = null; let generation = 0;
-function reset() { generation++; controller?.abort(); pending.value = false; page.value = null; error.value = ''; notice.value = ''; range.value = [0, 0]; }
-watch(scope, () => { reset(); resetSources(); }, { flush: 'sync' });
-watch(kind, resetSources, { flush: 'sync' });
-watch([kind, source], reset, { flush: 'sync' });
+const pending = ref(false);
+const error = ref('');
+const notice = ref('');
+const range = ref<[number, number]>([0, 0]);
+let controller: globalThis.AbortController | null = null;
+let generation = 0;
+
+function reset() {
+  generation++;
+  controller?.abort();
+  pending.value = false;
+  page.value = null;
+  error.value = '';
+  notice.value = '';
+  range.value = [0, 0];
+}
+watch(scope, () => { reset(); resetSources(); search.value = ''; }, { flush: 'sync' });
+watch(kind, (next) => {
+  resetSources();
+  reset();
+  if (next !== 'FILE') void loadSources();
+}, { flush: 'sync' });
+watch(source, reset, { flush: 'sync' });
 watch(() => props.disabled, () => { generation++; controller?.abort(); pending.value = false; notice.value = ''; }, { flush: 'sync' });
 onBeforeUnmount(reset);
+
+const filteredPaths = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  return (props.paths ?? []).filter(p => !q || p.toLowerCase().includes(q));
+});
+
 async function load(offset = 0, version: string | null = null, limit = 2048, addSelection = false) {
   if (props.disabled || !source.value.trim()) return;
-  const epoch = ++generation; controller?.abort(); controller = new globalThis.AbortController();
-  pending.value = true; error.value = ''; notice.value = '';
+  const epoch = ++generation;
+  controller?.abort();
+  controller = new globalThis.AbortController();
+  pending.value = true;
+  error.value = '';
+  notice.value = '';
   const requestedKind = addSelection && kind.value === 'FILE' ? 'CODE' : kind.value;
   try {
     const result = await preview(props.owner, props.exerciseId, props.conversationId, requestedKind, source.value, offset, limit, version, controller.signal);
     if (epoch !== generation) return;
-    if (addSelection) add(result); else { page.value = result; range.value = [0, 0]; }
+    if (addSelection) add(result);
+    else { page.value = result; range.value = [0, 0]; }
   } catch (failure) {
     if (epoch !== generation) return;
     if (commandPolicy.identityFailure(failure)) emit('unauthorized');
     error.value = failure instanceof ApiError && failure.code === 'COPILOT_REFERENCE_CHANGED'
-      ? '来源版本已变化，未用新内容替换旧引用。请重新预览后明确选择。'
-      : `来源读取失败，未取得空内容成功回执${failure instanceof ApiError ? `（${failure.code}）` : ''}。`;
+      ? '来源版本已变化，请重新预览后选择。'
+      : `来源读取失败${failure instanceof ApiError ? `（${failure.code}）` : ''}。`;
   } finally { if (epoch === generation) pending.value = false; }
 }
-async function loadSources(after: string | null = null) {
-  if (props.disabled || pending.value || kind.value === 'FILE') return;
-  const epoch = ++generation; controller?.abort(); controller = new globalThis.AbortController(); pending.value = true; error.value = ''; notice.value = '';
+
+async function quickAttachFile(path: string) {
+  if (props.disabled || selected.value.length >= 4) return;
+  source.value = path;
+  const epoch = ++generation;
+  controller?.abort();
+  controller = new globalThis.AbortController();
+  pending.value = true;
+  error.value = '';
+  notice.value = '';
   try {
-    const result = await sources(props.owner, props.exerciseId, props.conversationId, kind.value, after, controller.signal);
+    const result = await preview(props.owner, props.exerciseId, props.conversationId, 'FILE', path, 0, 2048, null, controller.signal);
     if (epoch !== generation) return;
-    options.value = result.sources; nextSources.value = result.nextCursor; loadedSources.value = true;
+    page.value = result;
+    range.value = [0, 0];
   } catch (failure) {
     if (epoch !== generation) return;
     if (commandPolicy.identityFailure(failure)) emit('unauthorized');
-    error.value = '无法读取保留日志任务列表；可重试，未执行任何测试或命令。';
+    error.value = failure instanceof ApiError && failure.code === 'COPILOT_REFERENCE_CHANGED'
+      ? '来源版本已变化，请重新预览。'
+      : `读取失败${failure instanceof ApiError ? `（${failure.code}）` : ''}。`;
   } finally { if (epoch === generation) pending.value = false; }
 }
+
+async function loadSources(after: string | null = null) {
+  if (props.disabled || pending.value || kind.value === 'FILE') return;
+  const epoch = ++generation;
+  controller?.abort();
+  controller = new globalThis.AbortController();
+  pending.value = true;
+  error.value = '';
+  notice.value = '';
+  try {
+    const result = await sources(props.owner, props.exerciseId, props.conversationId, kind.value, after, controller.signal);
+    if (epoch !== generation) return;
+    options.value = result.sources;
+    nextSources.value = result.nextCursor;
+    loadedSources.value = true;
+  } catch (failure) {
+    if (epoch !== generation) return;
+    if (commandPolicy.identityFailure(failure)) emit('unauthorized');
+    error.value = '无法读取日志列表，请重试。';
+  } finally { if (epoch === generation) pending.value = false; }
+}
+
 function add(value: ReferencePage) {
   if (props.disabled || selected.value.length >= 4) return;
   if (selected.value.some(item => item.fingerprint === value.fingerprint)) { notice.value = '此片段已引用。'; return; }
-  selected.value = [...selected.value, value]; notice.value = '已加入引用；提交时服务端再次核对来源。';
+  selected.value = [...selected.value, value];
+  notice.value = '已添加引用';
+  emit('attached');
 }
+
 function selectionChanged(event: globalThis.Event) {
   if (event.target instanceof globalThis.HTMLTextAreaElement) range.value = [event.target.selectionStart, event.target.selectionEnd];
 }
+
 // Textarea indices address LF-normalized UTF-16; source offsets address original UTF-8 bytes.
 function originalBoundary(text: string, normalized: number) {
   let original = 0;
@@ -65,196 +137,388 @@ function originalBoundary(text: string, normalized: number) {
   }
   return original;
 }
+
 function addRange() {
-  const current = page.value; const [start, end] = range.value;
+  const current = page.value;
+  const [start, end] = range.value;
   if (!current || end <= start) return;
   const encoder = new globalThis.TextEncoder();
-  const from = originalBoundary(current.text, start); const through = originalBoundary(current.text, end);
+  const from = originalBoundary(current.text, start);
+  const through = originalBoundary(current.text, end);
   void load(current.offset + encoder.encode(current.text.slice(0, from)).length, current.version, encoder.encode(current.text.slice(from, through)).length, true);
 }
-async function copy() {
-  const current = page.value; if (!current) return; const epoch = generation;
-  try { await globalThis.navigator.clipboard.writeText(current.text); if (epoch === generation) notice.value = '当前保留片段已复制。'; }
-  catch { if (epoch === generation) notice.value = '复制失败，可在只读文本框选择并手动复制。'; }
-}
 </script>
+
 <template>
-  <section aria-label="上下文引用">
-    <h3>文件、代码与日志引用 · {{ selected.length }}/4</h3>
-    <p>每项仅保留最多 2 KiB 节选，不注入整个项目。引用来自服务端保存版本；发送前保存草稿若改变版本，会明确拒绝旧引用，请重新预览。</p>
-    <label>来源类型<select
-      v-model="kind"
-      :disabled="disabled || pending"
-    ><option value="FILE">文件或选中代码</option><option value="TEST_LOG">测试日志</option><option value="COMMAND_LOG">命令日志</option></select></label>
-    <label v-if="kind === 'FILE' && paths?.length">保存文件<select
-      v-model="source"
-      :disabled="disabled || pending"
-    ><option value="">选择文件</option><option
-      v-for="path in paths"
-      :key="path"
-      :value="path"
-    >{{ path }}</option></select></label>
-    <label v-else>{{ kind === 'FILE' ? '保存文件路径' : '原测试／命令任务 ID' }}<input
-      v-model="source"
-      :disabled="disabled || pending"
-    ></label>
-    <template v-if="kind !== 'FILE'">
-      <button
-        type="button"
-        :disabled="disabled || pending"
-        @click="loadSources()"
+  <section
+    class="ref-picker"
+    aria-label="上下文引用"
+  >
+    <div class="ref-tabs-row">
+      <div
+        class="ui-segmented"
+        role="tablist"
+        aria-label="来源类型"
       >
-        选择已有日志任务
-      </button>
-      <label v-if="options.length">保留任务<select
-        v-model="source"
-        :disabled="disabled || pending"
-      ><option value="">选择任务</option><option
-        v-for="item in options"
-        :key="item.id"
-        :value="item.id"
-      >{{ item.label }} · {{ item.state }} · 修订 {{ item.revision }} · {{ item.id }}</option></select></label>
-      <p v-else-if="loadedSources">
-        当前页没有保留日志任务；不可据此重新执行历史命令。
-      </p>
-      <button
-        v-if="nextSources"
-        type="button"
-        :disabled="disabled || pending"
-        @click="loadSources(nextSources)"
+        <button
+          type="button"
+          role="tab"
+          class="ui-segmented-btn"
+          :aria-selected="kind === 'FILE'"
+          @click="kind = 'FILE'"
+        >
+          <FileCode2
+            :size="12"
+            aria-hidden="true"
+          />
+          <span>文件 / 代码</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="ui-segmented-btn"
+          :aria-selected="kind === 'TEST_LOG'"
+          @click="kind = 'TEST_LOG'"
+        >
+          <TestTube2
+            :size="12"
+            aria-hidden="true"
+          />
+          <span>测试日志</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="ui-segmented-btn"
+          :aria-selected="kind === 'COMMAND_LOG'"
+          @click="kind = 'COMMAND_LOG'"
+        >
+          <Terminal
+            :size="12"
+            aria-hidden="true"
+          />
+          <span>命令日志</span>
+        </button>
+      </div>
+      <span class="ref-count font-mono-num">{{ selected.length }}/4</span>
+    </div>
+
+    <template v-if="kind === 'FILE'">
+      <div
+        v-if="paths?.length"
+        class="ref-file-list"
       >
-        更多保留日志任务
-      </button>
+        <div class="ref-search">
+          <Search
+            :size="12"
+            aria-hidden="true"
+          />
+          <input
+            v-model="search"
+            type="search"
+            aria-label="筛选工作区文件"
+            placeholder="筛选文件…"
+          >
+        </div>
+        <div class="ref-items">
+          <button
+            v-for="path in filteredPaths"
+            :key="path"
+            type="button"
+            class="ref-item-btn font-mono-num"
+            :class="{ 'is-active': source === path }"
+            :disabled="disabled || pending"
+            @click="quickAttachFile(path)"
+          >
+            {{ path }}
+          </button>
+        </div>
+      </div>
+      <div
+        v-else
+        class="ref-manual-row"
+      >
+        <input
+          v-model="source"
+          aria-label="保存文件路径"
+          placeholder="输入已保存文件路径…"
+          :disabled="disabled || pending"
+        >
+        <Button
+          variant="secondary"
+          size="small"
+          :disabled="disabled || pending || !source.trim()"
+          @click="load()"
+        >
+          预览
+        </Button>
+      </div>
     </template>
-    <button
-      type="button"
-      :disabled="disabled || pending || !source.trim()"
-      @click="load()"
-    >
-      预览当前来源
-    </button>
+
+    <template v-else>
+      <div
+        v-if="options.length"
+        class="ref-items"
+      >
+        <button
+          v-for="item in options"
+          :key="item.id"
+          type="button"
+          class="ref-item-btn"
+          :class="{ 'is-active': source === item.id }"
+          :disabled="disabled || pending"
+          @click="source = item.id; load()"
+        >
+          <span class="truncate">{{ item.label }}</span>
+          <small class="font-mono-num">r{{ item.revision }} · {{ item.state }}</small>
+        </button>
+      </div>
+      <p
+        v-else-if="loadedSources"
+        class="ref-note"
+      >
+        暂无保留的{{ kind === 'TEST_LOG' ? '测试' : '命令' }}日志。
+      </p>
+      <div
+        v-if="nextSources"
+        class="ref-more-row"
+      >
+        <Button
+          variant="ghost"
+          size="small"
+          :disabled="disabled || pending"
+          @click="loadSources(nextSources)"
+        >
+          更多日志
+        </Button>
+      </div>
+    </template>
+
     <p
       v-if="pending"
       role="status"
+      class="ref-note"
     >
-      正在读取保留来源…
-    </p><p
+      正在读取…
+    </p>
+    <p
       v-if="error"
       role="alert"
+      class="ref-error"
     >
       {{ error }}
     </p>
-    <div v-if="page">
-      <p>{{ page.source }} · 版本 {{ page.version }}</p>
-      <p>展示 UTF-8 字节 {{ page.offset }}–{{ pageEnd }} / {{ page.retainedBytes }}；{{ page.nextOffset === null ? '已到保留内容末尾' : '还有保留内容可读取' }}。</p>
-      <p v-if="page.sourceIncomplete || page.droppedBytes !== '0'">
-        底层来源不完整／已丢弃 {{ page.droppedBytes }} 字节，不能取回；不等同于当前展示分页。
-      </p>
-      <p v-if="!page.text">
-        来源已确认，目前没有保留文本。
+
+    <div
+      v-if="page"
+      class="ref-preview-box"
+    >
+      <div class="ref-preview-meta font-mono-num">
+        <span class="truncate">{{ page.source }}</span>
+        <span>{{ page.offset }}–{{ pageEnd }} / {{ page.retainedBytes }} B</span>
+      </div>
+      <p
+        v-if="page.sourceIncomplete || page.droppedBytes !== '0'"
+        class="ref-warn"
+      >
+        已丢弃 {{ page.droppedBytes }} 字节尾部/截断内容
       </p>
       <textarea
         :value="page.text"
         readonly
-        aria-label="保留来源片段，可选择代码或日志"
+        rows="5"
+        aria-label="保留来源片段，可框选部分代码"
         @select="selectionChanged"
       />
-      <button
-        v-if="page.nextOffset !== null"
-        type="button"
-        :disabled="disabled || pending"
-        @click="load(page.nextOffset, page.version)"
-      >
-        继续读取保留来源
-      </button>
-      <button
-        type="button"
-        :disabled="disabled || pending || selected.length >= 4"
-        @click="add(page)"
-      >
-        引用当前片段
-      </button>
-      <button
-        type="button"
-        :disabled="disabled || pending || selected.length >= 4 || range[1] <= range[0]"
-        @click="addRange"
-      >
-        引用选中代码／日志
-      </button>
-      <button
-        type="button"
-        @click="copy"
-      >
-        复制当前来源片段
-      </button>
+      <div class="ref-preview-actions">
+        <Button
+          variant="primary"
+          size="small"
+          :disabled="disabled || pending || selected.length >= 4"
+          @click="add(page)"
+        >
+          引用当前片段
+        </Button>
+        <Button
+          v-if="range[1] > range[0]"
+          variant="secondary"
+          size="small"
+          :disabled="disabled || pending || selected.length >= 4"
+          @click="addRange"
+        >
+          引用选中代码
+        </Button>
+        <Button
+          v-if="page.nextOffset !== null"
+          variant="ghost"
+          size="small"
+          :disabled="disabled || pending"
+          @click="load(page.nextOffset, page.version)"
+        >
+          下一段
+        </Button>
+      </div>
     </div>
+
     <p
       v-if="notice"
       role="status"
+      class="ref-status"
     >
       {{ notice }}
     </p>
-    <ol>
-      <li
-        v-for="(item, index) in selected"
-        :key="item.fingerprint"
-      >
-        <details>
-          <summary>{{ item.kind }} · {{ item.source }} · 字节 {{ item.offset }} · 版本 {{ item.version }}</summary><pre>{{ item.text }}</pre><p v-if="item.sourceIncomplete || item.droppedBytes !== '0'">
-            来源不完整，已丢弃 {{ item.droppedBytes }} 字节。
-          </p>
-        </details>
-        <button
-          type="button"
-          :disabled="disabled || pending"
-          @click="selected = selected.filter((_item, position) => position !== index)"
-        >
-          移除此引用
-        </button>
-      </li>
-    </ol>
   </section>
 </template>
+
 <style scoped>
-section {
-  border: 1px solid var(--oc-border);
-  border-radius: 10px;
-  background: var(--oc-surface);
-  padding: 12px;
+.ref-picker {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
-h3 { margin: 0; font-size: 13px; font-weight: 600; }
-p { margin: 0; font-size: 12px; color: var(--oc-fg-muted); line-height: 1.55; }
-label { display: grid; gap: 6px; font-size: 12.5px; }
-input, select, textarea {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px 10px;
-  color: var(--oc-fg);
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border-input);
-  border-radius: 8px;
+
+.ref-tabs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
-textarea { min-height: 7rem; }
-pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--oc-bg-input);
+
+.ref-count {
+  font-size: 11px;
+  color: var(--oc-fg-dim);
+}
+
+.ref-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--oc-bg-subtle);
   border: 1px solid var(--oc-border);
-  font-size: 12px;
+  color: var(--oc-fg-dim);
 }
-button[type="button"] {
-  padding: 6px 12px;
-  border-radius: 7px;
-  border: 1px solid var(--oc-border-strong);
-  background: var(--oc-surface-2);
-  color: var(--oc-fg);
+
+.ref-search input {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
   font-size: 12px;
+  box-shadow: none;
+  outline: none;
+}
+
+.ref-file-list {
+  display: grid;
+  gap: 6px;
+}
+
+.ref-items {
+  display: grid;
+  gap: 2px;
+  max-height: 130px;
+  overflow-y: auto;
+}
+
+.ref-item-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--oc-fg-muted);
+  font-size: 11.5px;
+  text-align: left;
   cursor: pointer;
-  width: fit-content;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-button[type="button"]:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.ref-item-btn:hover:not(:disabled),
+.ref-item-btn.is-active {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--oc-fg);
+}
+
+.ref-item-btn small {
+  color: var(--oc-fg-dim);
+  flex-shrink: 0;
+}
+
+.ref-manual-row {
+  display: flex;
+  gap: 6px;
+}
+
+.ref-manual-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.ref-preview-box {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--oc-border);
+}
+
+.ref-preview-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--oc-fg-muted);
+}
+
+.ref-preview-box textarea {
+  width: 100%;
+  padding: 7px 9px;
+  font-family: var(--oc-font-mono);
+  font-size: 11.5px;
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+  border-radius: 6px;
+  resize: none;
+}
+
+.ref-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ref-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+
+.ref-error {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--oc-danger);
+}
+
+.ref-warn {
+  margin: 0;
+  font-size: 11px;
+  color: var(--oc-warning);
+}
+
+.ref-status {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--oc-accent);
+}
 </style>

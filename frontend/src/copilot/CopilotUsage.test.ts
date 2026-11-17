@@ -5,6 +5,7 @@ import CopilotUsage from './CopilotUsage.vue';
 import * as api from './usageApi';
 vi.mock('./usageApi', () => ({ usage: vi.fn() }));
 it('shows reported occupancy separately, waits after compaction, and drops late exercise reads', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
   const reported: api.CopilotUsage = { exerciseId: 'first', context: { state: 'REPORTED', turnId: 'turn', modelId: 'model', contextWindow: 128000,
     windowSource: 'USER_CONFIGURATION', inputTokens: '12345', dispatchedAt: '2026-11-15T00:00:00Z' }, totals: [], costs: [] };
   vi.mocked(api.usage).mockResolvedValue(reported);
@@ -15,12 +16,12 @@ it('shows reported occupancy separately, waits after compaction, and drops late 
     expect(wrapper.text()).toContain('12345 / 128000');
     expect(wrapper.text()).toContain('用户配置');
     vi.mocked(api.usage).mockResolvedValue({ ...reported, context: { ...reported.context, state: 'WAITING_UPDATE', inputTokens: null } });
-    await wrapper.get('button').trigger('click'); await flushPromises();
+    await vi.advanceTimersByTimeAsync(5000); await flushPromises();
     expect(wrapper.text()).toContain('已压缩，等待下次请求更新占用');
     expect(wrapper.text()).not.toContain('12345');
     let finish: (value: api.CopilotUsage) => void = () => {};
     vi.mocked(api.usage).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-    await wrapper.get('button').trigger('click'); await flushPromises();
+    await vi.advanceTimersByTimeAsync(5000); await flushPromises();
     const signal = vi.mocked(api.usage).mock.calls.at(-1)?.[2];
     vi.mocked(api.usage).mockResolvedValue({ ...reported, exerciseId: 'second', context: { state: 'UNKNOWN', turnId: null, modelId: null, contextWindow: null, windowSource: null, inputTokens: null, dispatchedAt: null } });
     await wrapper.setProps({ exerciseId: 'second', owner: 'new-owner' }); await flushPromises();
@@ -28,5 +29,5 @@ it('shows reported occupancy separately, waits after compaction, and drops late 
     finish(reported); await flushPromises();
     expect(wrapper.text()).not.toContain('12345');
     expect(wrapper.text()).toContain('占用未知');
-  } finally { wrapper.unmount(); client.clear(); }
+  } finally { wrapper.unmount(); client.clear(); vi.useRealTimers(); }
 });

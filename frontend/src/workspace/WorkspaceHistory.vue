@@ -78,25 +78,53 @@ function restore() {
     class="history"
     aria-label="代码修改历史"
   >
-    <header class="history-header">
-      <div class="history-title">
-        <h3>代码修改历史</h3>
-        <details class="history-rules">
-          <summary>恢复规则</summary>
-          <p>仅恢复受管理源码，保留最近 20 次变化所需版本；不恢复对话、缓存或进程，本地草稿需手动处理冲突。</p>
-        </details>
+    <div class="history-toolbar">
+      <div class="history-select-wrap">
+        <select
+          v-model="selected"
+          :disabled="busy"
+          aria-label="选择代码修改"
+        >
+          <option value="">选择历史修改预览或恢复…</option>
+          <option
+            v-for="item in listing.data.value?.changes"
+            :key="item.id"
+            :value="item.id"
+          >r{{ item.baseRevision }} → r{{ item.resultRevision }} · {{ item.source }} · {{ item.retained ? '可用' : '已清理' }}</option>
+        </select>
       </div>
-      <Button
-        variant="secondary"
-        size="small"
-        @click="listing.refetch()"
-      >
-        刷新历史
-      </Button>
-    </header>
+      <div class="actions">
+        <Button
+          v-if="listing.data.value?.nextBefore"
+          variant="ghost"
+          size="small"
+          :disabled="busy"
+          @click="cursor = listing.data.value.nextBefore; selected = ''"
+        >
+          更早
+        </Button>
+        <Button
+          v-if="cursor"
+          variant="ghost"
+          size="small"
+          :disabled="busy"
+          @click="cursor = null; selected = ''"
+        >
+          最新
+        </Button>
+        <Button
+          variant="ghost"
+          size="small"
+          @click="listing.refetch()"
+        >
+          刷新历史
+        </Button>
+      </div>
+    </div>
     <p
       v-if="listing.isPending.value"
       role="status"
+      class="history-meta"
     >
       正在读取历史…
     </p>
@@ -107,47 +135,15 @@ function restore() {
     >
       {{ message(listing.error.value) }}
     </p>
-    <p v-if="listing.data.value?.changes.length === 0">
-      尚无代码变化。
+    <p
+      v-if="listing.data.value?.changes.length === 0"
+      class="history-meta"
+    >
+      暂无修改记录。
     </p>
-    <div class="history-toolbar">
-      <label class="history-select-label">
-        <span>选择修改</span>
-        <select
-          v-model="selected"
-          :disabled="busy"
-          aria-label="选择代码修改"
-        >
-          <option value="">请选择</option>
-          <option
-            v-for="item in listing.data.value?.changes"
-            :key="item.id"
-            :value="item.id"
-          >r{{ item.baseRevision }} → r{{ item.resultRevision }} · {{ item.source }} · {{ item.retained ? '版本可用' : '版本已清理' }}</option>
-        </select>
-      </label>
-      <div class="actions">
-        <Button
-          v-if="listing.data.value?.nextBefore"
-          size="small"
-          :disabled="busy"
-          @click="cursor = listing.data.value.nextBefore; selected = ''"
-        >
-          更早的修改
-        </Button>
-        <Button
-          v-if="cursor"
-          size="small"
-          :disabled="busy"
-          @click="cursor = null; selected = ''"
-        >
-          返回最近修改
-        </Button>
-      </div>
-    </div>
     <template v-if="change">
       <p class="history-meta">
-        {{ change.recordedAt }} · 任务 {{ change.taskId ?? '无' }} · 会话 {{ change.conversationId ?? '无' }}
+        {{ change.recordedAt }}<template v-if="change.taskId"> · 任务 {{ change.taskId }}</template><template v-if="change.conversationId"> · 会话 {{ change.conversationId }}</template>
       </p>
       <div class="actions">
         <Button
@@ -183,6 +179,7 @@ function restore() {
     <p
       v-if="preview.isFetching.value"
       role="status"
+      class="history-meta"
     >
       正在读取预览…
     </p>
@@ -235,6 +232,7 @@ function restore() {
     <p
       v-if="notice"
       role="status"
+      class="history-meta"
     >
       {{ notice }}
     </p>
@@ -256,6 +254,7 @@ function restore() {
     <p
       v-if="unresolved"
       role="status"
+      class="history-meta"
     >
       恢复已受理，正在核对最终回执…
     </p>
@@ -279,58 +278,17 @@ function restore() {
 <style scoped>
 .history {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  border: 1px solid var(--oc-border);
-  border-radius: var(--radius-panel);
-  padding: 14px;
-  background: var(--oc-surface);
-}
-
-.history-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.history-title {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-h3 {
-  margin: 0;
-  font-size: 13.5px;
-  font-weight: 600;
-}
-
-.history-rules {
-  font-size: 12px;
-  color: var(--oc-fg-muted);
-}
-
-.history-rules summary {
-  cursor: pointer;
-}
-
-.history-rules p {
-  margin: 6px 0 0;
-}
-
-p {
-  margin: 0;
-  font-size: 12px;
-  color: var(--oc-fg-muted);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
+  padding: 10px 14px 14px;
 }
 
 .history-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
   font-family: var(--oc-font-mono);
+  overflow-wrap: break-word;
 }
 
 .history-toolbar {
@@ -341,26 +299,16 @@ p {
   flex-wrap: wrap;
 }
 
-.history-select-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.history-select-wrap {
   flex: 1 1 240px;
   min-width: 0;
-  font-size: 12.5px;
-  font-weight: 550;
 }
 
-.history-select-label span {
-  white-space: nowrap;
-  color: var(--oc-fg-muted);
-}
-
-.history-select-label select {
-  flex: 1 1 0%;
-  min-width: 0;
-  padding: 6px 10px;
-  font-size: 12.5px;
+.history-select-wrap select {
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 12px;
 }
 
 .history-ack {
@@ -372,10 +320,8 @@ p {
 }
 
 .history-alert {
-  padding: 8px 10px;
-  border-radius: var(--radius-control);
-  background: var(--oc-danger-bg);
-  border: 1px solid var(--oc-danger-border);
+  margin: 0;
+  font-size: 12px;
   color: var(--oc-danger);
 }
 

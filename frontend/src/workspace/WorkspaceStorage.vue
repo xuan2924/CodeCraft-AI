@@ -2,7 +2,9 @@
 import { computed, onScopeDispose } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
 import Button from '../components/ui/Button.vue';
+import Tooltip from '../components/ui/Tooltip.vue';
 import { ApiError } from '../api/request';
+import { formatShortTimestamp } from '../copilot/feeConsent';
 import { message } from './api';
 import * as api from './storageApi';
 
@@ -31,71 +33,161 @@ function format(bytes: number) { return bytes > 0 && bytes < 104857.6 ? '< 0.1 M
     class="workspace-storage"
     aria-label="演练数据容量"
   >
-    <header>
-      <h2>数据容量</h2>
-      <Button
-        size="small"
-        :loading="query.isFetching.value"
-        @click="query.refetch()"
-      >
-        刷新占用
-      </Button>
+    <header class="storage-header">
+      <div class="storage-title-wrap">
+        <h2>数据容量</h2>
+        <Tooltip text="停止、对账、结束和删除使用独立保留空间；容量不足拒绝写入时不会清除本地草稿。">
+          <button
+            type="button"
+            class="rule-hint"
+            aria-label="容量规则说明"
+          >
+            ?
+          </button>
+        </Tooltip>
+      </div>
+      <div class="storage-head-right">
+        <span
+          v-if="query.data.value"
+          class="measured-at font-mono-num"
+        >{{ formatShortTimestamp(query.data.value.measuredAt) }}</span>
+        <Button
+          variant="ghost"
+          size="small"
+          :loading="query.isFetching.value"
+          @click="query.refetch()"
+        >
+          刷新占用
+        </Button>
+      </div>
     </header>
     <p
       v-if="query.isPending.value"
       role="status"
+      class="storage-status"
     >
       正在查询数据占用…
     </p>
     <p
       v-else-if="query.isError.value"
       role="alert"
+      class="storage-alert"
     >
-      无法确认数据占用。{{ message(query.error.value) }} 不会按零占用处理。
+      无法确认数据占用。{{ message(query.error.value) }}
     </p>
     <template v-else-if="query.data.value">
-      <dl>
-        <div><dt>实际占用 / 单场上限</dt><dd>{{ format(used) }} / {{ format(query.data.value.limitBytes) }}</dd></div>
-        <div><dt>在途预留</dt><dd>{{ format(query.data.value.reservedBytes) }}</dd></div>
-        <div><dt>收尾保留</dt><dd>{{ format(query.data.value.recoveryBytes) }}</dd></div>
+      <dl class="storage-metrics ui-divide-list">
+        <div class="metric-row">
+          <dt>已用 / 上限</dt>
+          <dd class="font-mono-num">{{ format(used) }} / {{ format(query.data.value.limitBytes) }}</dd>
+        </div>
+        <div class="metric-row">
+          <dt>在途预留</dt>
+          <dd class="font-mono-num">{{ format(query.data.value.reservedBytes) }}</dd>
+        </div>
+        <div class="metric-row">
+          <dt>收尾保留</dt>
+          <dd class="font-mono-num">{{ format(query.data.value.recoveryBytes) }}</dd>
+        </div>
       </dl>
       <p
         v-if="available === 0"
         role="status"
+        class="storage-warn"
       >
-        普通新增空间不足。可等待在途操作收敛后刷新；不会提前删除仍需保留的数据。
+        普通新增空间已满，请等待在途操作收敛后刷新。
       </p>
-      <p>停止、对账、结束和删除使用保留空间；容量拒绝不会清除草稿。</p>
-      <small>计量于 {{ new Date(query.data.value.measuredAt).toLocaleString() }}。在途预留不等于已写入的数据。</small>
     </template>
   </section>
 </template>
 
 <style scoped>
 .workspace-storage {
-  padding: 16px;
-  border-radius: 10px;
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
-  box-shadow: var(--oc-hairline-top);
+  padding: 12px 14px;
   display: grid;
-  gap: 12px;
-}
-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-h2 { margin: 0; font-size: 14.5px; font-weight: 600; }
-dl {
-  margin: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
 }
-dl > div {
-  padding: 12px;
-  border-radius: 8px;
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border);
+
+.storage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
-dt { color: var(--oc-fg-muted); font-size: 12px; margin-bottom: 4px; }
-dd { margin-inline-start: 0; font-variant-numeric: tabular-nums; font-size: 14px; font-weight: 600; color: var(--oc-fg); }
-p, small { margin: 0; color: var(--oc-fg-muted); font-size: 12.5px; line-height: 1.55; }
+
+.storage-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rule-hint {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid var(--oc-border);
+  background: transparent;
+  color: var(--oc-fg-dim);
+  font-size: 11px;
+  cursor: help;
+}
+
+.storage-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.measured-at {
+  font-size: 11.5px;
+  color: var(--oc-fg-dim);
+}
+
+.storage-metrics {
+  border-top: 1px solid var(--oc-border);
+  border-bottom: 1px solid var(--oc-border);
+  margin: 0;
+}
+
+.metric-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 0;
+  font-size: 12.5px;
+}
+
+dt {
+  color: var(--oc-fg-muted);
+}
+
+dd {
+  margin-inline-start: 0;
+  color: var(--oc-fg);
+  font-weight: 550;
+}
+
+.storage-status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.storage-warn {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-warning);
+}
+
+.storage-alert {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-danger);
+}
 </style>

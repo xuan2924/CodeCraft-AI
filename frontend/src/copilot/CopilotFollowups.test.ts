@@ -22,14 +22,14 @@ it('keeps unknown enqueue intent and original key even after the main task finis
   const view = panel(); await flushPromises(); await view.get('textarea').setValue(receipt.text); await view.get('input').setValue(true);
   await button(view, '加入后续队列（不 steer）').trigger('click'); await flushPromises();
   expect(view.text()).toContain('网络结果未确认'); await view.setProps({ running: false, disabled: true });
-  await button(view, '按原意图核对队列操作（不换键）').trigger('click'); await flushPromises();
+  await button(view, '按原意图核对队列操作').trigger('click'); await flushPromises();
   const calls = vi.mocked(api.enqueue).mock.calls; expect(calls).toHaveLength(2); expect(calls[0]!.slice(0, 6)).toEqual(calls[1]!.slice(0, 6));
 });
 it('reads FIFO receipts without posting on refresh and requires explicit fees before resumption', async () => {
   vi.mocked(api.recent).mockResolvedValue([{ ...receipt, state: 'PAUSED', reason: 'PREDECESSOR_STOPPED', text: '<script>next</script>' }]);
   vi.mocked(api.resume).mockImplementation(async (_o, _e, conversationId, _c, requestKey) => ({ conversationId, requestKey }));
   const view = panel(); await view.setProps({ running: false }); await flushPromises(); await vi.advanceTimersByTimeAsync(4000); await flushPromises();
-  expect(view.text()).toContain('队列暂停'); expect(view.find('script').exists()).toBe(false); expect(api.resume).not.toHaveBeenCalled(); expect(api.enqueue).not.toHaveBeenCalled();
+  expect(view.text()).toContain('暂停'); expect(view.find('script').exists()).toBe(false); expect(api.resume).not.toHaveBeenCalled(); expect(api.enqueue).not.toHaveBeenCalled();
   expect(button(view, '重新授权并继续队列').attributes('disabled')).toBeDefined(); await view.get('input').setValue(true);
   await button(view, '重新授权并继续队列').trigger('click'); await flushPromises(); expect(api.resume).toHaveBeenCalledTimes(1);
 });

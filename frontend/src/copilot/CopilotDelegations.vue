@@ -1,59 +1,71 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
+import { GitFork } from '@lucide/vue';
 import { commandPolicy, errorMessage } from './errors';
 import * as api from './delegationApi';
+
 const props = defineProps<{ owner: string; exerciseId: string; parentTaskId: string }>();
 const emit = defineEmits<{ unauthorized: [] }>();
 const selected = ref('');
-const rows = useQuery({ queryKey: computed(() => ['copilot-delegations', props.owner, props.exerciseId, props.parentTaskId]),
-  queryFn: ({ signal }) => api.list(props.owner, props.exerciseId, props.parentTaskId, signal), retry: false, gcTime: 0, refetchInterval: 2000 });
+const rows = useQuery({
+  queryKey: computed(() => ['copilot-delegations', props.owner, props.exerciseId, props.parentTaskId]),
+  queryFn: ({ signal }) => api.list(props.owner, props.exerciseId, props.parentTaskId, signal),
+  retry: false,
+  gcTime: 0,
+  refetchInterval: 2000,
+});
 const current = computed(() => rows.data.value?.find(row => row.toolId === selected.value) ?? rows.data.value?.at(-1));
 watch(() => `${props.owner}/${props.exerciseId}/${props.parentTaskId}`, () => { selected.value = ''; }, { flush: 'sync' });
 watch(rows.error, error => { if (commandPolicy.identityFailure(error)) emit('unauthorized'); });
+const visible = computed(() => (rows.data.value?.length ?? 0) > 0 || rows.isError.value);
 </script>
+
 <template>
   <section
+    v-if="visible"
     class="delegations"
     aria-label="父子任务与交接"
   >
-    <h3>委派子任务</h3>
-    <p>同一父任务最多 8 次、一层且一次一个。父任务等待交接并释放 worker；子任务继续使用你的模型、费用和本场 ASK/AUTO 设置。不是独立的平台 Agent。</p>
-    <p>停止父任务会连带停止子任务，并等待命令及文件同步收敛；停止子任务只向父任务交回停止结果。已写入的修改不会撤销。父任务 steer 在子任务收敛后生效，不立即改变子任务目标。</p>
+    <div class="del-head">
+      <GitFork
+        :size="13"
+        aria-hidden="true"
+      />
+      <h3>委派子任务</h3>
+    </div>
     <p
-      v-if="rows.isPending.value"
-      role="status"
-    >
-      正在读取父子关系…
-    </p>
-    <p
-      v-else-if="rows.isError.value"
+      v-if="rows.isError.value"
       role="alert"
+      class="del-error"
     >
       {{ errorMessage(rows.error.value) }}
     </p>
-    <p v-else-if="!rows.data.value?.length">
-      当前父任务尚未创建子任务。
-    </p>
-    <ul>
+    <ul
+      v-else-if="rows.data.value?.length"
+      class="del-list"
+    >
       <li
         v-for="row in rows.data.value"
         :key="row.toolId"
       >
         <button
           type="button"
+          class="del-btn"
           :aria-pressed="current?.toolId === row.toolId"
           @click="selected = row.toolId"
         >
-          {{ row.goal }} · {{ row.child.state }} · {{ row.state === 'RESOLVED' ? '已持久交接' : '父任务等待交接' }}
+          <span>{{ row.goal }}</span>
+          <small class="font-mono-num">{{ row.child.state }} · {{ row.state === 'RESOLVED' ? '已交接' : '等待中' }}</small>
         </button>
-        <small>父 {{ row.parentTaskId }} → 子 {{ row.child.id }} · 工具 {{ row.toolId }}</small>
       </li>
     </ul>
     <template v-if="current && !rows.isError.value">
-      <p>当前子目标：{{ current.goal }}</p>
-      <details v-if="current.resultPayload">
-        <summary>已交给父任务的有界结果（非全部子任务历史）</summary>
+      <details
+        v-if="current.resultPayload"
+        class="del-result"
+      >
+        <summary>查看交接结果</summary>
         <pre>{{ current.resultPayload }}</pre>
       </details>
       <slot
@@ -63,42 +75,86 @@ watch(rows.error, error => { if (commandPolicy.identityFailure(error)) emit('una
     </template>
   </section>
 </template>
+
 <style scoped>
 .delegations {
-  border-inline-start: 3px solid var(--oc-accent);
-  padding: 12px 14px;
-  border-radius: 0 10px 10px 0;
+  border-inline-start: 2px solid var(--oc-accent);
+  padding: 8px 10px;
+  border-radius: 0 8px 8px 0;
   background: var(--oc-surface-2);
   display: grid;
   gap: 8px;
 }
-h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
-p { margin: 0; font-size: 12px; color: var(--oc-fg-muted); line-height: 1.55; }
-small { display: block; overflow-wrap: anywhere; font-size: 11.5px; color: var(--oc-fg-muted); }
-pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 20rem;
-  overflow: auto;
-  padding: 10px;
-  border-radius: 8px;
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border);
-  font-size: 12px;
+
+.del-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--oc-fg);
 }
-button {
+
+h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.del-error {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--oc-danger);
+}
+
+.del-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.del-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   text-align: start;
-  overflow-wrap: anywhere;
-  padding: 6px 10px;
-  border-radius: 7px;
-  border: 1px solid var(--oc-border-strong);
-  background: var(--oc-surface);
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-bg-subtle);
   color: var(--oc-fg);
   font-size: 12px;
   cursor: pointer;
 }
-button[aria-pressed="true"] {
+
+.del-btn[aria-pressed="true"] {
   background: var(--oc-selected);
   border-color: var(--oc-border-accent);
+}
+
+.del-btn small {
+  color: var(--oc-fg-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.del-result summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 14rem;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+  font-size: 11.5px;
 }
 </style>

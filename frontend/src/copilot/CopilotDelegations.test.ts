@@ -25,7 +25,7 @@ it('selects retained child identity without starting work and renders goals as t
   const wrapper = view(); await flushPromises(); expect(wrapper.get('[data-child]').attributes('data-child')).toBe(second);
   await wrapper.findAll('button')[0]!.trigger('click'); expect(wrapper.get('[data-child]').attributes('data-child')).toBe(first);
   expect(wrapper.find('script').exists()).toBe(false); expect(wrapper.text()).toContain('<script>not executable</script>');
-  expect(wrapper.text()).toContain('父任务等待交接'); expect(api.list).toHaveBeenCalledTimes(1);
+  expect(wrapper.text()).toContain('RUNNING · 等待中'); expect(api.list).toHaveBeenCalledTimes(1);
 });
 it('does not render a late old-parent relation after the parent scope changes', async () => {
   let finish: (rows: api.Delegation[]) => void = () => {};

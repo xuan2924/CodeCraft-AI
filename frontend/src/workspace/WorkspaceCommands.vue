@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
+import { CornerDownLeft, Folder, Square } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
+import Tooltip from '../components/ui/Tooltip.vue';
 import { ApiError } from '../api/request';
 import { useCommand, type CommandFailurePolicy } from '../api/useCommand';
+import { formatShortTimestamp } from '../copilot/feeConsent';
 import { message, type Exercise } from './api';
 import * as api from './commandApi';
 import CommandOutput from './CommandOutput.vue';
 import { stateLabels } from './commandPresentation';
+
 const props = defineProps<{ owner: string; exercise: Exercise; credential: string; disabled: boolean; prepare: () => Promise<string | null> }>();
 const emit = defineEmits<{ changed: []; unauthorized: []; locked: [value: boolean] }>();
 const client = useQueryClient();
@@ -15,6 +19,8 @@ const scope = computed(() => `${props.owner}/${props.exercise.exerciseId}/${prop
 const root = computed(() => ['workspace-commands', props.owner, props.exercise.exerciseId, props.exercise.workspaceInstanceId]);
 const command = ref('');
 const directory = ref('.');
+const editingDirectory = ref(false);
+const historyIndex = ref(-1);
 const selected = ref('');
 const cursor = ref<string | null>(null);
 const preparing = ref(false);
@@ -24,6 +30,7 @@ let notifiedRevision = 0n;
 onScopeDispose(() => { disposed = true; });
 watch(scope, () => {
   selected.value = ''; cursor.value = null; command.value = ''; directory.value = '.';
+  editingDirectory.value = false; historyIndex.value = -1;
   preparing.value = false; notice.value = ''; notifiedRevision = 0n;
 }, { flush: 'sync' });
 const policy: CommandFailurePolicy = {
@@ -53,6 +60,7 @@ const options = computed(() => {
   const tasks = [...(head.data.value?.commands ?? []), ...(page.value?.commands ?? []), ...(detail.data.value ? [detail.data.value] : [])];
   return [...new Map(tasks.map(task => [task.id, task])).values()];
 });
+const recentCommandStrings = computed(() => options.value.map(item => item.command).filter(Boolean));
 watch([head.error, older.error, detail.error], failures => { if (failures.some(policy.identityFailure)) emit('unauthorized'); });
 watch([head.data, detail.data], () => {
   const candidates = [...(head.data.value?.commands ?? []), ...(detail.data.value ? [detail.data.value] : [])];
@@ -76,6 +84,13 @@ watch(busy, value => emit('locked', value), { immediate: true });
 const commandBytes = computed(() => new globalThis.TextEncoder().encode(command.value).length);
 const mayStart = computed(() => !props.disabled && !!props.credential && props.exercise.state === 'ACTIVE' && !busy.value
   && command.value.trim().length > 0 && commandBytes.value <= 4096 && directory.value.length > 0);
+function cycleHistory(direction: -1 | 1) {
+  const items = recentCommandStrings.value;
+  if (!items.length || command.value.includes('\n')) return;
+  const next = historyIndex.value + direction;
+  if (next < 0) { historyIndex.value = -1; command.value = ''; return; }
+  if (next < items.length) { historyIndex.value = next; command.value = items[next]!; }
+}
 async function execute() {
   if (!mayStart.value) return;
   const before = scope.value;
@@ -88,6 +103,10 @@ async function execute() {
     if (disposed || scope.value !== before || revision === null || props.disabled || !props.credential) return;
     const input = { command: text, directory: cwd, expectedRevision: revision };
     await start.submit((key, signal) => api.start(owner, exercise.exerciseId, exercise.workspaceInstanceId, input, key, props.credential, signal));
+    if (!disposed && scope.value === before && !start.error.value && !start.uncertain.value) {
+      command.value = '';
+      historyIndex.value = -1;
+    }
   } catch (failure) {
     if (!disposed && scope.value === before) notice.value = message(failure);
   } finally { if (!disposed && scope.value === before) preparing.value = false; }
@@ -102,107 +121,15 @@ function requestStop() {
 
 <template>
   <section
-    class="commands"
-    aria-label="联网 Bash"
+    class="terminal-shell"
+    aria-label="开发终端"
   >
-    <header class="cmd-header">
-      <div class="cmd-title">
-        <h3>Bash · 联网开发命令</h3>
-        <details class="cmd-rules">
-          <summary>执行限制说明</summary>
-          <p>只在 Docker 内执行，非平台权威测试。依赖请放 <code>/cache</code>；<code>target</code>、<code>node_modules</code> 执行后清理。受版本超时、CPU、内存与进程数限制；可写副本上限 128 MiB / 20,000 目录项；执行前先保存当前草稿。</p>
-        </details>
-      </div>
-      <span class="cmd-bytes">{{ commandBytes }} / 4096 B</span>
-    </header>
-    <form
-      class="cmd-form"
-      @submit.prevent="execute"
-    >
-      <div class="cmd-cwd-row">
-        <span class="cmd-cwd-prefix">/project/</span>
-        <input
-          v-model="directory"
-          aria-label="Bash 工作目录"
-          maxlength="1024"
-          placeholder="."
-          :disabled="start.pending.value || start.uncertain.value || preparing"
-        >
-        <Button
-          type="submit"
-          variant="primary"
-          size="small"
-          :disabled="!mayStart"
-        >
-          {{ preparing || start.pending.value ? '正在受理…' : '执行 Bash' }}
-        </Button>
-      </div>
-      <textarea
-        v-model="command"
-        aria-label="Bash 命令"
-        rows="3"
-        maxlength="4096"
-        spellcheck="false"
-        placeholder="输入要执行的 Bash 命令…"
-        :disabled="start.pending.value || start.uncertain.value || preparing"
-      />
-    </form>
-    <p
-      v-if="notice"
-      role="status"
-      class="cmd-status"
-    >
-      {{ notice }}
-    </p>
-    <p
-      v-if="start.error.value"
-      role="alert"
-      class="cmd-alert"
-    >
-      {{ start.error.value }}
-    </p>
-    <Button
-      v-if="start.uncertain.value"
-      size="small"
-      :disabled="start.pending.value"
-      @click="start.retry()"
-    >
-      使用原请求键核对，不重复执行
-    </Button>
-    <p
-      v-if="head.isPending.value"
-      role="status"
-      class="cmd-status"
-    >
-      正在读取命令记录…
-    </p>
-    <p
-      v-if="head.isError.value"
-      role="alert"
-      class="cmd-alert"
-    >
-      {{ message(head.error.value) }}
-      <Button
-        size="small"
-        @click="head.refetch()"
-      >
-        重新读取记录
-      </Button>
-    </p>
-    <p
-      v-if="head.data.value?.commands.length === 0"
-      class="cmd-empty"
-    >
-      还没有开发命令。
-    </p>
-    <div
-      v-if="options.length"
-      class="cmd-history-bar"
-    >
-      <label class="cmd-select-label">
-        <span>执行记录</span>
+    <div class="terminal-topbar">
+      <div class="terminal-history-nav">
         <select
+          v-if="options.length"
           v-model="selected"
+          class="terminal-select font-mono-num"
           aria-label="选择 Bash 执行记录"
           :disabled="start.pending.value"
         >
@@ -210,194 +137,334 @@ function requestStop() {
             v-for="task in options"
             :key="task.id"
             :value="task.id"
-          >{{ new Date(task.createdAt).toLocaleTimeString() }} · {{ stateLabels[task.state] }} · {{ task.id.slice(0, 8) }}</option>
+          >{{ formatShortTimestamp(task.createdAt) }} · {{ stateLabels[task.state] }} · {{ task.command.slice(0, 28) }}</option>
         </select>
-      </label>
-      <div class="actions">
+        <span
+          v-else
+          class="terminal-idle-label font-mono-num"
+        >/project</span>
         <Button
           v-if="page?.nextCursor"
+          variant="ghost"
           size="small"
           @click="cursor = page.nextCursor"
         >
-          更早的记录
+          更早
         </Button>
         <Button
           v-if="cursor"
+          variant="ghost"
           size="small"
           @click="cursor = null"
         >
-          返回最近记录
+          最新
         </Button>
       </div>
-    </div>
-    <p
-      v-if="cursor && older.isPending.value"
-      role="status"
-      class="cmd-status"
-    >
-      正在读取更早的记录…
-    </p>
-    <p
-      v-if="cursor && older.isError.value"
-      role="alert"
-      class="cmd-alert"
-    >
-      {{ message(older.error.value) }}
-      <Button
-        size="small"
-        @click="older.refetch()"
-      >
-        重试读取历史
-      </Button>
-    </p>
-    <p
-      v-if="selected && detail.isPending.value"
-      role="status"
-      class="cmd-status"
-    >
-      正在读取命令输出…
-    </p>
-    <p
-      v-if="detail.isError.value"
-      role="alert"
-      class="cmd-alert"
-    >
-      {{ message(detail.error.value) }}
-      <Button
-        size="small"
-        @click="detail.refetch()"
-      >
-        重新核对记录
-      </Button>
-    </p>
-    <CommandOutput
-      v-if="detail.data.value"
-      :owner="owner"
-      :task="detail.data.value"
-      @unauthorized="emit('unauthorized')"
-    >
-      <template #controls>
+      <div class="terminal-top-actions">
         <Button
-          v-if="!detail.data.value.quiescent"
+          v-if="detail.data.value && !detail.data.value.quiescent"
           variant="danger"
           size="small"
           :disabled="detail.data.value.stopRequested || stop.pending.value || stop.uncertain.value || (exercise.state === 'ACTIVE' && !credential)"
           @click="requestStop"
         >
-          停止实际命令
+          <Square
+            :size="11"
+            aria-hidden="true"
+          />
+          <span>停止实际命令</span>
         </Button>
-        <p
-          v-if="stop.error.value"
-          role="alert"
-          class="cmd-alert"
-        >
-          {{ stop.error.value }}
-        </p>
+        <Tooltip text="在 Docker 沙箱执行（非权威测试）；依赖缓存目录 /cache，单条命令上限 4 KiB。执行前自动保存当前文件。">
+          <button
+            type="button"
+            class="terminal-help-btn"
+            aria-label="终端环境说明"
+          >
+            ?
+          </button>
+        </Tooltip>
+      </div>
+    </div>
+
+    <div class="terminal-stream">
+      <p
+        v-if="notice"
+        role="status"
+        class="term-status"
+      >
+        {{ notice }}
+      </p>
+      <p
+        v-if="start.error.value"
+        role="alert"
+        class="term-alert"
+      >
+        {{ start.error.value }}
+      </p>
+      <div
+        v-if="start.uncertain.value"
+        class="term-alert-row"
+      >
+        <span class="term-alert">受理结果未确认</span>
         <Button
-          v-if="stop.uncertain.value"
           size="small"
-          :disabled="stop.pending.value"
-          @click="stop.retry()"
+          :disabled="start.pending.value"
+          @click="start.retry()"
         >
-          核对原停止请求
+          使用原请求键核对，不重复执行
         </Button>
-      </template>
-    </CommandOutput>
-    <small class="cmd-footnote">保留最近 20 条可清理已完成输出；刷新仅读取原执行身份。</small>
+      </div>
+      <p
+        v-if="head.isPending.value"
+        role="status"
+        class="term-status"
+      >
+        正在连接终端历史…
+      </p>
+      <div
+        v-else-if="head.isError.value"
+        role="alert"
+        class="term-alert-row"
+      >
+        <span class="term-alert">{{ message(head.error.value) }}</span>
+        <Button
+          variant="ghost"
+          size="small"
+          @click="head.refetch()"
+        >
+          重试
+        </Button>
+      </div>
+      <div
+        v-else-if="head.data.value?.commands.length === 0 && !detail.data.value"
+        class="term-empty font-mono-num"
+      >
+        $ 输入命令并按 Enter 执行（支持 ↑ / ↓ 切换历史）
+      </div>
+      <p
+        v-if="cursor && older.isPending.value"
+        role="status"
+        class="term-status"
+      >
+        正在加载更早记录…
+      </p>
+      <div
+        v-if="cursor && older.isError.value"
+        role="alert"
+        class="term-alert-row"
+      >
+        <span class="term-alert">{{ message(older.error.value) }}</span>
+        <Button
+          variant="ghost"
+          size="small"
+          @click="older.refetch()"
+        >
+          重试
+        </Button>
+      </div>
+      <p
+        v-if="selected && detail.isPending.value"
+        role="status"
+        class="term-status"
+      >
+        正在读取命令输出…
+      </p>
+      <div
+        v-if="detail.isError.value"
+        role="alert"
+        class="term-alert-row"
+      >
+        <span class="term-alert">{{ message(detail.error.value) }}</span>
+        <Button
+          variant="ghost"
+          size="small"
+          @click="detail.refetch()"
+        >
+          重新核对
+        </Button>
+      </div>
+      <CommandOutput
+        v-if="detail.data.value"
+        :owner="owner"
+        :task="detail.data.value"
+        @unauthorized="emit('unauthorized')"
+      >
+        <template #controls>
+          <p
+            v-if="stop.error.value"
+            role="alert"
+            class="term-alert"
+          >
+            {{ stop.error.value }}
+          </p>
+          <Button
+            v-if="stop.uncertain.value"
+            size="small"
+            :disabled="stop.pending.value"
+            @click="stop.retry()"
+          >
+            核对原停止请求
+          </Button>
+        </template>
+      </CommandOutput>
+    </div>
+
+    <form
+      class="terminal-prompt-bar"
+      @submit.prevent="execute"
+    >
+      <button
+        type="button"
+        class="cwd-chip font-mono-num"
+        :title="editingDirectory ? '收起工作目录' : '修改工作目录（默认 /project）'"
+        @click="editingDirectory = !editingDirectory"
+      >
+        <Folder
+          :size="11"
+          aria-hidden="true"
+        />
+        <span>{{ directory === '.' ? '/project' : `/project/${directory}` }}</span>
+      </button>
+      <input
+        v-if="editingDirectory"
+        v-model="directory"
+        class="cwd-inline-input font-mono-num"
+        aria-label="Bash 工作目录"
+        maxlength="1024"
+        placeholder="."
+        :disabled="start.pending.value || start.uncertain.value || preparing"
+      >
+      <span
+        class="prompt-glyph font-mono-num"
+        aria-hidden="true"
+      >$</span>
+      <textarea
+        v-model="command"
+        class="terminal-input font-mono-num"
+        aria-label="Bash 命令"
+        rows="1"
+        maxlength="4096"
+        spellcheck="false"
+        placeholder="输入命令，Enter 执行…"
+        :disabled="start.pending.value || start.uncertain.value || preparing"
+        @keydown.enter.exact.prevent="execute"
+        @keydown.up.exact="cycleHistory(1)"
+        @keydown.down.exact="cycleHistory(-1)"
+      />
+      <span
+        v-if="commandBytes > 3072"
+        class="byte-limit-badge font-mono-num"
+        :class="{ 'is-over': commandBytes > 4096 }"
+      >
+        {{ commandBytes }} / 4096 B
+      </span>
+      <Button
+        type="submit"
+        variant="ghost"
+        size="icon"
+        class="run-cmd-btn"
+        aria-label="执行命令"
+        :disabled="!mayStart"
+      >
+        <CornerDownLeft
+          :size="14"
+          aria-hidden="true"
+        />
+      </Button>
+    </form>
   </section>
 </template>
 
 <style scoped>
-.commands {
-  display: grid;
-  gap: 10px;
+.terminal-shell {
+  flex: 1;
+  min-height: 0;
   min-width: 0;
-  border: 1px solid var(--oc-border);
-  border-radius: var(--radius-panel);
-  padding: 14px;
-  background: var(--oc-surface);
+  display: flex;
+  flex-direction: column;
+  background: var(--oc-bg-subtle);
 }
 
-.cmd-header {
+.terminal-topbar {
+  flex-shrink: 0;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 32px;
+  padding: 2px 10px;
+  border-bottom: 1px solid var(--oc-border);
 }
 
-.cmd-title {
+.terminal-history-nav {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
 }
 
-h3 {
-  margin: 0;
-  font-size: 13.5px;
-  font-weight: 600;
-}
-
-.cmd-rules {
-  font-size: 12px;
-  color: var(--oc-fg-muted);
-}
-
-.cmd-rules summary {
-  cursor: pointer;
-}
-
-.cmd-rules p {
-  margin: 6px 0 0;
-  line-height: 1.5;
-}
-
-.cmd-bytes {
-  font-family: var(--oc-font-mono);
+.terminal-select {
+  min-width: 0;
+  max-width: 340px;
+  min-height: 24px;
+  padding: 2px 8px;
   font-size: 11.5px;
-  color: var(--oc-fg-muted);
-  font-variant-numeric: tabular-nums;
+  border-radius: 5px;
 }
 
-.cmd-form {
-  display: grid;
-  gap: 8px;
+.terminal-idle-label {
+  font-size: 11.5px;
+  color: var(--oc-fg-dim);
 }
 
-.cmd-cwd-row {
+.terminal-top-actions {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
-.cmd-cwd-prefix {
-  font-family: var(--oc-font-mono);
-  font-size: 12px;
-  color: var(--oc-accent);
-  padding: 6px 8px;
-  border-radius: var(--radius-control);
-  background: var(--oc-surface-2);
+.terminal-help-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
   border: 1px solid var(--oc-border);
+  background: transparent;
+  color: var(--oc-fg-dim);
+  font-size: 11px;
+  cursor: help;
 }
 
-.cmd-cwd-row input {
-  flex: 1 1 140px;
-  min-width: 0;
-  padding: 6px 10px;
-  font-family: var(--oc-font-mono);
-  font-size: 12.5px;
+.terminal-stream {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-textarea {
-  width: 100%;
-  font-family: var(--oc-font-mono);
-  font-size: 12.5px;
-  resize: vertical;
+.term-empty {
+  font-size: 12px;
+  color: var(--oc-fg-dim);
+  padding: 6px 0;
 }
 
-.cmd-history-bar {
+.term-status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.term-alert {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-danger);
+}
+
+.term-alert-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -405,61 +472,87 @@ textarea {
   flex-wrap: wrap;
 }
 
-.cmd-select-label {
+.terminal-prompt-bar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex: 1 1 220px;
-  min-width: 0;
-  font-size: 12.5px;
-  font-weight: 550;
-}
-
-.cmd-select-label span {
-  white-space: nowrap;
-  color: var(--oc-fg-muted);
-}
-
-.cmd-select-label select {
-  flex: 1 1 0%;
-  min-width: 0;
-  padding: 6px 10px;
-  font-size: 12.5px;
-}
-
-.cmd-status,
-.cmd-empty,
-.cmd-footnote {
-  margin: 0;
-  font-size: 12px;
-  color: var(--oc-fg-muted);
-  line-height: 1.5;
-}
-
-.cmd-alert {
-  margin: 0;
-  padding: 8px 10px;
-  border-radius: var(--radius-control);
-  background: var(--oc-danger-bg);
-  border: 1px solid var(--oc-danger-border);
-  color: var(--oc-danger);
-  font-size: 12.5px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-code {
-  overflow-wrap: anywhere;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--oc-surface-2);
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
   gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--oc-border);
+  background: var(--oc-bg);
+}
+
+.cwd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--oc-border);
+  background: transparent;
+  color: var(--oc-fg-dim);
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.cwd-chip:hover {
+  color: var(--oc-fg);
+  border-color: var(--oc-border-strong);
+}
+
+.cwd-inline-input {
+  width: 96px;
+  min-height: 22px;
+  padding: 1px 6px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.prompt-glyph {
+  color: var(--oc-accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.terminal-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 24px;
+  max-height: 76px;
+  padding: 3px 4px;
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  color: var(--oc-fg);
+  font-size: 12.5px;
+  line-height: 1.45;
+  resize: none;
+  box-shadow: none !important;
+}
+
+.terminal-input:focus {
+  outline: none;
+}
+
+.byte-limit-badge {
+  font-size: 11px;
+  color: var(--oc-warning);
+  flex-shrink: 0;
+}
+
+.byte-limit-badge.is-over {
+  color: var(--oc-danger);
+}
+
+.run-cmd-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
 }
 </style>

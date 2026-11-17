@@ -1,114 +1,154 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
+import { Check, FileText, Zap } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
 import { listSkills, skillError } from '../skills/api';
 import { snapshotPackage, taskSkills } from './skillApi';
 import { commandPolicy } from './errors';
+
 const props = defineProps<{ owner: string; taskId: string | null; disabled: boolean; modelValue: string[] }>();
 const emit = defineEmits<{ 'update:modelValue': [ids: string[]]; unauthorized: [] }>();
-const originals = useQuery({ queryKey: computed(() => ['skills', props.owner]), queryFn: ({ signal }) => listSkills(props.owner, signal), retry: false, gcTime: 0 });
+const originals = useQuery({
+  queryKey: computed(() => ['skills', props.owner]),
+  queryFn: ({ signal }) => listSkills(props.owner, signal),
+  retry: false,
+  gcTime: 0,
+});
 const available = computed(() => originals.data.value?.filter(item => item.enabled) ?? []);
-const snapshots = useQuery({ queryKey: computed(() => ['copilot-skills', props.owner, props.taskId]), queryFn: ({ signal }) => taskSkills(props.owner, props.taskId!, signal),
-  enabled: computed(() => !!props.taskId), retry: false, gcTime: 0, refetchInterval: 5000 });
+const snapshots = useQuery({
+  queryKey: computed(() => ['copilot-skills', props.owner, props.taskId]),
+  queryFn: ({ signal }) => taskSkills(props.owner, props.taskId!, signal),
+  enabled: computed(() => !!props.taskId),
+  retry: false,
+  gcTime: 0,
+  refetchInterval: 5000,
+});
 const viewing = ref<string | null>(null);
 watch([() => props.owner, () => props.taskId], () => { viewing.value = null; });
-const contents = useQuery({ queryKey: computed(() => ['copilot-skill-package', props.owner, props.taskId, viewing.value]),
-  queryFn: ({ signal }) => snapshotPackage(props.owner, props.taskId!, viewing.value!, signal), enabled: computed(() => !!props.taskId && !!viewing.value), retry: false, gcTime: 0 });
+const contents = useQuery({
+  queryKey: computed(() => ['copilot-skill-package', props.owner, props.taskId, viewing.value]),
+  queryFn: ({ signal }) => snapshotPackage(props.owner, props.taskId!, viewing.value!, signal),
+  enabled: computed(() => !!props.taskId && !!viewing.value),
+  retry: false,
+  gcTime: 0,
+});
 watch([originals.error, snapshots.error, contents.error], errors => { if (errors.some(commandPolicy.identityFailure)) emit('unauthorized'); });
-function select(id: string, event: globalThis.Event) {
-  if (props.disabled || !(event.target instanceof globalThis.HTMLInputElement)) return;
-  emit('update:modelValue', event.target.checked ? [...new Set([...props.modelValue, id])] : props.modelValue.filter(value => value !== id));
+
+function toggleSkill(id: string) {
+  if (props.disabled) return;
+  const active = props.modelValue.includes(id);
+  emit('update:modelValue', active ? props.modelValue.filter(value => value !== id) : [...new Set([...props.modelValue, id])]);
 }
 </script>
+
 <template>
-  <section aria-label="任务 Skill">
-    <h3>Skill 指导</h3>
-    <p>新任务固定当时所有已启用版本；清单不等于正文已加载。勾选后显式加载正文，其他指导由模型按需读取。steer 不更新快照。</p>
+  <section
+    class="skills-picker"
+    aria-label="任务 Skill"
+  >
     <p
       v-if="originals.isPending.value"
       role="status"
+      class="picker-note"
     >
-      正在读取可选择的 Skill…
+      正在读取可用 Skill…
     </p>
-    <p
+    <div
       v-else-if="originals.isError.value"
       role="alert"
+      class="picker-error"
     >
-      {{ skillError(originals.error.value) }}
+      <span>{{ skillError(originals.error.value) }}</span>
+      <Button
+        variant="ghost"
+        size="small"
+        @click="originals.refetch()"
+      >
+        重试
+      </Button>
+    </div>
+    <p
+      v-else-if="!available.length"
+      class="picker-note"
+    >
+      暂无已启用 Skill，可在 AI 配置中创建或启用。
     </p>
-    <fieldset
+    <div
       v-else
-      :disabled="disabled"
+      class="skill-options"
     >
-      <legend>下一任务显式选择（可选）</legend>
-      <p v-if="!available.length">
-        暂无已启用 Skill，可前往账号页的个人 Skill 管理。
-      </p>
-      <label
+      <button
         v-for="item in available"
         :key="item.id"
+        type="button"
+        class="skill-option-row"
+        :class="{ 'is-selected': modelValue.includes(item.id) }"
+        :disabled="disabled"
+        :aria-pressed="modelValue.includes(item.id)"
+        @click="toggleSkill(item.id)"
       >
-        <input
-          type="checkbox"
-          :checked="modelValue.includes(item.id)"
-          @change="select(item.id, $event)"
-        >
-        {{ item.name }} — {{ item.description }}
-      </label>
-    </fieldset>
-    <Button
-      :disabled="originals.isFetching.value || disabled"
-      @click="originals.refetch()"
+        <Zap
+          :size="13"
+          class="skill-icon"
+          aria-hidden="true"
+        />
+        <span class="skill-copy">
+          <strong class="font-mono-num">{{ item.name }}</strong>
+          <small>{{ item.description }}</small>
+        </span>
+        <Check
+          v-if="modelValue.includes(item.id)"
+          :size="13"
+          class="skill-check"
+          aria-hidden="true"
+        />
+      </button>
+    </div>
+
+    <details
+      v-if="taskId && snapshots.data.value?.length"
+      class="snapshot-drawer"
     >
-      重新读取可选 Skill
-    </Button>
-    <template v-if="taskId">
-      <h4>当前任务固定版本</h4>
-      <p
-        v-if="snapshots.isPending.value"
-        role="status"
-      >
-        正在读取快照…
-      </p>
-      <p
-        v-else-if="snapshots.isError.value"
-        role="alert"
-      >
-        {{ skillError(snapshots.error.value) }}
-      </p>
-      <p v-else-if="!snapshots.data.value?.length">
-        本任务没有 Skill 快照。
-      </p>
-      <ul v-else>
+      <summary>当前任务已固定快照 ({{ snapshots.data.value.length }})</summary>
+      <ul class="snapshot-list">
         <li
           v-for="item in snapshots.data.value"
           :key="item.skillId"
         >
-          <p>{{ item.name }}：{{ item.explicitLoaded ? 'SKILL.md 已显式加载' : item.explicitlySelected ? '已显式选择，等待派发加载' : '未显式加载，可能按需读取' }}</p>
-          <p>不可变版本 {{ item.versionId }}</p>
-          <Button @click="viewing = item.skillId">
-            查看 {{ item.name }} 留存原文
+          <span class="snapshot-info">
+            <strong class="font-mono-num">{{ item.name }}</strong>
+            <small>{{ item.explicitLoaded ? '已显式加载' : item.explicitlySelected ? '等待派发加载' : '按需读取' }}</small>
+          </span>
+          <Button
+            variant="ghost"
+            size="small"
+            @click="viewing = viewing === item.skillId ? null : item.skillId"
+          >
+            <FileText
+              :size="12"
+              aria-hidden="true"
+            />
+            <span>{{ viewing === item.skillId ? '收起' : '查看原文' }}</span>
           </Button>
         </li>
       </ul>
-      <p>模型按需加载的路径、版本、切片与内容见对话中的 load_skill 工具结果。查看留存原文仅供本人核对，不触发模型请求或加载记录。</p>
       <section
         v-if="viewing"
         aria-label="私有 Skill 留存原文"
+        class="snapshot-viewer"
       >
-        <Button @click="viewing = null">
-          关闭原文
-        </Button>
         <p
           v-if="contents.isPending.value"
           role="status"
+          class="picker-note"
         >
-          正在读取留存原文…
+          正在读取…
         </p>
         <p
           v-else-if="contents.isError.value"
           role="alert"
+          class="picker-error"
         >
           {{ skillError(contents.error.value) }}
         </p>
@@ -116,37 +156,171 @@ function select(id: string, event: globalThis.Event) {
           <details
             v-for="file in contents.data.value.files"
             :key="file.path"
+            open
           >
-            <summary>{{ file.path }}</summary><pre>{{ file.content }}</pre>
+            <summary class="font-mono-num">{{ file.path }}</summary>
+            <pre>{{ file.content }}</pre>
           </details>
         </template>
       </section>
-    </template>
+    </details>
   </section>
 </template>
+
 <style scoped>
-section { display: grid; gap: 8px; }
-h3, h4 { margin: 0; font-size: 13px; font-weight: 600; }
-p { margin: 0; font-size: 12px; color: var(--oc-fg-muted); line-height: 1.55; }
-label { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; font-size: 12.5px; }
-fieldset {
-  margin: 0;
-  min-width: 0;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--oc-border);
-  background: var(--oc-surface);
+.skills-picker {
+  display: grid;
+  gap: 6px;
 }
-legend { font-size: 12px; color: var(--oc-fg-muted); padding: 0 6px; }
-pre {
+
+.picker-note {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+}
+
+.picker-error {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--oc-danger);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.skill-options {
+  display: grid;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.skill-option-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--oc-fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.skill-option-row:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.skill-option-row.is-selected {
+  background: var(--oc-selected);
+}
+
+.skill-option-row:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.skill-icon {
+  color: var(--oc-warning);
+  flex-shrink: 0;
+}
+
+.skill-copy {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.skill-copy strong {
+  font-size: 12px;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-copy small {
+  font-size: 11px;
+  color: var(--oc-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-check {
+  color: var(--oc-accent);
+  flex-shrink: 0;
+}
+
+.snapshot-drawer {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--oc-border);
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+
+.snapshot-drawer summary {
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.snapshot-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.snapshot-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.snapshot-info {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.snapshot-info strong {
+  font-size: 11.5px;
+  color: var(--oc-fg);
+}
+
+.snapshot-info small {
+  font-size: 11px;
+  color: var(--oc-fg-dim);
+}
+
+.snapshot-viewer {
+  margin-top: 6px;
+  display: grid;
+  gap: 6px;
+}
+
+.snapshot-viewer pre {
+  margin: 4px 0 0;
+  padding: 8px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+  font-size: 11.5px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 32rem;
-  overflow: auto;
-  padding: 10px;
-  border-radius: 8px;
-  background: var(--oc-bg-input);
-  border: 1px solid var(--oc-border);
-  font-size: 12px;
 }
 </style>

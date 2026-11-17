@@ -4,78 +4,122 @@ import { useQuery } from '@tanstack/vue-query';
 import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { projectInstructions } from './projectInstructionsApi';
+
 const props = defineProps<{ owner: string; exerciseId: string; taskId: string | null; running: boolean }>();
 const emit = defineEmits<{ unauthorized: [] }>();
-const snapshot = useQuery({ queryKey: computed(() => ['project-instructions', props.owner, props.exerciseId, props.taskId]), enabled: computed(() => props.taskId !== null), retry: false, gcTime: 0,
-  queryFn: ({ signal }) => projectInstructions(props.owner, props.exerciseId, props.taskId!, signal), refetchInterval: computed(() => props.running ? 2000 : false) });
+const snapshot = useQuery({
+  queryKey: computed(() => ['project-instructions', props.owner, props.exerciseId, props.taskId]),
+  enabled: computed(() => props.taskId !== null),
+  retry: false,
+  gcTime: 0,
+  queryFn: ({ signal }) => projectInstructions(props.owner, props.exerciseId, props.taskId!, signal),
+  refetchInterval: computed(() => props.running ? 2000 : false),
+});
 watch(() => props.running, running => { if (!running && props.taskId) void snapshot.refetch(); });
 watch(snapshot.error, error => { if (error instanceof ApiError && error.status === 401) emit('unauthorized'); });
-const labels = { LOADED: '已加载', MISSING: '未发现', LIMIT_EXCEEDED: '超出限额，未加载', READ_FAILED: '读取失败，未加载' };
+const labels = { LOADED: '已加载', MISSING: '未发现', LIMIT_EXCEEDED: '超出限额', READ_FAILED: '读取失败' };
 </script>
+
 <template>
-  <details>
-    <summary>项目指令 · AGENTS.md</summary>
-    <p>每次模型请求前更新：根规则及本任务最近读取文件的祖先目录规则。子目录规则仅在对应目录优先，不改变审批权限。单文件 8 KiB，总正文 32 KiB，最多 32 个来源。</p>
-    <p v-if="!taskId || snapshot.data.value === null">
-      尚无已派发请求的指令快照；New 不继承其他会话聊天或旁支。
+  <div class="instructions-view">
+    <p
+      v-if="!taskId || snapshot.data.value === null"
+      class="inst-note"
+    >
+      尚无已派发请求的指令快照；发送任务后自动记录已生效的 AGENTS.md。
     </p>
     <p
-      v-if="taskId && snapshot.isPending.value"
+      v-else-if="snapshot.isPending.value"
       role="status"
+      class="inst-note"
     >
       正在读取实际生效来源…
     </p>
-    <p
-      v-if="snapshot.isError.value"
+    <div
+      v-else-if="snapshot.isError.value"
       role="alert"
+      class="inst-error"
     >
-      项目指令快照读取失败；不代表没有规则。<Button @click="snapshot.refetch()">
-        重新读取
+      <span>项目指令快照读取失败。</span>
+      <Button
+        variant="ghost"
+        size="small"
+        @click="snapshot.refetch()"
+      >
+        重试
       </Button>
-    </p>
-    <Button
-      v-if="taskId"
-      @click="snapshot.refetch()"
-    >
-      核对最近请求来源
-    </Button>
-    <template v-if="snapshot.data.value">
-      <p>最近一次已派发请求 · 正式修订 r{{ snapshot.data.value.revision }}（不是当前文件内容）</p>
+    </div>
+    <template v-else-if="snapshot.data.value">
+      <p class="inst-meta font-mono-num">
+        最近派发修订 r{{ snapshot.data.value.revision }}
+      </p>
       <p
         v-if="snapshot.data.value.scopeTruncated"
         role="alert"
+        class="inst-error"
       >
         目录来源超过限额，部分规则未加载。
       </p>
       <details
         v-for="source in snapshot.data.value.sources"
         :key="source.path"
+        class="inst-source"
       >
-        <summary>{{ source.path }} · {{ labels[source.status] }} · 作用域 {{ source.scope }}</summary>
+        <summary class="font-mono-num">
+          {{ source.path }} · {{ labels[source.status] }}
+        </summary>
         <pre v-if="source.content !== null">{{ source.content }}</pre>
       </details>
     </template>
-  </details>
+  </div>
 </template>
+
 <style scoped>
-details {
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border);
-  font-size: 12.5px;
+.instructions-view {
+  display: grid;
+  gap: 8px;
 }
-summary { cursor: pointer; font-weight: 550; }
-p { margin: 8px 0; color: var(--oc-fg-muted); line-height: 1.55; }
-pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 20rem;
-  overflow: auto;
-  padding: 10px;
+
+.inst-note,
+.inst-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-muted);
+  line-height: 1.5;
+}
+
+.inst-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--oc-danger);
+}
+
+.inst-source {
+  padding: 8px 10px;
   border-radius: 8px;
-  background: var(--oc-bg-input);
+  background: var(--oc-bg-subtle);
   border: 1px solid var(--oc-border);
   font-size: 12px;
+}
+
+summary {
+  cursor: pointer;
+  color: var(--oc-fg);
+}
+
+pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 16rem;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--oc-bg);
+  border: 1px solid var(--oc-border);
+  font-size: 11.5px;
 }
 </style>

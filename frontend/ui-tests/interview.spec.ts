@@ -23,7 +23,7 @@ for (const width of [1440, 390]) {
     await page.keyboard.press('Enter');
     await expect.poll(() => submitted).toBe(1);
     await expect(page.getByLabel('向面试官提问', { exact: true })).toHaveValue('');
-    await expect(page.getByText('进入时的基础验收修订：0。最终验收包含基础回归与挑战。')).toBeVisible();
+    await expect(page.getByText('基线修订 r0')).toBeVisible();
     const summary = page.locator('summary');
     await summary.focus(); await page.keyboard.press('Enter');
     await expect(page.getByText('class Test { /* read-only acceptance */ }')).toBeVisible();

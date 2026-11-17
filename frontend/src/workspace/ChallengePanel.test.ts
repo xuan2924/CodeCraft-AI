@@ -36,7 +36,7 @@ it('retries an unknown command with its original key rather than entering twice'
 it('only renders the server-confirmed published challenge and its immutable revision', () => {
   const wrapper = render({ ...props, state: { ...state, entered: true, enteredRevision: '7', baseTestId: 'base-test',
     publishedChallenge: { requirements: '<script>challenge text</script>', acceptanceFiles: { 'Test.java': 'class Test {}' } } } });
-  expect(wrapper.text()).toContain('基础验收修订：7');
+  expect(wrapper.text()).toContain('基线修订 r7');
   expect(wrapper.text()).toContain('<script>challenge text</script>');
   expect(wrapper.find('script').exists()).toBe(false);
   expect(wrapper.find('button').exists()).toBe(false);

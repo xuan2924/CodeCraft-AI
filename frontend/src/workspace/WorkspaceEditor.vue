@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
-import { Play, Save, X } from '@lucide/vue';
+import { ChevronRight, FolderCog, Play, Save, X } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
 import Tooltip from '../components/ui/Tooltip.vue';
 import { ApiError } from '../api/request';
@@ -39,6 +39,8 @@ function closeTab(path: string) {
 function dirty(value: Buffer): boolean { return contentDirty(value) || deleted.has(value.path); }
 const current = computed(() => buffers.get(props.selected));
 const edited = computed(() => [...buffers.values()].some(dirty));
+const crumbs = computed(() => props.selected ? props.selected.split('/').filter(Boolean) : []);
+const fileActionsOpen = ref(false);
 const canWrite = computed(() => !props.answeringClosed && !!props.credential && props.exercise.state === 'ACTIVE' &&
   (!props.exercise.deadlineAt || Date.now() < Date.parse(props.exercise.deadlineAt)));
 const busy = ref(false);
@@ -431,12 +433,111 @@ onScopeDispose(() => {
         </Button>
       </div>
     </div>
+    <div class="editor-breadcrumb-bar">
+      <nav
+        v-if="crumbs.length"
+        class="editor-breadcrumbs font-mono-num"
+        aria-label="文件路径"
+      >
+        <template
+          v-for="(part, idx) in crumbs"
+          :key="idx"
+        >
+          <ChevronRight
+            v-if="idx > 0"
+            :size="12"
+            class="crumb-sep"
+            aria-hidden="true"
+          />
+          <span
+            class="crumb-part"
+            :class="{ 'is-last': idx === crumbs.length - 1 }"
+          >{{ part }}</span>
+        </template>
+      </nav>
+      <span
+        v-else
+        class="editor-empty-crumb"
+      >工作区代码</span>
+      <div class="breadcrumb-tools">
+        <Button
+          variant="ghost"
+          size="small"
+          class="breadcrumb-tool-btn"
+          aria-label="管理文件"
+          :aria-expanded="fileActionsOpen"
+          @click="fileActionsOpen = !fileActionsOpen"
+        >
+          <FolderCog
+            :size="13"
+            aria-hidden="true"
+          />
+          <span>文件操作</span>
+        </Button>
+        <details class="local-backups-details">
+          <summary>备份</summary>
+          <div class="local-backups-popover">
+            <span
+              role="status"
+              class="backup-inline-status"
+            >{{ backup }}</span>
+            <ClosedDrafts
+              :owner="owner"
+              :exercise-id="exercise"
+              active
+            />
+          </div>
+        </details>
+      </div>
+    </div>
+    <div
+      v-if="fileActionsOpen"
+      class="file-actions"
+    >
+      <div class="file-actions-row">
+        <label
+          for="file-destination"
+          class="file-dest-label"
+        >路径</label>
+        <input
+          id="file-destination"
+          v-model="newPath"
+          autocomplete="off"
+          aria-label="新建或重命名的目标路径"
+          placeholder="src/test/java/Example.java"
+        >
+        <Button
+          variant="secondary"
+          size="small"
+          :disabled="!canWrite || busy || !!unresolved"
+          @click="createFile"
+        >
+          创建文本文件
+        </Button>
+        <Button
+          variant="secondary"
+          size="small"
+          :disabled="!canWrite || !current || dirty(current) || busy || !!unresolved"
+          @click="removeOrRename(true)"
+        >
+          重命名文件
+        </Button>
+        <Button
+          variant="danger"
+          size="small"
+          :disabled="!canWrite || !current || dirty(current) || busy || !!unresolved"
+          @click="removeOrRename(false)"
+        >
+          删除文件
+        </Button>
+      </div>
+    </div>
     <p
       v-if="answeringClosed || props.exercise.state !== 'ACTIVE'"
       role="status"
       class="editor-banner"
     >
-      作答已关闭。这里保留本地内容供查看或复制，不会自动保存，也不是最终冻结代码；备份内容可展开查看。
+      作答已关闭，仅可浏览或复制本地草稿；不会自动提交。
     </p>
     <p
       v-if="error"
@@ -541,65 +642,9 @@ onScopeDispose(() => {
           保留本地内容，采用此基线
         </Button>
         <p class="conflict-note">
-          此操作不提交代码；整理后仍需显式保存。服务器再次变化时会再次冲突。
+          此操作不提交代码；整理后仍需显式保存。
         </p>
       </section>
-    </div>
-    <div class="file-actions">
-      <div class="file-actions-row">
-        <label
-          for="file-destination"
-          class="file-dest-label"
-        >路径</label>
-        <input
-          id="file-destination"
-          v-model="newPath"
-          autocomplete="off"
-          aria-label="新建或重命名的目标路径"
-          placeholder="src/test/java/Example.java"
-        >
-        <Button
-          variant="secondary"
-          size="small"
-          :disabled="!canWrite || busy || !!unresolved"
-          @click="createFile"
-        >
-          创建文本文件
-        </Button>
-        <Button
-          variant="secondary"
-          size="small"
-          :disabled="!canWrite || !current || dirty(current) || busy || !!unresolved"
-          @click="removeOrRename(true)"
-        >
-          重命名文件
-        </Button>
-        <Button
-          variant="danger"
-          size="small"
-          :disabled="!canWrite || !current || dirty(current) || busy || !!unresolved"
-          @click="removeOrRename(false)"
-        >
-          删除文件
-        </Button>
-      </div>
-      <div class="local-backups-row">
-        <details class="local-backups-details">
-          <summary>本地草稿备份与文件操作说明</summary>
-          <p class="file-actions-tip">
-            删除或重命名前，先保存或明确丢弃该文件的草稿。
-          </p>
-          <ClosedDrafts
-            :owner="owner"
-            :exercise-id="exercise"
-            active
-          />
-        </details>
-        <span
-          role="status"
-          class="backup-inline-status"
-        >{{ backup }}</span>
-      </div>
     </div>
     <div
       v-if="leaving"
@@ -823,10 +868,107 @@ onScopeDispose(() => {
 
 .editor-surface {
   flex: 1 1 0%;
-  min-height: 260px;
+  min-height: 220px;
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.editor-breadcrumb-bar {
+  flex-shrink: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 10px;
+  border-bottom: 1px solid var(--oc-border);
+  background: var(--oc-bg);
+}
+
+.editor-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+  font-size: 11.5px;
+  color: var(--oc-fg-dim);
+}
+
+.crumb-sep {
+  flex-shrink: 0;
+  color: var(--oc-fg-dim);
+}
+
+.crumb-part {
+  white-space: nowrap;
+}
+
+.crumb-part.is-last {
+  color: var(--oc-fg-muted);
+  font-weight: 500;
+}
+
+.editor-empty-crumb {
+  font-size: 11.5px;
+  color: var(--oc-fg-dim);
+}
+
+.breadcrumb-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.breadcrumb-tool-btn {
+  min-height: 22px;
+  padding: 2px 6px;
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+
+.local-backups-details {
+  position: relative;
+  font-size: 11.5px;
+  color: var(--oc-fg-dim);
+}
+
+.local-backups-details summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 2px 4px;
+}
+
+.local-backups-details summary:hover {
+  color: var(--oc-fg);
+}
+
+.local-backups-popover {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 30;
+  width: min(360px, 85vw);
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 4px;
+  padding: 10px;
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--oc-border-strong);
+  background: var(--oc-surface-2);
+  box-shadow: var(--oc-shadow-lg);
+  display: grid;
+  gap: 8px;
+}
+
+.backup-inline-status {
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
 }
 
 .editor-primary-column {
@@ -888,9 +1030,9 @@ onScopeDispose(() => {
   flex-shrink: 0;
   display: grid;
   gap: 6px;
-  padding: 7px 12px;
+  padding: 6px 10px;
   background: var(--oc-bg-subtle);
-  border-top: 1px solid var(--oc-border);
+  border-bottom: 1px solid var(--oc-border);
 }
 
 .file-actions-row {
@@ -910,41 +1052,14 @@ onScopeDispose(() => {
 .file-actions input {
   flex: 1 1 200px;
   min-width: 0;
-  padding: 5px 9px;
+  min-height: 28px;
+  padding: 3px 8px;
   font-family: var(--oc-font-mono);
   font-size: 12px;
   color: var(--oc-fg);
   background: var(--oc-bg-input);
   border: 1px solid var(--oc-border-input);
   border-radius: var(--radius-control);
-}
-
-.local-backups-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 6px 12px;
-}
-
-.local-backups-details {
-  font-size: 12px;
-  color: var(--oc-fg-muted);
-}
-
-.backup-inline-status {
-  font-size: 11.5px;
-  color: var(--oc-fg-dim);
-}
-
-.local-backups-details summary {
-  cursor: pointer;
-}
-
-.file-actions-tip {
-  margin: 6px 0 8px;
-  font-size: 12px;
-  color: var(--oc-fg-muted);
 }
 
 .leave-dialog {

@@ -33,6 +33,7 @@ test('save and run a solution, then recover the durable result after refresh @sm
   await editor.focus();
   await page.keyboard.press('ControlOrMeta+a');
   await page.keyboard.insertText(reference + `\n// ${workspace.workspaceId}\n`);
+  await page.getByRole('tab', { name: '验证输出' }).click();
   await page.getByRole('button', { name: '运行基础测试', exact: true }).click();
   await page.getByRole('button', { name: '保存后运行', exact: true }).click();
   const result = page.getByRole('article', { name: '当前测试结果' });
@@ -40,6 +41,7 @@ test('save and run a solution, then recover the durable result after refresh @sm
   await expect(result).toContainText('启动修订 1');
   await expect(result).toContainText('副本清理：SUCCEEDED');
   await page.reload();
+  await page.getByRole('tab', { name: '验证输出' }).click();
   await expect(page.getByRole('article', { name: '当前测试结果' })).toContainText('通过');
   await expect(page.getByRole('article', { name: '当前测试结果' })).toContainText('启动修订 1');
 });

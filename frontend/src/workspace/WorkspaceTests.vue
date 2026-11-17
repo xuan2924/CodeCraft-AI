@@ -92,11 +92,16 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
   >
     <div class="tests-header">
       <div class="tests-title-group">
-        <h2>基础测试</h2>
-        <span class="tests-sub">使用已保存版本 · 最终状态以结构化结果为准</span>
+        <h2>验证输出</h2>
+        <span
+          v-if="recent.data.value && (recent.data.value.retention.prunedCount > 0 || recent.data.value.retention.cleanupPendingCount > 0)"
+          class="tests-retention-note font-mono-num"
+        >
+          已精简 {{ recent.data.value.retention.prunedCount }} 条<template v-if="recent.data.value.retention.cleanupPendingCount">（{{ recent.data.value.retention.cleanupPendingCount }} 条后台清理中）</template>
+        </span>
       </div>
       <Button
-        variant="secondary"
+        variant="ghost"
         size="small"
         @click="recent.refetch(); chosen && detail.refetch()"
       >
@@ -115,7 +120,7 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
       role="alert"
       class="tests-alert"
     >
-      停止结果尚未确认，不会自动重发或停止其他任务。
+      停止结果尚未确认。
     </p>
     <Button
       v-if="stopUnknown"
@@ -130,7 +135,7 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
       role="alert"
       class="tests-alert"
     >
-      启动结果尚未确认，不会自动换请求重新运行。原请求固定修订 {{ unknown.revision }}。
+      启动结果尚未确认（原请求固定修订 {{ unknown.revision }}）。
     </p>
     <Button
       v-if="unknown"
@@ -160,9 +165,12 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
     >
       尚未运行测试。
     </p>
-    <ul class="tests-list">
+    <ul
+      v-if="recent.data.value?.tasks.length"
+      class="tests-list"
+    >
       <li
-        v-for="task in recent.data.value?.tasks"
+        v-for="task in recent.data.value.tasks"
         :key="task.taskId"
       >
         <button
@@ -170,18 +178,10 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
           :aria-pressed="chosen === task.taskId"
           @click="chosen = task.taskId"
         >
-          修订 {{ task.revision }} · {{ labels[task.state] }}
+          r{{ task.revision }} · {{ labels[task.state] }}
         </button>
       </li>
     </ul>
-    <p
-      v-if="recent.data.value"
-      class="tests-retention-note"
-    >
-      普通测试保留最近 {{ recent.data.value.retention.retainedCompletedLimit }} 次完整记录；最终验收及需要恢复的任务不受此窗口淘汰。
-      已精简 {{ recent.data.value.retention.prunedCount }} 条较早记录。
-      <span v-if="recent.data.value.retention.cleanupPendingCount">{{ recent.data.value.retention.cleanupPendingCount }} 条仍在后台清理。</span>
-    </p>
     <p
       v-if="chosen && detail.isPending.value"
       role="status"
@@ -194,11 +194,11 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
       role="alert"
       class="tests-alert"
     >
-      结果查询失败，先前数据不代表当前状态。{{ message(detail.error.value) }}
+      结果查询失败，{{ message(detail.error.value) }}
     </p>
     <article
       v-if="detail.data.value"
-      class="test-detail-card"
+      class="test-detail-block"
       aria-label="当前测试结果"
     >
       <div class="test-detail-head">
@@ -226,66 +226,54 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
         v-if="recoveryAllowed && !credential && exercise.state === 'ACTIVE' && !detail.data.value.quiescent"
         class="tests-desc"
       >
-        恢复停止只取消这个任务，不授予本页写入或新测试权限。
+        恢复停止仅取消该任务。
       </p>
       <p
         v-if="detail.data.value.revision !== exercise.revision"
         role="status"
         class="tests-warn"
       >
-        这是旧版本结果；当前工作区修订 {{ exercise.revision }}，不能视为当前版本已通过。
+        这是旧版本结果（当前修订 {{ exercise.revision }}）。
       </p>
-      <p class="tests-meta">
-        任务 <code>{{ detail.data.value.taskId }}</code> · 目标 {{ detail.data.value.target }}
+      <p class="tests-meta font-mono-num">
+        任务 <code>{{ detail.data.value.taskId }}</code> · 目标 {{ detail.data.value.target }} · {{ stream.status.value }}
       </p>
       <p
         v-if="detail.data.value.reason"
         class="tests-desc"
       >
-        原因：{{ detail.data.value.reason }}
+        {{ detail.data.value.reason }}
       </p>
       <details class="test-provenance">
-        <summary>执行身份与证据</summary>
-        <div class="provenance-body">
+        <summary>执行凭证与退出信息（退出码：{{ detail.data.value.exitCode ?? '待确认' }}）</summary>
+        <div class="provenance-body font-mono-num">
           <p>题目：{{ detail.data.value.problem.problemId }} / {{ detail.data.value.problem.version }}（{{ detail.data.value.problem.platform }}）</p>
           <p>包摘要：{{ detail.data.value.problem.packageSha256 }}</p>
           <p>镜像：{{ detail.data.value.problem.executionImageDigest }}</p>
-          <p>执行实例：{{ detail.data.value.executionInstanceId }}</p>
+          <p>实例：{{ detail.data.value.executionInstanceId }}；清理：{{ detail.data.value.cleanup }} / {{ detail.data.value.copyCleanup }}</p>
           <p v-if="detail.data.value.evidence">
-            权威证据：{{ detail.data.value.evidence.kind }}，{{ detail.data.value.evidence.bytes }} 字节；SHA-256 {{ detail.data.value.evidence.sha256 }}。原始证据随执行记录保留，控制台文本不用于判分。
-          </p>
-          <p v-else>
-            尚无可用于判分的权威证据。
+            证据：{{ detail.data.value.evidence.kind }}（{{ detail.data.value.evidence.bytes }} B，SHA-256 {{ detail.data.value.evidence.sha256 }}）
           </p>
         </div>
       </details>
-      <p class="tests-meta">
-        退出码：{{ detail.data.value.exitCode ?? '尚未确认' }}；容器清理：{{ detail.data.value.cleanup }}；副本清理：{{ detail.data.value.copyCleanup }}
-      </p>
       <p
         v-if="detail.data.value.cleanup === 'FAILED' || detail.data.value.copyCleanup === 'FAILED'"
         role="alert"
         class="tests-alert"
       >
-        资源清理失败，需要维护者处理；不改变已确认的测试结论。
+        资源清理失败，请等待后台或维护者处理。
       </p>
       <p
         v-if="detail.data.value.droppedBytes !== '0'"
         class="tests-warn"
       >
-        日志已截断，丢弃 {{ detail.data.value.droppedBytes }} 字节，仅保留尾部。
+        日志已截断，丢弃 {{ detail.data.value.droppedBytes }} 字节。
       </p>
       <p
         v-if="detail.data.value.logsIncomplete"
         class="tests-warn"
       >
         输出流不完整，最终状态以结构化结果为准。
-      </p>
-      <p
-        role="status"
-        class="tests-meta"
-      >
-        {{ stream.status.value }}
       </p>
       <ReadOnlyTestLog :logs="detail.data.value.logs" />
     </article>
@@ -295,12 +283,9 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
 <style scoped>
 .workspace-tests {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  padding: 14px;
-  border-radius: var(--radius-panel);
-  background: var(--oc-surface);
-  border: 1px solid var(--oc-border);
+  padding: 10px 14px 14px;
 }
 
 .tests-header {
@@ -308,54 +293,41 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .tests-title-group {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .tests-header h2 {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
-}
-
-.tests-sub {
-  font-size: 12px;
-  color: var(--oc-fg-muted);
 }
 
 .tests-desc,
 .tests-retention-note,
 .tests-meta {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--oc-fg-muted);
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .tests-alert {
   margin: 0;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--oc-danger-bg);
-  border: 1px solid var(--oc-danger-border);
+  font-size: 12px;
   color: var(--oc-danger);
-  font-size: 12.5px;
 }
 
 .tests-warn {
   margin: 0;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--oc-warning-bg);
-  border: 1px solid var(--oc-warning-border);
+  font-size: 12px;
   color: var(--oc-warning);
-  font-size: 12.5px;
 }
 
 .tests-list {
@@ -364,39 +336,31 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
   margin: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .tests-list button {
-  padding: 6px 12px;
-  border-radius: 8px;
+  padding: 4px 10px;
+  border-radius: 6px;
   border: 1px solid var(--oc-border);
-  background: var(--oc-surface-2);
+  background: var(--oc-surface);
   color: var(--oc-fg-muted);
-  font-size: 12.5px;
+  font-size: 12px;
   cursor: pointer;
-  transition: background-color 150ms var(--oc-ease), border-color 150ms var(--oc-ease), color 150ms var(--oc-ease);
-}
-
-.tests-list button:hover {
-  border-color: var(--oc-border-strong);
-  color: var(--oc-fg);
 }
 
 .tests-list button[aria-pressed="true"] {
   background: var(--oc-selected);
-  border-color: var(--oc-border-accent);
+  border-color: var(--oc-border-strong);
   color: var(--oc-fg);
   font-weight: 550;
 }
 
-.test-detail-card {
-  padding: 14px;
-  border-radius: 10px;
-  background: var(--oc-bg-subtle);
-  border: 1px solid var(--oc-border);
+.test-detail-block {
+  padding-top: 8px;
+  border-top: 1px solid var(--oc-border);
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .test-detail-head {
@@ -404,18 +368,18 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
 }
 
 .test-detail-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .test-provenance {
-  overflow-wrap: anywhere;
-  font-size: 12.5px;
+  overflow-wrap: break-word;
+  font-size: 12px;
   color: var(--oc-fg-muted);
 }
 
@@ -424,9 +388,10 @@ const labels: Record<string, string> = { ACCEPTED: '已受理，等待确认登�
 }
 
 .provenance-body {
-  margin-top: 8px;
+  margin-top: 6px;
   display: grid;
-  gap: 4px;
+  gap: 3px;
+  font-size: 11.5px;
 }
 
 .provenance-body p {

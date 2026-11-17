@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
+import { FileDiff as FileDiffIcon } from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
@@ -11,15 +12,37 @@ const CodeDiff = defineAsyncComponent(() => import('../components/CodeDiff.vue')
 const props = defineProps<{ owner: string; taskId: string; credential: string; disabled: boolean }>();
 const emit = defineEmits<{ unauthorized: []; changed: [] }>();
 const client = useQueryClient();
-const before = ref('0'); const selected = ref(''); const file = ref(''); const reason = ref(''); const consent = ref(false); const notice = ref('');
+const before = ref('0');
+const selected = ref('');
+const file = ref('');
+const reason = ref('');
+const consent = ref(false);
+const notice = ref('');
 const scope = computed(() => `${props.owner}/${props.taskId}/${props.credential}/${selected.value}`);
 const prefix = computed(() => ['copilot-proposals', props.owner, props.taskId]);
-const list = useQuery({ queryKey: computed(() => [...prefix.value, 'list', before.value]),
-  queryFn: ({ signal }) => api.proposals(props.owner, props.taskId, before.value, signal), retry: false, gcTime: 0, refetchInterval: 2000 });
-const detail = useQuery({ queryKey: computed(() => [...prefix.value, 'detail', selected.value]), enabled: computed(() => !!selected.value),
-  queryFn: ({ signal }) => api.proposalDetail(props.owner, props.taskId, selected.value, signal), retry: false, gcTime: 0, staleTime: Infinity });
-const status = useQuery({ queryKey: computed(() => [...prefix.value, 'status', selected.value]), enabled: computed(() => !!selected.value),
-  queryFn: ({ signal }) => api.proposalStatus(props.owner, props.taskId, selected.value, signal), retry: false, gcTime: 0, refetchInterval: 2000 });
+const list = useQuery({
+  queryKey: computed(() => [...prefix.value, 'list', before.value]),
+  queryFn: ({ signal }) => api.proposals(props.owner, props.taskId, before.value, signal),
+  retry: false,
+  gcTime: 0,
+  refetchInterval: 2000,
+});
+const detail = useQuery({
+  queryKey: computed(() => [...prefix.value, 'detail', selected.value]),
+  enabled: computed(() => !!selected.value),
+  queryFn: ({ signal }) => api.proposalDetail(props.owner, props.taskId, selected.value, signal),
+  retry: false,
+  gcTime: 0,
+  staleTime: Infinity,
+});
+const status = useQuery({
+  queryKey: computed(() => [...prefix.value, 'status', selected.value]),
+  enabled: computed(() => !!selected.value),
+  queryFn: ({ signal }) => api.proposalStatus(props.owner, props.taskId, selected.value, signal),
+  retry: false,
+  gcTime: 0,
+  refetchInterval: 2000,
+});
 const proposal = computed(() => status.data.value);
 const current = computed(() => detail.data.value?.files.find((item) => item.path === file.value));
 watch(() => list.data.value, (value) => { if (!selected.value && value?.items.length) selected.value = value.items[0]!.id; });
@@ -30,12 +53,12 @@ watch([list.error, detail.error, status.error], (errors) => { if (errors.some(co
 watch(() => `${props.owner}/${props.taskId}`, () => { before.value = '0'; selected.value = ''; file.value = ''; }, { flush: 'sync' });
 watch(scope, () => { reason.value = ''; consent.value = false; notice.value = ''; }, { flush: 'sync' });
 const command = useCommand<api.Proposal>(() => scope.value, () => {
-  consent.value = false; void client.invalidateQueries({ queryKey: [...prefix.value, 'list'] });
+  consent.value = false;
+  void client.invalidateQueries({ queryKey: [...prefix.value, 'list'] });
   void client.invalidateQueries({ queryKey: [...prefix.value, 'status'] });
   void client.invalidateQueries({ queryKey: ['copilot', props.owner] });
 }, commandPolicy, () => emit('unauthorized'));
-// A proposal can be decided only once. Non-PENDING proves decision admission/cancellation,
-// NOT write completion, even if another page decided it. A workspace revision alone proves neither.
+
 watch([status.data, command.uncertain], ([value, uncertain]) => {
   if (uncertain && value?.id === selected.value && value.state !== 'PENDING') command.confirmObserved(value);
 });
@@ -44,73 +67,95 @@ const ready = computed(() => !props.disabled && !!props.credential && proposal.v
 function decide(decision: 'APPROVE' | 'REJECT') {
   if (!ready.value || decision === 'APPROVE' && !consent.value) return;
   if (new globalThis.TextEncoder().encode(reason.value).length > 2048) { notice.value = '拒绝理由最多 2 KiB。'; return; }
-  const { owner, taskId, credential } = props; const id = selected.value; const explanation = decision === 'REJECT' ? reason.value : null;
+  const { owner, taskId, credential } = props;
+  const id = selected.value;
+  const explanation = decision === 'REJECT' ? reason.value : null;
   notice.value = '';
   void command.submit((key, signal) => api.decide(owner, taskId, id, credential, decision, explanation, key, signal));
 }
-function label(proposal: api.Proposal): string {
-  if (proposal.mode === 'AUTO') {
-    if (proposal.state === 'PENDING') return '自动应用待校验';
-    if (proposal.state === 'APPLYING') return '自动批准，写入结果待核对';
-    if (proposal.state === 'APPLIED') return '自动应用成功';
-    if (proposal.state === 'FAILED') return '自动应用失败';
+function label(item: api.Proposal): string {
+  if (item.mode === 'AUTO') {
+    if (item.state === 'PENDING') return '自动应用待校验';
+    if (item.state === 'APPLYING') return '自动应用写入中';
+    if (item.state === 'APPLIED') return '自动应用成功';
+    if (item.state === 'FAILED') return '自动应用失败';
   }
-  return labels[proposal.state];
+  return labels[item.state];
 }
-const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批审批', APPLYING: '已批准，写入结果待核对', APPLIED: '已应用', REJECTED: '已拒绝', INVALIDATED: '原提案已失效，原批准不可复用', FAILED: '未应用', CANCELLED: '已取消' };
+const labels: Record<api.Proposal['state'], string> = {
+  PENDING: '等待整批审批',
+  APPLYING: '写入结果待核对',
+  APPLIED: '已应用',
+  REJECTED: '已拒绝',
+  INVALIDATED: '原提案已失效',
+  FAILED: '未应用',
+  CANCELLED: '已取消',
+};
+const visible = computed(() => (list.data.value?.items.length ?? 0) > 0 || list.isError.value || detail.isError.value
+  || status.isError.value || !!command.error.value || command.uncertain.value);
 </script>
+
 <template>
   <section
+    v-if="visible"
     aria-label="Copilot 修改提案"
     class="proposals"
     :data-pending="proposal?.state === 'PENDING' && proposal.mode === 'ASK' ? 'true' : undefined"
   >
     <div class="proposals-head">
-      <h3>修改提案 · 整批审批</h3>
-      <Button
-        variant="ghost"
-        size="small"
-        @click="list.refetch(); selected && status.refetch(); detail.isError.value && detail.refetch()"
-      >
-        重新读取提案
-      </Button>
+      <div class="proposals-title">
+        <FileDiffIcon
+          :size="13"
+          aria-hidden="true"
+        />
+        <h3>修改提案</h3>
+      </div>
+      <div class="proposals-head-actions">
+        <Button
+          v-if="list.isError.value || detail.isError.value || status.isError.value"
+          variant="ghost"
+          size="small"
+          @click="list.refetch(); selected && status.refetch(); detail.isError.value && detail.refetch()"
+        >
+          重试
+        </Button>
+      </div>
     </div>
-    <p class="proposals-note">
-      来自 edit / write / propose_changes 的整批变更均在此核对；默认先审批再写入，批准不保存或覆盖本地草稿。
-    </p>
+
     <p
-      v-if="list.isPending.value"
-      role="status"
-    >
-      正在读取提案…
-    </p>
-    <p
-      v-else-if="list.isError.value"
+      v-if="list.isError.value"
       role="alert"
       class="proposals-alert"
     >
       {{ errorMessage(list.error.value) }}
     </p>
-    <p v-else-if="!list.data.value?.items.length">
-      本页没有修改提案。
-    </p>
-    <ul v-if="list.data.value?.items.length">
+
+    <ul
+      v-if="list.data.value?.items.length && (list.data.value.items.length > 1 || before !== '0' || list.data.value.nextCursor)"
+      class="proposal-pills"
+    >
       <li
-        v-for="item in list.data.value?.items"
+        v-for="item in list.data.value.items"
         :key="item.id"
       >
-        <Button
-          size="small"
-          :variant="selected === item.id ? 'primary' : 'secondary'"
+        <button
+          type="button"
+          class="proposal-pill"
+          :aria-pressed="selected === item.id"
           :disabled="command.pending.value || command.uncertain.value"
           @click="selected = item.id"
         >
-          {{ label(item) }} · 基线 {{ item.baseRevision }} · {{ item.fileCount }} 个文件
-        </Button>
+          {{ label(item) }} · r{{ item.baseRevision }} · {{ item.fileCount }} 文件
+        </button>
       </li>
     </ul>
-    <div class="actions">
+
+    <div
+      v-if="before !== '0' || list.data.value?.nextCursor"
+      class="actions"
+    >
       <Button
+        v-if="before !== '0'"
         variant="ghost"
         size="small"
         @click="before = '0'; list.refetch()"
@@ -123,14 +168,16 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
         size="small"
         @click="before = list.data.value.nextCursor"
       >
-        更早的提案
+        更早提案
       </Button>
     </div>
+
     <p
       v-if="selected && detail.isPending.value"
       role="status"
+      class="proposals-note"
     >
-      正在读取完整 Diff…
+      正在读取 Diff…
     </p>
     <p
       v-if="detail.isError.value"
@@ -146,13 +193,23 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
     >
       {{ errorMessage(status.error.value) }}
     </p>
+
     <template v-if="proposal && detail.data.value">
-      <h4>{{ label(proposal) }} · 提案 {{ proposal.id }}</h4>
-      <p>原始模式 {{ proposal.mode }} · 登记模式版本 {{ proposal.modeVersion }} · 保存基线 {{ proposal.baseRevision }} · 整批 {{ proposal.fileCount }} 个文件</p>
-      <p v-if="proposal.resultRevision !== null">
-        已确认修订 {{ proposal.resultRevision }} · {{ proposal.changed ? '文件已变化' : '内容无变化' }}
-      </p>
-      <p v-if="proposal.decisionReason">
+      <div class="proposal-meta-row">
+        <span
+          class="ui-pill"
+          :data-tone="proposal.state === 'PENDING' ? 'warning' : proposal.state === 'APPLIED' ? 'accent' : undefined"
+        >
+          {{ label(proposal) }}
+        </span>
+        <span class="font-mono-num proposal-meta-text">
+          r{{ proposal.baseRevision }}<template v-if="proposal.resultRevision !== null"> → 已确认修订 {{ proposal.resultRevision }}</template> · {{ proposal.fileCount }} 文件
+        </span>
+      </div>
+      <p
+        v-if="proposal.decisionReason"
+        class="proposals-note"
+      >
         拒绝理由：{{ proposal.decisionReason }}
       </p>
       <p
@@ -161,10 +218,13 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
       >
         {{ errorMessage(new ApiError(409, proposal.failureCode)) }}
       </p>
-      <label :for="`proposal-file-${proposal.id}`">逐文件查看完整修改</label>
+
       <select
+        v-if="detail.data.value.files.length > 1"
         :id="`proposal-file-${proposal.id}`"
         v-model="file"
+        aria-label="逐文件查看完整修改"
+        class="proposal-file-select font-mono-num"
       >
         <option
           v-for="item in detail.data.value.files"
@@ -174,6 +234,13 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
           {{ item.kind }} · {{ item.path }}
         </option>
       </select>
+      <div
+        v-else-if="current"
+        class="proposal-single-path font-mono-num"
+      >
+        {{ current.kind }} · {{ current.path }}
+      </div>
+
       <template v-if="current">
         <CodeDiff
           :key="proposal.id + current.path"
@@ -181,22 +248,29 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
           :before="current.before ?? ''"
           :after="current.after ?? ''"
         />
-        <details>
-          <summary>查看完整纯文本（Diff 标记计算受限时仍可核对全部内容）</summary>
-          <h5>修改前{{ current.before === null ? ' · 文件不存在' : '' }}</h5><pre>{{ current.before }}</pre>
-          <h5>修改后{{ current.after === null ? ' · 删除文件' : '' }}</h5><pre>{{ current.after }}</pre>
+        <details class="raw-diff-details">
+          <summary>查看完整纯文本</summary>
+          <h5>修改前{{ current.before === null ? ' · 文件不存在' : '' }}</h5>
+          <pre>{{ current.before }}</pre>
+          <h5>修改后{{ current.after === null ? ' · 删除文件' : '' }}</h5>
+          <pre>{{ current.after }}</pre>
         </details>
       </template>
+
       <template v-if="proposal.state === 'PENDING' && proposal.mode === 'ASK'">
-        <label class="consent-row"><input
-          v-model="consent"
-          type="checkbox"
-          :disabled="!ready"
-        >我已核对整批 Diff，同意保留草稿并应用此提案；完成后原任务将继续，可能产生模型费用。</label>
-        <label :for="`proposal-reason-${proposal.id}`">拒绝理由（可选）</label>
+        <label class="consent-row">
+          <input
+            v-model="consent"
+            type="checkbox"
+            :disabled="!ready"
+          >
+          <span>我已核对整批 Diff，保留草稿并应用修改</span>
+        </label>
         <textarea
           :id="`proposal-reason-${proposal.id}`"
           v-model="reason"
+          aria-label="拒绝理由（可选）"
+          placeholder="拒绝理由（可选）…"
           :disabled="!ready"
           rows="2"
         />
@@ -215,11 +289,12 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
             :disabled="!ready"
             @click="decide('REJECT')"
           >
-            拒绝整批并继续任务
+            拒绝并继续
           </Button>
         </div>
       </template>
     </template>
+
     <p
       v-if="command.error.value || notice"
       role="alert"
@@ -227,23 +302,26 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
     >
       {{ command.error.value || notice }}
     </p>
-    <p v-if="command.uncertain.value">
-      审批结果未知；仅核对原请求，不换键、不修改内容。
-    </p>
-    <Button
+    <div
       v-if="command.uncertain.value"
-      size="small"
-      :disabled="command.pending.value || disabled || !credential"
-      @click="command.retry"
+      class="uncertain-box"
     >
-      核对原审批请求
-    </Button>
+      <p>审批结果未知，仅核对原请求。</p>
+      <Button
+        size="small"
+        :disabled="command.pending.value || disabled || !credential"
+        @click="command.retry"
+      >
+        核对原审批请求
+      </Button>
+    </div>
   </section>
 </template>
+
 <style scoped>
 .proposals {
-  border: 1px solid var(--oc-border);
-  border-radius: var(--radius-control);
+  border: 1px solid var(--oc-border-strong);
+  border-radius: 8px;
   background: var(--oc-surface-2);
   padding: 10px 12px;
   display: grid;
@@ -260,37 +338,78 @@ const labels: Record<api.Proposal['state'], string> = { PENDING: '等待整批�
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
-h3, h4, h5 {
+.proposals-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--oc-fg);
+}
+
+h3, h5 {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 
+.proposals-note,
 p {
   margin: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--oc-fg-muted);
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .proposals-alert {
   color: var(--oc-danger);
 }
 
-ul {
+.proposal-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.proposal-meta-text {
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+
+.proposal-pills {
   list-style: none;
   padding: 0;
   margin: 0;
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
-label {
-  display: grid;
-  gap: 5px;
+.proposal-pill {
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-bg-subtle);
+  color: var(--oc-fg-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.proposal-pill[aria-pressed="true"] {
+  color: var(--oc-fg);
+  border-color: var(--oc-border-accent);
+  background: var(--oc-selected);
+}
+
+.proposal-single-path {
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+
+.proposal-file-select {
+  width: 100%;
+  padding: 5px 8px;
   font-size: 12px;
 }
 
@@ -298,6 +417,7 @@ label {
   display: flex;
   align-items: flex-start;
   gap: 7px;
+  font-size: 12px;
   color: var(--oc-fg);
 }
 
@@ -307,22 +427,36 @@ label {
   gap: 6px;
 }
 
-textarea, select {
+textarea {
   max-width: 100%;
   width: 100%;
-  padding: 6px 10px;
-  font-size: 12.5px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.raw-diff-details summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
 }
 
 pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 360px;
+  max-height: 240px;
   overflow: auto;
-  padding: 10px;
-  border-radius: var(--radius-control);
-  background: var(--oc-bg-input);
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--oc-bg-subtle);
   border: 1px solid var(--oc-border);
-  font-size: 12px;
+  font-size: 11.5px;
+}
+
+.uncertain-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 </style>

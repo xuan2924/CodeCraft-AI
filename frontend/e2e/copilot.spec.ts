@@ -61,7 +61,7 @@ test('real DeepSeek approved and automatic edits, Docker test, draft isolation a
     const original = text(object(await api('GET', `${base}/files?path=${encodeURIComponent(source)}`)).content);
     await current.goto('/workspace');
     await expect(current.getByRole('heading', { name: '购物车金额计算', exact: true })).toBeVisible();
-    await expect(current.getByText('第二阶段工程练习：', { exact: false })).toContainText('无面试官、挑战或 AI 报告');
+    await expect(current.getByRole('button', { name: '面试官澄清' })).toHaveCount(0);
     await current.getByRole('button', { name: '申请操作权', exact: true }).click();
     await current.getByLabel('连接', { exact: true }).selectOption(connectionId);
     await current.getByLabel('具体模型', { exact: true }).selectOption(modelId);
@@ -74,8 +74,8 @@ test('real DeepSeek approved and automatic edits, Docker test, draft isolation a
     await expect(current.getByText('剩余时间 ', { exact: false })).toBeVisible();
     await current.getByLabel('给 Copilot 的请求', { exact: true }).fill(
       `Read ${source} with view_file. Propose exactly one UPDATE that prepends the single line ${marker} and otherwise preserves every existing line. Wait for my approval. After confirmed application, run_tests exactly once on the applied revision with target base. Then reply briefly with the exact structured test result state, including FAILED if tests fail. Do not fix the intentional bug or propose another edit.`);
-    await current.getByLabel('我确认模型请求可能收费', { exact: true }).check();
-    await current.getByRole('button', { name: '保存草稿并发送', exact: true }).click();
+    await current.getByRole('button', { name: '发送消息', exact: true }).click();
+    await current.getByRole('button', { name: '确认并发送', exact: true }).click();
     const proposalRegion = current.getByRole('region', { name: 'Copilot 修改提案', exact: true });
     await expect(proposalRegion.getByRole('heading', { name: /等待整批审批/ })).toBeVisible({ timeout: 60000 });
     const snapshot = object(await api('GET', `${base}/copilot/tasks/latest`));
@@ -140,11 +140,10 @@ test('real DeepSeek approved and automatic edits, Docker test, draft isolation a
     console.log(`Live browser evidence: model=deepseek-flash thinking=${thinking}, task=${taskId}, proposal=${proposalId}, test=${text(bound.testTaskId)}, revision=1, structured result=FAILED`);
 
     const mode = current.getByRole('region', { name: 'Copilot 审批模式', exact: true });
-    await expect(mode).toContainText('已生效：逐次审批');
-    await mode.getByLabel('期望审批模式', { exact: false }).selectOption('AUTO');
-    await mode.getByLabel('我允许本场后续登记的合法修改自动应用', { exact: false }).check();
-    await mode.getByRole('button', { name: '确认审批模式', exact: true }).click();
-    await expect(mode).toContainText('已生效：自动审批');
+    await expect(mode).toContainText('逐次审批');
+    await mode.getByRole('button', { name: '切换审批模式', exact: true }).click();
+    await current.getByRole('button', { name: /自动审批/ }).click();
+    await expect(mode).toContainText('自动审批');
     console.log('Live auto progress: mode confirmed');
     const draft = '// AUTO_DRAFT_RETAINED';
     await current.getByRole('button', { name: source, exact: true }).click();
@@ -157,15 +156,15 @@ test('real DeepSeek approved and automatic edits, Docker test, draft isolation a
     otherBrowser = await browser.newContext({ baseURL, storageState: { cookies: await context.cookies(), origins: [] } });
     const automaticPage = await otherBrowser.newPage(); await automaticPage.goto('/workspace');
     await automaticPage.getByRole('button', { name: '接管操作权', exact: true }).click();
-    await expect(automaticPage.getByText('当前页面持有操作权', { exact: true })).toBeVisible();
+    await expect(automaticPage.getByText('持有操作权', { exact: true })).toBeVisible();
     console.log('Live auto progress: second-browser control acquired');
     const automaticMode = automaticPage.getByRole('region', { name: 'Copilot 审批模式', exact: true });
-    await expect(automaticMode).toContainText('已生效：自动审批');
+    await expect(automaticMode).toContainText('自动审批');
     const autoMarker = '// Automatically approved integration edit';
     await automaticPage.getByLabel('给 Copilot 的请求', { exact: true }).fill(
       `For this new task, approval mode is AUTO. Read ${source} with view_file, then propose exactly one UPDATE that prepends the line ${autoMarker} to the current saved file and otherwise preserves every existing line. Do not run any tests or propose any other edit. After confirmed application, reply AUTO_MODE_DONE. Do not wait for a manual approval.`);
-    await automaticPage.getByLabel('我确认模型请求可能收费', { exact: true }).check();
-    await automaticPage.getByRole('button', { name: '保存草稿并发送', exact: true }).click();
+    await automaticPage.getByRole('button', { name: '发送消息', exact: true }).click();
+    await automaticPage.getByRole('button', { name: '确认并发送', exact: true }).click();
     await expect.poll(async () => text(object(object(await api('GET', `${base}/copilot/tasks/latest`)).task).id), { timeout: 15000 }).not.toBe(taskId);
     const autoTask = text(object(object(await api('GET', `${base}/copilot/tasks/latest`)).task).id);
     await expect.poll(async () => object(await api('GET', `/api/copilot-tasks/${autoTask}`)).state, { timeout: 60000 }).toBe('SUCCEEDED');
@@ -184,16 +183,16 @@ test('real DeepSeek approved and automatic edits, Docker test, draft isolation a
     await expect(automaticProposalRegion.getByRole('button', { name: '批准整批修改', exact: true })).toHaveCount(0);
     await expect(automaticProposalRegion.locator('.monaco-diff-editor')).toBeVisible();
     if (output) await automaticProposalRegion.screenshot({ path: join(output, 'automatically-applied-proposal.png') });
-    await automaticMode.getByLabel('期望审批模式', { exact: false }).selectOption('ASK');
-    await automaticMode.getByRole('button', { name: '确认审批模式', exact: true }).click();
-    await expect(automaticMode).toContainText('已生效：逐次审批');
+    await automaticMode.getByRole('button', { name: '切换审批模式', exact: true }).click();
+    await automaticPage.getByRole('button', { name: /逐次审批/ }).click();
+    await expect(automaticMode).toContainText('逐次审批');
     const audit = object(await api('GET', `${base}/copilot/approval-mode`)); expect(audit.version).toBe('2');
     expect(array(audit.history).map((item) => object(item).mode)).toEqual(['ASK', 'AUTO']);
     const postsAfterReload: string[] = [];
     automaticPage.on('request', (request) => { if (request.method() === 'POST') postsAfterReload.push(request.url()); });
     await automaticPage.reload();
     await expect(automaticPage.getByRole('region', { name: 'Copilot 修改提案', exact: true })).toContainText('自动应用成功');
-    await expect(automaticPage.getByRole('region', { name: 'Copilot 审批模式', exact: true })).toContainText('模式版本 2');
+    await expect(automaticPage.getByRole('region', { name: 'Copilot 审批模式', exact: true })).toContainText('逐次审批');
     expect(postsAfterReload).toEqual([]);
     expect(text(object(object(await api('GET', `${base}/copilot/tasks/latest`)).task).id)).toBe(autoTask);
     console.log(`Live auto evidence: task=${autoTask}, proposal=${text(autoProposal.id)}, modeVersion=1, revision=2, auditVersion=2, draft retained in first browser, reload GET-only`);

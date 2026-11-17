@@ -34,12 +34,12 @@ it('shows complete immutable evidence as text and requires explicit whole-batch 
   await wrapper.get('input[type="checkbox"]').setValue(true);
   await button(wrapper, '批准整批修改').trigger('click'); await flushPromises();
   expect(vi.mocked(api.decide).mock.calls[0]?.slice(0, 6)).toEqual(['owner', proposal.taskId, proposal.id, 'control', 'APPROVE', null]);
-  expect(wrapper.text()).toContain('不保存或覆盖本地草稿');
+  expect(wrapper.text()).toContain('保留草稿并应用修改');
 });
 it('retries an unknown decision with the original key and captured content only', async () => {
   vi.mocked(api.decide).mockRejectedValueOnce(new TypeError('offline'));
   const wrapper = panel(); await flushPromises(); await wrapper.get('textarea').setValue('Keep the public API');
-  await button(wrapper, '拒绝整批并继续任务').trigger('click'); await flushPromises();
+  await button(wrapper, '拒绝并继续').trigger('click'); await flushPromises();
   expect(wrapper.text()).toContain('审批结果未知'); expect(button(wrapper, '批准整批修改').attributes('disabled')).toBeDefined();
   await button(wrapper, '核对原审批请求').trigger('click'); await flushPromises();
   const calls = vi.mocked(api.decide).mock.calls;
@@ -51,8 +51,8 @@ it('cannot approve from a read-only page or after the baseline invalidates', asy
   await wrapper.setProps({ disabled: true }); expect(button(wrapper, '批准整批修改').attributes('disabled')).toBeDefined();
   await wrapper.setProps({ disabled: false, credential: '' }); expect(button(wrapper, '批准整批修改').attributes('disabled')).toBeDefined();
   vi.mocked(api.proposalStatus).mockResolvedValue({ ...proposal, state: 'INVALIDATED', failureCode: 'REVISION_CONFLICT' });
-  await button(wrapper, '重新读取提案').trigger('click'); await flushPromises();
-  expect(wrapper.text()).toContain('原批准不可复用'); expect(api.decide).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(2000); await flushPromises();
+  expect(wrapper.text()).toContain('原提案已失效'); expect(api.decide).not.toHaveBeenCalled();
 });
 it('polls bounded metadata instead of repeatedly downloading full diff contents and disposes reads', async () => {
   const wrapper = panel(); await flushPromises();
@@ -68,7 +68,7 @@ it('settles an unknown command from the immutable proposal outcome without repos
   await button(wrapper, '批准整批修改').trigger('click'); await flushPromises();
   expect(wrapper.text()).toContain('审批结果未知');
   vi.mocked(api.proposalStatus).mockResolvedValue({ ...proposal, state: 'APPLYING', decisionType: 'APPROVE' });
-  await wrapper.setProps({ disabled: true }); await button(wrapper, '重新读取提案').trigger('click'); await flushPromises();
+  await wrapper.setProps({ disabled: true }); await vi.advanceTimersByTimeAsync(2000); await flushPromises();
   expect(wrapper.text()).not.toContain('审批结果未知'); expect(wrapper.text()).toContain('写入结果待核对');
   expect(api.decide).toHaveBeenCalledTimes(1);
 });
@@ -77,12 +77,12 @@ it('marks automatic registration, keeps its Diff and failure, and offers no manu
   vi.mocked(api.proposals).mockResolvedValue({ items: [automatic], nextCursor: null });
   vi.mocked(api.proposalStatus).mockResolvedValue(automatic);
   const wrapper = panel(); await flushPromises();
-  expect(wrapper.text()).toContain('自动应用待校验'); expect(wrapper.text()).toContain('登记模式版本 3');
+  expect(wrapper.text()).toContain('自动应用待校验');
   expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false);
   expect(wrapper.findAll('button').some((item) => item.text() === '批准整批修改')).toBe(false);
   expect(wrapper.findAll('pre')).toHaveLength(2);
   vi.mocked(api.proposalStatus).mockResolvedValue({ ...automatic, state: 'FAILED', failureCode: 'STORAGE_BUDGET_EXCEEDED' });
-  await button(wrapper, '重新读取提案').trigger('click'); await flushPromises();
+  await vi.advanceTimersByTimeAsync(2000); await flushPromises();
   expect(wrapper.text()).toContain('自动应用失败'); expect(wrapper.text()).toContain('单场数据容量不足');
   expect(api.decide).not.toHaveBeenCalled();
 });

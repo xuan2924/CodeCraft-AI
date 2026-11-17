@@ -1,11 +1,27 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
+import {
+  ArrowUp,
+  AtSign,
+  FileCode2,
+  GitBranch,
+  History,
+  ListOrdered,
+  MoreHorizontal,
+  Slash,
+  Sparkles,
+  Square,
+  X,
+} from '@lucide/vue';
 import Button from '../components/ui/Button.vue';
+import Dialog from '../components/ui/Dialog.vue';
+import Tooltip from '../components/ui/Tooltip.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
 import * as api from './api';
 import { commandPolicy, errorMessage } from './errors';
+import { grantCopilotFeeConsent, hasCopilotFeeConsent } from './feeConsent';
 import CopilotProposals from './CopilotProposals.vue';
 import CopilotTests from './CopilotTests.vue';
 import CopilotCommands from './CopilotCommands.vue';
@@ -25,80 +41,308 @@ import CopilotToolResult from './CopilotToolResult.vue';
 import CopilotMessageBody from './CopilotMessageBody.vue';
 import { isStructuredToolReceipt, splitAssistantToolCalls } from './toolPresentation';
 
-const props = defineProps<{ owner: string; exerciseId: string; conversationId?: string; delegated?: boolean; paths?: string[]; credential: string; disabled: boolean; prepare: () => Promise<boolean> }>();
-const emit = defineEmits<{ unauthorized: []; changed: []; 'inspect-test': [testId: string]; fork: [messageId: string] }>();
+const props = withDefaults(defineProps<{
+  owner: string;
+  exerciseId: string;
+  conversationId?: string;
+  delegated?: boolean;
+  paths?: string[];
+  credential: string;
+  disabled: boolean;
+  prepare: () => Promise<boolean>;
+  subview?: 'chat' | 'btw';
+  moreTarget?: globalThis.HTMLElement | null;
+}>(), {
+  conversationId: undefined,
+  delegated: false,
+  paths: undefined,
+  subview: 'chat',
+  moreTarget: null,
+});
+
+const emit = defineEmits<{
+  unauthorized: [];
+  changed: [];
+  'inspect-test': [testId: string];
+  fork: [messageId: string];
+  'switch-chat': [];
+  'switch-btw': [];
+}>();
+
 const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.conversationId ?? props.exerciseId}/${props.credential}`);
 const text = ref('');
-const fee = ref(false);
 const selectedSkills = ref<string[]>([]);
 const references = ref<ReferencePage[]>([]);
-const contextBusy = ref(true);
+const childContextBusy = ref(false);
 const saving = ref(false);
 const saveError = ref('');
 const handoffNotice = ref('');
 const after = ref('-1');
 const connected = ref(false);
 const transientPreview = ref<api.PreviewEvent | null>(null);
+
+const slashOpen = ref(false);
+const atOpen = ref(false);
+const moreOpen = ref(false);
+const usageModalOpen = ref(false);
+const instructionsModalOpen = ref(false);
+const feeConsentOpen = ref(false);
+const pendingAction = ref<null | 'send' | 'followup'>(null);
+
+const composerHost = ref<globalThis.HTMLElement | null>(null);
+const moreHost = ref<globalThis.HTMLElement | null>(null);
+const textareaRef = ref<globalThis.HTMLTextAreaElement | null>(null);
+const approvalModeRef = ref<{ openAudit: () => void } | null>(null);
+const followupRef = ref<{ enqueueDirect: (prompt: string) => boolean; pending: number; paused: boolean; busy: boolean } | null>(null);
+const steerRef = ref<{ sendDirect: (content: string) => Promise<boolean>; accepting: boolean; pending: boolean; uncertain: boolean } | null>(null);
+
 const taskKey = computed(() => ['copilot', props.owner, props.exerciseId, 'task', props.conversationId ?? props.exerciseId]);
 const historyKey = computed(() => ['copilot', props.owner, props.exerciseId, 'messages', props.conversationId ?? props.exerciseId, after.value]);
-const latest = useQuery({ queryKey: taskKey, queryFn: ({ signal }) => api.latest(props.owner, props.exerciseId, signal, props.conversationId), retry: false, gcTime: 0, refetchInterval: 2000 });
-const history = useQuery({ queryKey: historyKey, queryFn: ({ signal }) => api.messages(props.owner, props.exerciseId, after.value, signal, props.conversationId), retry: false, gcTime: 0 });
+const contextKey = computed(() => ['copilot-context', props.owner, props.exerciseId, props.conversationId ?? props.exerciseId]);
+
+const latest = useQuery({
+  queryKey: taskKey,
+  queryFn: ({ signal }) => api.latest(props.owner, props.exerciseId, signal, props.conversationId),
+  retry: false,
+  gcTime: 0,
+  refetchInterval: 2000,
+});
+const history = useQuery({
+  queryKey: historyKey,
+  queryFn: ({ signal }) => api.messages(props.owner, props.exerciseId, after.value, signal, props.conversationId),
+  retry: false,
+  gcTime: 0,
+});
+const contextQuery = useQuery({
+  queryKey: contextKey,
+  queryFn: ({ signal }) => api.context(props.owner, props.exerciseId, signal, props.conversationId),
+  enabled: computed(() => !props.delegated && !!props.owner && !!props.exerciseId),
+  retry: false,
+  gcTime: 0,
+  refetchInterval: 2000,
+});
+
+const contextBusy = computed(() => {
+  if (props.delegated) return false;
+  if (childContextBusy.value) return true;
+  if (!contextQuery.data.value || contextQuery.isError.value) return true;
+  return contextQuery.data.value.requests.some(item => item.state === 'WAITING' || item.state === 'RUNNING');
+});
+
 const task = computed(() => latest.data.value?.task);
 const running = computed(() => api.active(task.value));
 const preview = computed(() => api.resolveDisplayPreview(transientPreview.value, latest.data.value, running.value));
-watch([latest.error, history.error], (errors) => { if (errors.some(commandPolicy.identityFailure)) emit('unauthorized'); });
+
+watch([latest.error, history.error, contextQuery.error], (errors) => {
+  if (errors.some(commandPolicy.identityFailure)) emit('unauthorized');
+});
 watch(() => latest.data.value?.lastSequence, () => {
   transientPreview.value = null;
   void client.invalidateQueries({ queryKey: ['copilot', props.owner, props.exerciseId, 'messages'] });
 });
-watch(scope, () => { text.value = ''; fee.value = false; selectedSkills.value = []; references.value = []; saveError.value = ''; handoffNotice.value = ''; saving.value = false; transientPreview.value = null; }, { flush: 'sync' });
+watch(scope, () => {
+  text.value = '';
+  selectedSkills.value = [];
+  references.value = [];
+  saveError.value = '';
+  handoffNotice.value = '';
+  saving.value = false;
+  transientPreview.value = null;
+  slashOpen.value = false;
+  atOpen.value = false;
+  moreOpen.value = false;
+  feeConsentOpen.value = false;
+  pendingAction.value = null;
+}, { flush: 'sync' });
+
 const start = useCommand<api.Task>(() => scope.value, () => {
-  text.value = ''; fee.value = false; selectedSkills.value = []; references.value = []; after.value = '-1'; void latest.refetch(); void history.refetch();
+  text.value = '';
+  selectedSkills.value = [];
+  references.value = [];
+  after.value = '-1';
+  slashOpen.value = false;
+  atOpen.value = false;
+  void latest.refetch();
+  void history.refetch();
 }, commandPolicy, () => emit('unauthorized'));
-const stop = useCommand<api.Task>(() => `${props.owner}/${props.exerciseId}/${task.value?.id}`, () => { void latest.refetch(); }, commandPolicy, () => emit('unauthorized'));
+
+const stop = useCommand<api.Task>(() => `${props.owner}/${props.exerciseId}/${task.value?.id}`, () => {
+  void latest.refetch();
+}, commandPolicy, () => emit('unauthorized'));
+
 const handoff = useCommand<api.Steer>(() => `${scope.value}/${task.value?.id}`, receipt => {
-  handoffNotice.value = receipt.state === 'NOT_APPLIED' ? '旁支带回未生效，未另起任务。' : '旁支结论已作为 steer 接收；是否生效以主线方向调整记录为准。';
+  handoffNotice.value = receipt.state === 'NOT_APPLIED' ? '旁支带回未生效。' : '已作为方向调整发送，是否生效以记录为准。';
   void client.invalidateQueries({ queryKey: ['copilot-steers', props.owner, props.exerciseId, receipt.taskId] });
 }, commandPolicy, () => emit('unauthorized'));
+
 const canSteer = computed(() => !!task.value && ['QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND', 'WAITING_CHILD'].includes(task.value.state));
+
 function bringBack(conclusion: string) {
   if (props.disabled || saving.value || start.pending.value || start.uncertain.value || handoff.pending.value || handoff.uncertain.value) return;
-  if (new globalThis.TextEncoder().encode(conclusion).length > 4096) { handoffNotice.value = '带回内容过长，请缩短预览片段。'; return; }
+  if (new globalThis.TextEncoder().encode(conclusion).length > 4096) {
+    handoffNotice.value = '带回内容过长，请缩短片段。';
+    return;
+  }
   if (running.value) {
-    if (!task.value || !canSteer.value) { handoffNotice.value = '主任务暂停或停止收敛中，当前不能接收 steer；旁支结论仍保留。'; return; }
-    const { owner, exerciseId, credential } = props; const id = task.value.id;
+    if (!task.value || !canSteer.value) {
+      handoffNotice.value = '主任务收敛中，当前不可调整方向。';
+      return;
+    }
+    const { owner, exerciseId, credential } = props;
+    const id = task.value.id;
     void handoff.submit((key, signal) => api.sendSteer(owner, exerciseId, id, credential, conclusion, key, signal));
   } else {
     const draft = text.value ? `${text.value}\n\n${conclusion}` : conclusion;
-    if (new globalThis.TextEncoder().encode(draft).length > 4096) { handoffNotice.value = '主请求已有草稿，合并后超过 4 KiB，未覆盖原草稿；请缩短或手动复制。'; return; }
-    text.value = draft; fee.value = false; handoffNotice.value = '已填入主请求草稿，尚未发送；请预览并确认费用。';
+    if (new globalThis.TextEncoder().encode(draft).length > 4096) {
+      handoffNotice.value = '合并后超过 4 KiB，未覆盖现有草稿。';
+      return;
+    }
+    text.value = draft;
+    handoffNotice.value = '已填入草稿，尚未发送。';
+    emit('switch-chat');
   }
 }
-const canSend = computed(() => !props.delegated && !props.disabled && !!props.credential && !running.value && !contextBusy.value && !latest.isPending.value && !latest.isError.value
-  && !start.pending.value && !start.uncertain.value && !saving.value && fee.value && !!text.value.trim());
-async function send() {
-  if (!canSend.value) return;
-  if (new globalThis.TextEncoder().encode(text.value).length > 4096) { saveError.value = '请求文字最多 4 KiB，请缩短后再发送。'; return; }
+
+const canSendIdle = computed(() => !props.delegated && !props.disabled && !!props.credential && !running.value && !contextBusy.value
+  && !latest.isPending.value && !latest.isError.value && !start.pending.value && !start.uncertain.value && !saving.value && !!text.value.trim());
+
+const canSteerRunning = computed(() => !props.delegated && !props.disabled && !!props.credential && running.value
+  && canSteer.value && !!text.value.trim() && !steerRef.value?.pending && !steerRef.value?.uncertain);
+
+const canQueueRunning = computed(() => !props.delegated && !props.disabled && !!props.credential && running.value
+  && !!text.value.trim() && !(followupRef.value?.busy) && (followupRef.value?.pending ?? 0) < 32);
+
+const canSubmitPrimary = computed(() => running.value ? canSteerRunning.value : canSendIdle.value);
+
+async function executeSend() {
+  if (!canSendIdle.value) return;
+  if (new globalThis.TextEncoder().encode(text.value).length > 4096) {
+    saveError.value = '请求内容最多 4 KiB，请缩短后发送。';
+    return;
+  }
   const before = scope.value;
   const prompt = text.value;
   const skillIds = [...selectedSkills.value];
   const referenceSelections = references.value.map(selection);
   const { owner, exerciseId, credential, conversationId } = props;
-  saving.value = true; saveError.value = '';
+  saving.value = true;
+  saveError.value = '';
   try {
-    if (!await props.prepare()) { if (scope.value === before) saveError.value = '草稿保存未完成，未创建 Copilot 请求。请处理冲突或返回编辑。'; return; }
+    if (!await props.prepare()) {
+      if (scope.value === before) saveError.value = '草稿保存未完成，未创建 Copilot 请求。';
+      return;
+    }
     if (scope.value !== before || props.disabled) return;
     await start.submit((key, signal) => api.start(owner, exerciseId, credential, prompt, key, signal, skillIds, conversationId, referenceSelections));
   } catch {
-    if (scope.value === before) saveError.value = '操作结果待核对，请重新读取任务并检查编辑器；不要换键重发。';
-  } finally { if (scope.value === before) saving.value = false; }
+    if (scope.value === before) saveError.value = '请求结果待核对，请检查后使用原请求重试。';
+  } finally {
+    if (scope.value === before) saving.value = false;
+  }
 }
+
+async function handlePrimarySubmit() {
+  if (running.value) {
+    if (!canSteerRunning.value || !steerRef.value) return;
+    const sent = await steerRef.value.sendDirect(text.value);
+    if (sent) text.value = '';
+    return;
+  }
+  if (!canSendIdle.value) return;
+  if (!hasCopilotFeeConsent(props.owner)) {
+    pendingAction.value = 'send';
+    feeConsentOpen.value = true;
+    return;
+  }
+  await executeSend();
+}
+
+function handleFollowupQueue() {
+  if (!canQueueRunning.value || !followupRef.value) return;
+  if (!hasCopilotFeeConsent(props.owner)) {
+    pendingAction.value = 'followup';
+    feeConsentOpen.value = true;
+    return;
+  }
+  if (followupRef.value.enqueueDirect(text.value)) text.value = '';
+}
+
+async function confirmFeeConsent() {
+  grantCopilotFeeConsent(props.owner);
+  const action = pendingAction.value;
+  feeConsentOpen.value = false;
+  pendingAction.value = null;
+  if (action === 'followup') {
+    if (followupRef.value?.enqueueDirect(text.value)) text.value = '';
+  } else if (action === 'send') {
+    await executeSend();
+  }
+}
+
 function stopTask() {
   if (!task.value || !running.value) return;
-  const { owner, exerciseId } = props; const id = task.value.id;
+  const { owner, exerciseId } = props;
+  const id = task.value.id;
   void stop.submit((key, signal) => api.stop(owner, exerciseId, id, key, signal));
 }
+
+function removeReference(index: number) {
+  references.value.splice(index, 1);
+}
+
+function removeSkill(skillId: string) {
+  selectedSkills.value = selectedSkills.value.filter(id => id !== skillId);
+}
+
+function onTextInput() {
+  const val = text.value;
+  if (val === '/' || val.endsWith('\n/')) {
+    slashOpen.value = true;
+    atOpen.value = false;
+  } else if (val.endsWith('@')) {
+    atOpen.value = true;
+    slashOpen.value = false;
+  } else if (!val) {
+    slashOpen.value = false;
+    atOpen.value = false;
+  }
+}
+
+function runSlashCommand(cmd: 'btw' | 'compact' | 'agents') {
+  slashOpen.value = false;
+  if (text.value.trim() === '/') text.value = '';
+  if (cmd === 'btw') emit('switch-btw');
+  else if (cmd === 'compact') usageModalOpen.value = true;
+  else if (cmd === 'agents') instructionsModalOpen.value = true;
+}
+
+function applyQuickPrompt(prompt: string) {
+  text.value = prompt;
+  void nextTick(() => textareaRef.value?.focus());
+}
+
+function referenceLabel(item: ReferencePage): string {
+  const tail = item.source.split('/').pop() || item.source;
+  if (item.kind === 'CODE' && item.limit > 0) return `${tail} (${item.offset + 1}-${item.offset + item.limit})`;
+  return tail;
+}
+
+function onWindowPointerDown(event: globalThis.PointerEvent) {
+  const target = event.target as globalThis.Node | null;
+  if (!target) return;
+  if ((slashOpen.value || atOpen.value) && !composerHost.value?.contains(target)) {
+    slashOpen.value = false;
+    atOpen.value = false;
+  }
+  if (moreOpen.value && !moreHost.value?.contains(target)) {
+    moreOpen.value = false;
+  }
+}
+
+onMounted(() => globalThis.addEventListener('pointerdown', onWindowPointerDown));
+onBeforeUnmount(() => globalThis.removeEventListener('pointerdown', onWindowPointerDown));
+
 watch([() => props.owner, () => props.exerciseId, () => task.value?.id, running], ([owner, exercise, id, active], _old, cleanup) => {
   connected.value = false;
   transientPreview.value = null;
@@ -127,367 +371,442 @@ watch([() => props.owner, () => props.exerciseId, () => task.value?.id, running]
     });
   }
   connect();
-  cleanup(() => { disposed = true; transientPreview.value = null; controller.abort(); close(); if (timer !== undefined) globalThis.clearTimeout(timer); });
+  cleanup(() => {
+    disposed = true;
+    transientPreview.value = null;
+    controller.abort();
+    close();
+    if (timer !== undefined) globalThis.clearTimeout(timer);
+  });
 }, { immediate: true });
-const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待派发', RUNNING: '正在执行', PAUSED: '已暂停，等待处理', WAITING_APPROVAL: '等待审批', WAITING_WRITE: '等待写入回执', WAITING_TEST: '等待测试确定结果', WAITING_COMMAND: '等待命令及文件同步结果', WAITING_CHILD: '等待真实子任务交接，父 worker 已释放', STOPPING: '正在停止，等待当前操作收敛', STOPPED: '已停止', SUCCEEDED: '已完成', FAILED: '失败', INTERRUPTED: '已中断，不会自动重发' };
+
+const labels: Record<api.Task['state'], string> = {
+  QUEUED: '排队中',
+  RUNNING: '思考与执行中',
+  PAUSED: '已暂停',
+  WAITING_APPROVAL: '等待审批',
+  WAITING_WRITE: '等待写入确认',
+  WAITING_TEST: '运行验证测试中',
+  WAITING_COMMAND: '等待命令执行',
+  WAITING_CHILD: '等待子任务交接',
+  STOPPING: '正在停止',
+  STOPPED: '已停止',
+  SUCCEEDED: '已完成',
+  FAILED: '失败',
+  INTERRUPTED: '已中断，不会自动重发',
+};
+
+const showTaskBanner = computed(() =>
+  latest.isPending.value
+  || latest.isError.value
+  || running.value
+  || !!task.value?.reason
+  || task.value?.state === 'PAUSED'
+  || task.value?.state === 'INTERRUPTED'
+  || !!stop.error.value
+  || !!latest.data.value?.textHistory
+);
 </script>
+
 <template>
   <section
     class="copilot-panel"
+    :class="{ 'is-delegated': delegated }"
     :aria-label="delegated ? '委派子任务对话' : 'Copilot 对话'"
   >
-    <div class="copilot-head">
-      <div class="copilot-head-row">
-        <h2>{{ delegated ? '子任务 Copilot' : 'Copilot' }}</h2>
-        <details class="copilot-rules-drawer">
-          <summary>协作与计费说明</summary>
-          <p v-if="delegated">
-            子任务不能再次委派；审批、方向调整与停止仅针对当前子任务，共享本场审批模式。
-          </p>
-          <p>
-            读取服务端已保存代码，可提出整批修改与运行测试；请求可能收费，关闭页面不停止后台任务。
-          </p>
-        </details>
-      </div>
-    </div>
-    <CopilotApprovalMode
+    <Teleport
       v-if="!delegated"
-      :owner="owner"
-      :exercise-id="exerciseId"
-      :credential="credential"
-      :disabled="disabled"
-      @unauthorized="emit('unauthorized')"
-    />
-    <div
-      v-if="latest.isPending.value || latest.isError.value || task || running"
-      class="copilot-task-strip"
+      :to="moreTarget"
+      :disabled="!moreTarget"
     >
-      <p
-        v-if="latest.isPending.value"
-        role="status"
-        class="copilot-status"
-      >
-        正在读取任务…
-      </p>
-      <p
-        v-else-if="latest.isError.value"
-        role="alert"
-        class="copilot-alert"
-      >
-        {{ errorMessage(latest.error.value) }}
-      </p>
       <div
-        v-else-if="task"
-        class="copilot-task-row"
+        ref="moreHost"
+        class="more-menu-wrap"
       >
-        <p
-          role="status"
-          class="copilot-task-badge"
-        >
-          {{ labels[task.state] }} · {{ task.id }}
-        </p>
         <Button
-          v-if="running"
-          variant="danger"
-          size="small"
-          :disabled="stop.pending.value"
-          @click="stop.uncertain.value ? stop.retry() : stopTask()"
+          variant="ghost"
+          size="icon"
+          class="more-trigger-btn"
+          aria-label="更多 Copilot 选项"
+          :aria-expanded="moreOpen"
+          @click="moreOpen = !moreOpen"
         >
-          {{ stop.uncertain.value ? '核对原停止请求' : delegated ? '停止此子任务并交回结果' : '停止 Copilot 任务' }}
+          <MoreHorizontal
+            :size="15"
+            aria-hidden="true"
+          />
         </Button>
-      </div>
-      <p
-        v-if="task?.reason"
-        class="copilot-warn"
-      >
-        {{ errorMessage(new ApiError(409, task.reason)) }}
-      </p>
-      <p
-        v-if="running"
-        class="copilot-status"
-      >
-        {{ connected ? '实时状态已连接' : '实时状态重连中；只读轮询仍在核对，不会重启任务。' }}
-      </p>
-      <p
-        v-if="stop.error.value"
-        role="alert"
-        class="copilot-alert"
-      >
-        {{ stop.error.value }}
-      </p>
-      <p
-        v-if="task?.state === 'PAUSED'"
-        class="copilot-warn"
-      >
-        {{ delegated ? '子任务已暂停。处理配置或容量问题后，可停止子任务并把停止结果交回父任务；不会自动重发。' : '请处理模型配置或容量问题；可先停止当前任务，再显式发起新请求。不会自动回退或重发。' }}
-      </p>
-    </div>
-    <p
-      v-else
-      class="copilot-desc"
-    >
-      尚无 Copilot 任务。
-    </p>
-    <p
-      v-if="latest.data.value?.textHistory"
-      class="copilot-desc"
-    >
-      模型配置域已变化：完整历史批次作为带来源的只读文本证据传入；原始协议证据仍保留，不重做已完成工具。
-    </p>
-    <CopilotProposals
-      v-if="task"
-      :key="owner + task.id"
-      :owner="owner"
-      :task-id="task.id"
-      :credential="credential"
-      :disabled="disabled || task.state !== 'WAITING_APPROVAL'"
-      @unauthorized="emit('unauthorized')"
-      @changed="emit('changed')"
-    />
-    <CopilotCommands
-      v-if="task"
-      :key="owner + task.id + ':commands'"
-      :owner="owner"
-      :exercise-id="exerciseId"
-      :task="task"
-      :credential="credential"
-      :disabled="disabled"
-      @unauthorized="emit('unauthorized')"
-      @changed="emit('changed')"
-    />
-    <CopilotTests
-      v-if="task"
-      :key="owner + task.id + ':tests'"
-      :owner="owner"
-      :task-id="task.id"
-      :running="running"
-      @inspect="emit('inspect-test', $event)"
-    />
-    <CopilotSteers
-      v-if="task"
-      :key="owner + task.id + ':steers'"
-      :owner="owner"
-      :exercise-id="exerciseId"
-      :task-id="task.id"
-      :state="task.state"
-      :credential="credential"
-      :disabled="disabled"
-      @unauthorized="emit('unauthorized')"
-    />
-    <div
-      class="messages"
-      aria-live="polite"
-    >
-      <p
-        v-if="history.isPending.value"
-        class="copilot-desc"
-      >
-        正在读取已保存对话…
-      </p>
-      <p
-        v-else-if="history.isError.value"
-        role="alert"
-        class="copilot-alert"
-      >
-        {{ errorMessage(history.error.value) }}
-      </p>
-      <p
-        v-else-if="!history.data.value?.messages.length"
-        class="copilot-desc"
-      >
-        本页没有保留的消息。
-      </p>
-      <article
-        v-for="message in history.data.value?.messages"
-        :key="message.id"
-        class="message-card"
-        :data-kind="message.kind"
-      >
-        <div class="message-head">
-          <h3>{{ ({ USER: '你', ASSISTANT: 'Copilot', TOOL: '工具回执' })[message.kind] }}</h3>
-          <Button
-            v-if="!delegated"
-            variant="ghost"
-            size="small"
-            :disabled="disabled || !credential"
-            @click="emit('fork', message.id)"
+        <div
+          v-if="moreOpen"
+          class="more-popover ui-popover"
+          role="menu"
+          aria-label="Copilot 工具菜单"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            class="more-item"
+            @click="moreOpen = false; approvalModeRef?.openAudit()"
           >
-            Fork 到此消息
-          </Button>
+            <History
+              :size="13"
+              aria-hidden="true"
+            />
+            <span>审批模式变更记录</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            class="more-item"
+            @click="moreOpen = false; usageModalOpen = true"
+          >
+            <Sparkles
+              :size="13"
+              aria-hidden="true"
+            />
+            <span>上下文占用与压缩</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            class="more-item"
+            @click="moreOpen = false; instructionsModalOpen = true"
+          >
+            <FileCode2
+              :size="13"
+              aria-hidden="true"
+            />
+            <span>项目指令 (AGENTS.md)</span>
+          </button>
         </div>
-        <CopilotWebResult
-          v-if="message.kind === 'TOOL' && /^web_(search|read) \[/.test(message.text)"
-          :text="message.text"
-          :scope="`${scope}/${message.id}`"
-        />
-        <CopilotToolResult
-          v-else-if="message.kind === 'TOOL' && isStructuredToolReceipt(message.text)"
-          :text="message.text"
-        />
-        <template v-else-if="message.kind === 'ASSISTANT'">
+      </div>
+    </Teleport>
+
+    <div
+      v-show="delegated || subview !== 'btw'"
+      class="main-chat-shell"
+    >
+      <div
+        v-if="showTaskBanner"
+        class="task-status-bar"
+      >
+        <span
+          v-if="latest.isPending.value"
+          role="status"
+          class="status-muted"
+        >同步状态…</span>
+        <span
+          v-else-if="latest.isError.value"
+          role="alert"
+          class="status-danger"
+        >{{ errorMessage(latest.error.value) }}</span>
+        <template v-else-if="task">
+          <div class="status-pill-row">
+            <span
+              class="ui-status-dot"
+              :data-tone="running ? 'accent' : task.state === 'FAILED' || task.state === 'INTERRUPTED' ? 'danger' : 'warning'"
+            />
+            <span
+              role="status"
+              class="status-label"
+            >{{ labels[task.state] }}</span>
+            <span
+              v-if="running"
+              class="status-conn"
+            >{{ connected ? '实时' : '轮询中' }}</span>
+            <Button
+              v-if="running"
+              variant="ghost"
+              size="small"
+              class="stop-task-btn"
+              :disabled="stop.pending.value"
+              @click="stop.uncertain.value ? stop.retry() : stopTask()"
+            >
+              <Square
+                :size="11"
+                aria-hidden="true"
+              />
+              <span>{{ stop.uncertain.value ? '核对原停止请求' : delegated ? '停止此子任务并交回结果' : '停止任务' }}</span>
+            </Button>
+          </div>
+          <p
+            v-if="task.reason"
+            class="status-sub-warn"
+          >
+            {{ errorMessage(new ApiError(409, task.reason)) }}
+          </p>
+          <p
+            v-if="stop.error.value"
+            role="alert"
+            class="status-sub-danger"
+          >
+            {{ stop.error.value }}
+          </p>
+          <p
+            v-if="task.state === 'PAUSED'"
+            class="status-sub-warn"
+          >
+            {{ delegated ? '子任务已暂停，可停止交回父任务。' : '请检查模型配置后停止重发。' }}
+          </p>
+          <p
+            v-if="latest.data.value?.textHistory"
+            class="status-sub-muted"
+          >
+            模型切换已将历史作为只读文本证据传入。
+          </p>
+        </template>
+      </div>
+
+      <div
+        class="messages-viewport"
+        aria-live="polite"
+      >
+        <div
+          v-if="after !== '-1' || history.data.value?.nextCursor"
+          class="history-pager"
+        >
+          <button
+            v-if="after === '-1'"
+            type="button"
+            class="quiet-pager-btn"
+            @click="after = '0'"
+          >
+            查看最早消息
+          </button>
+          <button
+            v-else
+            type="button"
+            class="quiet-pager-btn"
+            @click="after = '-1'; history.refetch()"
+          >
+            回到最新消息
+          </button>
+          <button
+            v-if="after !== '-1' && history.data.value?.nextCursor"
+            type="button"
+            class="quiet-pager-btn"
+            @click="after = history.data.value.nextCursor"
+          >
+            加载更多
+          </button>
+        </div>
+
+        <p
+          v-if="history.isPending.value"
+          class="stream-note"
+        >
+          加载对话…
+        </p>
+        <p
+          v-else-if="history.isError.value"
+          role="alert"
+          class="stream-error"
+        >
+          {{ errorMessage(history.error.value) }}
+        </p>
+        <div
+          v-else-if="!history.data.value?.messages.length && !running && !preview"
+          class="empty-welcome"
+        >
+          <div class="welcome-icon">
+            <Sparkles
+              :size="18"
+              aria-hidden="true"
+            />
+          </div>
+          <p class="welcome-title">
+            需要重构、排查或加测试？
+          </p>
+          <div
+            v-if="!delegated"
+            class="welcome-chips"
+          >
+            <button
+              type="button"
+              class="welcome-chip"
+              @click="applyQuickPrompt('梳理当前代码结构与潜在边界问题')"
+            >
+              梳理当前代码结构
+            </button>
+            <button
+              type="button"
+              class="welcome-chip"
+              @click="applyQuickPrompt('补充关键边界单元测试并运行验证')"
+            >
+              补充关键边界测试
+            </button>
+          </div>
+        </div>
+
+        <article
+          v-for="message in history.data.value?.messages"
+          :key="message.id"
+          class="chat-msg"
+          :data-kind="message.kind"
+        >
+          <header class="chat-msg-head">
+            <span class="chat-role">{{ ({ USER: '你', ASSISTANT: 'Copilot', TOOL: '工具' })[message.kind] }}</span>
+            <button
+              v-if="!delegated"
+              type="button"
+              class="fork-inline-btn"
+              title="从这条消息分支"
+              :disabled="disabled || !credential"
+              @click="emit('fork', message.id)"
+            >
+              <GitBranch
+                :size="11"
+                aria-hidden="true"
+              />
+              <span>分支</span>
+            </button>
+          </header>
+          <CopilotWebResult
+            v-if="message.kind === 'TOOL' && /^web_(search|read) \[/.test(message.text)"
+            :text="message.text"
+            :scope="`${scope}/${message.id}`"
+          />
+          <CopilotToolResult
+            v-else-if="message.kind === 'TOOL' && isStructuredToolReceipt(message.text)"
+            :text="message.text"
+          />
+          <template v-else-if="message.kind === 'ASSISTANT'">
+            <CopilotMessageBody
+              v-if="splitAssistantToolCalls(message.text).body || message.thinking"
+              :text="splitAssistantToolCalls(message.text).body"
+              :thinking="message.thinking"
+            />
+            <div
+              v-if="splitAssistantToolCalls(message.text).calls.length"
+              class="assistant-tool-calls"
+              aria-label="发起的工具调用"
+            >
+              <span
+                v-for="call in splitAssistantToolCalls(message.text).calls"
+                :key="call.callId"
+                class="tool-call-chip"
+              >
+                <code>{{ call.name }}</code>
+                <span>{{ call.label }}</span>
+              </span>
+            </div>
+          </template>
           <CopilotMessageBody
-            v-if="splitAssistantToolCalls(message.text).body || message.thinking"
-            :text="splitAssistantToolCalls(message.text).body"
+            v-else
+            :text="message.text"
             :thinking="message.thinking"
           />
-          <div
-            v-if="splitAssistantToolCalls(message.text).calls.length"
-            class="assistant-tool-calls"
-            aria-label="发起的工具调用"
+        </article>
+
+        <aside
+          v-if="preview"
+          class="partial-preview"
+          aria-label="未确认回复预览"
+        >
+          <span class="preview-badge">生成中（未确认）</span>
+          <CopilotMessageBody
+            :text="preview.text"
+            :thinking="preview.thinking"
+          />
+          <p
+            v-if="preview.truncated || preview.thinkingTruncated"
+            class="preview-trunc-note"
           >
-            <span
-              v-for="call in splitAssistantToolCalls(message.text).calls"
-              :key="call.callId"
-              class="ui-badge tool-call-chip"
-            >
-              <code>{{ call.name }}</code>
-              <span>{{ call.label }}</span>
-            </span>
-          </div>
-        </template>
-        <CopilotMessageBody
-          v-else
-          :text="message.text"
-          :thinking="message.thinking"
-        />
-      </article>
-    </div>
-    <aside
-      v-if="preview"
-      class="partial-preview"
-      aria-label="未确认回复预览"
-    >
-      <h3>未确认的部分回复</h3>
-      <CopilotMessageBody
-        :text="preview.text"
-        :thinking="preview.thinking"
-      />
-      <p>此预览不代表任务完成，也不会作为完整助手消息或工具请求执行。</p>
-      <p v-if="preview.truncated || preview.thinkingTruncated">
-        预览已截断。完整确认的回复将在上方对话记录显示。
-      </p>
-    </aside>
-    <div class="copilot-pagination">
-      <Button
-        variant="ghost"
-        size="small"
-        @click="after = '-1'; history.refetch()"
-      >
-        显示最近消息
-      </Button>
-      <Button
-        variant="ghost"
-        size="small"
-        @click="after = '0'"
-      >
-        从最早记录查看
-      </Button>
-      <Button
-        v-if="after !== '-1' && history.data.value?.nextCursor"
-        variant="ghost"
-        size="small"
-        @click="after = history.data.value.nextCursor"
-      >
-        下一页历史
-      </Button>
-      <Button
-        variant="ghost"
-        size="small"
-        @click="latest.refetch(); history.refetch()"
-      >
-        重新读取
-      </Button>
-    </div>
-    <CopilotDelegations
-      v-if="task && !delegated"
-      :owner="owner"
-      :exercise-id="exerciseId"
-      :parent-task-id="task.id"
-      @unauthorized="emit('unauthorized')"
-    >
-      <template #default="childScope">
-        <CopilotPanel
-          :key="childScope.conversationId"
+            预览已截断
+          </p>
+        </aside>
+
+        <CopilotProposals
+          v-if="task"
+          :key="owner + task.id"
           :owner="owner"
-          :exercise-id="exerciseId"
-          :conversation-id="childScope.conversationId"
-          delegated
+          :task-id="task.id"
           :credential="credential"
-          :disabled="disabled"
-          :prepare="prepare"
+          :disabled="disabled || task.state !== 'WAITING_APPROVAL'"
           @unauthorized="emit('unauthorized')"
           @changed="emit('changed')"
-          @inspect-test="emit('inspect-test', $event)"
         />
-      </template>
-    </CopilotDelegations>
-    <div
-      v-if="!delegated"
-      class="copilot-composer"
-    >
-      <label
-        :for="`copilot-text-${exerciseId}`"
-        class="sr-only"
-      >给 Copilot 的请求</label>
-      <textarea
-        :id="`copilot-text-${exerciseId}`"
-        v-model="text"
-        rows="3"
-        placeholder="向 Copilot 描述目标、约束或待排查问题…"
-        :disabled="saving || start.pending.value || start.uncertain.value"
-      />
-      <div class="composer-bar">
-        <label
-          :for="`copilot-fee-${exerciseId}`"
-          class="fee-checkbox"
-        ><input
-          :id="`copilot-fee-${exerciseId}`"
-          v-model="fee"
-          type="checkbox"
-          :disabled="saving || start.pending.value || start.uncertain.value"
-        ><span>确认模型请求可能收费</span></label>
-        <Button
-          v-if="start.uncertain.value"
-          size="small"
-          :disabled="start.pending.value || disabled || !credential"
-          @click="start.retry"
+        <CopilotCommands
+          v-if="task"
+          :key="owner + task.id + ':commands'"
+          :owner="owner"
+          :exercise-id="exerciseId"
+          :task="task"
+          :credential="credential"
+          :disabled="disabled"
+          @unauthorized="emit('unauthorized')"
+          @changed="emit('changed')"
+        />
+        <CopilotTests
+          v-if="task"
+          :key="owner + task.id + ':tests'"
+          :owner="owner"
+          :task-id="task.id"
+          :running="running"
+          @inspect="emit('inspect-test', $event)"
+        />
+        <CopilotDelegations
+          v-if="task && !delegated"
+          :owner="owner"
+          :exercise-id="exerciseId"
+          :parent-task-id="task.id"
+          @unauthorized="emit('unauthorized')"
         >
-          核对原 Copilot 请求
-        </Button>
-        <Button
-          v-else
-          variant="primary"
-          size="small"
-          :disabled="!canSend"
-          :loading="saving || start.pending.value"
-          @click="send"
-        >
-          保存草稿并发送
-        </Button>
+          <template #default="childScope">
+            <CopilotPanel
+              :key="childScope.conversationId"
+              :owner="owner"
+              :exercise-id="exerciseId"
+              :conversation-id="childScope.conversationId"
+              delegated
+              :credential="credential"
+              :disabled="disabled"
+              :prepare="prepare"
+              @unauthorized="emit('unauthorized')"
+              @changed="emit('changed')"
+              @inspect-test="emit('inspect-test', $event)"
+            />
+          </template>
+        </CopilotDelegations>
       </div>
-      <p
-        v-if="saveError"
-        role="alert"
-        class="copilot-alert"
+
+      <div
+        v-if="!delegated"
+        ref="composerHost"
+        class="composer-dock"
       >
-        {{ saveError }}
-      </p>
-      <p
-        v-if="start.error.value"
-        role="alert"
-        class="copilot-alert"
-      >
-        {{ start.error.value }}
-      </p>
-      <p
-        v-if="start.uncertain.value"
-        class="copilot-warn"
-      >
-        受理结果未知，仅可核对原请求；不会换键重复派发。
-      </p>
-      <div class="composer-drawers">
-        <details class="panel-drawer">
-          <summary>Skill 指导（已选 {{ selectedSkills.length }}）</summary>
+        <div
+          v-show="slashOpen"
+          class="floating-popover ui-popover"
+          role="dialog"
+          aria-label="指令与 Skill"
+        >
+          <div class="slash-shortcuts">
+            <button
+              type="button"
+              class="slash-cmd-row"
+              @click="runSlashCommand('btw')"
+            >
+              <code>/btw</code>
+              <span>切换 BTW 旁支</span>
+            </button>
+            <button
+              type="button"
+              class="slash-cmd-row"
+              @click="runSlashCommand('compact')"
+            >
+              <code>/compact</code>
+              <span>上下文压缩与用量</span>
+            </button>
+            <button
+              type="button"
+              class="slash-cmd-row"
+              @click="runSlashCommand('agents')"
+            >
+              <code>/agents</code>
+              <span>查看 AGENTS.md</span>
+            </button>
+          </div>
           <CopilotSkills
             v-model="selectedSkills"
             :owner="owner"
@@ -495,9 +814,14 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
             :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
             @unauthorized="emit('unauthorized')"
           />
-        </details>
-        <details class="panel-drawer">
-          <summary>上下文引用（{{ references.length }}/4）</summary>
+        </div>
+
+        <div
+          v-show="atOpen"
+          class="floating-popover ui-popover"
+          role="dialog"
+          aria-label="引用上下文"
+        >
           <CopilotReferences
             v-model="references"
             :owner="owner"
@@ -505,62 +829,271 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
             :conversation-id="conversationId ?? exerciseId"
             :paths="paths"
             :disabled="disabled || running || saving || start.pending.value || start.uncertain.value"
+            @attached="atOpen = false"
             @unauthorized="emit('unauthorized')"
           />
-        </details>
-        <details class="panel-drawer">
-          <summary>后续队列与 BTW 旁支</summary>
-          <div class="drawer-stack">
-            <CopilotFollowups
-              :owner="owner"
-              :exercise-id="exerciseId"
-              :conversation-id="conversationId ?? exerciseId"
-              :credential="credential"
-              :disabled="disabled"
-              :running="running"
-              @unauthorized="emit('unauthorized')"
-              @changed="latest.refetch()"
-            />
-            <CopilotBtw
-              :owner="owner"
-              :exercise-id="exerciseId"
-              :parent-conversation-id="conversationId ?? exerciseId"
-              :credential="credential"
-              :main-running="running"
-              :disabled="disabled || saving || start.pending.value || start.uncertain.value"
-              :handoff-disabled="handoff.pending.value || handoff.uncertain.value || (running && !canSteer)"
-              @unauthorized="emit('unauthorized')"
-              @bringback="bringBack"
-            />
+        </div>
+
+        <CopilotSteers
+          v-if="task"
+          :key="owner + task.id + ':steers'"
+          ref="steerRef"
+          slim
+          :owner="owner"
+          :exercise-id="exerciseId"
+          :task-id="task.id"
+          :state="task.state"
+          :credential="credential"
+          :disabled="disabled"
+          @unauthorized="emit('unauthorized')"
+        />
+        <CopilotFollowups
+          ref="followupRef"
+          slim
+          :owner="owner"
+          :exercise-id="exerciseId"
+          :conversation-id="conversationId ?? exerciseId"
+          :credential="credential"
+          :disabled="disabled"
+          :running="running"
+          @unauthorized="emit('unauthorized')"
+          @changed="latest.refetch()"
+        />
+
+        <div
+          v-if="saveError || start.error.value || start.uncertain.value || handoffNotice || handoff.error.value || handoff.uncertain.value"
+          class="composer-alerts"
+        >
+          <p
+            v-if="saveError"
+            role="alert"
+            class="alert-danger"
+          >
+            {{ saveError }}
+          </p>
+          <p
+            v-if="start.error.value"
+            role="alert"
+            class="alert-danger"
+          >
+            {{ start.error.value }}
+          </p>
+          <div
+            v-if="start.uncertain.value"
+            class="alert-warn-row"
+          >
+            <span>受理结果未知，仅可核对原请求</span>
+            <Button
+              size="small"
+              :disabled="start.pending.value || disabled || !credential"
+              @click="start.retry"
+            >
+              核对原 Copilot 请求
+            </Button>
           </div>
-        </details>
+          <p
+            v-if="handoffNotice"
+            role="status"
+            class="alert-status"
+          >
+            {{ handoffNotice }}
+          </p>
+          <p
+            v-if="handoff.error.value"
+            role="alert"
+            class="alert-danger"
+          >
+            {{ handoff.error.value }}
+          </p>
+          <Button
+            v-if="handoff.uncertain.value"
+            size="small"
+            :disabled="handoff.pending.value"
+            @click="handoff.retry()"
+          >
+            核对原旁支带回 steer
+          </Button>
+        </div>
+
+        <div class="composer-capsule ui-capsule">
+          <div
+            v-if="selectedSkills.length || references.length"
+            class="composer-chips"
+          >
+            <span
+              v-for="skillId in selectedSkills"
+              :key="`skill:${skillId}`"
+              class="ctx-chip"
+            >
+              <span>Skill: {{ skillId }}</span>
+              <button
+                type="button"
+                class="chip-remove"
+                :aria-label="`移除 Skill ${skillId}`"
+                @click="removeSkill(skillId)"
+              >
+                <X
+                  :size="11"
+                  aria-hidden="true"
+                />
+              </button>
+            </span>
+            <span
+              v-for="(refItem, idx) in references"
+              :key="`${refItem.source}:${refItem.offset}`"
+              class="ctx-chip font-mono-num"
+            >
+              <span>{{ referenceLabel(refItem) }}</span>
+              <button
+                type="button"
+                class="chip-remove"
+                :aria-label="`移除引用 ${refItem.source}`"
+                @click="removeReference(idx)"
+              >
+                <X
+                  :size="11"
+                  aria-hidden="true"
+                />
+              </button>
+            </span>
+            <span
+              v-if="references.length"
+              class="ref-quota font-mono-num"
+            >{{ references.length }}/4</span>
+          </div>
+
+          <label
+            :for="`copilot-text-${exerciseId}`"
+            class="sr-only"
+          >给 Copilot 的请求</label>
+          <textarea
+            :id="`copilot-text-${exerciseId}`"
+            ref="textareaRef"
+            v-model="text"
+            class="composer-textarea"
+            rows="2"
+            :placeholder="running ? '输入方向调整或排队消息，Enter 发送…' : '输入指令或问题，输 / 选 Skill，输 @ 引用文件…'"
+            :disabled="saving || start.pending.value || start.uncertain.value"
+            @input="onTextInput"
+            @keydown.escape="slashOpen = false; atOpen = false"
+            @keydown.enter.exact.prevent="handlePrimarySubmit"
+          />
+
+          <div class="composer-toolbar">
+            <div class="toolbar-left">
+              <Tooltip text="指令与 Skill ( / )">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="tool-icon-btn"
+                  aria-label="指令与 Skill"
+                  :aria-expanded="slashOpen"
+                  @click="slashOpen = !slashOpen; atOpen = false"
+                >
+                  <Slash
+                    :size="13"
+                    aria-hidden="true"
+                  />
+                </Button>
+              </Tooltip>
+              <Tooltip text="添加上下文引用 ( @ )">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="tool-icon-btn"
+                  aria-label="添加上下文引用"
+                  :aria-expanded="atOpen"
+                  @click="atOpen = !atOpen; slashOpen = false"
+                >
+                  <AtSign
+                    :size="13"
+                    aria-hidden="true"
+                  />
+                </Button>
+              </Tooltip>
+              <CopilotApprovalMode
+                ref="approvalModeRef"
+                compact
+                :owner="owner"
+                :exercise-id="exerciseId"
+                :credential="credential"
+                :disabled="disabled"
+                @unauthorized="emit('unauthorized')"
+              />
+            </div>
+
+            <div class="toolbar-right">
+              <CopilotUsage
+                compact
+                :conversation-id="conversationId"
+                :owner="owner"
+                :exercise-id="exerciseId"
+                @open-detail="usageModalOpen = true"
+                @unauthorized="emit('unauthorized')"
+              />
+              <Tooltip
+                v-if="running"
+                text="加入后续队列（不打断当前执行）"
+              >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="tool-icon-btn"
+                  aria-label="加入后续队列"
+                  :disabled="!canQueueRunning"
+                  @click="handleFollowupQueue"
+                >
+                  <ListOrdered
+                    :size="13"
+                    aria-hidden="true"
+                  />
+                </Button>
+              </Tooltip>
+              <Button
+                variant="primary"
+                size="icon"
+                class="send-circle-btn"
+                :aria-label="running ? '发送方向调整' : '发送消息'"
+                :disabled="!canSubmitPrimary"
+                :loading="saving || start.pending.value || steerRef?.pending"
+                @click="handlePrimarySubmit"
+              >
+                <ArrowUp
+                  :size="14"
+                  aria-hidden="true"
+                />
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
-      <p
-        v-if="handoffNotice"
-        role="status"
-        class="copilot-status"
-      >
-        {{ handoffNotice }}
-      </p>
-      <p
-        v-if="handoff.error.value"
-        role="alert"
-        class="copilot-alert"
-      >
-        {{ handoff.error.value }}
-      </p>
-      <Button
-        v-if="handoff.uncertain.value"
-        size="small"
-        :disabled="handoff.pending.value"
-        @click="handoff.retry()"
-      >
-        核对原旁支带回 steer（不换键）
-      </Button>
     </div>
-    <details class="panel-drawer">
-      <summary>用量与上下文状态</summary>
-      <div class="drawer-stack">
+
+    <div
+      v-if="!delegated"
+      v-show="subview === 'btw'"
+      class="btw-view-wrap"
+    >
+      <CopilotBtw
+        :owner="owner"
+        :exercise-id="exerciseId"
+        :parent-conversation-id="conversationId ?? exerciseId"
+        :credential="credential"
+        :main-running="running"
+        :disabled="disabled || saving || start.pending.value || start.uncertain.value"
+        :handoff-disabled="handoff.pending.value || handoff.uncertain.value || (running && !canSteer)"
+        @unauthorized="emit('unauthorized')"
+        @bringback="bringBack"
+      />
+    </div>
+
+    <Dialog
+      v-if="!delegated"
+      v-model:open="usageModalOpen"
+      title="上下文与用量"
+      description="查看最近上下文占用，或在需要时执行压缩。"
+    >
+      <div class="modal-stack">
         <CopilotUsage
           :conversation-id="conversationId"
           :owner="owner"
@@ -573,148 +1106,318 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
           :exercise-id="exerciseId"
           :credential="credential"
           :disabled="disabled"
-          @busy="contextBusy = $event"
+          @busy="childContextBusy = $event"
           @unauthorized="emit('unauthorized')"
         />
       </div>
-    </details>
-    <CopilotProjectInstructions
-      :owner="owner"
-      :exercise-id="exerciseId"
-      :task-id="task?.id ?? null"
-      :running="running"
-      @unauthorized="emit('unauthorized')"
-    />
+    </Dialog>
+
+    <Dialog
+      v-if="!delegated"
+      v-model:open="instructionsModalOpen"
+      title="项目指令 (AGENTS.md)"
+    >
+      <CopilotProjectInstructions
+        :owner="owner"
+        :exercise-id="exerciseId"
+        :task-id="task?.id ?? null"
+        :running="running"
+        @unauthorized="emit('unauthorized')"
+      />
+    </Dialog>
+
+    <Dialog
+      v-if="!delegated"
+      v-model:open="feeConsentOpen"
+      title="确认调用付费模型"
+      description="Copilot 将调用您配置的模型接口并可能产生费用。确认后当前会话内免重复提示。"
+    >
+      <template #footer>
+        <Button
+          variant="ghost"
+          size="small"
+          @click="feeConsentOpen = false; pendingAction = null"
+        >
+          取消
+        </Button>
+        <Button
+          variant="primary"
+          size="small"
+          @click="confirmFeeConsent"
+        >
+          确认并发送
+        </Button>
+      </template>
+    </Dialog>
   </section>
 </template>
+
 <style scoped>
 .copilot-panel {
-  border-top: 1px solid var(--oc-border);
-  padding-top: 10px;
-  margin-top: 2px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 8px;
-}
-
-.copilot-head-row {
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--oc-bg-subtle);
+}
+
+.copilot-panel.is-delegated {
+  flex: none;
+  border: 1px solid var(--oc-border);
+  border-radius: 8px;
+  padding: 8px;
+  margin-top: 6px;
+}
+
+.main-chat-shell,
+.btw-view-wrap {
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.more-menu-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.more-trigger-btn {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+}
+
+.more-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 184px;
+  display: grid;
+  gap: 2px;
+}
+
+.more-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-}
-
-.copilot-head h2 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.copilot-rules-drawer {
-  font-size: 11.5px;
-  color: var(--oc-fg-muted);
-}
-
-.copilot-rules-drawer summary {
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--oc-fg);
+  font-size: 12px;
+  text-align: left;
   cursor: pointer;
 }
 
-.copilot-rules-drawer p {
-  margin: 4px 0 0;
-  line-height: 1.45;
+.more-item:hover {
+  background: var(--oc-selected);
 }
 
-.copilot-task-strip {
+.task-status-bar {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--oc-border);
+  background: rgba(255, 255, 255, 0.02);
   display: grid;
-  gap: 6px;
+  gap: 3px;
+  font-size: 12px;
 }
 
-.copilot-task-row {
+.status-pill-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
-.copilot-desc {
-  margin: 0;
-  font-size: 12px;
-  color: var(--oc-fg-muted);
-  line-height: 1.5;
-}
-
-.copilot-status {
-  margin: 0;
-  font-size: 12px;
-  color: var(--oc-accent);
-}
-
-.copilot-task-badge {
-  margin: 0;
-  padding: 4px 9px;
-  border-radius: var(--radius-control);
-  background: var(--oc-accent-soft);
-  border: 1px solid var(--oc-border-accent);
-  color: var(--oc-accent);
-  font-size: 11.5px;
+.status-label {
   font-weight: 550;
-  overflow-wrap: anywhere;
+  color: var(--oc-fg);
 }
 
-.copilot-alert {
-  margin: 0;
-  padding: 7px 10px;
-  border-radius: var(--radius-control);
-  background: var(--oc-danger-bg);
-  border: 1px solid var(--oc-danger-border);
+.status-conn {
+  font-size: 11px;
+  color: var(--oc-fg-dim);
+}
+
+.stop-task-btn {
+  margin-left: auto;
+  min-height: 22px;
+  padding: 1px 7px;
+  font-size: 11px;
   color: var(--oc-danger);
-  font-size: 12px;
 }
 
-.copilot-warn {
+.status-muted,
+.status-sub-muted {
   margin: 0;
-  padding: 7px 10px;
-  border-radius: var(--radius-control);
-  background: var(--oc-warning-bg);
-  border: 1px solid var(--oc-warning-border);
+  font-size: 11.5px;
+  color: var(--oc-fg-muted);
+}
+
+.status-sub-warn {
+  margin: 0;
+  font-size: 11.5px;
   color: var(--oc-warning);
-  font-size: 12px;
 }
 
-.messages {
-  max-height: 460px;
-  overflow: auto;
+.status-danger,
+.status-sub-danger {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--oc-danger);
+}
+
+.messages-viewport {
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-pager {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.quiet-pager-btn {
+  border: 0;
+  background: transparent;
+  color: var(--oc-fg-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.quiet-pager-btn:hover {
+  color: var(--oc-fg);
+}
+
+.empty-welcome {
+  margin: auto 0;
+  padding: 24px 12px;
   display: grid;
-  gap: 8px;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
 }
 
-.message-card {
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--oc-surface-2);
+.welcome-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--oc-surface);
   border: 1px solid var(--oc-border);
-  display: grid;
+  color: var(--oc-accent);
+}
+
+.welcome-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--oc-fg-muted);
+}
+
+.welcome-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 6px;
 }
 
-.message-card[data-kind="USER"] {
-  background: var(--oc-selected);
-  border-color: var(--oc-border-accent);
+.welcome-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-surface);
+  color: var(--oc-fg-muted);
+  font-size: 12px;
+  cursor: pointer;
 }
 
-.message-head {
+.welcome-chip:hover {
+  color: var(--oc-fg);
+  border-color: var(--oc-border-strong);
+  background: var(--oc-surface-2);
+}
+
+.stream-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-fg-dim);
+}
+
+.stream-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-danger);
+}
+
+.chat-msg {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.chat-msg[data-kind="USER"] {
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--oc-surface-2);
+}
+
+.chat-msg[data-kind="TOOL"] {
+  padding: 6px 10px;
+  border-left: 2px solid var(--oc-border-strong);
+}
+
+.chat-msg-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.message-head h3 {
-  margin: 0;
-  font-size: 12px;
+.chat-role {
+  font-size: 11px;
   font-weight: 600;
+  color: var(--oc-fg-dim);
+}
+
+.fork-inline-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  color: var(--oc-fg-dim);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms var(--oc-ease), color 120ms var(--oc-ease);
+}
+
+.chat-msg:hover .fork-inline-btn,
+.fork-inline-btn:focus-visible {
+  opacity: 1;
+}
+
+.fork-inline-btn:hover:not(:disabled) {
   color: var(--oc-fg);
 }
 
@@ -725,115 +1428,220 @@ const labels: Record<api.Task['state'], string> = { QUEUED: '已受理，等待�
 }
 
 .tool-call-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.04);
   font-size: 11.5px;
-}
-
-.tool-call-chip code {
-  color: var(--oc-accent);
-  font-size: 11.5px;
+  color: var(--oc-fg-muted);
 }
 
 .partial-preview {
-  padding: 10px;
+  padding: 8px 10px;
   border-radius: 8px;
-  background: var(--oc-surface-2);
-  border: 1px dashed var(--oc-border-accent);
+  background: rgba(110, 231, 183, 0.04);
+  border: 1px solid rgba(110, 231, 183, 0.2);
   display: grid;
   gap: 6px;
 }
 
-.partial-preview h3 {
+.preview-badge {
+  font-size: 11px;
+  color: var(--oc-accent);
+}
+
+.preview-trunc-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 11px;
+  color: var(--oc-fg-dim);
 }
 
-.partial-preview p {
-  margin: 0;
-  font-size: 12px;
-  color: var(--oc-fg-muted);
+.composer-dock {
+  flex-shrink: 0;
+  position: relative;
+  padding: 6px 10px 10px;
+  display: grid;
+  gap: 6px;
 }
 
-.copilot-pagination {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.copilot-composer {
-  padding: 10px 12px;
-  border-radius: var(--radius-panel);
-  background: var(--oc-surface-2);
-  border: 1px solid var(--oc-border-strong);
+.floating-popover {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 100%;
+  margin-bottom: 6px;
+  max-height: min(360px, 55dvh);
+  overflow-y: auto;
   display: grid;
   gap: 8px;
 }
 
-.composer-bar {
+.slash-shortcuts {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--oc-border);
+}
+
+.slash-cmd-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--oc-fg);
+  font-size: 12px;
+  cursor: pointer;
 }
 
-.fee-checkbox {
+.slash-cmd-row:hover {
+  background: var(--oc-selected);
+}
+
+.slash-cmd-row span {
+  color: var(--oc-fg-muted);
+  font-size: 11.5px;
+}
+
+.composer-alerts {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.alert-danger {
+  margin: 0;
+  color: var(--oc-danger);
+}
+
+.alert-status {
+  margin: 0;
+  color: var(--oc-fg-muted);
+}
+
+.alert-warn-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-weight: 500;
-  font-size: 12px;
-  color: var(--oc-fg-muted);
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--oc-warning);
 }
 
-.composer-drawers {
+.composer-capsule {
+  padding: 6px 8px;
   display: grid;
-  gap: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--oc-border);
+  gap: 4px;
 }
 
-.panel-drawer {
-  padding: 7px 10px;
-  border-radius: var(--radius-control);
-  background: var(--oc-bg-subtle);
-  border: 1px solid var(--oc-border);
-  font-size: 12px;
-  color: var(--oc-fg-muted);
+.composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding-bottom: 4px;
 }
 
-.panel-drawer summary {
+.ctx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 190px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--oc-fg);
+  font-size: 11.5px;
+}
+
+.ctx-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-remove {
+  border: 0;
+  background: transparent;
+  color: var(--oc-fg-dim);
+  padding: 0;
+  display: grid;
+  place-items: center;
   cursor: pointer;
-  font-weight: 550;
+}
+
+.chip-remove:hover {
   color: var(--oc-fg);
 }
 
-.drawer-stack {
-  margin-top: 8px;
-  display: grid;
-  gap: 10px;
+.ref-quota {
+  font-size: 11px;
+  color: var(--oc-fg-dim);
+  margin-left: auto;
 }
 
 .sr-only {
   position: absolute;
   width: 1px;
   height: 1px;
-  padding: 0;
-  margin: -1px;
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
-  border: 0;
 }
 
-pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font: inherit;
-}
-
-textarea {
+.composer-textarea {
   width: 100%;
-  padding: 8px 10px;
-  font-size: 12.5px;
-  resize: vertical;
+  min-height: 44px;
+  max-height: 140px;
+  padding: 2px 4px;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--oc-fg);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  box-shadow: none !important;
+}
+
+.composer-textarea:focus {
+  outline: none;
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.toolbar-left,
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool-icon-btn {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  color: var(--oc-fg-muted);
+}
+
+.send-circle-btn {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.modal-stack {
+  display: grid;
+  gap: 14px;
 }
 </style>

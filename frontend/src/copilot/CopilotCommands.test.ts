@@ -39,7 +39,6 @@ afterEach(() => { view?.unmount(); client?.clear(); view = undefined; client = u
 it('reads a concrete ASK proposal without approving it and sends an explicit rejection', async () => {
   const page = panel(); await flushPromises();
   expect(page.text()).toContain('/project/. $ echo hello; exit 7');
-  expect(page.text()).toContain('批准不代表预先批准未知文件 Diff');
   expect(api.decide).not.toHaveBeenCalled(); expect(execution.start).not.toHaveBeenCalled();
   vi.mocked(api.decide).mockResolvedValue({ ...proposal, state: 'RESOLVED', decision: 'REJECT', reason: 'different approach', decidedAt: parent.createdAt,
     completedAt: parent.createdAt, result: { code: 'COMMAND_REJECTED', reason: 'different approach', result: null, logTruncated: false, omittedLogBytes: '0' } });
@@ -55,17 +54,17 @@ it('keeps the original decision intent across credential rotation and ignores an
   await button(page, '批准此命令').trigger('click'); await flushPromises();
   expect(button(page, '批准此命令').attributes('disabled')).toBeDefined();
   await page.setProps({ credential: 'rotated' });
-  await button(page, '核对原命令决定（不会批准其他历史项）').trigger('click'); await flushPromises();
+  await button(page, '核对原命令决定').trigger('click'); await flushPromises();
   const calls = vi.mocked(api.decide).mock.calls;
   expect(calls).toHaveLength(2); expect(calls[1]!.slice(0, 6)).toEqual(calls[0]!.slice(0, 6)); expect(calls[1]![6]).toBe('rotated');
   expect(button(page, '批准此命令')).toBeUndefined();
-  expect(page.text()).toContain('等待所属命令与文件变化收敛');
+  expect(page.text()).toContain('等待命令与文件同步收敛');
 });
 
 it('shows AUTO as server admission rather than a client-triggered approval', async () => {
   vi.mocked(api.detail).mockResolvedValue({ ...proposal, mode: 'AUTO', modeVersion: '2' });
   const page = panel(); await flushPromises();
-  expect(page.text()).toContain('正在按登记的 AUTO 模式核对准入');
+  expect(page.text()).toContain('按 AUTO 模式核对准入中');
   expect(button(page, '批准此命令')).toBeUndefined();
   await vi.advanceTimersByTimeAsync(2200); await flushPromises();
   expect(api.decide).not.toHaveBeenCalled(); expect(execution.start).not.toHaveBeenCalled();
