@@ -19,6 +19,17 @@ import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import ai.codecraft.modules.copilot.model.dto.ToolOutcome;
+import ai.codecraft.modules.copilot.model.entity.CopilotTaskEntity;
+import ai.codecraft.modules.copilot.model.entity.CopilotToolEntity;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import org.springframework.stereotype.Service;
 
 /** Application-owned loop. Suspended batches resume their durable position, never regenerate their model response. */
@@ -88,7 +99,27 @@ public class CopilotRunner {
                     if (current.stopRequested()) { store.finish(id, worker, "STOPPED", "USER_STOP"); return; }
                     if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Copilot worker interrupted");
                     if (store.steerAtBoundary(id, worker)) continue loop;
-                    var request = assistant.toolExecutionRequests().get(position);
+                    var requests = assistant.toolExecutionRequests();
+                    int end = position;
+                    while (end < requests.size() && end < position + 4) {
+                        var entry = CopilotToolCatalog.find(requests.get(end).name());
+                        if (entry == null || !entry.rereadable()) break;
+                        end++;
+                    }
+                    if (end > position + 1) {
+                        var window = requests.subList(position, end);
+                        var admitted = capacity.admit(current.sessionHash(), current.exerciseId(), measurement -> store.beginReadTools(id, worker, batch.id(), window, measurement));
+                        if (admitted.isEmpty()) {
+                            if (store.steerAtBoundary(id, worker)) continue loop;
+                            var stopped = store.current(id, worker);
+                            if (stopped != null && stopped.stopRequested()) store.finish(id, worker, "STOPPED", "USER_STOP");
+                            return;
+                        }
+                        if (!executeReads(current, worker, admitted, requests)) return;
+                        position = end - 1;
+                        continue;
+                    }
+                    var request = requests.get(position);
                     var tool = capacity.admit(current.sessionHash(), current.exerciseId(), measurement -> store.beginTool(id, worker, batch.id(), request, measurement));
                     if (tool == null) {
                         if (store.steerAtBoundary(id, worker)) continue loop;
@@ -114,6 +145,41 @@ public class CopilotRunner {
                 "STORAGE_BUDGET_EXCEEDED", "STORAGE_METER_UNAVAILABLE", CopilotErrorCode.COPILOT_CONTEXT_REQUIRED.code()).contains(code);
             store.finish(id, worker, paused ? "PAUSED" : "FAILED", code);
         } catch (JsonProcessingException invalid) { store.finish(id, worker, "FAILED", "TOOL_RESULT_ENCODING_FAILED"); }
+    }
+
+    private boolean executeReads(CopilotTaskEntity task, String worker, List<CopilotToolEntity> admitted, List<ToolExecutionRequest> requests)
+        throws InterruptedException, JsonProcessingException {
+        var futures = new ArrayList<Future<ToolOutcome>>();
+        // One admitted window is a safe-point unit: steer is applied after it drains, before any subsequent tool.
+        try (var executor = Executors.newFixedThreadPool(4, Thread.ofVirtual().name("copilot-read-", 0).factory())) {
+            try {
+                for (var tool : admitted) futures.add(executor.submit(() -> tools.execute(task, worker, tool)));
+                for (int index = 0; index < admitted.size(); index++) {
+                    ToolOutcome outcome;
+                    while (true) {
+                        if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Copilot read window interrupted");
+                        var current = store.current(task.id(), worker);
+                        if (current == null) return false;
+                        if (current.stopRequested()) { store.finish(task.id(), worker, "STOPPED", "USER_STOP"); return false; }
+                        try { outcome = futures.get(index).get(100, TimeUnit.MILLISECONDS); break; }
+                        catch (TimeoutException pending) { /* Poll ownership and stop even when the first result is slow. */ }
+                    }
+                    if (outcome.waiting()) throw new IllegalStateException("Read-only tool suspended");
+                    var tool = admitted.get(index);
+                    if (!store.completeTool(task.id(), worker, tool, ChatMessageSerializer.messageToJson(
+                        ToolExecutionResultMessage.from(requests.get(tool.position()), outcome.body())), tool.position() + 1 == requests.size())) return false;
+                }
+                return true;
+            } catch (ExecutionException failure) {
+                if (failure.getCause() instanceof InterruptedException interrupted) throw interrupted;
+                if (failure.getCause() instanceof JsonProcessingException invalid) throw invalid;
+                if (failure.getCause() instanceof RuntimeException runtime) throw runtime;
+                throw new IllegalStateException("Read tool failed", failure.getCause());
+            } finally {
+                for (var future : futures) future.cancel(true);
+                executor.shutdownNow();
+            }
+        }
     }
 
     private void interrupted(String id, String worker) {

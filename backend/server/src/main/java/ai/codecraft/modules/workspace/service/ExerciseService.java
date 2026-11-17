@@ -15,6 +15,8 @@ import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
 import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import ai.codecraft.workspace.v1.ReadWorkspaceFileResponse;
+import ai.codecraft.workspace.v1.GrepWorkspaceRequest;
+import ai.codecraft.modules.workspace.model.dto.WorkspaceGrepResponse;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.grpc.StatusRuntimeException;
@@ -125,6 +127,34 @@ public class ExerciseService {
                 throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE);
             }
             return new WorkspaceFileResponse(result.getWorkspaceInstanceId(), Long.toString(result.getRevision()), path, result.getContent());
+        } catch (StatusRuntimeException error) {
+            WorkspaceErrorCode code = switch (error.getStatus().getCode()) {
+                case NOT_FOUND -> WorkspaceErrorCode.RESOURCE_NOT_FOUND;
+                case INVALID_ARGUMENT -> WorkspaceErrorCode.INVALID_REQUEST;
+                case ABORTED -> WorkspaceErrorCode.REVISION_CONFLICT;
+                default -> WorkspaceErrorCode.WORKSPACE_UNAVAILABLE;
+            };
+            throw new BusinessException(code, error);
+        }
+    }
+
+    /** One sandbox RPC, with authorization checked again after the potentially slow scan. */
+    public WorkspaceGrepResponse grep(String session, String exerciseId, String pattern, String prefix, boolean regex, int context, int limit) {
+        var exercise = store.find(session, exerciseId);
+        if (exercise.revision() == null) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
+        try {
+            var result = sandbox.grep(GrepWorkspaceRequest.newBuilder().setWorkspaceInstanceId(exercise.workspaceInstanceId())
+                .setExpectedRevision(exercise.revision()).setPattern(pattern).setPathPrefix(prefix).setIsRegex(regex)
+                .setContextLines(context).setLimit(limit).build());
+            var current = store.find(session, exerciseId);
+            if (!current.workspaceInstanceId().equals(exercise.workspaceInstanceId()) || !exercise.revision().equals(current.revision())) {
+                throw new BusinessException(WorkspaceErrorCode.REVISION_CONFLICT);
+            }
+            if (!result.getWorkspaceInstanceId().equals(exercise.workspaceInstanceId()) || result.getRevision() != exercise.revision()
+                || result.getLinesCount() > 201 || result.getLinesList().stream().mapToInt(line -> line.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1).sum() > 65536) {
+                throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE);
+            }
+            return new WorkspaceGrepResponse(Long.toString(result.getRevision()), result.getLinesList(), result.getTruncated());
         } catch (StatusRuntimeException error) {
             WorkspaceErrorCode code = switch (error.getStatus().getCode()) {
                 case NOT_FOUND -> WorkspaceErrorCode.RESOURCE_NOT_FOUND;

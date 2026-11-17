@@ -25,8 +25,8 @@ public final class CopilotToolCatalog {
             .parameters(JsonObjectSchema.builder().addStringProperty("pattern").addStringProperty("path_prefix")
                 .addBooleanProperty("is_regex").addBooleanProperty("literal").addIntegerProperty("context_lines")
                 .addIntegerProperty("limit").required("pattern").additionalProperties(false).build()).build(),
-        ToolSpecification.builder().name("edit").description("Propose an atomic batch of exact unique non-overlapping replacements. ASK/AUTO applies; revision is maintained by the server.")
-            .parameters(JsonObjectSchema.builder().addStringProperty("expected_revision")
+        ToolSpecification.builder().name("edit").description("Propose atomic unique non-overlapping replacements. Exact match first; whole-line indentation/trailing whitespace differences are tolerated only for a unique match. ASK/AUTO applies; revision is maintained by the server.")
+            .parameters(JsonObjectSchema.builder()
                 .addProperty("files", JsonArraySchema.builder().items(JsonObjectSchema.builder()
                     .addStringProperty("path").addEnumProperty("action", List.of("EDIT", "CREATE", "DELETE"))
                     .addStringProperty("content").addProperty("edits", JsonArraySchema.builder().items(JsonObjectSchema.builder()
@@ -34,7 +34,7 @@ public final class CopilotToolCatalog {
                     .required("path", "action").additionalProperties(false).build()).build())
                 .required("files").additionalProperties(false).build()).build(),
         ToolSpecification.builder().name("write").description("Propose creating or replacing one complete file through ASK/AUTO approval.")
-            .parameters(JsonObjectSchema.builder().addStringProperty("path").addStringProperty("content").addStringProperty("expected_revision")
+            .parameters(JsonObjectSchema.builder().addStringProperty("path").addStringProperty("content")
                 .required("path", "content").additionalProperties(false).build()).build(),
         ToolSpecification.builder().name("propose_changes").description("Propose one atomic batch against the saved workspace revision. Uses ASK/AUTO approval before writing. Up to 32 files and 192 KiB of arguments; never edit protected files. Rejection is not permission to resubmit unchanged content.")
             .parameters(JsonObjectSchema.builder().addStringProperty("expected_revision", "Exact saved revision as a decimal string")
@@ -45,10 +45,10 @@ public final class CopilotToolCatalog {
                     .required("path", "kind").additionalProperties(false).build()).build())
                 .required("expected_revision", "changes").additionalProperties(false).build()).build(),
         ToolSpecification.builder().name("run_tests").description("Run published tests on a stable copy of the exact saved revision. Use base for the base stage; challenge is available only after explicit challenge entry and includes base regression. No shell or custom command. Wait for the confirmed result; failures are normal tool results. The same goal/revision/target reuses its previous confirmed result; a busy slot does not queue a test.")
-            .parameters(JsonObjectSchema.builder().addStringProperty("expected_revision", "Exact saved revision as a decimal string")
+            .parameters(JsonObjectSchema.builder()
                 .addEnumProperty("target", List.of("base", "challenge")).required("target").additionalProperties(false).build()).build(),
         ToolSpecification.builder().name("bash").description("Propose a Docker-only development command on the exact saved revision. ASK waits for command approval; AUTO uses the recorded mode. Network and dependency downloads are allowed within sandbox limits. Approval does not preapprove unknown file changes: inspect synchronization and exit results. Nonzero exit is normal; output never proves authority tests passed. Busy does not queue work; do not repeat rejected commands or replay uncertain execution.")
-            .parameters(JsonObjectSchema.builder().addStringProperty("expected_revision", "Exact saved revision as a decimal string")
+            .parameters(JsonObjectSchema.builder()
                 .addStringProperty("command", "Exact Bash text, at most 4096 UTF-8 bytes")
                 .addStringProperty("directory", "Canonical project-relative working directory; use . for project root")
                 .required("command", "directory").additionalProperties(false).build()).build(),

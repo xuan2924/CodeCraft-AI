@@ -10,7 +10,7 @@
 准备上下文（系统指令 + Skill 目录 + 历史消息 + planningRevision）
   → 调用模型（流式推送 copilot_preview，每 ≥2s 落盘检查点）
   ├─ 无工具调用 → 输出最终回答，任务结束
-  └─ 工具调用批次（按模型返回顺序串行执行）
+  └─ 工具调用批次（连续只读窗口最多 4 路并行，其余串行；结果按原始 position 落盘）
        ├─ 检查点：停止？steer？演练暂停/到期？
        ├─ 只读/搜索/受控测试 → 直接执行并回填结果
        ├─ edit / write / bash（ASK 模式）→ 持久化提案，释放 Worker 等待人工审批
@@ -24,9 +24,12 @@
 - **静态统一目录**：`CopilotToolCatalog` 集中声明每个工具的 schema、通道白名单（`MAIN / CHILD / BTW`）、参数限额与空间预留，替代早期散落各处的硬编码判断；用 `ToolOutcome(Suspended / Completed(outcomeCode))` 区分挂起等待与业务结果。
 - **核心工具**：
   - `read`：单次最多 200 行 / 64 KiB，超限自动分页并提示续读位置；**只有 `read` 真实返回 `OK` 时，才按需加载对应目录的只读 `AGENTS.md`**。
-  - `grep` / `find`：采用无回溯正则子集防 ReDoS，结果带上下行和截断提示。
-  - `edit` / `write`：`edit` 使用 `oldText -> newText` 局部精确替换（LF 归一化匹配并保留原 CRLF），模型不再手填 `expected_revision`；若外部手动保存推进了版本，服务端对比任务私有的 `planningRevision` 直接返回 `REVISION_CONFLICT`，迫使模型先重读再改。
+  - `grep`：Java 完成授权后以当前修订发起单次 `GrepWorkspace` RPC；Go 校验 `commit-*` 树后扫描，保留字面量/无回溯正则子集、路径前缀、上下文、200 行与 64 KiB 上限，返回前重验修订；Java 返回前再次核对授权与修订。`find` 继续匹配已发布路径。
+  - `edit` / `write`：`edit` 优先精确替换；仅在未命中时尝试整行首尾空格/Tab 归一化后的唯一匹配，仍拒绝多处或重叠匹配，保留 CRLF。失败返回总行数和有界的建议重读行号，不回显整份源码。
+  - `edit` / `write` / `run_tests` / `bash` 的模型 schema 不暴露 `expected_revision`，服务端注入任务私有 `planningRevision`；旧格式显式传入的版本不匹配仍返回 `REVISION_CONFLICT`，外部保存不会被自动覆盖。
   - `run_tests` / `bash` / `load_skill` / `read_source` / `read_evidence` / `delegate_task` / `web_search` / `web_read`（并保留历史工具名兼容）。
+
+连续只读工具（含历史别名、Skill、证据与 Web 读取）以最多 4 个为一个安全点窗口：短事务一次登记各自存储预留与 `RUNNING` 标记，事务外并发 IO，按 `position` 顺序逐一提交结果并推进游标。`steer` 在已登记窗口排空后、下一工具之前生效；等待期间轮询归属与停止，停止/中断取消未结束任务并沿用现有批次配对补齐及预留结算。已登记未完成的工具不自动重放（Web 调用可能计费）；写入、测试、命令和委派不进入并行窗口。
 
 ### 2. 审批策略（`ASK` vs `AUTO`）
 

@@ -32,6 +32,8 @@ import ai.codecraft.workspace.v1.PrepareWorkspaceRequest;
 import ai.codecraft.workspace.v1.ProblemIdentity;
 import ai.codecraft.workspace.v1.QueryWorkspaceRequest;
 import ai.codecraft.workspace.v1.ReadWorkspaceFileRequest;
+import ai.codecraft.workspace.v1.GrepWorkspaceRequest;
+import ai.codecraft.workspace.v1.GrepWorkspaceResponse;
 import ai.codecraft.workspace.v1.ReadWorkspaceFileResponse;
 import ai.codecraft.workspace.v1.WorkspaceSnapshot;
 import ai.codecraft.workspace.v1.WorkspaceDeletionReceipt;
@@ -291,6 +293,10 @@ public class SandboxWorkspaceGateway {
     public ReadWorkspaceFileResponse read(String instance, String path, long revision) {
         return client().readWorkspaceFile(ReadWorkspaceFileRequest.newBuilder().setWorkspaceInstanceId(instance)
             .setPath(path).setExpectedRevision(revision).build());
+    }
+
+    public GrepWorkspaceResponse grep(GrepWorkspaceRequest request) {
+        return client().grepWorkspace(request);
     }
 
     private WorkspaceStorageGrpc.WorkspaceStorageBlockingStub client() {

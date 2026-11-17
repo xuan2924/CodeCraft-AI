@@ -40,6 +40,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.Set;
 import ai.codecraft.modules.skills.service.SkillSnapshots;
 import org.springframework.stereotype.Service;
@@ -248,22 +250,44 @@ public class CopilotExecutionStore {
 
     @Transactional
     public CopilotToolEntity beginTool(String id, String worker, String turnId, ToolExecutionRequest request, StorageMeasurement measurement) {
+        var admitted = beginTools(id, worker, turnId, List.of(request), measurement);
+        return admitted.isEmpty() ? null : admitted.getFirst();
+    }
+
+    /** Admit a bounded contiguous read window atomically; the durable cursor advances only on ordered completion. */
+    @Transactional
+    public List<CopilotToolEntity> beginReadTools(String id, String worker, String turnId, List<ToolExecutionRequest> requests, StorageMeasurement measurement) {
+        if (requests.isEmpty() || requests.size() > 4 || requests.stream().anyMatch(request -> {
+            var entry = CopilotToolCatalog.find(request.name());
+            return entry == null || !entry.rereadable();
+        })) throw new IllegalArgumentException("Not a bounded read window");
+        return beginTools(id, worker, turnId, requests, measurement);
+    }
+
+    private List<CopilotToolEntity> beginTools(String id, String worker, String turnId, List<ToolExecutionRequest> requests, StorageMeasurement measurement) {
         var task = owned(id, worker);
-        if (task == null || task.stopRequested() || steers.unstaged(id)) return null;
+        if (task == null || task.stopRequested() || steers.unstaged(id)) return List.of();
         var turn = tasks.latestTurn(id);
-        if (turn == null || !turn.id().equals(turnId) || !"TOOLS".equals(turn.state())) return null;
+        if (turn == null || !turn.id().equals(turnId) || !"TOOLS".equals(turn.state())) return List.of();
         var assistant = (AiMessage) ChatMessageDeserializer.messageFromJson(tasks.messageById(turn.assistantMessageId()).payload());
-        if (!assistant.toolExecutionRequests().get(turn.toolPosition()).equals(request)) throw new IllegalStateException("Tool no longer matches its durable batch");
-        if (tasks.toolAt(turnId, turn.toolPosition()) != null) return null;
-        String operation = UUID.randomUUID().toString();
-        var definition = CopilotToolCatalog.find(request.name());
-        operations.reserve(task.sessionHash(), task.exerciseId(), operation, definition == null ? "COPILOT_READ" : definition.opKind(), measurement,
-            definition == null ? 512 * 1024 : definition.preparationCredit());
-        var tool = new CopilotToolEntity(operation, turnId, id, task.exerciseId(), turn.toolPosition(), request.id(), request.name(), request.arguments(), "RUNNING", null, clock.instant(), null);
-        tasks.tool(tool);
+        int start = turn.toolPosition();
+        if (start + requests.size() > assistant.toolExecutionRequests().size()
+            || !assistant.toolExecutionRequests().subList(start, start + requests.size()).equals(requests)) throw new IllegalStateException("Read window changed");
+        for (int offset = 0; offset < requests.size(); offset++) if (tasks.toolAt(turnId, start + offset) != null) return List.of();
+        var result = new ArrayList<CopilotToolEntity>();
+        for (int offset = 0; offset < requests.size(); offset++) {
+            var request = requests.get(offset);
+            var definition = CopilotToolCatalog.find(request.name());
+            String operation = UUID.randomUUID().toString();
+            operations.reserve(task.sessionHash(), task.exerciseId(), operation, definition == null ? "COPILOT_READ" : definition.opKind(), measurement,
+                definition == null ? 512 * 1024 : definition.preparationCredit());
+            var tool = new CopilotToolEntity(operation, turnId, id, task.exerciseId(), start + offset, request.id(), request.name(), request.arguments(), "RUNNING", null, clock.instant(), null);
+            tasks.tool(tool);
+            result.add(tool);
+        }
         signals.changed(id);
         tasks.renew(id, worker, clock.instant().plus(limits.workerLease()));
-        return tool;
+        return List.copyOf(result);
     }
 
     @Transactional

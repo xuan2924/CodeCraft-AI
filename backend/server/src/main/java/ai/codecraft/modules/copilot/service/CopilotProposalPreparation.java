@@ -18,6 +18,8 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Set;
+import java.util.Arrays;
+import java.util.stream.Collectors;
 import ai.codecraft.modules.copilot.model.dto.CopilotTextReplacementDTO;
 import java.util.Comparator;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -91,9 +93,14 @@ public class CopilotProposalPreparation {
             String replacement = text(edit, "newText").replace("\r\n", "\n");
             if (old.isEmpty()) throw new CopilotEditException("EDIT_EMPTY_MATCH", path, lineCount);
             int index = source.indexOf(old);
-            if (index < 0) throw new CopilotEditException("EDIT_MATCH_NOT_FOUND", path, lineCount);
-            if (source.indexOf(old, index + 1) >= 0) throw new CopilotEditException("EDIT_AMBIGUOUS_MATCH", path, lineCount);
-            replacements.add(new CopilotTextReplacementDTO(index, index + old.length(), replacement));
+            int matchEnd = index + old.length();
+            if (index >= 0) {
+                if (source.indexOf(old, index + 1) >= 0) throw new CopilotEditException("EDIT_AMBIGUOUS_MATCH", path, lineCount);
+            } else {
+                var match = whitespaceMatch(path, source, old, lineCount);
+                index = match[0]; matchEnd = match[1];
+            }
+            replacements.add(new CopilotTextReplacementDTO(index, matchEnd, replacement));
         }
         replacements.sort(Comparator.comparingInt(CopilotTextReplacementDTO::start));
         int end = 0;
@@ -106,6 +113,61 @@ public class CopilotProposalPreparation {
         }
         output.append(source, end, source.length());
         return original.contains("\r\n") ? output.toString().replace("\n", "\r\n") : output.toString();
+    }
+
+    private static int[] whitespaceMatch(String path, String source, String old, int lineCount) {
+        // Literal search over normalized whole lines, mapped back to original offsets; no model-authored regex.
+        String[] lines = source.split("\n", -1);
+        int[] originalStarts = new int[lines.length];
+        int[] normalizedStarts = new int[lines.length];
+        var normalized = new StringBuilder();
+        int offset = 0;
+        for (int row = 0; row < lines.length; row++) {
+            originalStarts[row] = offset;
+            normalizedStarts[row] = normalized.length();
+            normalized.append(trimHorizontal(lines[row]));
+            if (row + 1 < lines.length) normalized.append('\n');
+            offset += lines[row].length() + 1;
+        }
+        String wanted = Arrays.stream(old.split("\n", -1)).map(CopilotProposalPreparation::trimHorizontal).collect(Collectors.joining("\n"));
+        int found = -1;
+        if (!wanted.isBlank()) {
+            for (int candidate = normalized.indexOf(wanted); candidate >= 0; candidate = normalized.indexOf(wanted, candidate + 1)) {
+                int end = candidate + wanted.length();
+                if ((candidate > 0 && normalized.charAt(candidate - 1) != '\n')
+                    || (end < normalized.length() && !wanted.endsWith("\n") && normalized.charAt(end) != '\n')) continue;
+                if (found >= 0) throw new CopilotEditException("EDIT_AMBIGUOUS_MATCH", path, lineCount);
+                found = candidate;
+            }
+        }
+        if (found < 0) throw new CopilotEditException("EDIT_MATCH_NOT_FOUND", path, lineCount, closestLine(source, old));
+        int firstRow = Arrays.binarySearch(normalizedStarts, found);
+        int lastRow = firstRow + old.split("\n", -1).length - 1;
+        int end = old.endsWith("\n") ? originalStarts[lastRow] : originalStarts[lastRow] + lines[lastRow].length();
+        return new int[] {originalStarts[firstRow], end};
+    }
+
+    private static String trimHorizontal(String value) {
+        int first = 0;
+        int last = value.length();
+        while (first < last && (value.charAt(first) == ' ' || value.charAt(first) == '\t')) first++;
+        while (last > first && (value.charAt(last - 1) == ' ' || value.charAt(last - 1) == '\t')) last--;
+        return value.substring(first, last);
+    }
+
+    private static int closestLine(String source, String old) {
+        String wanted = old.lines().filter(line -> !line.isBlank()).findFirst().orElse("").strip();
+        int bestLine = 1;
+        int bestScore = 0;
+        String[] lines = source.split("\n", -1);
+        for (int index = 0; index < lines.length; index++) {
+            String candidate = lines[index].strip();
+            int score = 0;
+            int bound = Math.min(256, Math.min(candidate.length(), wanted.length()));
+            while (score < bound && candidate.charAt(score) == wanted.charAt(score)) score++;
+            if (score > bestScore) { bestScore = score; bestLine = index + 1; }
+        }
+        return bestLine;
     }
 
     private static void fields(JsonNode value, Set<String> allowed) {

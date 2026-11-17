@@ -88,48 +88,32 @@ public class CopilotReadTools {
         if (context < 0 || context > 10 || limit < 1 || limit > MAX_LINES) return failure("INVALID_ARGUMENTS");
         boolean regex = value.path("is_regex").asBoolean(false);
         if (regex && value.path("literal").asBoolean(false)) return failure("INVALID_ARGUMENTS");
-        Pattern expression = null;
         if (regex) {
             // Deliberately restricted Java regex subset: no groups, alternation, backreferences or repeated quantifiers.
             if (pattern.chars().anyMatch(c -> "(){}|".indexOf(c) >= 0) || pattern.contains("\\") || pattern.chars().filter(c -> c == '*' || c == '+' || c == '?').count() > 1
                 || !pattern.startsWith("^") && pattern.chars().anyMatch(c -> c == '*' || c == '+' || c == '?')) return failure("INVALID_ARGUMENTS");
-            try { expression = Pattern.compile(pattern); }
+            try { Pattern.compile(pattern); }
             catch (PatternSyntaxException invalid) { return failure("INVALID_ARGUMENTS"); }
         }
         if (glob && (!pattern.matches("[A-Za-z0-9_./*?-]+") || pattern.startsWith("/")
             || List.of(pattern.split("/")).stream().anyMatch(part -> part.equals("..") || part.equals(".")))) return failure("INVALID_ARGUMENTS");
+        if (!glob) {
+            if (Thread.currentThread().isInterrupted()) return failure("CANCELLED");
+            var result = exercises.grep(session, exercise, pattern, prefix, regex, context, limit);
+            return new ReadToolResultDTO("OK", result.revision(), result.lines(), result.truncated());
+        }
         ExerciseResponse snapshot = exercises.find(session, exercise);
         var result = new ArrayList<String>();
         int bytes = 0;
         var matcher = new AntPathMatcher();
         matcher.setCachePatterns(false);
-        int matches = 0;
         for (String path : snapshot.paths().stream().sorted().toList()) {
             if (!path.startsWith(prefix)) continue;
             if (Thread.currentThread().isInterrupted()) return failure("CANCELLED");
-            if (glob) {
-                if (!matcher.match(pattern, path)) continue;
-                int size = path.getBytes(StandardCharsets.UTF_8).length;
-                if (result.size() >= MAX_LINES || size > MAX_RESULT_BYTES - 160 - bytes) return truncated(snapshot.revision(), result);
-                result.add(path); bytes += size;
-            } else {
-                var file = exercises.read(session, exercise, path);
-                if (!file.revision().equals(snapshot.revision()) || !file.workspaceInstanceId().equals(snapshot.workspaceInstanceId())) return failure("REVISION_CONFLICT");
-                String[] lines = file.content().split("\\n", -1);
-                int emittedThrough = -1;
-                for (int index = 0; index < lines.length; index++) {
-                    if (Thread.currentThread().isInterrupted()) return failure("CANCELLED");
-                    if (regex && lines[index].length() > 65536) return truncated(snapshot.revision(), result);
-                    if (!(regex ? expression.matcher(lines[index]).find() : lines[index].contains(pattern))) continue;
-                    if (++matches > limit) return truncated(snapshot.revision(), result);
-                    for (int rowIndex = Math.max(emittedThrough + 1, index - context); rowIndex <= Math.min(lines.length - 1, index + context); rowIndex++) {
-                        String row = path + ":" + (rowIndex + 1) + ": " + lines[rowIndex];
-                        int size = row.getBytes(StandardCharsets.UTF_8).length + 1;
-                        if (result.size() >= MAX_LINES || size > MAX_RESULT_BYTES - 160 - bytes) return truncated(snapshot.revision(), result);
-                        result.add(row); bytes += size; emittedThrough = rowIndex;
-                    }
-                }
-            }
+            if (!matcher.match(pattern, path)) continue;
+            int size = path.getBytes(StandardCharsets.UTF_8).length;
+            if (result.size() >= MAX_LINES || size > MAX_RESULT_BYTES - 160 - bytes) return truncated(snapshot.revision(), result);
+            result.add(path); bytes += size;
         }
         return new ReadToolResultDTO("OK", snapshot.revision(), result, false);
     }

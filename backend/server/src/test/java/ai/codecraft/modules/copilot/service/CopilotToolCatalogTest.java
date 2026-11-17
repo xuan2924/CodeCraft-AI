@@ -19,7 +19,9 @@ class CopilotToolCatalogTest {
         assertThat(CopilotToolCatalog.find("edit").preparationCredit()).isEqualTo(CopilotProposalPreparation.PREPARATION_CREDIT);
         assertThatThrownBy(() -> CopilotToolCatalog.find("read").lanes().add("OTHER")).isInstanceOf(UnsupportedOperationException.class);
         for (String tool : new String[] {"edit", "write", "run_tests", "bash"}) {
-            assertThat(((JsonObjectSchema) CopilotToolCatalog.find(tool).schema().parameters()).required()).doesNotContain("expected_revision");
+            var schema = (JsonObjectSchema) CopilotToolCatalog.find(tool).schema().parameters();
+            assertThat(schema.required()).doesNotContain("expected_revision");
+            assertThat(schema.properties()).doesNotContainKey("expected_revision");
         }
     }
 

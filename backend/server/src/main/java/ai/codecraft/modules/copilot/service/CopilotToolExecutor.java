@@ -57,7 +57,7 @@ public class CopilotToolExecutor {
         } catch (JsonProcessingException malformed) {
             return new ToolOutcome.Completed(ToolOutcome.Code.INVALID_ARGUMENTS, "{\"code\":\"INVALID_ARGUMENTS\"}");
         } catch (CopilotEditException mismatch) {
-            return new ToolOutcome.Completed(ToolOutcome.Code.INVALID_ARGUMENTS, json.writeValueAsString(Map.of("code", mismatch.code(), "path", mismatch.path(), "lineCount", mismatch.lineCount())));
+            return new ToolOutcome.Completed(ToolOutcome.Code.INVALID_ARGUMENTS, json.writeValueAsString(Map.of("code", mismatch.code(), "path", mismatch.path(), "lineCount", mismatch.lineCount(), "suggestedLine", mismatch.suggestedLine())));
         }
         return result.waiting() ? new ToolOutcome.Suspended() : new ToolOutcome.Completed(ToolOutcome.classify(json.readTree(result.body())), result.body());
     }

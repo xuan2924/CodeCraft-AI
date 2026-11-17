@@ -18,6 +18,7 @@ service WorkspaceStorage {
   // Scope is monotonic at the durable meter; delayed subset requests never forget old owners.
   rpc MeasureExerciseStorage(MeasureExerciseStorageRequest) returns (StorageMeasurement);
   rpc ReadWorkspaceFile(ReadWorkspaceFileRequest) returns (ReadWorkspaceFileResponse);
+  rpc GrepWorkspace(GrepWorkspaceRequest) returns (GrepWorkspaceResponse);
   // Pure historical comparison / restore preview; publication still uses ApplyBatch.
   rpc PreviewWorkspaceHistory(WorkspaceHistoryRequest) returns (WorkspaceHistoryPreview);
   rpc CancelPreparation(CancelPreparationRequest) returns (WorkspaceSnapshot);
@@ -104,6 +105,22 @@ message ReadWorkspaceFileResponse {
   uint64 revision = 2;
   string path = 3;
   string content = 4;
+}
+// Search only the verified published tree at an exact saved revision.
+message GrepWorkspaceRequest {
+  string workspace_instance_id = 1;
+  uint64 expected_revision = 2;
+  string pattern = 3;
+  string path_prefix = 4;
+  bool is_regex = 5;
+  uint32 context_lines = 6;
+  uint32 limit = 7;
+}
+message GrepWorkspaceResponse {
+  string workspace_instance_id = 1;
+  uint64 revision = 2;
+  repeated string lines = 3;
+  bool truncated = 4;
 }
 message CancelPreparationRequest {
   string workspace_instance_id = 1;

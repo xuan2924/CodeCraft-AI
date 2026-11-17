@@ -18,6 +18,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class CopilotToolExecutorTest {
@@ -41,6 +43,19 @@ class CopilotToolExecutorTest {
         assertThat(json.readTree(supplied.getValue().arguments()).path("expected_revision").asText()).isEqualTo("7");
         var stale = executor.execute(task, "worker", tool("bash", "{\"expected_revision\":\"8\",\"command\":\"pwd\",\"directory\":\".\"}"));
         assertThat(((ToolOutcome.Completed) stale).outcomeCode()).isEqualTo(ToolOutcome.Code.CONFLICT);
+        verify(commands, never()).execute(any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"edit", "write", "run_tests", "bash"})
+    void legacyExplicitRevisionMismatchCannotReachAnyEffect(String name) throws Exception {
+        when(tasks.planningRevision("task")).thenReturn("7");
+        for (String revision : List.of("\"8\"", "null", "7")) {
+            var outcome = (ToolOutcome.Completed) executor.execute(task("MAIN"), "worker", tool(name, "{\"expected_revision\":" + revision + "}"));
+            assertThat(json.readTree(outcome.body()).path("code").asText()).isEqualTo("REVISION_CONFLICT");
+        }
+        verify(preparation, never()).prepare(any(), any(), any(), any());
+        verify(tests, never()).execute(any(), any(), any());
         verify(commands, never()).execute(any(), any(), any());
     }
 

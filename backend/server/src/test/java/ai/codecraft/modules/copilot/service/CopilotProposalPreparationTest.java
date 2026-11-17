@@ -66,6 +66,23 @@ class CopilotProposalPreparationTest {
         assertThatThrownBy(() -> CopilotProposalPreparation.exactEdit("a", "abc", overlap)).hasMessage("EDIT_OVERLAPPING_MATCH");
     }
 
+    @Test void whitespaceFallbackIsUniqueWholeLineAndKeepsExactMatchPriority() throws Exception {
+        var edits = json.readTree("[{\"oldText\":\"  alpha\\n  beta\",\"newText\":\"changed\"}]");
+        assertThat(CopilotProposalPreparation.exactEdit("a", "\talpha  \r\n    beta\t\r\nend", edits)).isEqualTo("changed\r\nend");
+        assertThat(CopilotProposalPreparation.exactEdit("a", "  alpha\n  beta\n\talpha\n\tbeta", edits))
+            .isEqualTo("changed\n\talpha\n\tbeta");
+        assertThatThrownBy(() -> CopilotProposalPreparation.exactEdit("a", "alpha\nbeta\n\talpha\n\tbeta", edits)).hasMessage("EDIT_AMBIGUOUS_MATCH");
+        assertThatThrownBy(() -> CopilotProposalPreparation.exactEdit("a", "prefix alpha\nbeta", edits)).hasMessage("EDIT_MATCH_NOT_FOUND");
+        var missing = json.readTree("[{\"oldText\":\"beta expected\",\"newText\":\"changed\"}]");
+        assertThatThrownBy(() -> CopilotProposalPreparation.exactEdit("a", "first\nbeta actual\nlast", missing))
+            .isInstanceOfSatisfying(CopilotEditException.class, failure -> {
+                assertThat(failure.lineCount()).isEqualTo(3);
+                assertThat(failure.suggestedLine()).isEqualTo(2);
+            });
+        var overlapping = json.readTree("[{\"oldText\":\"  alpha\\n  beta\",\"newText\":\"changed\"},{\"oldText\":\"beta\",\"newText\":\"other\"}]");
+        assertThatThrownBy(() -> CopilotProposalPreparation.exactEdit("a", "\talpha\n\tbeta", overlapping)).hasMessage("EDIT_OVERLAPPING_MATCH");
+    }
+
     @Test void modernEditAndWritePrepareTheSameAtomicApprovalEvidence() {
         when(files.find("session", "exercise")).thenReturn(snapshot("7"));
         when(files.read("session", "exercise", "src/main/java/Before.java"))

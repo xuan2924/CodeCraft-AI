@@ -27,6 +27,7 @@ const (
 	WorkspaceStorage_PruneCommandEvidence_FullMethodName    = "/codecraft.workspace.v1.WorkspaceStorage/PruneCommandEvidence"
 	WorkspaceStorage_MeasureExerciseStorage_FullMethodName  = "/codecraft.workspace.v1.WorkspaceStorage/MeasureExerciseStorage"
 	WorkspaceStorage_ReadWorkspaceFile_FullMethodName       = "/codecraft.workspace.v1.WorkspaceStorage/ReadWorkspaceFile"
+	WorkspaceStorage_GrepWorkspace_FullMethodName           = "/codecraft.workspace.v1.WorkspaceStorage/GrepWorkspace"
 	WorkspaceStorage_PreviewWorkspaceHistory_FullMethodName = "/codecraft.workspace.v1.WorkspaceStorage/PreviewWorkspaceHistory"
 	WorkspaceStorage_CancelPreparation_FullMethodName       = "/codecraft.workspace.v1.WorkspaceStorage/CancelPreparation"
 	WorkspaceStorage_CloseGate_FullMethodName               = "/codecraft.workspace.v1.WorkspaceStorage/CloseGate"
@@ -69,6 +70,7 @@ type WorkspaceStorageClient interface {
 	// Scope is monotonic at the durable meter; delayed subset requests never forget old owners.
 	MeasureExerciseStorage(ctx context.Context, in *MeasureExerciseStorageRequest, opts ...grpc.CallOption) (*StorageMeasurement, error)
 	ReadWorkspaceFile(ctx context.Context, in *ReadWorkspaceFileRequest, opts ...grpc.CallOption) (*ReadWorkspaceFileResponse, error)
+	GrepWorkspace(ctx context.Context, in *GrepWorkspaceRequest, opts ...grpc.CallOption) (*GrepWorkspaceResponse, error)
 	// Pure historical comparison / restore preview; publication still uses ApplyBatch.
 	PreviewWorkspaceHistory(ctx context.Context, in *WorkspaceHistoryRequest, opts ...grpc.CallOption) (*WorkspaceHistoryPreview, error)
 	CancelPreparation(ctx context.Context, in *CancelPreparationRequest, opts ...grpc.CallOption) (*WorkspaceSnapshot, error)
@@ -180,6 +182,16 @@ func (c *workspaceStorageClient) ReadWorkspaceFile(ctx context.Context, in *Read
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReadWorkspaceFileResponse)
 	err := c.cc.Invoke(ctx, WorkspaceStorage_ReadWorkspaceFile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) GrepWorkspace(ctx context.Context, in *GrepWorkspaceRequest, opts ...grpc.CallOption) (*GrepWorkspaceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GrepWorkspaceResponse)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_GrepWorkspace_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -442,6 +454,7 @@ type WorkspaceStorageServer interface {
 	// Scope is monotonic at the durable meter; delayed subset requests never forget old owners.
 	MeasureExerciseStorage(context.Context, *MeasureExerciseStorageRequest) (*StorageMeasurement, error)
 	ReadWorkspaceFile(context.Context, *ReadWorkspaceFileRequest) (*ReadWorkspaceFileResponse, error)
+	GrepWorkspace(context.Context, *GrepWorkspaceRequest) (*GrepWorkspaceResponse, error)
 	// Pure historical comparison / restore preview; publication still uses ApplyBatch.
 	PreviewWorkspaceHistory(context.Context, *WorkspaceHistoryRequest) (*WorkspaceHistoryPreview, error)
 	CancelPreparation(context.Context, *CancelPreparationRequest) (*WorkspaceSnapshot, error)
@@ -502,6 +515,9 @@ func (UnimplementedWorkspaceStorageServer) MeasureExerciseStorage(context.Contex
 }
 func (UnimplementedWorkspaceStorageServer) ReadWorkspaceFile(context.Context, *ReadWorkspaceFileRequest) (*ReadWorkspaceFileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadWorkspaceFile not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) GrepWorkspace(context.Context, *GrepWorkspaceRequest) (*GrepWorkspaceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GrepWorkspace not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) PreviewWorkspaceHistory(context.Context, *WorkspaceHistoryRequest) (*WorkspaceHistoryPreview, error) {
 	return nil, status.Error(codes.Unimplemented, "method PreviewWorkspaceHistory not implemented")
@@ -733,6 +749,24 @@ func _WorkspaceStorage_ReadWorkspaceFile_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WorkspaceStorageServer).ReadWorkspaceFile(ctx, req.(*ReadWorkspaceFileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_GrepWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GrepWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).GrepWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_GrepWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).GrepWorkspace(ctx, req.(*GrepWorkspaceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1182,6 +1216,10 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReadWorkspaceFile",
 			Handler:    _WorkspaceStorage_ReadWorkspaceFile_Handler,
+		},
+		{
+			MethodName: "GrepWorkspace",
+			Handler:    _WorkspaceStorage_GrepWorkspace_Handler,
 		},
 		{
 			MethodName: "PreviewWorkspaceHistory",
