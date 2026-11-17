@@ -121,6 +121,7 @@ const timelineKindLabels: Record<string, string> = {
   TEST_COMPLETED: '测试完成',
   CHALLENGE_ENTERED: '进入挑战',
   EXERCISE_FROZEN: '演练冻结',
+  CLI_PROXY: 'CLI 代理模型调用',
 };
 
 const traceMetrics = computed(() => {

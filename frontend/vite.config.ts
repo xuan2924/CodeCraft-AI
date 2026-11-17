@@ -12,7 +12,7 @@ const localServer = {
   host: '127.0.0.1',
   port: webPort,
   strictPort: true,
-  proxy: { '/api': { target: `http://127.0.0.1:${javaPort}` } },
+  proxy: { '/api': { target: `http://127.0.0.1:${javaPort}`, ws: true } },
 };
 
 export default defineConfig({

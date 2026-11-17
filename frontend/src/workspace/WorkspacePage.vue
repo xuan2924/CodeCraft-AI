@@ -15,6 +15,7 @@ import CodeEditor from './CodeEditor.vue';
 import FileTree from './FileTree.vue';
 import WorkspaceTests from './WorkspaceTests.vue';
 import WorkspaceCommands from './WorkspaceCommands.vue';
+import InteractivePtyTerminal from './InteractivePtyTerminal.vue';
 import WorkspaceHistory from './WorkspaceHistory.vue';
 import WorkspaceStorage from './WorkspaceStorage.vue';
 import ExerciseModelPicker from '../modelaccess/ExerciseModelPicker.vue';
@@ -91,7 +92,10 @@ watch(expired, (value) => { if (value) { endPrompt.value = false; void active.re
 const logoutBusy = ref(false);
 const testView = ref<{ start: (revision: string) => void; inspect: (taskId: string) => void }>();
 const testBusy = ref(true);
-const commandBusy = ref(true);
+const singleCommandBusy = ref(true);
+const ptyBusy = ref(false);
+const commandBusy = computed(() => singleCommandBusy.value || ptyBusy.value);
+const terminalMode = ref<'command' | 'pty'>('command');
 const historyBusy = ref(false);
 const editorWriteBusy = ref(false);
 const editorGeneration = ref(0);
@@ -122,7 +126,7 @@ const controlState = useQuery({ queryKey: ['workspace', owner, 'control', comput
 watch(() => controlState.data.value?.generation, (value) => {
   if (value && credential.value && value !== credentialGeneration.value) credential.value = '';
 });
-watch(() => exercise.value?.workspaceInstanceId, () => { selected.value = ''; credential.value = ''; testBusy.value = true; commandBusy.value = true; historyBusy.value = false; editorWriteBusy.value = false; });
+watch(() => exercise.value?.workspaceInstanceId, () => { selected.value = ''; credential.value = ''; testBusy.value = true; singleCommandBusy.value = true; ptyBusy.value = false; historyBusy.value = false; editorWriteBusy.value = false; });
 const source = useQuery({ queryKey: ['workspace', owner, 'file', computed(() => exercise.value?.workspaceInstanceId), selected, computed(() => exercise.value?.revision)],
   queryFn: ({ signal }) => {
     if (!exercise.value) throw new Error('Workspace is not available');
@@ -926,18 +930,65 @@ const assistantTabItems = computed(() => {
             </template>
 
             <template #commands>
-              <WorkspaceCommands
+              <div
                 v-if="historyStates.includes(exercise.state)"
-                :key="owner + exercise.workspaceInstanceId"
-                :owner="owner"
-                :exercise="exercise"
-                :credential="credential"
-                :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || testBusy || historyBusy"
-                :prepare="prepareCommand"
-                @locked="commandBusy = $event"
-                @changed="refreshWorkspace"
-                @unauthorized="credential = ''; account.refetch()"
-              />
+                class="terminal-mode-deck"
+              >
+                <div
+                  class="terminal-mode-tabs"
+                  role="tablist"
+                  aria-label="终端模式切换"
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    :aria-selected="terminalMode === 'command'"
+                    class="terminal-mode-tab"
+                    :class="{ 'is-active': terminalMode === 'command' }"
+                    @click="terminalMode = 'command'"
+                  >
+                    单次命令与历史
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    :aria-selected="terminalMode === 'pty'"
+                    class="terminal-mode-tab"
+                    :class="{ 'is-active': terminalMode === 'pty' }"
+                    @click="terminalMode = 'pty'"
+                  >
+                    <span
+                      v-if="ptyBusy"
+                      class="terminal-mode-live"
+                      aria-hidden="true"
+                    />
+                    实时交互终端 (Dev PTY)
+                  </button>
+                </div>
+                <WorkspaceCommands
+                  v-show="terminalMode === 'command'"
+                  :key="`cmd-${owner}-${exercise.workspaceInstanceId}`"
+                  :owner="owner"
+                  :exercise="exercise"
+                  :credential="credential"
+                  :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || testBusy || historyBusy || ptyBusy"
+                  :prepare="prepareCommand"
+                  @locked="singleCommandBusy = $event"
+                  @changed="refreshWorkspace"
+                  @unauthorized="credential = ''; account.refetch()"
+                />
+                <InteractivePtyTerminal
+                  v-show="terminalMode === 'pty'"
+                  :key="`pty-${owner}-${exercise.workspaceInstanceId}`"
+                  :owner="owner"
+                  :exercise="exercise"
+                  :credential="credential"
+                  :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || testBusy || historyBusy || singleCommandBusy"
+                  @locked="ptyBusy = $event"
+                  @changed="refreshWorkspace"
+                  @unauthorized="credential = ''; account.refetch()"
+                />
+              </div>
             </template>
 
             <template #tests>
@@ -1511,5 +1562,53 @@ const assistantTabItems = computed(() => {
     height: 100%;
     min-height: 460px;
   }
+}
+
+.terminal-mode-deck {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-mode-tabs {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 10px 0;
+  border-bottom: 1px solid var(--oc-border);
+  background: var(--oc-bg);
+}
+
+.terminal-mode-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 6px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--oc-fg-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.terminal-mode-tab:hover {
+  color: var(--oc-fg);
+}
+
+.terminal-mode-tab.is-active {
+  color: var(--oc-fg);
+  border-bottom-color: var(--oc-accent);
+  font-weight: 500;
+}
+
+.terminal-mode-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--oc-accent);
 }
 </style>

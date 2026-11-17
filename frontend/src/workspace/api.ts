@@ -137,6 +137,8 @@ export function message(error: unknown): string {
     if (error.code === 'EXERCISE_EXPIRED') return '作答已到期，本地内容不会自动提交。';
     if (error.code === 'TEST_TARGET_UNAVAILABLE') return '这个固定题目版本尚未配备正式执行配置，不会替换已有工作区版本，请联系维护者。';
     if (error.code === 'TEST_SLOT_BUSY' || error.code === 'COMMAND_SLOT_BUSY') return '已有命令或测试占用执行名额，不会排队。请查询原执行，确认结束后再运行。';
+    if (error.code === 'TERMINAL_BUSY') return '交互终端仍在运行，请先同步或断开终端后再继续修改。';
+    if (error.code === 'TERMINAL_AUTHORITY_ENDED' || error.code === 'TERMINAL_TICKET_INVALID') return '终端授权已过期或已撤销，请刷新操作权后重新开启终端。';
     if (error.code === 'CODE_HISTORY_UNAVAILABLE') return '此版本未被历史保留或已清理，不能预览或恢复；当前代码和草稿不受影响。';
     if (error.code === 'RESTORE_CONFLICT') return '选中修改的文件已有后续变更，不能安全撤销；不会自动合并或覆盖。';
     if (error.code === 'RESTORE_PREVIEW_CHANGED') return '恢复预览已变化，请重新预览并确认；本次没有应用恢复。';
