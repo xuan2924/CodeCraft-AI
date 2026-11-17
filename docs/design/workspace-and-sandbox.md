@@ -60,7 +60,7 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 5. 也可 `POST /api/exercises/{id}/terminal/sync`，JSON `{ "commandId": "..." }`，遵循 Cookie/CSRF 与原终端授权。202 表示已请求收敛，不保证当场完成；使用原 `/commands/{commandId}` 查询确认静默、同步及 Java revision 投影完成后再开新会话。已结束的草稿不会由该接口偷偷重新提交。
 6. `GET /api/exercises/{id}/terminal/sessions` 返回最近 100 条归属用户审计摘要（创建、握手、关闭、状态与同步 revision），不返回票据/输入正文；同步同时进入原 BASH 变更历史。
 
-M2-3 扩展点为 Go `ConfigureTerminalEnvironment`：仅允许受信任进程侧 provider 注入 `ANTHROPIC_BASE_URL`、`OPENAI_BASE_URL`、`CODECRAFT_PROXY_TOKEN`，不从浏览器/proto 接收环境覆盖，不进入 Input/恢复标签/应用日志。当前默认不注入任何模型凭据。
+Go `ConfigureTerminalEnvironment` 已接入 Java Host LLM Proxy：受信任进程侧 provider 注入两个 Base URL、`CODECRAFT_PROXY_TOKEN` 及与之完全相同的 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` 临时别名；不从浏览器/proto 接收环境覆盖，不进入 Input/恢复标签/应用日志。Compose 默认启用受控通道，未配置 `SANDBOX_LLM_HOST_URL` 的部署不注入凭证；签发失败拒绝终端启动，绝不退回真实 Key。吊销与审计契约见 [模型接入与安全](model-access-and-security.md#5-容器-cli-的-host-llm-proxy)。
 
 ## 关键源码入口
 

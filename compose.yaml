@@ -58,6 +58,7 @@ services:
       SANDBOX_COMMAND_NETWORK: "${COMPOSE_PROJECT_NAME}_command-egress"
       SANDBOX_RPC_BIND: "172.29.0.2"
       SANDBOX_EGRESS_PROXY_URL: "http://egress:3128"
+      SANDBOX_LLM_HOST_URL: "http://java:8080"
       SANDBOX_EGRESS_LISTEN: "0.0.0.0:3128"
       SANDBOX_EGRESS_ALLOWLIST: ${SANDBOX_EGRESS_ALLOWLIST:-repo.maven.apache.org:443,registry.npmjs.org:443,repo1.maven.org:443}
     networks:

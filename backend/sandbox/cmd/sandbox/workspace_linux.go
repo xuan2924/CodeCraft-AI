@@ -105,11 +105,24 @@ func registerWorkspace(server *grpc.Server, key, volume string) (func() error, e
 			if proxyErr != nil {
 				return close, proxyErr
 			}
+			var handler http.Handler = proxy
+			if base := os.Getenv("SANDBOX_LLM_HOST_URL"); base != "" {
+				channel, channelErr := security.NewLLMChannel(base, key)
+				if channelErr != nil {
+					return close, channelErr
+				}
+				handler = channel.Handler(proxy)
+				if err = runner.ConfigureTerminalEnvironment(func(ctx context.Context, input execution.Input) ([]string, error) {
+					return channel.Grant(ctx, input.TaskID, input.ExerciseID, input.GateEpoch)
+				}); err != nil {
+					return close, err
+				}
+			}
 			listener, listenErr := net.Listen("tcp", os.Getenv("SANDBOX_EGRESS_LISTEN"))
 			if listenErr != nil {
 				return close, listenErr
 			}
-			server := &http.Server{Handler: proxy, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 5 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384,
+			server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 5 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384,
 				BaseContext: func(net.Listener) context.Context { return worker }}
 			done := make(chan struct{})
 			go func() { defer func() { done <- struct{}{} }(); _ = server.Serve(listener); cancel() }()

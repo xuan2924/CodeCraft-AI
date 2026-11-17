@@ -16,11 +16,22 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class ReportTimelineReaderTest {
+    @Test void cliTraceSharesTimelineWithoutChangingContextCounters() {
+        var repository = mock(ReportTimelineRepository.class);
+        var proxy = mock(ai.codecraft.modules.modelaccess.service.ProxyAuditService.class);
+        when(proxy.events("exercise")).thenReturn(List.of(new ai.codecraft.modules.modelaccess.repository.ProxyAuditRepository.Event(
+            "call", Instant.EPOCH, Instant.EPOCH.plusSeconds(2), "responses", "SUCCEEDED", 100, 200, 3, 4L)));
+        var timeline = new ReportTimelineReader(repository, mock(CopilotReportTraceReader.class), proxy).timeline("exercise");
+        assertThat(timeline).hasSize(1);
+        assertThat(timeline.getFirst().kind()).isEqualTo("CLI_PROXY");
+        assertThat(timeline.getFirst().detail()).contains("ms=2000", "toolSignals=3", "reasoningTokens=4");
+        assertThat(timeline.getFirst().sourceId()).isEqualTo("call");
+    }
     @Test
     void objectiveTraceAndTimelineKeepExactCrossEndContract() throws Exception {
         var repository = mock(ReportTimelineRepository.class);
         var copilot = mock(CopilotReportTraceReader.class);
-        var reader = new ReportTimelineReader(repository, copilot);
+        var reader = new ReportTimelineReader(repository, copilot, mock(ai.codecraft.modules.modelaccess.service.ProxyAuditService.class));
         when(copilot.read("exercise")).thenReturn(new CopilotReportTraceDTO(2, 1, 1, 1));
         when(repository.successfulInteractions("exercise", "CLARIFY")).thenReturn(2L);
         when(repository.successfulInteractions("exercise", "DEFENSE")).thenReturn(1L);

@@ -349,6 +349,7 @@ class CopilotPersistenceIT {
             ExerciseRepository.class, ExercisePauseRepository.class, ExerciseChallengeRepository.class, InterviewerRepository.class, ExerciseReportRepository.class, FeedbackRepository.class, ExerciseModelRepository.class, WorkspaceWriteRepository.class, StorageCapacityRepository.class,
             CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotFollowupRepository.class, CopilotBtwRepository.class, CopilotDelegationRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class)) config.addMapper(mapper);
+        config.addMapper(ai.codecraft.modules.modelaccess.repository.ProxyAuditRepository.class);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
     }
@@ -445,7 +446,7 @@ class CopilotPersistenceIT {
         var operations = proxy(new WorkspaceAiOperationService(identity, exercises, writes, capacityStore, clock), WorkspaceAiOperationService.class);
         conversations = proxy(new CopilotConversationStore(sql.getMapper(CopilotConversationRepository.class), identity,
             lifecycle, coordination, operations, clock), CopilotConversationStore.class);
-        usage = proxy(new CopilotUsageService(sql.getMapper(CopilotUsageRepository.class), sql.getMapper(CopilotCompactionRepository.class), identity, lifecycle, conversations), CopilotUsageService.class);
+        usage = proxy(new CopilotUsageService(sql.getMapper(CopilotUsageRepository.class), sql.getMapper(CopilotCompactionRepository.class), identity, lifecycle, conversations, new ai.codecraft.modules.modelaccess.service.ProxyAuditService(sql.getMapper(ai.codecraft.modules.modelaccess.repository.ProxyAuditRepository.class), clock)), CopilotUsageService.class);
         repository = sql.getMapper(CopilotTaskRepository.class);
         var skillLimits = new SkillProperties(50, 262144, 65536, 5242880, 32, 256, 4);
         personalSkills = new SkillService(new SkillPackageParser(skillLimits), proxy(new SkillStore(sql.getMapper(SkillRepository.class), identity, skillLimits, json, clock), SkillStore.class), json);

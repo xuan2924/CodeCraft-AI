@@ -49,6 +49,14 @@ class TerminalStoreTest {
         assertThatThrownBy(()->store.consume("session","other",token)).isInstanceOf(BusinessException.class).hasMessage("TERMINAL_TICKET_INVALID");
         assertThatThrownBy(()->store.consume("session","exercise","invalid")).isInstanceOf(BusinessException.class).hasMessage("TERMINAL_TICKET_INVALID");
     }
+    @Test void proxyAndTerminalAuthorityRequireActiveExercise(){
+        active();
+        var exercise=exercises.find("exercise");
+        for(String state:java.util.List.of("PAUSING","PAUSED","RESUMING","CLOSING","ENDED")){
+            when(exercise.state()).thenReturn(state);
+            assertThatThrownBy(()->store.authorize("session","exercise","task")).hasMessage("TERMINAL_AUTHORITY_ENDED");
+        }
+    }
     @Test void closedGateChangedEpochRevokedIdentityAndDeadlineRejectInput(){
         var task=active();
         for(var control:java.util.List.of(new WorkspaceControlEntity("exercise",1,2L,"CLOSED","hash",null,null),new WorkspaceControlEntity("exercise",1,4L,"OPEN","hash",null,null))){

@@ -2,6 +2,7 @@ package execution_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,11 @@ import (
 
 func TestRealTerminalPTYResizeControlCAndEOF(t *testing.T) {
 	runner, input, _, _ := fixture(t, "original")
+	if err := runner.ConfigureTerminalEnvironment(func(context.Context, execution.Input) ([]string, error) {
+		return []string{"OPENAI_BASE_URL=http://egress:3128/internal/llm-proxy/openai/v1", "ANTHROPIC_BASE_URL=http://egress:3128/internal/llm-proxy/anthropic", "CODECRAFT_PROXY_TOKEN=fixture-ephemeral-grant", "OPENAI_API_KEY=fixture-ephemeral-grant", "ANTHROPIC_API_KEY=fixture-ephemeral-grant"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	original := filepath.Dir(filepath.Join("/state", input.Subpath))
 	input.Purpose, input.Target, input.Suite, input.Tests = "COMMAND", "bash", "", nil
 	input.TaskID, input.ExerciseID, input.ProblemID, input.ProblemVersion = identifier(), identifier(), "cart-total", "1.1.0"
@@ -67,6 +73,8 @@ func TestRealTerminalPTYResizeControlCAndEOF(t *testing.T) {
 	if output := wait("READY_yes"); !strings.Contains(output, "40 100") {
 		t.Fatalf("PTY did not apply resize: %q", output)
 	}
+	send("[ \"$OPENAI_API_KEY\" = \"$CODECRAFT_PROXY_TOKEN\" ] && [ \"$ANTHROPIC_API_KEY\" = \"$CODECRAFT_PROXY_TOKEN\" ] && [ -n \"$CODECRAFT_PROXY_TOKEN\" ] && printf 'PROXY_%s\\n' yes\n")
+	wait("PROXY_yes")
 	send("sleep 20\n")
 	time.Sleep(150 * time.Millisecond)
 	send("\x03")
@@ -75,6 +83,10 @@ func TestRealTerminalPTYResizeControlCAndEOF(t *testing.T) {
 	send("\x04")
 	runner.Wait()
 	record, err := runner.Query(context.Background(), input.ExecutionID)
+	encoded, _ := json.Marshal(record.Input)
+	if strings.Contains(string(encoded), "fixture-ephemeral-grant") {
+		t.Fatal("ephemeral proxy grant entered durable Input")
+	}
 	if err != nil || !record.Quiescent || record.Cleanup != "SUCCEEDED" || record.CopyCleanup != "SUCCEEDED" {
 		t.Fatalf("PTY did not converge: %+v %v", record, err)
 	}

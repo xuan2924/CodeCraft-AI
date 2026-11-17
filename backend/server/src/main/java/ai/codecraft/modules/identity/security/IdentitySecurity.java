@@ -42,6 +42,47 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class IdentitySecurity {
     private static final Logger LOG = LoggerFactory.getLogger(IdentitySecurity.class);
 
+    /** Separate machine-only chain; browser routes retain their original Cookie/CSRF policy. */
+    @Bean
+    @org.springframework.core.annotation.Order(1)
+    SecurityFilterChain proxyChain(HttpSecurity http,
+        org.springframework.beans.factory.ObjectProvider<ai.codecraft.modules.modelaccess.security.ProxyTokens> tokens,
+        org.springframework.beans.factory.ObjectProvider<ai.codecraft.modules.workspace.config.WorkspaceProperties> settings) throws Exception {
+        http.securityMatcher("/internal/llm-proxy/**", "/internal/llm-grants")
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .requestCache(cache -> cache.disable()).csrf(csrf -> csrf.disable())
+            .formLogin(form -> form.disable()).httpBasic(basic -> basic.disable()).logout(logout -> logout.disable())
+            .authorizeHttpRequests(routes -> routes.anyRequest().permitAll());
+        http.addFilterBefore(new OncePerRequestFilter() {
+            @Override
+            protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+                throws ServletException, IOException {
+                response.setHeader("Cache-Control", "no-store");
+                try {
+                    if ("/internal/llm-grants".equals(request.getServletPath())) {
+                        var workspace = settings.getObject();
+                        String supplied = request.getHeader("X-Codecraft-Internal-Key");
+                        if (workspace.rpcKey().isBlank() || supplied == null || !java.security.MessageDigest.isEqual(
+                            workspace.rpcKey().getBytes(java.nio.charset.StandardCharsets.UTF_8), supplied.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+                            response.setStatus(403); return;
+                        }
+                    } else {
+                        String token = request.getHeader("X-Codecraft-Proxy-Token");
+                        if (token == null) token = request.getHeader("x-api-key");
+                        if (token == null) {
+                            String auth = request.getHeader("Authorization");
+                            if (auth != null && auth.startsWith("Bearer ")) token = auth.substring(7);
+                        }
+                        tokens.getObject().verify(token);
+                        request.setAttribute("codecraft.proxy.token", token);
+                    }
+                } catch (RuntimeException failure) { response.setStatus(403); return; }
+                chain.doFilter(request, response);
+            }
+        }, CsrfFilter.class);
+        return http.build();
+    }
+
     @Bean
     SecurityFilterChain identityChain(HttpSecurity http, IdentityTransactionService store, IdentitySecrets secrets,
                                      IdentitySettings settings, ObjectMapper json, RequestBodyAdmission bodies) throws Exception {

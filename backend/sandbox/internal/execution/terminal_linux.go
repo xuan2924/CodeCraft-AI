@@ -38,10 +38,22 @@ func (r *Runner) terminalGrant(ctx context.Context, input Input) ([]string, erro
 	for _, value := range values {
 		key, _, ok := strings.Cut(value, "=")
 		size += len(value)
-		if !ok || seen[key] || size > 4096 || strings.ContainsAny(value, "\x00\r\n") || (key != "ANTHROPIC_BASE_URL" && key != "OPENAI_BASE_URL" && key != "CODECRAFT_PROXY_TOKEN") {
+		if !ok || seen[key] || size > 4096 || strings.ContainsAny(value, "\x00\r\n") || (key != "ANTHROPIC_BASE_URL" && key != "OPENAI_BASE_URL" && key != "CODECRAFT_PROXY_TOKEN" && key != "ANTHROPIC_API_KEY" && key != "OPENAI_API_KEY") {
 			return nil, errors.New("invalid terminal environment grant")
 		}
 		seen[key] = true
+	}
+	var token string
+	for _, value := range values {
+		if strings.HasPrefix(value, "CODECRAFT_PROXY_TOKEN=") {
+			token = strings.TrimPrefix(value, "CODECRAFT_PROXY_TOKEN=")
+		}
+	}
+	for _, value := range values {
+		key, secret, _ := strings.Cut(value, "=")
+		if (key == "ANTHROPIC_API_KEY" || key == "OPENAI_API_KEY") && (token == "" || secret != token) {
+			return nil, errors.New("model key must be an ephemeral proxy token alias")
+		}
 	}
 	return append([]string(nil), values...), nil
 }

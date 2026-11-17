@@ -64,7 +64,8 @@ public class TerminalStore {
         return command;
     }
 
-    @Transactional(readOnly = true)
+    // Identity authorization acquires an owner row lock; PostgreSQL read-only transactions forbid it.
+    @Transactional
     public CommandTaskEntity authorize(String session, String exercise, String taskId) {
         var actor=identity.authorizeMutation(session);
         var task=commands.read(session,exercise,taskId);
@@ -82,7 +83,7 @@ public class TerminalStore {
     @Transactional
     public void close(String task) { commands.requestSystemStop(task); tickets.closed(task,clock.instant()); }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<ai.codecraft.modules.workspace.model.dto.TerminalAuditResponse> history(String session, String exercise) {
         var actor=identity.authorizePrivateDelivery(session);
         var current=exercises.find(exercise);

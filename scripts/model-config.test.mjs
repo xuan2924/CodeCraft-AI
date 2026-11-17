@@ -1,9 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseConfig, serviceEnv } from './local-config.mjs';
 import { javaComposeEnv } from './build-java.mjs';
+
+test('container model channel has a fixed Java destination and no upstream provider credentials', () => {
+  const compose = readFileSync(new URL('../compose.yaml', import.meta.url), 'utf8');
+  const sandbox = compose.split('  sandbox:')[1].split('  postgres:')[0];
+  assert.match(sandbox, /SANDBOX_LLM_HOST_URL: "http:\/\/java:8080"/);
+  assert.doesNotMatch(sandbox, /MODEL_CREDENTIAL|OPENAI_API_KEY|ANTHROPIC_API_KEY|COPILOT_WEB_API_KEY/);
+  const channel = readFileSync(new URL('../backend/sandbox/internal/security/llm.go', import.meta.url), 'utf8');
+  assert.match(channel, /OPENAI_API_KEY=" \+ grant.Token/);
+  assert.match(channel, /ANTHROPIC_API_KEY=" \+ grant.Token/);
+});
 
 const base = 'POSTGRES_USER=fixture\nPOSTGRES_PASSWORD=fixture\n';
 const configured = { MODEL_CREDENTIAL_ACTIVE_KEY_ID: 'new', MODEL_CREDENTIAL_KEYS: `new:${Buffer.alloc(32, 1).toString('base64')}`, MODEL_CREDENTIAL_ROTATION_ENABLED: 'true' };
