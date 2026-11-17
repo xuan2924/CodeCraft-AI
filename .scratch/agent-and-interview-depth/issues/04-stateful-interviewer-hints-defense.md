@@ -10,7 +10,7 @@
 - [x] `InterviewerWorker` 在派发模型请求时注入本场演练最近最多 8 轮已完成的问答历史，以及当前只读演练态势（当前阶段 `stage`、工作区版本、最近一次受控测试结果摘要）。
 - [x] 当 `mode="HINT"` 时，按 `(exerciseId, topic)` 独立计算已成功发布（`SUCCEEDED`）的提示次数并分配本次等级（`L1 思路方向 -> L2 模块/边界定位 -> L3 关键逻辑提示`，上限为 3）；失败（`FAILED`）或幂等重放不升级提示等级。
 - [x] 当 `mode="DEFENSE"`（在 `ACTIVE` 阶段可用）时，在数据库事务外读取当前已保存的可编辑源码有界节选与最近 `workspace_change` 变更摘要作为不可信证据注入提示词，使面试官针对候选人真实代码实现发起架构与边界追问。
-- [ ] 前端 `InterviewerPanel.vue` 新增互动模式选择胶囊（`需求澄清` / `提示锦囊` / `代码拷问`）、`topic` 输入/快捷标签及历史消息中的模式与 `L1~L3` 等级徽标展示，通过前后端单元与组件测试。
+- [x] 前端 `InterviewerPanel.vue` 新增互动模式选择胶囊（`需求澄清` / `提示锦囊` / `代码拷问`）、`topic` 输入/快捷标签及历史消息中的模式与 `L1~L3` 等级徽标展示，通过前后端单元与组件测试。
 
 ## Comments
 
@@ -27,4 +27,7 @@
 - V58 最终采用 `hint_level NOT NULL DEFAULT 1 CHECK (1..3)`，历史及非 HINT 行保持严格响应契约；修复 Worker 提示词字符串换行转义。
 - 全量 `./mvnw.cmd -q test` 469 项通过，含编译/Checkstyle；真实一次性 PostgreSQL `ReportTimelinePersistenceIT` 2 项通过，验证成功提示计数、主题隔离、8 轮历史、时间轴和可信轨迹聚合。
 - 提交后唤醒及 SSE 更新已接线，原持久扫描/授权/到期检查保留。独立审查未发现未修复的本票阻塞；后端无已知剩余功能缺口。
-- 前端交互属于独立 owner，本记录不代替其交付。
+### 全栈前端与联调收口（2026-11-17，agy-frontend + leader）
+
+- 前端已于 `fe4f244` 完成 `interviewerApi.ts` 与 `InterviewerPanel.vue` 多模式切换、`topic` 快捷主题标签及 `L1~L3` 等级徽标渲染，新增/更新 `interviewerApi.test.ts` 与 `InterviewerPanel.test.ts`。
+- 前后端响应字段 `stage/mode/topic/hintLevel` 经核查完全一致；`node scripts/verify.mjs --quick` 与 `test:ui`（22/22）全部通过。

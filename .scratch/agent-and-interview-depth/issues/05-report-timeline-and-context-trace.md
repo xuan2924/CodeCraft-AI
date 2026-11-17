@@ -8,7 +8,7 @@
 
 - [x] 后端报告读取接口 `GET /api/exercises/{exercise}/report` 在 `ExerciseReportResponse` 中返回只读确定性字段 `timeline`（聚合澄清/提示/答辩问答、开始实现、工作区代码变更、受控测试完成、进入挑战、最终冻结等关键节点，携带时间戳、类型、标题、摘要、关联工作区版本与来源 ID）与 `contextTrace`（统计本场使用的 `@引用` 次数、`Skill` 加载次数、`steer` 纠偏次数、`BTW` 旁支次数、澄清/答辩次数及各主题最高 `HINT` 等级）。
 - [x] `ReportEvidenceCollector` 将客观演练时间轴与分主题提示使用记录纳入有界报告证据目录，供评测官在分析 `COLLABORATION` 与 `VALIDATION` 维度时引用，明确禁止按提案拒绝率、AI 使用量或提示使用次数机械扣分。
-- [ ] 前端 `ReportPanel.vue` / `ReportPage.vue` 渲染「演练时间轴回放（Session Timeline）」与「上下文工程轨迹（Context Trace）」卡片，支持从时间轴节点关联查看对应证据或修订信息，通过前后端单元测试与构建验证。
+- [x] 前端 `ReportPanel.vue` / `ReportPage.vue` 渲染「演练时间轴回放（Session Timeline）」与「上下文工程轨迹（Context Trace）」卡片，支持从时间轴节点关联查看对应证据或修订信息，通过前后端单元测试与构建验证。
 
 ## Comments
 
@@ -24,4 +24,7 @@
 
 - 全量 Java 编译、Checkstyle 与 469 项测试通过；一次性 PostgreSQL 时间轴/轨迹 mapper 集成 2 项通过，可信引用计数迁移与 Copilot 受理回归已验证。
 - 评测排队、显式重试和确定失败重生成接入事务提交后唤醒，仍通过原 generation/授权/冻结版本检查。
-- 独立审查未发现本票未修复阻塞，后端无已知剩余功能缺口。前端展示验收由独立 owner 记录。
+### 全栈前端与联调收口（2026-11-17，agy-frontend + leader）
+
+- 前端已于 `fe4f244` 完成 `reportApi.ts` 与 `ReportPanel.vue` 演练时间轴与上下文工程轨迹展示及单测（`reportApi.test.ts` / `ReportPanel.test.ts`）。
+- 核对 `ExerciseReportResponse` 的 `timeline` / `contextTrace` 与前端解析契约完全匹配；全栈 `node scripts/verify.mjs --quick` 与 `test:ui`（22/22）全部通过。

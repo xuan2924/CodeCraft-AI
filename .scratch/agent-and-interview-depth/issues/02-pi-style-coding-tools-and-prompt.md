@@ -10,7 +10,7 @@
 - [x] 实现 `grep(pattern, path_prefix?, is_regex?, literal?, context_lines?, limit?)`（兼容 `grep_code`）与 `find(pattern)`（兼容 `glob_files`）：支持路径前缀过滤、带复杂度保护的正则表达式、默认附带匹配行上下 문上下文行，并在达到条数或字节上限时给出明确截断提示。
 - [x] 实现 `edit(files: [{path, action: EDIT|CREATE|DELETE, edits?: [{oldText, newText}], content?}])` 与 `write(path, content)`（兼容 `propose_changes`）：模型无需手填 `expected_revision`，服务端按规划基线校验所有目标文件；`EDIT` 校验每个 `oldText` 在原文件中唯一且不重叠（支持 LF/CRLF 归一化并保留原文件换行风格），匹配失败或多重匹配时返回带文件行数的可诊断结果；验证通过后生成单个不可变提案、整批 Diff、`ASK/AUTO` 审批决定与 `FILE_BATCH` 原子提交。
 - [x] 精简 `prompts/copilot/system.txt`，移除冗余说教与已过时的 `base-only` / 强制手动批准描述，对齐 `challenge` 阶段与 `AUTO` 审批的真实行为。
-- [ ] 前端 Copilot 消息、工具卡片与提案面板适配 `read / grep / find / edit / write` 工具名称与摘要展示，通过前后端单元与构建验证。
+- [x] 前端 Copilot 消息、工具卡片与提案面板适配 `read / grep / find / edit / write` 工具名称与摘要展示，通过前后端单元与构建验证。
 
 ## Comments
 
@@ -26,4 +26,9 @@
 
 - 全量 Java 编译、Checkstyle 与 469 项单元/边界测试通过；Copilot 定向 PostgreSQL 持久化 7 项通过（具体边界及扩大回归超时记录见 01）。
 - 独立审查发现正则复杂度校验可被换行绕过，已改为逐字符禁止分组/交替等构造；新增 LF/CR/CRLF/NEL/Unicode 行分隔符回归，确保读工作区前拒绝。精确编辑 CRLF 测试的 JSON 转义夹具一并修复。
-- 后端工具、审批提案契约及 prompt 无已知剩余功能缺口。前端展示由 agy-frontend 独立交付，本记录不代替前端验收。
+- 后端工具、审批提案契约及 prompt 无已知剩余功能缺口。
+
+### 全栈前端与联调收口（2026-11-17，agy-frontend + leader）
+
+- 前端已于 `fe4f244` 完成 `toolPresentation.ts`、`CopilotToolResult.vue` 及消息/提案组件对 `read/grep/find/edit/write` 工具名与结果摘要卡片的支持，补充 `CopilotToolResult.test.ts`。
+- 仓库总门禁 `node scripts/verify.mjs --quick`（Java 469 项 + Vue 83 文件 350 项 + Go + Node 契约 32 项）与前端 `test:ui`（22/22）全部通过。
