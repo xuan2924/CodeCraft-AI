@@ -4,9 +4,10 @@ import { root } from './process.mjs';
 
 const defaults = {
   POSTGRES_DB: 'codecraft', POSTGRES_PORT: '5432', JAVA_PORT: '8080',
+  REDIS_HOST: '127.0.0.1', REDIS_PORT: '6379', REALTIME_BACKEND: 'local', RATE_LIMIT_BACKEND: 'postgresql',
   SANDBOX_PORT: '9090', WEB_PORT: '5173', MODEL_CREDENTIAL_ROTATION_ENABLED: 'false',
 };
-const allowed = new Set([...Object.keys(defaults), 'POSTGRES_USER', 'POSTGRES_PASSWORD',
+const allowed = new Set([...Object.keys(defaults), 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'REDIS_PASSWORD',
   'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN', 'SANDBOX_RPC_KEY', 'PROBLEM_PUBLICATION_FILE',
   'MODEL_CREDENTIAL_ACTIVE_KEY_ID', 'MODEL_CREDENTIAL_KEYS', 'COPILOT_WEB_API_KEY', 'COPILOT_WEB_BASE_URL', 'COPILOT_WEB_TIMEOUT']);
 
@@ -38,7 +39,7 @@ export function parseConfig(text) {
   for (const key of ['POSTGRES_USER', 'POSTGRES_DB']) {
     if (!/^[a-z][a-z0-9_]{0,62}$/.test(values[key])) throw new Error(`${key} must be a lowercase database identifier`);
   }
-  for (const key of ['POSTGRES_PORT', 'JAVA_PORT', 'SANDBOX_PORT', 'WEB_PORT']) {
+  for (const key of ['POSTGRES_PORT', 'JAVA_PORT', 'SANDBOX_PORT', 'WEB_PORT', 'REDIS_PORT']) {
     if (!/^\d+$/.test(values[key]) || Number(values[key]) < 1 || Number(values[key]) > 65535) {
       throw new Error(`${key} must be between 1 and 65535`);
     }
@@ -46,6 +47,10 @@ export function parseConfig(text) {
   if (new Set(['POSTGRES_PORT', 'JAVA_PORT', 'SANDBOX_PORT', 'WEB_PORT'].map((key) => Number(values[key]))).size !== 4) {
     throw new Error('Service ports must be distinct');
   }
+  if (!['local', 'redis'].includes(values.REALTIME_BACKEND) || !['postgresql', 'redis'].includes(values.RATE_LIMIT_BACKEND)) {
+    throw new Error('Invalid Redis backend selection');
+  }
+  if (!/^[a-zA-Z0-9.-]+$/.test(values.REDIS_HOST)) throw new Error('Invalid REDIS_HOST');
   if (values.PROBLEM_PUBLICATION_FILE && !/^[0-9a-f]{64}$/.test(values.SANDBOX_RPC_KEY ?? '')) {
     throw new Error('Published workspaces require a 32-byte lowercase hex SANDBOX_RPC_KEY');
   }
@@ -62,6 +67,7 @@ export async function loadConfig() {
 export function serviceEnv(values, service, inherited = process.env) {
   const keys = {
     java: ['POSTGRES_DB', 'POSTGRES_PORT', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'JAVA_PORT', 'SANDBOX_PORT',
+      'REDIS_HOST', 'REDIS_PORT', 'REDIS_PASSWORD', 'REALTIME_BACKEND', 'RATE_LIMIT_BACKEND',
       'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN',
       'SANDBOX_RPC_KEY', 'PROBLEM_PUBLICATION_FILE', 'MODEL_CREDENTIAL_ACTIVE_KEY_ID', 'MODEL_CREDENTIAL_KEYS', 'MODEL_CREDENTIAL_ROTATION_ENABLED', 'COPILOT_WEB_API_KEY', 'COPILOT_WEB_BASE_URL', 'COPILOT_WEB_TIMEOUT'],
     sandbox: ['SANDBOX_PORT', 'SANDBOX_RPC_KEY'], web: ['JAVA_PORT', 'WEB_PORT'],

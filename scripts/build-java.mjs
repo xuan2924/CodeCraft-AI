@@ -21,6 +21,9 @@ export function javaComposeEnv(values) {
   const env = {};
   for (const key of ['JAVA_PORT', 'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD',
     'IDENTITY_FINGERPRINT_KEY', 'SANDBOX_RPC_KEY', 'MODEL_CREDENTIAL_ACTIVE_KEY_ID', 'MODEL_CREDENTIAL_KEYS']) env[key] = values[key] ?? '';
+  env.REDIS_PASSWORD = values.REDIS_PASSWORD ?? '';
+  env.REALTIME_BACKEND = values.REALTIME_BACKEND ?? 'local';
+  env.RATE_LIMIT_BACKEND = values.RATE_LIMIT_BACKEND ?? 'postgresql';
   env.MODEL_CREDENTIAL_ROTATION_ENABLED = values.MODEL_CREDENTIAL_ROTATION_ENABLED ?? 'false';
   env.COPILOT_WEB_API_KEY = values.COPILOT_WEB_API_KEY ?? '';
   env.COPILOT_WEB_BASE_URL = values.COPILOT_WEB_BASE_URL ?? 'https://api.tavily.com/';

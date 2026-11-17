@@ -17,6 +17,24 @@ test('container model channel has a fixed Java destination and no upstream provi
 });
 
 const base = 'POSTGRES_USER=fixture\nPOSTGRES_PASSWORD=fixture\n';
+
+test('Redis configuration is opt-in, validated and Java-only', () => {
+  const values = parseConfig(base + 'REALTIME_BACKEND=redis\nRATE_LIMIT_BACKEND=redis\nREDIS_PASSWORD=fixture-redis\n');
+  for (const service of ['web', 'sandbox', 'postgres']) {
+    const env = serviceEnv(values, service, { REDIS_PASSWORD: 'host-secret', REALTIME_BACKEND: 'redis' });
+    for (const key of ['REDIS_HOST', 'REDIS_PORT', 'REDIS_PASSWORD', 'REALTIME_BACKEND', 'RATE_LIMIT_BACKEND']) assert.equal(env[key], undefined);
+  }
+  for (const env of [serviceEnv(values, 'java', {}), javaComposeEnv(values)]) {
+    assert.equal(env.REDIS_PASSWORD, 'fixture-redis');
+    assert.equal(env.REALTIME_BACKEND, 'redis');
+    assert.equal(env.RATE_LIMIT_BACKEND, 'redis');
+  }
+  assert.equal(parseConfig(base).REALTIME_BACKEND, 'local');
+  assert.equal(parseConfig(base).RATE_LIMIT_BACKEND, 'postgresql');
+  for (const invalid of ['REALTIME_BACKEND=typo', 'RATE_LIMIT_BACKEND=local', 'REDIS_PORT=0', 'REDIS_HOST=bad/host']) {
+    assert.throws(() => parseConfig(base + invalid));
+  }
+});
 const configured = { MODEL_CREDENTIAL_ACTIVE_KEY_ID: 'new', MODEL_CREDENTIAL_KEYS: `new:${Buffer.alloc(32, 1).toString('base64')}`, MODEL_CREDENTIAL_ROTATION_ENABLED: 'true' };
 
 test('local literal configuration admits the declared model wrapping-key settings without evaluating values', () => {

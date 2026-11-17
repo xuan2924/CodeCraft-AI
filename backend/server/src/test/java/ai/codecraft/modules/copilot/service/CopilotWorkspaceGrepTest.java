@@ -49,6 +49,19 @@ class CopilotWorkspaceGrepTest {
         assertThat(request.getValue().getContextLines()).isEqualTo(2);
         assertThat(request.getValue().getLimit()).isEqualTo(20);
     }
+    @Test void cacheHitsStillReauthorizeAndAvoidGrpc() {
+        doReturn(exercise(7)).when(store).find("session", "exercise");
+        when(sandbox.grep(any())).thenReturn(response());
+        service.grep("session", "exercise", "needle", "", false, 0, 1);
+        service.grep("session", "exercise", "needle", "", false, 0, 1);
+        verify(sandbox, org.mockito.Mockito.times(1)).grep(any());
+        verify(store, org.mockito.Mockito.times(4)).find("session", "exercise");
+        var baseline = exercise(7);
+        when(store.find("session", "exercise")).thenReturn(baseline)
+            .thenThrow(new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND));
+        assertThatThrownBy(() -> service.grep("session", "exercise", "needle", "", false, 0, 1)).hasMessage("RESOURCE_NOT_FOUND");
+        verify(sandbox, org.mockito.Mockito.times(1)).grep(any());
+    }
     @Test void neverReturnsContentAfterAuthorizationIsRevokedInFlight() {
         var initial = exercise(7);
         when(store.find("session", "exercise")).thenReturn(initial).thenThrow(new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND));

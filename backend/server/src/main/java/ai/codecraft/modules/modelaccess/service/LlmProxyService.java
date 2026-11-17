@@ -80,7 +80,8 @@ public class LlmProxyService {
         if (!"max_tokens".equals(limit)) request.remove("max_tokens");
         request.put(limit, requested);
         if (!anthropic && "chat/completions".equals(suffix) && request.path("stream").asBoolean()) request.withObject("stream_options").put("include_usage", true);
-        if (!limiter.admit(List.of(new RateLimitPolicy("cli-proxy-user", grant.user(), Duration.ofMinutes(1), 30),
+        if (!limiter.admit(List.of(new RateLimitPolicy("cli-proxy-burst", grant.user(), Duration.ofSeconds(1), 5),
+            new RateLimitPolicy("cli-proxy-user", grant.user(), Duration.ofMinutes(1), 30),
             new RateLimitPolicy("cli-proxy-exercise", grant.exercise(), Duration.ofHours(1), 300)))) { response.setStatus(429); return; }
         URI base = validator.baseUri(target.connection().baseUrl());
         if (base.getRawQuery() != null) { response.setStatus(400); return; }

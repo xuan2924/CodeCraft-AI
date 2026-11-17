@@ -57,7 +57,9 @@ public class TerminalGateway extends AbstractWebSocketHandler implements SubProt
         if(task==null||owner==null){session.close(CloseStatus.POLICY_VIOLATION);return;}
         session.setBinaryMessageSizeLimit(16384);session.setTextMessageSizeLimit(1024);
         var bridge=new Bridge(new ConcurrentWebSocketSessionDecorator(session,5000,128*1024),task,owner);
-        if(!connections.register(task.id(),task.exerciseId(),()->bridge.close(CloseStatus.POLICY_VIOLATION))){session.close(BUSY);return;}
+        try {
+            if(!connections.register(task.id(),task.exerciseId(),()->bridge.close(CloseStatus.POLICY_VIOLATION))){session.close(BUSY);return;}
+        } catch (RuntimeException unavailable) { session.close(BUSY); return; }
         bridges.put(session.getId(),bridge);
         Thread.startVirtualThread(bridge::output);
         Thread.startVirtualThread(bridge::input);

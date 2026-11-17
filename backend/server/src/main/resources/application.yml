@@ -14,6 +14,13 @@ server:
 spring:
   application:
     name: codecraft-server
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+      connect-timeout: 2s
   datasource:
     url: jdbc:postgresql://127.0.0.1:${POSTGRES_PORT:5432}/${POSTGRES_DB:codecraft}?connectTimeout=2&socketTimeout=3
     username: ${POSTGRES_USER}
@@ -27,6 +34,11 @@ spring:
     clean-disabled: true
     baseline-on-migrate: false
     validate-on-migrate: true
+codecraft:
+  realtime:
+    backend: ${REALTIME_BACKEND:local}
+  rate-limit:
+    backend: ${RATE_LIMIT_BACKEND:postgresql}
 mybatis:
   configuration:
     default-statement-timeout: 2

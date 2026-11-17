@@ -3,13 +3,11 @@ package ai.codecraft.infrastructure.ratelimit;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.SocketOptions;
 import java.time.Duration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.data.redis.LettuceClientConfigurationBuilderCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = "codecraft.rate-limit.backend", havingValue = "redis")
 public class RedisRateLimitConfiguration {
     @Bean
     LettuceClientConfigurationBuilderCustomizer rateLimitRedisTimeouts() {

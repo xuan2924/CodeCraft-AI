@@ -4,6 +4,9 @@ import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.identity.model.entity.RevocationIntentEntity;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
+import ai.codecraft.modules.workspace.gateway.WorkspaceImmutableCache;
+import ai.codecraft.workspace.v1.ReadWorkspaceFileRequest;
+import ai.codecraft.workspace.v1.GrepWorkspaceResponse;
 import ai.codecraft.modules.workspace.model.dto.ExerciseResponse;
 import ai.codecraft.modules.workspace.model.dto.ExercisePauseResponse;
 import java.time.Clock;
@@ -38,6 +41,7 @@ public class ExerciseService {
     private final StorageCapacityService capacity;
     private final ExercisePauseStore pauses;
     private final Clock clock;
+    private final WorkspaceImmutableCache cache;
 
     public ExerciseService(ExerciseTransactionService store, SandboxWorkspaceGateway sandbox, @Qualifier("workspaceJson") ObjectMapper json, ProblemService problems, IdentityTransactionService identity, WorkspaceWriteTransactionService writes, FinalizationStore finals, FinalizationCoordinator finalization, StorageCapacityService capacity, ExercisePauseStore pauses, Clock clock) {
         this.store = store;
@@ -49,6 +53,7 @@ public class ExerciseService {
         this.finals = finals;
         this.finalization = finalization; this.capacity = capacity;
         this.pauses = pauses; this.clock = clock;
+        this.cache = new WorkspaceImmutableCache(clock == null ? Clock.systemUTC() : clock);
     }
 
     public WorkspaceOperationResponse pause(String session, String id, String key, String credential, boolean resume) {
@@ -116,10 +121,16 @@ public class ExerciseService {
             throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
         }
         try {
-            ReadWorkspaceFileResponse result = sandbox.read(exercise.workspaceInstanceId(), path, exercise.revision());
+            var request = ReadWorkspaceFileRequest.newBuilder()
+                .setWorkspaceInstanceId(exercise.workspaceInstanceId()).setExpectedRevision(exercise.revision()).setPath(path).build();
+            ReadWorkspaceFileResponse result = cache.read(new WorkspaceImmutableCache.Key(
+                exerciseId, exercise.workspaceInstanceId(), exercise.revision(), request), ReadWorkspaceFileResponse.class,
+                () -> sandbox.read(exercise.workspaceInstanceId(), path, exercise.revision()),
+                value -> value.getWorkspaceInstanceId().equals(exercise.workspaceInstanceId())
+                    && value.getRevision() == exercise.revision() && value.getPath().equals(path));
             // A slow RPC must not return private content under an identity revoked while it was in flight.
             ExerciseEntity current = store.find(session, exerciseId);
-            if (!current.workspaceInstanceId().equals(exercise.workspaceInstanceId()) || current.revision() == null) {
+            if (!current.workspaceInstanceId().equals(exercise.workspaceInstanceId()) || !exercise.revision().equals(current.revision())) {
                 throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
             }
             if (!result.getWorkspaceInstanceId().equals(exercise.workspaceInstanceId())
@@ -143,9 +154,14 @@ public class ExerciseService {
         var exercise = store.find(session, exerciseId);
         if (exercise.revision() == null) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
         try {
-            var result = sandbox.grep(GrepWorkspaceRequest.newBuilder().setWorkspaceInstanceId(exercise.workspaceInstanceId())
+            var request = GrepWorkspaceRequest.newBuilder().setWorkspaceInstanceId(exercise.workspaceInstanceId())
                 .setExpectedRevision(exercise.revision()).setPattern(pattern).setPathPrefix(prefix).setIsRegex(regex)
-                .setContextLines(context).setLimit(limit).build());
+                .setContextLines(context).setLimit(limit).build();
+            var result = cache.read(new WorkspaceImmutableCache.Key(
+                exerciseId, exercise.workspaceInstanceId(), exercise.revision(), request), GrepWorkspaceResponse.class,
+                () -> sandbox.grep(request), value -> value.getWorkspaceInstanceId().equals(exercise.workspaceInstanceId())
+                    && value.getRevision() == exercise.revision() && value.getLinesCount() <= 201
+                    && value.getLinesList().stream().mapToInt(line -> line.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1).sum() <= 65536);
             var current = store.find(session, exerciseId);
             if (!current.workspaceInstanceId().equals(exercise.workspaceInstanceId()) || !exercise.revision().equals(current.revision())) {
                 throw new BusinessException(WorkspaceErrorCode.REVISION_CONFLICT);

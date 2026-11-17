@@ -21,14 +21,32 @@ public final class TaskWakeupPublisher {
         new ArrayBlockingQueue<>(TaskWakeup.Lane.values().length), Thread.ofPlatform().name("task-wakeup-", 0).factory(),
         new ThreadPoolExecutor.AbortPolicy());
 
-    public TaskWakeupPublisher(ApplicationEventPublisher events) { this.events = events; }
+    private final ai.codecraft.infrastructure.stream.TaskRealtimeBus bus;
+    private final AutoCloseable subscription;
+
+    public TaskWakeupPublisher(ApplicationEventPublisher events) {
+        this(events, new ai.codecraft.infrastructure.stream.TaskRealtimeBus(null));
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public TaskWakeupPublisher(ApplicationEventPublisher events, ai.codecraft.infrastructure.stream.TaskRealtimeBus bus) {
+        this.events = events;
+        this.bus = bus;
+        subscription = bus.subscribe(hint -> {
+            if (hint.kind().equals("wakeup")) enqueue(TaskWakeup.Lane.valueOf(hint.task()));
+        });
+    }
+
+    private void publish(TaskWakeup.Lane lane) {
+        bus.publish(new ai.codecraft.infrastructure.stream.TaskRealtimeBus.Hint("wakeup", lane.name(), null, null));
+    }
 
     public void afterCommit(TaskWakeup.Lane lane) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override public void afterCommit() { enqueue(lane); }
+                @Override public void afterCommit() { publish(lane); }
             });
-        } else enqueue(lane);
+        } else publish(lane);
     }
 
     private void enqueue(TaskWakeup.Lane lane) {
@@ -44,5 +62,9 @@ public final class TaskWakeupPublisher {
     }
 
     @PreDestroy
-    public void close() { executor.shutdownNow(); pending.clear(); }
+    public void close() {
+        executor.shutdownNow(); pending.clear();
+        try { subscription.close(); }
+        catch (Exception failure) { throw new IllegalStateException("Cannot close hint subscription", failure); }
+    }
 }

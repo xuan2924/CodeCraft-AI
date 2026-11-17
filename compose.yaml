@@ -12,6 +12,11 @@ services:
     environment:
       SERVER_ADDRESS: "0.0.0.0"
       JAVA_PORT: "8080"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REALTIME_BACKEND: ${REALTIME_BACKEND:-local}
+      RATE_LIMIT_BACKEND: ${RATE_LIMIT_BACKEND:-postgresql}
       WORKSPACE_EXECUTION_CONCURRENCY: ${SANDBOX_EXECUTION_CONCURRENCY:-4}
       SANDBOX_HOST: sandbox
       SANDBOX_PORT: "9090"
@@ -92,6 +97,20 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+  redis:
+    image: redis:7.4.2-alpine
+    profiles: [redis]
+    # No host port: only trusted services on the Compose network may connect.
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command: ["sh", "-c", 'test -n "$$REDIS_PASSWORD" || exit 1; exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 64mb --maxmemory-policy noeviction --save "" --appendonly no']
+    healthcheck:
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
 networks:
   default:
     ipam:
