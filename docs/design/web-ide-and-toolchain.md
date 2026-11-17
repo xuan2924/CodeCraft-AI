@@ -20,7 +20,7 @@
 
 ## 构建脚本与测试分层体系
 
-工程契约以 `backend/proto/workspace.proto` 为唯一跨端接口定义，通过 `./scripts/generate-proto.ps1`（或 `.sh`）同步生成 Java 与 Go 代码；日常服务统一通过 `node scripts/dev.mjs <postgres|sandbox|java|web>` 启动。
+工程契约以 `backend/proto/workspace.proto` 为唯一跨端接口定义，通过 `./scripts/generate-proto.ps1`（或 `.sh`）同步生成 Java 与 Go 代码；全套 Java 与 Go 联调与沙箱执行均在 Docker（Linux 容器）下运行（Windows 宿主机无需本地留存 `.tools/llvm-mingw` 等 CGO 编译器；仅当在宿主机运行 `--all` 模式中的 Go `-race` 检测时需自备 Linux/CGO 编译环境）。日常服务可通过 `node scripts/dev.mjs <postgres|sandbox|java|web>` 启动。
 
 | 验证层级 | 核心命令 | 覆盖范围与依赖 | 使用时机 |
 |---|---|---|---|

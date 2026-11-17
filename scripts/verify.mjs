@@ -64,6 +64,7 @@ if (mode === '--quick') {
   run('go', ['mod', 'verify'], go);
   run('go', ['vet', './...'], go);
   run('go', ['test', '-count=1', './...'], go);
+  // Full Go race detector requires CGO/Linux (containers run Java & Go under Docker; Windows host does not bundle llvm-mingw).
   run('go', ['test', '-race', '-count=1', './...'], go);
   run('go', ['build', './cmd/sandbox'], go);
   run('go', ['vet', './...'], { ...go, env: { ...process.env, GOOS: 'linux', GOARCH: 'amd64', CGO_ENABLED: '0' } });
