@@ -60,7 +60,7 @@ class LifecycleConvergenceTest {
         when(fixture.tasks.lock("manual")).thenReturn(manual);
         ProblemRepository problems = mock(ProblemRepository.class);
         when(problems.find("problem")).thenReturn(new ProblemVersionEntity("problem", "cart", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", "{}"));
-        TestTaskStore admission = new TestTaskStore(mock(IdentityTransactionService.class), mock(IdentitySecrets.class), fixture.exercises, fixture.writes,
+        TestTaskStore admission = new TestTaskStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), mock(IdentityTransactionService.class), mock(IdentitySecrets.class), fixture.exercises, fixture.writes,
             fixture.tasks, problems, Clock.fixed(DEADLINE, ZoneOffset.UTC), JsonMapper.builder().addModule(new JavaTimeModule()).build(),
             mock(TaskStreamRepository.class), mock(TaskStreamPublisher.class), fixture.finals,
             new ai.codecraft.modules.workspace.config.StorageProperties(512L * 1024 * 1024, 256L * 1024 * 1024, 20), mock(WorkspaceMaintenanceStore.class), mock(StorageCapacityStore.class));
@@ -127,7 +127,7 @@ class LifecycleConvergenceTest {
             when(identity.authorizeMutation("session")).thenReturn(new SessionAuthorizationDTO("user", "USER", false, 1, DEADLINE.plusSeconds(1000)));
             Clock clock = Clock.fixed(DEADLINE, ZoneOffset.UTC);
             // One attempt is an allowed bound; environmental failure must release business activity.
-            store = new FinalizationStore(finals, exercises, writes, tasks, mock(TaskStreamRepository.class), mock(ProblemRepository.class), identity,
+            store = new FinalizationStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), finals, exercises, writes, tasks, mock(TaskStreamRepository.class), mock(ProblemRepository.class), identity,
                 mock(IdentitySecrets.class), clock, new FinalizationProperties(1, 600, 5, 30), new FinalVerificationPolicy(clock), json, mock(StorageCapacityStore.class));
             coordination = new WorkspaceCoordinationStore(writes, exercises, json, mock(WorkspaceHistoryLedger.class));
             when(finals.find("exercise")).thenAnswer(call -> finalization);

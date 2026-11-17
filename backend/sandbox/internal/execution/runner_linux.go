@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"time"
 
+	"codecraft.local/sandbox/internal/security"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/errdefs"
@@ -159,7 +160,7 @@ func (r *Runner) register(ctx context.Context, input Input, prepare func() error
 		r.mu.Unlock()
 		return Result{}, false, err
 	}
-	if r.running || r.blocked || r.closed {
+	if r.capacityBusy(input) || r.blocked || r.closed {
 		r.mu.Unlock()
 		return Result{}, false, ErrBusy
 	}
@@ -196,26 +197,36 @@ func (r *Runner) register(ctx context.Context, input Input, prepare func() error
 	if input.TaskID != "" {
 		r.tasks[input.TaskID] = input.ExecutionID
 	}
-	r.running = true
-	r.done = make(chan struct{})
+	r.reserve(input)
 	r.mu.Unlock()
 	return record, true, nil
 }
 
 func (r *Runner) finished(ctx context.Context, result Result) {
+	if result.Quiescent && result.Cleanup == "SUCCEEDED" {
+		if err := r.removeNetwork(ctx, result.Input); err != nil {
+			result.Cleanup = "FAILED"
+			if persistErr := r.persist(result); persistErr != nil {
+				log.Printf("execution network cleanup persistence failed: execution=%s error_type=%T", result.Input.ExecutionID, persistErr)
+			}
+		}
+	}
 	durable, err := r.Query(context.WithoutCancel(ctx), result.Input.ExecutionID)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.running = false
-	if err != nil || !result.Quiescent || !durable.Quiescent || durable.Cleanup != "SUCCEEDED" || durable.CopyCleanup == "FAILED" || (durable.Input.TaskID != "" && durable.CopyCleanup != "SUCCEEDED") {
+	delete(r.active, result.Input.ExecutionID)
+	r.running = len(r.active) != 0
+	if err != nil || !result.Quiescent || result.Cleanup != "SUCCEEDED" || !durable.Quiescent || durable.Cleanup != "SUCCEEDED" || durable.CopyCleanup == "FAILED" || (durable.Input.TaskID != "" && durable.CopyCleanup != "SUCCEEDED") {
 		r.blocked = true
-	} else {
+	} else if !r.running {
 		r.blocked = false
 		if err := r.inventory(context.WithoutCancel(ctx)); err != nil {
 			r.blocked = true
 		}
 	}
-	close(r.done)
+	if !r.running {
+		close(r.done)
+	}
 }
 
 func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonitor) (Result, error) {
@@ -240,6 +251,15 @@ func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonito
 		now := time.Now().UTC()
 		record.FinishedAt = &now
 		return record, r.persist(record)
+	}
+	networkCall, stopNetwork := context.WithTimeout(ctx, 5*time.Second)
+	networkErr := r.prepareNetwork(networkCall, input)
+	stopNetwork()
+	if networkErr != nil {
+		record.State, record.Reason, record.Quiescent, record.Cleanup = "INTERRUPTED", "network_setup_failed", true, "SUCCEEDED"
+		now := time.Now().UTC()
+		record.FinishedAt = &now
+		return record, errors.Join(networkErr, r.persist(record))
 	}
 	config, host := r.containerConfig(input)
 	// An immutable Engine-side owner receipt survives loss of both local files.
@@ -368,7 +388,7 @@ func (r *Runner) containerConfig(input Input) (*container.Config, *container.Hos
 		Env:             []string{"HOME=/tmp", "MAVEN_OPTS=-Xmx256m -XX:ActiveProcessorCount=1 -Djava.io.tmpdir=/tmp"},
 		Labels:          map[string]string{"codecraft.execution.owner": r.owner, "codecraft.execution.volume": r.volume, "codecraft.execution.id": input.ExecutionID, "codecraft.workspace.id": input.WorkspaceID},
 		NetworkDisabled: true, AttachStdout: true, AttachStderr: true}
-	host := &container.HostConfig{NetworkMode: "none", ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges:true"},
+	host := &container.HostConfig{NetworkMode: "none", ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges:true", "seccomp=" + security.SeccompProfile},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
 		Resources:     container.Resources{CPUPeriod: 100000, CPUQuota: limits.CPUs * 100000, Memory: limits.MemoryMiB * 1024 * 1024, MemorySwap: limits.MemoryMiB * 1024 * 1024, PidsLimit: &pids, Ulimits: []*units.Ulimit{{Name: "core", Soft: 0, Hard: 0}}},
 		ShmSize:       limits.ShmMiB * 1024 * 1024,
@@ -377,10 +397,15 @@ func (r *Runner) containerConfig(input Input) (*container.Config, *container.Hos
 		LogConfig:     container.LogConfig{Type: "local", Config: map[string]string{"max-size": strconv.Itoa(limits.LogBytes), "max-file": "1", "compress": "false"}}}
 	if input.Purpose == "COMMAND" && input.Command != nil {
 		config.Entrypoint, config.Cmd = []string{"/bin/bash"}, []string{"--noprofile", "--norc", "-c", developmentCommand}
-		config.NetworkDisabled, host.NetworkMode = false, "bridge"
+		if r.commandNetwork != "" {
+			config.NetworkDisabled, host.NetworkMode = false, container.NetworkMode(r.executionNetwork(input.ExecutionID))
+		}
 		config.Env = []string{"HOME=/cache/home", "MAVEN_OPTS=-Xmx256m -XX:ActiveProcessorCount=1 -Djava.io.tmpdir=/tmp -Dmaven.repo.local=/cache/maven",
 			"npm_config_cache=/cache/npm", "GOCACHE=/cache/go-build", "GOMODCACHE=/cache/go-mod",
 			"CODECRAFT_COMMAND=" + input.Command.Text, "CODECRAFT_DIRECTORY=" + input.Command.Directory}
+		if r.proxyURL != "" {
+			config.Env = append(config.Env, "HTTP_PROXY="+r.proxyURL, "HTTPS_PROXY="+r.proxyURL, "http_proxy="+r.proxyURL, "https_proxy="+r.proxyURL, "NO_PROXY=", "no_proxy=")
+		}
 		host.Mounts[0].Target, host.Mounts[0].ReadOnly = "/project", false
 		cache := fmt.Sprintf("rw,nosuid,nodev,size=%dm,uid=10001,gid=10001", limits.WorkMiB)
 		host.Tmpfs["/cache"] = cache // Project build directories must remain removable (e.g. mvn clean).

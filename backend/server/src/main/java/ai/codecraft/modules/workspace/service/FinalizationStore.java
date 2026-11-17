@@ -4,6 +4,7 @@ import ai.codecraft.common.exception.BusinessException;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.config.FinalizationProperties;
+import ai.codecraft.modules.workspace.config.ExecutionProperties;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import ai.codecraft.modules.workspace.model.entity.FinalizationEntity;
@@ -34,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 /** Durable lifecycle transactions. No RPC is performed while database locks are held. */
 @Service
 public class FinalizationStore {
+    private final ExecutionProperties executionLimits;
     private static final Set<String> VERIFIED = Set.of("PASSED", "FAILED", "TIMED_OUT");
     private static final Set<String> RETRYABLE = Set.of("ENVIRONMENT_ERROR", "INTERRUPTED", "STOPPED");
     private final FinalizationRepository finals;
@@ -50,9 +52,10 @@ public class FinalizationStore {
     private final ObjectMapper json;
     private final StorageCapacityStore capacity;
 
-    public FinalizationStore(FinalizationRepository finals, ExerciseRepository exercises, WorkspaceWriteRepository writes,
+    public FinalizationStore(ExecutionProperties executionLimits, FinalizationRepository finals, ExerciseRepository exercises, WorkspaceWriteRepository writes,
         TestTaskRepository tasks, TaskStreamRepository streams, ProblemRepository problems, IdentityTransactionService identity,
         IdentitySecrets secrets, Clock clock, FinalizationProperties properties, FinalVerificationPolicy policy, @Qualifier("workspaceJson") ObjectMapper json, StorageCapacityStore capacity) {
+        this.executionLimits = executionLimits;
         this.finals = finals; this.exercises = exercises; this.writes = writes; this.tasks = tasks; this.streams = streams;
         this.problems = problems; this.identity = identity; this.secrets = secrets; this.clock = clock;
         this.properties = properties; this.policy = policy; this.json = json; this.capacity = capacity;
@@ -181,7 +184,7 @@ public class FinalizationStore {
         if (policy.exhausted(value)) { finish(value, "UNAVAILABLE", null); return null; }
         if (value.nextAttemptAt() != null && clock.instant().isBefore(value.nextAttemptAt())) return null;
         tasks.lockAdmission();
-        if (tasks.occupied() != 0) return null;
+        if (tasks.occupiedExercise(exerciseId) != 0 || tasks.occupied() >= executionLimits.concurrency()) return null;
         String id = UUID.randomUUID().toString();
         if (finals.allocate(exerciseId, id) != 1) return null;
         TestTaskEntity task = new TestTaskEntity(id, UUID.randomUUID().toString(), exerciseId, exercise.workspaceInstanceId(), value.finalRevision(),

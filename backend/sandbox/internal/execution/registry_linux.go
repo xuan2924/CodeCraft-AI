@@ -17,6 +17,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/docker/client"
 )
@@ -34,21 +35,26 @@ var ErrConflict = errors.New("execution input conflict")
 // Runner exclusively owns one private registry and one Docker namespace. Pending
 // registrations block new work after restart; recovery must not blindly rerun them.
 type Runner struct {
-	docker      *client.Client
-	root        string
-	volume      string
-	inputPrefix string
-	owner       string
-	epoch       string
-	lock        *os.File
-	mu          sync.Mutex
-	stateMu     sync.Mutex // Orders durable intent and result publication.
-	blocked     bool
-	running     bool
-	closed      bool
-	done        chan struct{}
-	tasks       map[string]string
-	now         func() time.Time // Authorization only; process timeout timers remain real.
+	docker         *client.Client
+	root           string
+	volume         string
+	inputPrefix    string
+	owner          string
+	epoch          string
+	lock           *os.File
+	mu             sync.Mutex
+	stateMu        sync.Mutex // Orders durable intent and result publication.
+	blocked        bool
+	running        bool
+	active         map[string]Input
+	concurrency    int
+	commandNetwork string
+	coordinator    string
+	proxyURL       string
+	closed         bool
+	done           chan struct{}
+	tasks          map[string]string
+	now            func() time.Time // Authorization only; process timeout timers remain real.
 }
 
 // New acquires process ownership and checks inventory before admitting work.
@@ -69,7 +75,7 @@ func New(ctx context.Context, docker *client.Client, root, volume, owner string)
 		lock.Close()
 		return nil, fmt.Errorf("execution registry already owned: %w", err)
 	}
-	r := &Runner{docker: docker, root: root, volume: volume, owner: owner, lock: lock, tasks: map[string]string{}, epoch: rand.Text(), now: time.Now}
+	r := &Runner{docker: docker, root: root, volume: volume, owner: owner, lock: lock, tasks: map[string]string{}, active: map[string]Input{}, concurrency: 4, epoch: rand.Text(), now: time.Now}
 	// Each process durably fences all previous dispatch generations before it
 	// inspects/repairs evidence or permits RPC admission.
 	if err = r.writeRegistry(".epoch", []byte(r.epoch)); err != nil {
@@ -121,7 +127,7 @@ func (r *Runner) Close() error {
 	return r.lock.Close()
 }
 
-// Wait joins the one owned asynchronous execution before releasing registry storage.
+// Wait joins all owned asynchronous executions before releasing registry storage.
 func (r *Runner) Wait() {
 	r.mu.Lock()
 	done := r.done
@@ -202,6 +208,17 @@ func (r *Runner) inventory(ctx context.Context) error {
 		// A retained container, even if marked quiescent in its record, requires
 		// reconciliation before admitting another execution after restart.
 		r.blocked = true
+	}
+	if r.coordinator != "" {
+		networks, err := r.docker.NetworkList(call, network.ListOptions{Filters: filters.NewArgs(filters.Arg("label", "codecraft.execution.volume="+r.volume))})
+		if err != nil {
+			return err
+		}
+		// Leftover network side effects also require reconciliation; a failed
+		// cleanup receipt must not be forgotten when another worker finishes.
+		if len(networks) != 0 {
+			r.blocked = true
+		}
 	}
 	return nil
 }

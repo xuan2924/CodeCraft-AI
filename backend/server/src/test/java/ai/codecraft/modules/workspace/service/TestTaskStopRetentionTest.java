@@ -101,7 +101,7 @@ class TestTaskStopRetentionTest {
             var writes = mock(WorkspaceWriteRepository.class);
             when(writes.lock("exercise")).thenReturn(new WorkspaceControlEntity("exercise", 1, 1L, "OPEN", IdentitySecrets.digest(credential), null, null));
             when(tasks.lock("task")).thenReturn(new TestTaskEntity("task", "execution", "exercise", "workspace", 1, 1, now.plusSeconds(60), "base", state, true, state.equals("STOPPED"), null, "host", 1));
-            store = new TestTaskStore(identity, mock(IdentitySecrets.class), exercises, writes, tasks, mock(ProblemRepository.class), Clock.fixed(now, ZoneOffset.UTC),
+            store = new TestTaskStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), identity, mock(IdentitySecrets.class), exercises, writes, tasks, mock(ProblemRepository.class), Clock.fixed(now, ZoneOffset.UTC),
                 new ObjectMapper(), mock(TaskStreamRepository.class), mock(TaskStreamPublisher.class), finals,
                 new StorageProperties(512L * 1024 * 1024, 256L * 1024 * 1024, 20), mock(WorkspaceMaintenanceStore.class), mock(StorageCapacityStore.class));
         }

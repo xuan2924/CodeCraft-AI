@@ -1,6 +1,7 @@
 package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.common.exception.BusinessException;
+import ai.codecraft.modules.workspace.config.ExecutionProperties;
 import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
 import ai.codecraft.modules.identity.model.exception.IdentityFailure;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
@@ -37,6 +38,7 @@ import org.springframework.transaction.annotation.Propagation;
 /** Durable business intent only; external execution and measurement stay outside transactions. */
 @Service
 public class CommandTaskStore {
+    private final ExecutionProperties executionLimits;
     private final IdentityTransactionService identity;
     private final IdentitySecrets secrets;
     private final ExerciseRepository exercises;
@@ -50,9 +52,10 @@ public class CommandTaskStore {
     private final ExerciseDataService data;
     private final WorkspaceHistoryLedger history;
 
-    public CommandTaskStore(IdentityTransactionService identity, IdentitySecrets secrets, ExerciseRepository exercises,
+    public CommandTaskStore(ExecutionProperties executionLimits, IdentityTransactionService identity, IdentitySecrets secrets, ExerciseRepository exercises,
         WorkspaceWriteRepository writes, TestTaskRepository admission, CommandTaskRepository commands, ProblemRepository problems,
         StorageCapacityStore capacity, @Qualifier("workspaceJson") ObjectMapper json, Clock clock, ExerciseDataService data, WorkspaceHistoryLedger history) {
+        this.executionLimits = executionLimits;
         this.identity = identity; this.secrets = secrets; this.exercises = exercises; this.writes = writes; this.admission = admission;
         this.commands = commands; this.problems = problems; this.capacity = capacity; this.json = json; this.clock = clock; this.data = data; this.history = history;
     }
@@ -96,7 +99,7 @@ public class CommandTaskStore {
         if (exercise.revision() == null || exercise.revision() != revision) fail(WorkspaceErrorCode.REVISION_CONFLICT);
         if (!problems.executionAvailable(exercise.problemVersionId())) fail(WorkspaceErrorCode.COMMAND_UNAVAILABLE);
         admission.lockAdmission();
-        if (admission.occupied() != 0) fail(WorkspaceErrorCode.COMMAND_SLOT_BUSY);
+        if (admission.occupiedExercise(exerciseId) != 0 || admission.occupied() >= executionLimits.concurrency()) fail(WorkspaceErrorCode.COMMAND_SLOT_BUSY);
         var now = clock.instant();
         var notAfter = actor.expiresAt().isBefore(exercise.deadlineAt()) ? actor.expiresAt() : exercise.deadlineAt();
         String id = UUID.randomUUID().toString();

@@ -86,7 +86,7 @@ class FinalizationStoreTest {
     void frozenRevisionResultIsReusedButOlderPassingRevisionIsNot() throws Exception {
         Fixture fixture = new Fixture(0, null);
         when(fixture.finals.reusable("exercise", "workspace", 7)).thenReturn(fixture.task("old", "PASSED", true, 6));
-        when(fixture.tasks.occupied()).thenReturn(1);
+        when(fixture.tasks.occupiedExercise("exercise")).thenReturn(1);
         assertNull(fixture.service().advance("exercise"));
         assertEquals("PENDING", fixture.service().find("exercise").verification());
         when(fixture.finals.reusable("exercise", "workspace", 7)).thenReturn(fixture.task("matching", "PASSED", true, 7));
@@ -106,10 +106,13 @@ class FinalizationStoreTest {
         assertNull(fixture.service().advance("exercise"));
         assertEquals(1, fixture.service().find("exercise").attempts());
         fixture.clock.now = START.plusSeconds(5);
-        when(fixture.tasks.occupied()).thenReturn(1);
+        when(fixture.tasks.occupiedExercise("exercise")).thenReturn(1);
         assertNull(fixture.service().advance("exercise"));
         assertEquals(1, fixture.service().find("exercise").attempts());
-        when(fixture.tasks.occupied()).thenReturn(0);
+        when(fixture.tasks.occupiedExercise("exercise")).thenReturn(0);
+        when(fixture.tasks.occupied()).thenReturn(4);
+        assertNull(fixture.service().advance("exercise"));
+        when(fixture.tasks.occupied()).thenReturn(3);
         TestTaskEntity second = fixture.service().advance("exercise");
         assertEquals(START.plusSeconds(600), second.notAfter());
         assertEquals(2, fixture.service().find("exercise").attempts());
@@ -127,7 +130,7 @@ class FinalizationStoreTest {
         when(fixture.writes.unresolved("exercise")).thenReturn(List.of());
         when(fixture.finals.outstanding("exercise")).thenReturn(List.of());
         when(fixture.exercises.find("exercise")).thenReturn(fixture.exercise("CLOSING"));
-        when(fixture.tasks.occupied()).thenReturn(1);
+        when(fixture.tasks.occupied()).thenReturn(4);
         when(fixture.finals.frozen(eq("exercise"), eq(4L), eq(7L), any(), any())).thenAnswer(call -> {
             fixture.value = new FinalizationEntity("final", "exercise", 4L, 7L, call.getArgument(3), call.getArgument(4), 3, 600, 5, 30, 0, null, null, "PENDING", null, null, true);
             return 1;
@@ -246,7 +249,7 @@ class FinalizationStoreTest {
         }
 
         FinalizationStore service() {
-            return new FinalizationStore(finals, exercises, writes, tasks, mock(TaskStreamRepository.class), problems,
+            return new FinalizationStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), finals, exercises, writes, tasks, mock(TaskStreamRepository.class), problems,
                 identity, mock(IdentitySecrets.class), clock, new FinalizationProperties(3, 600, 5, 30),
                 new FinalVerificationPolicy(clock), json, mock(StorageCapacityStore.class));
         }

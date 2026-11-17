@@ -12,6 +12,7 @@ services:
     environment:
       SERVER_ADDRESS: "0.0.0.0"
       JAVA_PORT: "8080"
+      WORKSPACE_EXECUTION_CONCURRENCY: ${SANDBOX_EXECUTION_CONCURRENCY:-4}
       SANDBOX_HOST: sandbox
       SANDBOX_PORT: "9090"
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-codecraft}?connectTimeout=2&socketTimeout=3
@@ -53,6 +54,17 @@ services:
       SANDBOX_PORT: "9090"
       SANDBOX_RPC_KEY: ${SANDBOX_RPC_KEY:-}
       SANDBOX_EXECUTION_VOLUME: "${COMPOSE_PROJECT_NAME}_sandbox-data"
+      SANDBOX_EXECUTION_CONCURRENCY: ${SANDBOX_EXECUTION_CONCURRENCY:-4}
+      SANDBOX_COMMAND_NETWORK: "${COMPOSE_PROJECT_NAME}_command-egress"
+      SANDBOX_RPC_BIND: "172.29.0.2"
+      SANDBOX_EGRESS_PROXY_URL: "http://egress:3128"
+      SANDBOX_EGRESS_LISTEN: "0.0.0.0:3128"
+      SANDBOX_EGRESS_ALLOWLIST: ${SANDBOX_EGRESS_ALLOWLIST:-repo.maven.apache.org:443,registry.npmjs.org:443,repo1.maven.org:443}
+    networks:
+      default:
+        ipv4_address: 172.29.0.2
+      command-egress:
+        ipv4_address: 172.30.0.2
     ports:
       - "127.0.0.1:${SANDBOX_PORT:-9090}:9090"
     volumes:
@@ -79,6 +91,16 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
+  command-egress:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 volumes:
   sandbox-data:
   postgres-data:

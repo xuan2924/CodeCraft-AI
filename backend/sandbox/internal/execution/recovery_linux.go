@@ -41,8 +41,7 @@ func (r *Runner) RecoverMonitored(owner context.Context, id string, monitor Inpu
 		}
 		return nil
 	}
-	r.running = true
-	r.done = make(chan struct{})
+	r.reserve(record.Input)
 	go func() {
 		result, err := r.recoverExecution(owner, record, monitor)
 		if result.Quiescent && result.FinishedAt != nil && cleanup != nil && result.CopyCleanup != "SUCCEEDED" {
@@ -69,6 +68,13 @@ func (r *Runner) RecoverMonitored(owner context.Context, id string, monitor Inpu
 }
 
 func (r *Runner) recoverExecution(ctx context.Context, record Result, monitor InputMonitor) (Result, error) {
+	if record.Quiescent && record.Reason == "network_setup_failed" {
+		if err := r.removeNetwork(ctx, record.Input); err != nil {
+			return record, err
+		}
+		record.Cleanup = "SUCCEEDED"
+		return record, r.persist(record)
+	}
 	if record.Quiescent && record.Cleanup == "SUCCEEDED" && record.FinishedAt != nil {
 		// Only copy finalization remains. In particular, a preparation-time
 		// expiry has no container ID and must not become ambiguous Create.

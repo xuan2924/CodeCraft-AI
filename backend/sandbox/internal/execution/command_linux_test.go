@@ -23,9 +23,9 @@ func TestCommandContainerUsesNetworkAndOnlyItsMutableCopy(t *testing.T) {
 	if err := validateInput(input); err != nil {
 		t.Fatal(err)
 	}
-	runner := &Runner{volume: "managed-workspaces", inputPrefix: "instances/", owner: "fixture"}
+	runner := &Runner{volume: "managed-workspaces", inputPrefix: "instances/", owner: "fixture", commandNetwork: "isolated", proxyURL: "http://proxy:3128"}
 	config, host := runner.containerConfig(input)
-	if config.NetworkDisabled || host.NetworkMode != "bridge" || !host.ReadonlyRootfs || config.User != "10001:10001" {
+	if config.NetworkDisabled || string(host.NetworkMode) != "isolated-"+input.ExecutionID || !host.ReadonlyRootfs || config.User != "10001:10001" {
 		t.Fatalf("unexpected command isolation: config=%+v host=%+v", config, host)
 	}
 	if len(host.Mounts) != 1 || host.Mounts[0].Target != "/project" || host.Mounts[0].ReadOnly || host.Mounts[0].VolumeOptions.Subpath != "instances/"+input.Subpath {
@@ -132,6 +132,33 @@ func TestCommandNonzeroExitIsDurableWithoutAnAuthorityGrade(t *testing.T) {
 	}
 	if _, err = runner.Start(context.Background(), input, nil, nil); err == nil {
 		t.Fatal("unmonitored command was admitted")
+	}
+}
+
+func TestSecurityPolicyAppliesToEveryPurpose(t *testing.T) {
+	for _, purpose := range []string{"MANUAL", "FINAL_VERIFICATION", "REVIEW", "COMMAND"} {
+		input := commandInput()
+		input.Purpose = purpose
+		if purpose != "COMMAND" {
+			input.Command = nil
+		}
+		runner := &Runner{commandNetwork: "isolated", proxyURL: "http://egress:3128"}
+		config, host := runner.containerConfig(input)
+		options := strings.Join(host.SecurityOpt, "\n")
+		if !strings.Contains(options, "no-new-privileges:true") || !strings.Contains(options, "seccomp=") || !strings.Contains(options, "SCMP_ACT_ERRNO") || len(host.CapDrop) != 1 || host.CapDrop[0] != "ALL" {
+			t.Fatalf("missing syscall/capability boundary for %s", purpose)
+		}
+		if purpose != "COMMAND" && (!config.NetworkDisabled || host.NetworkMode != "none") {
+			t.Fatalf("authority acquired network: %s", purpose)
+		}
+		if purpose == "COMMAND" {
+			env := strings.Join(config.Env, "\n")
+			for _, expected := range []string{"HTTP_PROXY=http://egress:3128", "HTTPS_PROXY=http://egress:3128", "NO_PROXY=", "no_proxy="} {
+				if !strings.Contains(env, expected) {
+					t.Fatalf("missing proxy environment: %s", expected)
+				}
+			}
+		}
 	}
 }
 

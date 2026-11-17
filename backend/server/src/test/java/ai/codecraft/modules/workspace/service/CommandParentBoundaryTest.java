@@ -35,7 +35,7 @@ class CommandParentBoundaryTest {
     private final ExerciseRepository exercises = mock(ExerciseRepository.class);
     private final CommandTaskRepository commands = mock(CommandTaskRepository.class);
     private final ExerciseDataService data = mock(ExerciseDataService.class);
-    private final CommandTaskStore store = new CommandTaskStore(identity, secrets, exercises, mock(WorkspaceWriteRepository.class),
+    private final CommandTaskStore store = new CommandTaskStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), identity, secrets, exercises, mock(WorkspaceWriteRepository.class),
         mock(TestTaskRepository.class), commands, mock(ProblemRepository.class), mock(StorageCapacityStore.class),
         JsonMapper.builder().build(), Clock.fixed(now, ZoneOffset.UTC), data, mock(WorkspaceHistoryLedger.class));
 

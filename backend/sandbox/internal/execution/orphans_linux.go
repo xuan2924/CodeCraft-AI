@@ -143,6 +143,12 @@ func (r *Runner) RefreshEvidence(ctx context.Context) error {
 		return err
 	}
 	r.blocked = false
+	if r.coordinator != "" {
+		if err := r.ConfigureEgress(ctx, r.coordinator); err != nil {
+			r.blocked = true
+			return err
+		}
+	}
 	if err := r.inventory(ctx); err != nil {
 		r.blocked = true
 		return err

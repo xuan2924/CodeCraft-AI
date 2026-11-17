@@ -430,14 +430,14 @@ class CopilotPersistenceIT {
         challengeStore = proxy(new ExerciseChallengeStore(sql.getMapper(ExerciseChallengeRepository.class), exercises, executionProblems,
             mock(ProblemPublicationReader.class), identity, coordination, data, capacityStore, secrets, clock), ExerciseChallengeStore.class);
         var streams = sql.getMapper(TaskStreamRepository.class);
-        exerciseFinalization = proxy(new FinalizationStore(sql.getMapper(FinalizationRepository.class), exercises, writes,
+        exerciseFinalization = proxy(new FinalizationStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), sql.getMapper(FinalizationRepository.class), exercises, writes,
             sql.getMapper(TestTaskRepository.class), streams, executionProblems, identity, secrets, clock,
             new FinalizationProperties(3, 600, 5, 30), new FinalVerificationPolicy(clock), json, capacityStore), FinalizationStore.class);
         var publisher = proxy(new TaskStreamPublisher(streams, json, clock, new TransientTaskStreamHub()), TaskStreamPublisher.class);
-        childExecutions = proxy(new TestTaskStore(identity, secrets, exercises, writes, sql.getMapper(TestTaskRepository.class), executionProblems, clock, json,
+        childExecutions = proxy(new TestTaskStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), identity, secrets, exercises, writes, sql.getMapper(TestTaskRepository.class), executionProblems, clock, json,
             streams, publisher, sql.getMapper(FinalizationRepository.class), budget, maintenance, capacityStore), TestTaskStore.class);
         childLifecycle = proxy(new CopilotTestLifecycle(sql.getMapper(CopilotTestRepository.class), childExecutions), CopilotTestLifecycle.class);
-        childCommands = proxy(new CommandTaskStore(identity, secrets, exercises, writes, sql.getMapper(TestTaskRepository.class),
+        childCommands = proxy(new CommandTaskStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), identity, secrets, exercises, writes, sql.getMapper(TestTaskRepository.class),
             sql.getMapper(CommandTaskRepository.class), executionProblems, capacityStore, json, clock, data, history), CommandTaskStore.class);
         commandLifecycle = proxy(new CopilotCommandLifecycle(sql.getMapper(CopilotCommandRepository.class), childCommands, clock), CopilotCommandLifecycle.class);
         var lifecycle = proxy(new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock, secrets, coordination,

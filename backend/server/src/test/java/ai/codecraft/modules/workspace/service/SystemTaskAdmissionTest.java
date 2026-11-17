@@ -143,7 +143,7 @@ class SystemTaskAdmissionTest {
                     row.target(), call.getArgument(1), row.dispatched(), call.getArgument(2), call.getArgument(3), row.hostEpoch(), row.stateVersion());
                 return null;
             }).when(tasks).observed(eq("task"), anyString(), anyBoolean(), anyString());
-            store = new TestTaskStore(identity, mock(IdentitySecrets.class), exercises, writes, tasks, problems,
+            store = new TestTaskStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), identity, mock(IdentitySecrets.class), exercises, writes, tasks, problems,
                 Clock.fixed(NOW, ZoneOffset.UTC), JsonMapper.builder().addModule(new JavaTimeModule()).build(), mock(TaskStreamRepository.class),
                 mock(TaskStreamPublisher.class), finals,
                 new ai.codecraft.modules.workspace.config.StorageProperties(512L * 1024 * 1024, 256L * 1024 * 1024, 20), mock(WorkspaceMaintenanceStore.class), mock(StorageCapacityStore.class));

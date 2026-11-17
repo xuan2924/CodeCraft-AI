@@ -128,7 +128,7 @@ class CommandPersistenceIT {
         var json = JsonMapper.builder().addModule(new JavaTimeModule()).disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS).build();
         var historyRepository = sql.getMapper(WorkspaceHistoryRepository.class);
         var data = new ExerciseDataService(List.of(new WorkspaceHistoryData(historyRepository)));
-        var target = new CommandTaskStore(identity, secrets, sql.getMapper(ExerciseRepository.class), sql.getMapper(WorkspaceWriteRepository.class),
+        var target = new CommandTaskStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), identity, secrets, sql.getMapper(ExerciseRepository.class), sql.getMapper(WorkspaceWriteRepository.class),
             sql.getMapper(TestTaskRepository.class), sql.getMapper(CommandTaskRepository.class), problems, mock(StorageCapacityStore.class), json, clock, data,
             new WorkspaceHistoryLedger(historyRepository, data, clock));
         store = transactional(target, CommandTaskStore.class);
@@ -155,6 +155,42 @@ class CommandPersistenceIT {
         assertThat(store.response(store.read(SESSION, exercise, task.id())).exitCode()).isEqualTo(7);
         assertThat(sql.getMapper(TestTaskRepository.class).occupied()).isZero();
         assertThat(sql.getMapper(ExerciseRepository.class).operation(task.id()).state()).isEqualTo("SUCCEEDED");
+    }
+
+    @Test void concurrentExercisesShareFourSlotsUnderTheRealAdmissionTransaction() throws Exception {
+        var ids = new java.util.ArrayList<String>();
+        ids.add(exercise);
+        when(identity.authorizeMutation(exercise)).thenReturn(new SessionAuthorizationDTO(owner, "USER", false, 1, clock.now.plusSeconds(60)));
+        for (int i = 0; i < 4; i++) {
+            String next = id();
+            String user = id();
+            jdbc.update("INSERT INTO identity_user(id,username,password_hash,role,password_change_required) VALUES (?::uuid,?,'fixture','USER',false)", user, "u_" + user.substring(0, 8));
+            when(identity.authorizeMutation(next)).thenReturn(new SessionAuthorizationDTO(user, "USER", false, 1, clock.now.plusSeconds(60)));
+            jdbc.update("INSERT INTO workspace_exercise(id,user_id,problem_version_id,workspace_instance_id,preparation_operation_id,state,revision,created_at,started_at,deadline_at) SELECT ?::uuid,?::uuid,problem_version_id,?::uuid,?::uuid,state,revision,created_at,started_at,deadline_at FROM workspace_exercise WHERE id=?::uuid",
+                next, user, id(), id(), exercise);
+            jdbc.update("INSERT INTO workspace_control(exercise_id,credential_hash,gate_epoch,gate_state) VALUES (?::uuid,?,2,'OPEN')", next, IdentitySecrets.digest(CREDENTIAL));
+            ids.add(next);
+        }
+        var ready = new java.util.concurrent.CountDownLatch(5);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var workers = java.util.concurrent.Executors.newFixedThreadPool(5)) {
+            var results = ids.stream().map(id -> workers.submit(() -> {
+                ready.countDown();
+                if (!start.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("Start barrier timed out");
+                try { store.accept(id, id, "parallel", CREDENTIAL, INPUT, null); return true; }
+                catch (BusinessException failure) {
+                    assertThat(failure.errorCode()).isEqualTo(WorkspaceErrorCode.COMMAND_SLOT_BUSY);
+                    return false;
+                }
+            })).toList();
+            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            int accepted = 0;
+            for (var result : results) if (result.get(10, java.util.concurrent.TimeUnit.SECONDS)) accepted++;
+            assertThat(accepted).isEqualTo(4);
+            assertThat(sql.getMapper(TestTaskRepository.class).occupied()).isEqualTo(4);
+            for (String id : ids) assertThat(sql.getMapper(TestTaskRepository.class).occupiedExercise(id)).isBetween(0, 1);
+        } finally { start.countDown(); }
     }
 
     @Test void expiryQueuesSafetyStopWithoutWaitingOrDispatching() {

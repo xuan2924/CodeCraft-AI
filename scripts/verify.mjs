@@ -43,7 +43,7 @@ const verificationStarted = performance.now();
 const checks = await Promise.allSettled([
   check('Node contracts', process.execPath, ['--test', 'scripts/problem-contract.test.mjs', 'scripts/publication-contract.test.mjs', 'scripts/verification-budget.test.mjs', 'scripts/docker-images.test.mjs', 'scripts/model-config.test.mjs']),
   check('Java lint + quick behavior', windows ? 'mvnw.cmd' : './mvnw', ['-B', '-ntp', 'test'], join(root, 'backend/server')),
-  check('Go quick behavior + vet', 'go', ['test', '-count=1', './internal/status', './internal/execution'], go.cwd),
+  check('Go quick behavior + vet', 'go', ['test', '-count=1', './internal/status', './internal/execution', './internal/security'], go.cwd),
   check('Linux Go compile + vet', 'go', ['vet', './...'], go.cwd, { ...process.env, GOOS: 'linux', GOARCH: 'amd64', CGO_ENABLED: '0' }),
   check('Vue typecheck', npm, ['run', 'typecheck'], frontend.cwd),
   check('Vue lint', npm, ['run', 'lint'], frontend.cwd),

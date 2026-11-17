@@ -9,6 +9,7 @@ import ai.codecraft.modules.workspace.model.dto.TestHistoryRetentionResponse;
 import ai.codecraft.modules.workspace.model.dto.TestHistoryResponse;
 import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
 import ai.codecraft.modules.workspace.config.StorageProperties;
+import ai.codecraft.modules.workspace.config.ExecutionProperties;
 import ai.codecraft.modules.workspace.model.dto.TestProblemResponse;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
 import ai.codecraft.modules.workspace.model.dto.TestResultEvidenceDTO;
@@ -44,6 +45,7 @@ import org.springframework.transaction.annotation.Propagation;
 
 @Service
 public class TestTaskStore {
+    private final ExecutionProperties executionLimits;
     private static final Set<String> TERMINAL = Set.of("PASSED", "FAILED", "TIMED_OUT", "STOPPED", "ENVIRONMENT_ERROR", "INTERRUPTED");
     private final IdentityTransactionService identity;
     private final IdentitySecrets secrets;
@@ -60,10 +62,11 @@ public class TestTaskStore {
     private final WorkspaceMaintenanceStore maintenance;
     private final StorageCapacityStore capacity;
 
-    public TestTaskStore(IdentityTransactionService identity, IdentitySecrets secrets, ExerciseRepository exercises,
+    public TestTaskStore(ExecutionProperties executionLimits, IdentityTransactionService identity, IdentitySecrets secrets, ExerciseRepository exercises,
         WorkspaceWriteRepository writes, TestTaskRepository tasks, ProblemRepository problems, Clock clock, @Qualifier("workspaceJson") ObjectMapper json,
         TaskStreamRepository streams, TaskStreamPublisher publisher, FinalizationRepository finals,
         StorageProperties storageLimits, WorkspaceMaintenanceStore maintenance, StorageCapacityStore capacity) {
+        this.executionLimits = executionLimits;
         this.identity = identity; this.secrets = secrets; this.exercises = exercises; this.writes = writes;
         this.tasks = tasks; this.problems = problems; this.clock = clock; this.json = json;
         this.streams = streams; this.publisher = publisher; this.finals = finals; this.storageLimits = storageLimits; this.maintenance = maintenance; this.capacity = capacity;
@@ -120,7 +123,7 @@ public class TestTaskStore {
             throw new BusinessException(WorkspaceErrorCode.TEST_TARGET_UNAVAILABLE);
         }
         tasks.lockAdmission();
-        if (tasks.occupied() != 0) throw new BusinessException(WorkspaceErrorCode.TEST_SLOT_BUSY);
+        if (tasks.occupiedExercise(exerciseId) != 0 || tasks.occupied() >= executionLimits.concurrency()) throw new BusinessException(WorkspaceErrorCode.TEST_SLOT_BUSY);
         Instant notAfter = authorization.expiresAt().isBefore(exercise.deadlineAt()) ? authorization.expiresAt() : exercise.deadlineAt();
         String id = UUID.randomUUID().toString();
         var operation = new WorkspaceOperationEntity(id, authorization.userId(), exerciseId, exercise.workspaceInstanceId(),

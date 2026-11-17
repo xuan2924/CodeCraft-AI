@@ -29,7 +29,7 @@ func TestDevelopmentCommandRunsInDockerAndRetainsNonzeroChanges(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if container.HostConfig.NetworkMode != "bridge" || !container.HostConfig.ReadonlyRootfs || container.Config.User != "10001:10001" {
+		if container.HostConfig.NetworkMode != "none" || !container.HostConfig.ReadonlyRootfs || container.Config.User != "10001:10001" {
 			return errors.New("development container configuration mismatch")
 		}
 		return nil

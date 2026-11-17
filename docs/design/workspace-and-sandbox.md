@@ -25,7 +25,11 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 - **可编辑范围锁定**：固定只允许修改题目声明的 Java 目录（`src/main/java`、`src/test/java`），并强制保护 `pom.xml` 和各级只读 `AGENTS.md` 指导文件。
 - **双模式 Docker 执行**：
   - **权威受控测试（`run_tests` / 手动验收）**：完全禁网，只读挂载镜像内权威测试 `/opt/acceptance` 与离线 Maven 仓库，用户 `src/test/java` 不参与权威判定；带 CPU/内存/PID/tmpfs 与 30s 保护性超时。
-  - **开发 Bash（`bash`）**：运行在独立可写容器副本中，**允许联网下载依赖**，执行后按可管理范围同步改动并推进 `revision`；每场演练同时只允许 1 个运行中测试或命令。
+  - **开发 Bash（`bash`）**：运行在独立可写容器副本中，每次执行建立独立 `internal` Docker bridge，仅连接该命令与 Go 协调器；不同命令不共享二层网络，无公网直连路由。通过内置 HTTP / HTTPS CONNECT 代理下载白名单依赖，执行后按可管理范围同步改动并推进 `revision`。
+- **有界执行准入**：Java 保留 `workspace_execution_admission` 短事务行锁，测试（含最终验收）和命令共享默认 4 个槽位，同时按演练排他；Go 再按 exerciseId / workspaceId 排他。Compose 用 `SANDBOX_EXECUTION_CONCURRENCY` 同时配置两端（1–64）。副本准备仍在原协调锁内，容器编译/执行并行；未知副作用与失败清理仍阻断新准入，恢复期间不盲目重跑。`Wait` 等待所有已接收工作退出。
+- **Egress 边界**：`SANDBOX_EGRESS_ALLOWLIST` 为精确 `域名:80/443` 列表，默认仅 Maven Central / npm 的 HTTPS 端点。每次建连先解析全部 DNS 答案，拒绝私网、回环、链路本地、元数据、未指定及保留地址，再直拨已验证 IP（不二次解析、不继承上游代理）。命令注入大小写 HTTP(S)_PROXY，清空 NO_PROXY；不遵循代理的工具不能直连，Maven 等工具可使用其原生代理设置。权威测试始终 `NetworkMode=none`。
+- **部署与清理**：Compose 为 RPC 固定绑定默认网 `172.29.0.2:9090`，代理单独监听 3128，不发布到宿主端口；运行网络仅可访问协调器代理，不能访问 RPC、Java、PostgreSQL 或其他命令。`172.29.0.0/24` / `172.30.0.0/24` 须避开宿主已有网段。每次执行网络有确定名称和 owner/volume/execution 标签，在持久登记后创建，容器确认移除后断开协调器并删除网络；重启对账孤儿网络，陌生归属失败关闭。不配置 Egress 时命令默认禁网。
+- **系统调用边界**：自定义 seccomp 通过 `go:embed` 内嵌，默认拒绝，仅放行工具链所需调用；clone 限制 namespace 标志，clone3 返回 ENOSYS 允许 libc 回退。ptrace、BPF、io_uring、挂载、命名空间切换、内核模块、keyctl 等均不可用。保留 `CapDrop=ALL` 与 `no-new-privileges`。
 
 ### 3. 双阶段题包隔离（Base vs Challenge）
 

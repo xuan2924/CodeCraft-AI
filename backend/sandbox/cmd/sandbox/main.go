@@ -45,6 +45,12 @@ func run(containerMode bool) error {
 		defer storage.Close()
 		// Docker publishes this container port only on host loopback.
 		host = "0.0.0.0"
+		if bind := os.Getenv("SANDBOX_RPC_BIND"); bind != "" {
+			if net.ParseIP(bind) == nil {
+				return fmt.Errorf("SANDBOX_RPC_BIND must be an IP address")
+			}
+			host = bind
+		}
 	}
 	listener, err := net.Listen("tcp", net.JoinHostPort(host, port))
 	if err != nil {
@@ -59,6 +65,7 @@ func run(containerMode bool) error {
 	if containerMode {
 		closeExecution, err := registerWorkspace(server, os.Getenv("SANDBOX_RPC_KEY"), os.Getenv("SANDBOX_EXECUTION_VOLUME"))
 		if err != nil {
+			_ = closeExecution()
 			return err
 		}
 		defer func() {

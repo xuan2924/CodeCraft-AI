@@ -149,7 +149,7 @@ class WorkspaceRetentionPersistenceIT {
         deletion = transactional(new DeletionStore(deletions, exercises, identity, clock, new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), new ExerciseDataService(List.of())), DeletionStore.class);
         problems = mock(ProblemRepository.class);
         when(problems.find(problem)).thenReturn(new ProblemVersionEntity(problem, "cart-total", "1", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", "{}"));
-        tasks = transactional(new TestTaskStore(identity, fingerprints(), exercises, sql.getMapper(WorkspaceWriteRepository.class), sql.getMapper(TestTaskRepository.class),
+        tasks = transactional(new TestTaskStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), identity, fingerprints(), exercises, sql.getMapper(WorkspaceWriteRepository.class), sql.getMapper(TestTaskRepository.class),
             problems, clock, json, sql.getMapper(TaskStreamRepository.class), mock(TaskStreamPublisher.class), sql.getMapper(FinalizationRepository.class), limits, maintenance, mock(StorageCapacityStore.class)), TestTaskStore.class);
     }
 
@@ -192,7 +192,7 @@ class WorkspaceRetentionPersistenceIT {
         jdbc.update("UPDATE workspace_exercise SET state = 'FINAL_TESTING' WHERE id = ?::uuid", exercise);
         jdbc.update("INSERT INTO workspace_finalization(id,exercise_id,frozen_epoch,final_revision,started_at,deadline_at,max_attempts,budget_seconds,first_retry_seconds,second_retry_seconds) VALUES (?::uuid,?::uuid,1,30,?,?,3,600,5,30)",
             finalization, exercise, java.sql.Timestamp.from(clock.now), java.sql.Timestamp.from(clock.now.plusSeconds(600)));
-        var finals = transactional(new FinalizationStore(sql.getMapper(FinalizationRepository.class), exercises, sql.getMapper(WorkspaceWriteRepository.class),
+        var finals = transactional(new FinalizationStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), sql.getMapper(FinalizationRepository.class), exercises, sql.getMapper(WorkspaceWriteRepository.class),
             sql.getMapper(TestTaskRepository.class), sql.getMapper(TaskStreamRepository.class), problems, identity, mock(IdentitySecrets.class), clock,
             new FinalizationProperties(3, 600, 5, 30), new FinalVerificationPolicy(clock), json, mock(StorageCapacityStore.class)), FinalizationStore.class);
         assertThat(finals.advance(exercise)).isNull();
@@ -274,7 +274,7 @@ class WorkspaceRetentionPersistenceIT {
         var stop = tasks.acceptRecoveryStop("session", exercise, task, "first-stop");
         assertThat(stop.ownerRecovery()).isTrue();
         assertThat(tasks.acceptRecoveryStop("session", exercise, task, "second-stop").id()).isEqualTo(stop.id());
-        var finalization = transactional(new FinalizationStore(sql.getMapper(FinalizationRepository.class), exercises, sql.getMapper(WorkspaceWriteRepository.class),
+        var finalization = transactional(new FinalizationStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), sql.getMapper(FinalizationRepository.class), exercises, sql.getMapper(WorkspaceWriteRepository.class),
             sql.getMapper(TestTaskRepository.class), sql.getMapper(TaskStreamRepository.class), problems, identity, fingerprints(), clock,
             new FinalizationProperties(3, 600, 5, 30), new FinalVerificationPolicy(clock), json, capacityStore), FinalizationStore.class);
         var end = finalization.recoveryEnd("session", exercise, "first-end");
