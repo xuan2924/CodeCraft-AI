@@ -209,7 +209,7 @@ func mutationFingerprint(request *rpc.ApplyBatchRequest) (string, error) {
 			return "", status.Error(codes.InvalidArgument, "invalid or duplicate path")
 		}
 		seen[change.Path] = true
-		if !(strings.HasPrefix(change.Path, "src/main/java/") || strings.HasPrefix(change.Path, "src/test/java/")) {
+		if isGuidancePath(change.Path) || !(strings.HasPrefix(change.Path, "src/main/java/") || strings.HasPrefix(change.Path, "src/test/java/")) {
 			return "", status.Error(codes.PermissionDenied, "path is not editable")
 		}
 		if change.Kind != "CREATE" && change.Kind != "UPDATE" && change.Kind != "DELETE" {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -26,6 +27,37 @@ status=$?
 printf '%s' "$status" > /work/.result-status.tmp || exit 91
 mv /work/.result-status.tmp /work/result-status || exit 92
 while :; do sleep 1; done`
+
+// Stage observations are operational only: never persist them as execution
+// evidence or log command text, output, paths, credentials, or raw errors.
+// Production time.Now retains its monotonic component, independent of authority.
+type executionStage struct {
+	input   Input
+	name    string
+	started time.Time
+	now     func() time.Time
+}
+
+func beginExecutionStage(input Input, name string) executionStage {
+	return newExecutionStage(input, name, time.Now)
+}
+
+func newExecutionStage(input Input, name string, now func() time.Time) executionStage {
+	return executionStage{input: input, name: name, started: now(), now: now}
+}
+
+func (stage executionStage) end(outcome string) {
+	slog.Info("sandbox execution stage", "execution_id", stage.input.ExecutionID,
+		"task_id", stage.input.TaskID, "stage", stage.name,
+		"duration_ms", stage.now().Sub(stage.started).Seconds()*1000, "outcome", outcome)
+}
+
+func stageOutcome(err error) string {
+	if err != nil {
+		return "failed"
+	}
+	return "succeeded"
+}
 
 // Run executes only the protected base target. ctx is the owning worker lifetime,
 // not a browser/RPC context. Every Docker side effect follows durable registration.
@@ -136,7 +168,10 @@ func (r *Runner) register(ctx context.Context, input Input, prepare func() error
 		return Result{}, false, errors.New("execution authorization expired")
 	}
 	if prepare != nil {
-		if err := prepare(); err != nil {
+		stage := beginExecutionStage(input, "input_preparation")
+		err := prepare()
+		stage.end(stageOutcome(err))
+		if err != nil {
 			r.mu.Unlock()
 			return Result{}, false, err
 		}
@@ -218,8 +253,10 @@ func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonito
 	config.Labels["codecraft.exercise.id"] = input.ExerciseID
 	config.Labels["codecraft.host.epoch"] = input.HostEpoch
 	call, cancel := context.WithTimeout(ctx, 5*time.Second)
+	creation := beginExecutionStage(input, "container_creation")
 	created, err := r.docker.ContainerCreate(call, config, host, nil, &specs.Platform{OS: "linux", Architecture: "amd64"}, "cc-execution-"+input.ExecutionID)
 	cancel()
+	creation.end(stageOutcome(err))
 	if err != nil {
 		// A lost create response may still produce a container. Keep the registration
 		// and capacity unresolved; querying an absent name is not proof of cancellation.
@@ -238,9 +275,11 @@ func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonito
 		return r.finish(ctx, record, "INTERRUPTED", "authorization_expired_before_start", nil, nil)
 	}
 	call, cancel = context.WithTimeout(ctx, 5*time.Second)
+	startup := beginExecutionStage(input, "attach_start")
 	attached, err := r.docker.ContainerAttach(call, created.ID, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
 	cancel()
 	if err != nil {
+		startup.end("failed")
 		return r.finish(ctx, record, "ENVIRONMENT_ERROR", "attach_failed", nil, err)
 	}
 	defer attached.Close()
@@ -261,12 +300,14 @@ func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonito
 		}
 	}
 	if !r.now().Before(input.NotAfter) {
+		startup.end("authorization_expired")
 		attached.Close()
 		_ = join()
 		return r.finish(ctx, record, "INTERRUPTED", "authorization_expired_before_start", logs, nil)
 	}
 	intent, intentErr = r.intent(ctx, input.ExecutionID)
 	if intentErr != nil || intent != "" {
+		startup.end("interrupted")
 		attached.Close()
 		_ = join()
 		return r.finish(ctx, record, "STOPPED", "user_stop", logs, intentErr)
@@ -274,6 +315,7 @@ func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonito
 	call, cancel = context.WithTimeout(ctx, 5*time.Second)
 	err = r.docker.ContainerStart(call, created.ID, container.StartOptions{})
 	cancel()
+	startup.end(stageOutcome(err))
 	if err != nil {
 		attached.Close()
 		_ = join()
@@ -288,7 +330,8 @@ func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonito
 	return r.observeExecution(ctx, record, logs, join, monitor)
 }
 
-func (r *Runner) observeExecution(ctx context.Context, record Result, logs *tailLog, join func() error, monitor InputMonitor) (Result, error) {
+func (r *Runner) observeExecution(ctx context.Context, record Result, logs *tailLog, join func() error, monitor InputMonitor) (result Result, resultErr error) {
+	execution := beginExecutionStage(record.Input, "command_execution")
 	// Restart never grants a fresh runtime budget.
 	runtime, cancelRuntime := context.WithDeadline(ctx, record.StartedAt.Add(time.Duration(record.Input.Limits.TimeoutSeconds)*time.Second))
 	state, reason := r.observe(runtime, &record, logs, monitor)
@@ -299,6 +342,9 @@ func (r *Runner) observeExecution(ctx context.Context, record Result, logs *tail
 		state, reason = "INTERRUPTED", "worker_cancelled"
 	}
 	cancelRuntime()
+	execution.end(state)
+	cleanup := beginExecutionStage(record.Input, "quiescent_cleanup")
+	defer func() { cleanup.end(cleanupOutcome(result, resultErr)) }()
 	// Evidence is durable BEFORE killing the holding shell/unmounting tmpfs.
 	if state == "TIMED_OUT" || state == "STOPPED" {
 		record.Intent = state
@@ -492,7 +538,9 @@ func (b *boundedEvidence) Write(data []byte) (int, error) {
 // An ambiguous Start can still arrive after an inspect of state=created. Removing
 // the exact, previously registered container fences that late request. A snapshot
 // of Running=false alone must never release execution capacity in this branch.
-func (r *Runner) fenceStart(ctx context.Context, record Result, logs *tailLog, cause error) (Result, error) {
+func (r *Runner) fenceStart(ctx context.Context, record Result, logs *tailLog, cause error) (result Result, resultErr error) {
+	stage := beginExecutionStage(record.Input, "quiescent_cleanup")
+	defer func() { stage.end(cleanupOutcome(result, resultErr)) }()
 	record.State = "INTERRUPTED"
 	record.Reason = "container_start_unconfirmed"
 	record.Quiescent = false
@@ -525,11 +573,25 @@ func (r *Runner) fenceStart(ctx context.Context, record Result, logs *tailLog, c
 	return record, errors.Join(cause, intentErr, err, r.persist(record))
 }
 
+// Quiescence and cleanup success are separate facts; an operational failure
+// must not be presented as successful cleanup merely because processes stopped.
+func cleanupOutcome(result Result, err error) string {
+	if !result.Quiescent {
+		return "unconfirmed"
+	}
+	if err != nil || result.Cleanup != "SUCCEEDED" {
+		return "failed"
+	}
+	return "succeeded"
+}
+
 func (r *Runner) owns(record Result, inspected container.InspectResponse) bool {
 	return inspected.Config != nil && inspected.Config.Labels["codecraft.execution.owner"] == r.owner && inspected.Config.Labels["codecraft.execution.id"] == record.Input.ExecutionID && inspected.Image == record.Input.Image
 }
 
-func (r *Runner) finish(ctx context.Context, record Result, state, reason string, logs *tailLog, cause error) (Result, error) {
+func (r *Runner) finish(ctx context.Context, record Result, state, reason string, logs *tailLog, cause error) (result Result, resultErr error) {
+	stage := beginExecutionStage(record.Input, "quiescent_cleanup")
+	defer func() { stage.end(cleanupOutcome(result, resultErr)) }()
 	stopErr := r.terminate(ctx, &record)
 	if logs != nil {
 		record.Logs, record.DroppedBytes = logs.snapshot()

@@ -104,7 +104,7 @@ func NewService(root string, publications []Publication, key string, runtime *Ex
 			copy.Challenge = &ChallengePublication{Identity: proto.Clone(child.Identity).(*rpc.ProblemIdentity), Execution: &policy}
 		}
 		for path, content := range publication.InitialFiles {
-			if !validPath(path) || !(path == "pom.xml" || strings.HasPrefix(path, "src/main/java/") || strings.HasPrefix(path, "src/test/java/")) ||
+			if !validPath(path) || !(path == "pom.xml" || isGuidancePath(path) || strings.HasPrefix(path, "src/main/java/") || strings.HasPrefix(path, "src/test/java/")) ||
 				len(content) > fileLimit || !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
 				return nil, fmt.Errorf("invalid initial file")
 			}
@@ -418,6 +418,11 @@ func (s *Service) ReadWorkspaceFile(ctx context.Context, request *rpc.ReadWorksp
 	}
 	return &rpc.ReadWorkspaceFileResponse{WorkspaceInstanceId: request.WorkspaceInstanceId,
 		Revision: r.Snapshot.Revision, Path: request.Path, Content: string(content)}, nil
+}
+
+// Guidance is supplied by controlled publication, never by workspace mutation.
+func isGuidancePath(path string) bool {
+	return path == "AGENTS.md" || strings.HasSuffix(path, "/AGENTS.md")
 }
 
 func validPath(path string) bool {
