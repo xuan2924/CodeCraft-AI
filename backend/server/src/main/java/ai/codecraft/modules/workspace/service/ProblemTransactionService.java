@@ -27,6 +27,7 @@ public class ProblemTransactionService {
         if (!Boolean.TRUE.equals(repository.availableForStart(id))) {
             throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         }
+        if (!"JAVA_MAVEN".equals(repository.language(id))) throw new BusinessException(WorkspaceErrorCode.EXECUTION_UNSUPPORTED);
     }
 
     @Transactional(readOnly = true)

@@ -152,6 +152,12 @@ class WorkspaceHistoryServiceTest {
         verify(history, never()).deliver(any(), any(), anyLong());
     }
 
+    @Test void historicalNestedBuildDescriptorRemainsPreviewable() throws Exception {
+        var preview = signed(base("UNDO").addConflicts("src/main/java/module/pom.xml"));
+        assertThat(WorkspaceHistoryProjection.project(source, 1, "UNDO", null, preview).conflicts()).containsExactly("src/main/java/module/pom.xml");
+        assertCode(() -> WorkspaceBatchCodec.validatePath("pom.xml"), "PATH_FORBIDDEN");
+    }
+
     private void setup(WorkspaceHistoryPreview preview) {
         when(secrets.fingerprint(anyString())).thenReturn("request");
         when(history.resolve(any(), any(), any(), any(), any())).thenReturn(new WorkspaceRestoreResolutionDTO(null, null));

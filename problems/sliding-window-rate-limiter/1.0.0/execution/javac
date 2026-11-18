@@ -1,0 +1,7 @@
+#!/bin/sh
+# Fixed protected compiler entrypoint; candidate files cannot select executables.
+exec java -Xmx256m -XX:ActiveProcessorCount=1 -Djava.io.tmpdir=/tmp \
+  --add-exports jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED \
+  --add-exports jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED \
+  --add-exports jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED \
+  -cp /opt/contract/compilation.jar ai.codecraft.execution.JavacEvidence "$@"

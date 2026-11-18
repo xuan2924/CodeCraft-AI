@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "sliding-window-rate-limiter-challenge",
+  "version": "1.0.0",
+  "title": "动态限额与突发预留",
+  "execution": {
+    "suite": "limiter.SlidingWindowTest",
+    "tests": [
+      "admitsFirstDebit",
+      "denialDoesNotConsume",
+      "exactBoundaryExpires",
+      "expiresDebitsSeparately",
+      "keysAreTuples",
+      "validatesArguments",
+      "arithmeticDoesNotWrap",
+      "rollbackCannotShortenWindow",
+      "updateRetainsDebits",
+      "protectedReserve",
+      "reserveNeverOversold",
+      "priorityFirstConsumesSharedCapacity",
+      "concurrentUpdateHasALegalLinearization",
+      "concurrentQuota"
+    ]
+  },
+  "durationSeconds": 3600,
+  "requirements": "README.md",
+  "initial": "initial",
+  "reference": "reference",
+  "acceptance": "acceptance",
+  "editableRoots": [
+    "src/main/java",
+    "src/test/java"
+  ],
+  "symlinks": "forbidden",
+  "targets": [
+    "base"
+  ],
+  "expectedInitial": {
+    "tests": 14,
+    "failures": 12,
+    "errors": 0,
+    "skipped": 0
+  },
+  "expectedReference": {
+    "tests": 14,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "runtime": {
+    "platform": "linux/amd64",
+    "cpus": 1,
+    "memoryMiB": 768,
+    "pids": 128,
+    "workMiB": 128,
+    "tmpMiB": 64,
+    "shmMiB": 16,
+    "timeoutSeconds": 60,
+    "logBytes": 1048576,
+    "globalConcurrency": 1
+  },
+  "language": "JAVA_MAVEN"
+}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, cp, readFile, writeFile, rm, symlink, link } from 'node:fs/promises';
+import { mkdir, mkdtemp, cp, readFile, writeFile, rm, symlink, link } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validatePackage } from './problem-contract.mjs';
@@ -14,6 +14,31 @@ async function fixture(t, packageUrl = source) {
     await cp(packageUrl, directory, { recursive: true });
     return directory;
 }
+
+test('rate limiter publishes a byte-identical challenge workspace and two suites', async () => {
+    const root = new URL('../problems/sliding-window-rate-limiter/1.0.0/', import.meta.url);
+    const base = await validatePackage(root);
+    const challenge = await validatePackage(new URL('challenge/', root), true);
+    assert.equal(base.executionSupported, true);
+    assert.equal(base.manifest.expectedInitial.failures, 7);
+    assert.equal(challenge.manifest.expectedReference.tests, 14);
+});
+
+test('Python profile is declarative and cannot opt into the Maven executor', async t => {
+    const dir = await mkdtemp(join(tmpdir(), 'python-profile-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', source)));
+    delete manifest.execution; delete manifest.challenge;
+    Object.assign(manifest, { language: 'PYTHON_PYTEST', editableRoots: ['src', 'tests'] });
+    for (const file of ['initial/src/main.py', 'reference/src/main.py', 'acceptance/test_main.py', 'initial/pyproject.toml', 'README.md']) {
+        await mkdir(join(dir, file, '..'), {recursive:true}); await writeFile(join(dir, file), 'fixture');
+    }
+    await writeFile(join(dir,'manifest.json'), JSON.stringify(manifest));
+    assert.equal((await validatePackage(dir)).executionSupported, false);
+    manifest.execution = {suite:'Maven', tests:['x']};
+    await writeFile(join(dir,'manifest.json'), JSON.stringify(manifest));
+    await assert.rejects(validatePackage(dir), /Python execution is not supported/);
+});
 
 test('published cart package has a fixed version and protected edit boundaries', async () => {
     const result = await validatePackage(source);

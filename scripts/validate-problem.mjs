@@ -17,7 +17,15 @@ const output = process.argv[3] ? resolve(process.argv[3])
     : fileURLToPath(new URL('../problems/.validation/', import.meta.url));
 await mkdir(output, { recursive: true });
 await rm(join(output, 'receipt.json'), { force: true });
-const { manifest, packageSha256 } = await validatePackage(packageDirectory);
+const { manifest, packageSha256, executionSupported } = await validatePackage(packageDirectory);
+if (!executionSupported) {
+    const receipt = { verdict: 'static-contract-only', packageSha256,
+        publicationInputsSha256: publicationInputsSha256(await readPublicationInputs(packageDirectory)) };
+    assert.equal((await validatePackage(packageDirectory)).packageSha256, packageSha256);
+    await writeFile(join(output, 'receipt.json'), JSON.stringify(receipt));
+    console.log('Static package contract validated; no container or tests were run.');
+    process.exit(0);
+}
 const limits = manifest.runtime;
 const runId = `cart-validation-${process.pid}-${Date.now()}`;
 const scratch = await mkdtemp(join(tmpdir(), 'cart-validation-'));

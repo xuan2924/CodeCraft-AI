@@ -13,6 +13,9 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface ExerciseRepository {
+    @Select("SELECT coalesce(p.artifact->'manifest'->>'language','JAVA_MAVEN') FROM problem_version p JOIN workspace_exercise e ON e.problem_version_id=p.id WHERE e.id=#{exercise}::uuid AND e.user_id=#{owner}::uuid")
+    String language(String exercise, String owner);
+
     @Select("SELECT EXISTS(SELECT 1 FROM workspace_challenge WHERE exercise_id=#{id}::uuid)")
     boolean challengeEntered(String id);
 

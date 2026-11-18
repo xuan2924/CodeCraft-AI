@@ -49,6 +49,8 @@ class InterviewerContextCollectorTest {
             .isEqualTo(Propagation.NEVER);
         var snapshot = mock(ExerciseResponse.class);
         when(snapshot.revision()).thenReturn("7");
+        when(snapshot.problemVersionId()).thenReturn("v1");
+        when(tasks.problemLanguage("v1")).thenReturn("JAVA_MAVEN");
         when(snapshot.paths()).thenReturn(List.of("src/main/java/A.java", "src/main/java/B.java", "src/main/java/C.java", "src/main/java/D.java", "src/main/java/E.java"));
         when(exercises.find("session", "exercise")).thenReturn(snapshot);
         for (String path : List.of("src/main/java/A.java", "src/main/java/B.java", "src/main/java/C.java", "src/main/java/D.java")) {

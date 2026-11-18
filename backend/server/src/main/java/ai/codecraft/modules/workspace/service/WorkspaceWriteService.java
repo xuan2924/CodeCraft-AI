@@ -39,7 +39,7 @@ public class WorkspaceWriteService {
     public ControlResponse control(String session, String exercise) { return store.view(session, exercise, null, null); }
 
     public WorkspaceOperationResponse batch(String session, String exercise, String key, String credential, FileBatchRequest batch) {
-        String payload = codec.encode(batch);
+        String payload = codec.encode(batch, store.language(session, exercise));
         WorkspaceOperationEntity operation = store.existingBatch(session, exercise, key, payload);
         if (operation == null) {
             String restore = store.ensureOpen(session, exercise, credential);

@@ -81,6 +81,14 @@ class CommandHttpTest {
         when(identity.csrf(any(), any())).thenReturn("fixture-csrf");
     }
 
+    @Test void adminProblemsRejectUsersAndInvalidArtifacts() throws Exception {
+        String path = "/api/admin/problems";
+        mvc.perform(get(path).servletPath(path).cookie(new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN))).andExpect(status().isForbidden());
+        when(identity.authenticate(HASH).user().role()).thenReturn("ADMIN");
+        mvc.perform(mutation(path + "/validate").header(IdentityHttp.CSRF_HEADER, "fixture-csrf").content("{}"))
+            .andExpect(status().isBadRequest()).andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.data.valid").value(false));
+    }
+
     @Test void startAndStopRequireCsrfAndCurrentCookieOwner() throws Exception {
         String body = "{\"command\":\"exit 7\",\"directory\":\".\",\"expectedRevision\":\"1\"}";
         mvc.perform(mutation(PATH).content(body)).andExpect(status().isForbidden());
@@ -140,8 +148,12 @@ class CommandHttpTest {
             .header("Idempotency-Key", "original").header("X-Operation-Credential", "control").contentType("application/json");
     }
     @Configuration @EnableWebMvc @EnableWebSecurity
-    @Import({IdentitySecurity.class, CommandTaskController.class, WorkspaceHistoryController.class, GlobalExceptionHandler.class})
+    @Import({IdentitySecurity.class, AdminProblemController.class, CommandTaskController.class, WorkspaceHistoryController.class, GlobalExceptionHandler.class})
     static class Fixture {
+        @Bean ai.codecraft.modules.workspace.service.AdminProblemStore adminStore() { return mock(ai.codecraft.modules.workspace.service.AdminProblemStore.class); }
+        @Bean ai.codecraft.modules.workspace.service.ProblemService problems(ObjectMapper json) {
+            return new ai.codecraft.modules.workspace.service.ProblemService(null, new ai.codecraft.modules.workspace.service.ProblemPublicationReader(json));
+        }
         @Bean CommandTaskService commands() { return mock(CommandTaskService.class); }
         @Bean WorkspaceHistoryService history() { return mock(WorkspaceHistoryService.class); }
         @Bean IdentityTransactionService identity() { return mock(IdentityTransactionService.class); }

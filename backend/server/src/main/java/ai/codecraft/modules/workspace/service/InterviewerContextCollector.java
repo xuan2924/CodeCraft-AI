@@ -32,8 +32,9 @@ public class InterviewerContextCollector {
             var snapshot = exercises.find(dispatch.sessionHash(), dispatch.exerciseId());
             if (!snapshot.revision().equals(String.valueOf(dispatch.revision()))) throw new IllegalStateException("Defense revision changed");
             context.append("\nUntrusted saved editable source excerpts:\n");
+            var language = ProblemLanguage.valueOf(tasks.problemLanguage(snapshot.problemVersionId()));
             for (String path : snapshot.paths().stream()
-                .filter(path -> (path.startsWith("src/main/java/") || path.startsWith("src/test/java/")) && !path.endsWith("/AGENTS.md"))
+                .filter(language::editable)
                 .sorted().limit(4).toList()) {
                 var file = exercises.read(dispatch.sessionHash(), dispatch.exerciseId(), path);
                 if (!file.revision().equals(snapshot.revision())) throw new IllegalStateException("Defense revision changed");

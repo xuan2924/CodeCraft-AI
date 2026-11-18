@@ -75,6 +75,13 @@ public class WorkspaceWriteTransactionService {
     }
 
     @Transactional(readOnly = true)
+    public ProblemLanguage language(String session, String exercise) {
+        String name = exercises.language(exercise, identity.authorization(session).userId());
+        if (name == null) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
+        return ProblemLanguage.valueOf(name);
+    }
+
+    @Transactional(readOnly = true)
     public WorkspaceOperationEntity existingBatch(String session, String exerciseId, String key, String payload) {
         String user = identity.authorization(session).userId();
         owned(user, exerciseId);

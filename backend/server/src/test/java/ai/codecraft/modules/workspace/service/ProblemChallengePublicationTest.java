@@ -71,6 +71,35 @@ class ProblemChallengePublicationTest {
         assertThatThrownBy(() -> reader.describe(version(artifact))).hasMessage("Invalid maintainer publication contract");
     }
 
+    @Test void declarativePythonIsNotExecutableAndProtectsDescriptorsAndGuidance() throws Exception {
+        var base = publication();
+        base.remove("challenge"); ((ObjectNode) base.path("receipt")).remove("challenge");
+        ObjectNode manifest = (ObjectNode) base.path("manifest"); manifest.remove(List.of("challenge", "execution"));
+        manifest.put("language", "PYTHON_PYTEST"); manifest.putArray("editableRoots").add("src").add("tests");
+        ((ObjectNode) base.path("identity")).remove(List.of("execution_image_digest", "platform"));
+        base.putObject("receipt").put("verdict", "static-contract-only").put("packageSha256", "a".repeat(64));
+        base.putObject("initialFiles").put("pyproject.toml", "").put("src/main.py", "pass").put("src/AGENTS.md", "Read only");
+        base.putObject("acceptanceFiles").put("test_main.py", "def test_main(): pass");
+        sign(base);
+        var view = reader.describe(version(base));
+        assertThat(view.executionAvailable()).isFalse(); assertThat(view.executionSupported()).isFalse();
+        assertThat(view.language()).isEqualTo("PYTHON_PYTEST");
+        WorkspaceBatchCodec.validatePath("tests/check.py", ProblemLanguage.PYTHON_PYTEST);
+        for (String path : List.of("src/../outside", "requirements.txt", "tests/AGENTS.md", "pom.xml")) {
+            assertThatThrownBy(() -> WorkspaceBatchCodec.validatePath(path, ProblemLanguage.PYTHON_PYTEST)).isInstanceOf(RuntimeException.class);
+        }
+    }
+
+    @Test void rejectsInvalidEncodingsAndUnstorableJsonBeforePublishing() throws Exception {
+        var service = new ProblemService(null, reader);
+        var base = publication(); String valid = base.toString();
+        assertThat(service.validate(valid.getBytes(java.nio.charset.StandardCharsets.UTF_16)).valid()).isFalse();
+        assertThat(service.validate(("\ufeff" + valid).getBytes(java.nio.charset.StandardCharsets.UTF_8)).valid()).isFalse();
+        base.put("untrustedMetadata", "abc" + (char) 0);
+        assertThat(service.validate(json.writeValueAsBytes(base)).valid()).isFalse();
+        assertThat(service.validate(new byte[]{(byte) 0xc0, (byte) 0xaf}).valid()).isFalse();
+    }
+
     private ProblemVersionEntity version(ObjectNode artifact) {
         return new ProblemVersionEntity("version", "cart", "1.1.0", "a".repeat(64), "sha256:" + "b".repeat(64), "linux/amd64", artifact.toString());
     }

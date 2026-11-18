@@ -5,7 +5,15 @@ import { join } from 'node:path';
 
 // Input is a private maintainer snapshot, never an active user workspace.
 export async function publicationFromSnapshot(directory, receipt, host) {
-    const { manifest, packageSha256 } = await validatePackage(directory);
+    const { manifest, packageSha256, executionSupported } = await validatePackage(directory);
+    if (!executionSupported) {
+        assert.deepEqual(Object.keys(receipt).sort(), ['packageSha256','publicationInputsSha256','verdict']);
+        assert.equal(receipt.verdict, 'static-contract-only');
+        assert.equal(receipt.packageSha256, packageSha256);
+        const inputs = await readPublicationInputs(directory);
+        verifyPublicationInputs({ ...inputs, receipt });
+        return { schemaVersion: 1, identity: { problem_id: manifest.id, version: manifest.version, package_sha256: packageSha256 }, ...inputs, receipt };
+    }
     assert.equal(receipt.verdict, 'local-contract-validation-passed');
     assert.equal(receipt.packageSha256, packageSha256, 'Package changed after validation');
     assert.match(receipt.imageId, /^sha256:[0-9a-f]{64}$/);

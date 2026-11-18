@@ -11,6 +11,9 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface InterviewerRepository {
+    @Select("SELECT coalesce(artifact->'manifest'->>'language','JAVA_MAVEN') FROM problem_version WHERE id=#{version}::uuid")
+    String problemLanguage(String version);
+
     String COLUMNS = "id::text,exercise_id::text,user_id::text,session_hash,control_hash,request_key,question,answer,state,reason,platform_version_id::text,phase,stage,mode,topic,hint_level,revision,created_at,deadline_at,completed_at,usage_receipt";
     @Select("SELECT " + COLUMNS + " FROM workspace_interviewer_task WHERE id=#{id}::uuid")
     InterviewerTaskEntity find(String id);

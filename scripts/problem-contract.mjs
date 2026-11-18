@@ -61,7 +61,17 @@ export async function validatePackage(directory, nested = false) {
         requirements: 'README.md', initial: 'initial', reference: 'reference',
         acceptance: 'acceptance', symlinks: 'forbidden',
     })) assert.equal(manifest[key], value, key);
-    assert.deepEqual(manifest.editableRoots, ['src/main/java', 'src/test/java'], 'editableRoots');
+    const language = Object.hasOwn(manifest, 'language') ? manifest.language : 'JAVA_MAVEN';
+    assert(['JAVA_MAVEN', 'PYTHON_PYTEST'].includes(language), 'Unsupported language profile');
+    const java = language === 'JAVA_MAVEN';
+    const roots = java ? ['src/main/java', 'src/test/java'] : ['src', 'tests'];
+    const builds = java ? ['pom.xml'] : ['pyproject.toml', 'requirements.txt'];
+    assert.deepEqual(manifest.editableRoots, roots, 'editableRoots');
+    if (!java) assert.equal(manifest.execution, undefined, 'Python execution is not supported');
+    for (const path of [...files].filter(p => p.startsWith('initial/')).map(p => p.slice(8))) {
+        assert(builds.includes(path) || path === 'AGENTS.md' || path.endsWith('/AGENTS.md') ||
+            roots.some(root => path.startsWith(`${root}/`)), `Invalid initial path: ${path}`);
+    }
     assert.deepEqual(manifest.targets, ['base']);
     if (manifest.execution !== undefined) {
         assert.match(manifest.execution.suite, /^[A-Za-z_][A-Za-z_0-9.]{0,254}$/);
@@ -85,20 +95,20 @@ export async function validatePackage(directory, nested = false) {
     }
     assert.equal(manifest.expectedReference.failures + manifest.expectedReference.errors
         + manifest.expectedReference.skipped, 0);
-    for (const required of ['README.md', 'Dockerfile', 'initial/pom.xml']) {
+    assert(builds.some(file => files.has(`initial/${file}`)), 'Missing build descriptor');
+    for (const required of ['README.md', ...(java ? ['Dockerfile'] : [])]) {
         assert(files.has(required), `Missing ${required}`);
     }
     const fileList = [...files];
-    assert(fileList.some((path) => path.startsWith('initial/src/main/java/') && path.endsWith('.java')),
-        'Missing Java sources under initial/src/main/java/');
-    assert(fileList.some((path) => path.startsWith('reference/src/main/java/') && path.endsWith('.java')),
-        'Missing Java sources under reference/src/main/java/');
+    for (const variant of ['initial', 'reference']) {
+        assert(fileList.some(path => path.startsWith(`${variant}/${roots[0]}/`) && path.endsWith(java ? '.java' : '.py')), `Missing ${java ? 'Java' : 'Python'} sources under ${variant}/${roots[0]}/`);
+    }
     if (manifest.execution?.suite) {
         const expectedAcceptance = `acceptance/${manifest.execution.suite.split('.').at(-1)}.java`;
         assert(files.has(expectedAcceptance), `Missing ${expectedAcceptance}`);
     } else {
-        assert(fileList.some((path) => path.startsWith('acceptance/') && path.endsWith('.java')),
+        assert(fileList.some((path) => path.startsWith('acceptance/') && (java ? path.endsWith('.java') : /\/test_\w+\.py$/.test(path))),
             'Missing acceptance Java tests');
     }
-    return { manifest, packageSha256: hash.digest('hex') };
+    return { manifest, language, executionSupported: java, packageSha256: hash.digest('hex') };
 }

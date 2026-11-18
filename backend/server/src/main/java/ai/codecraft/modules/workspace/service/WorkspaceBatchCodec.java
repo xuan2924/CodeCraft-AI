@@ -28,6 +28,10 @@ public class WorkspaceBatchCodec {
     public WorkspaceBatchCodec(@Qualifier("workspaceJson") ObjectMapper json) { this.json = json; }
 
     public String encode(FileBatchRequest input) {
+        return encode(input, ProblemLanguage.JAVA_MAVEN);
+    }
+
+    public String encode(FileBatchRequest input, ProblemLanguage language) {
         if (input == null || input.expectedRevision() == null || !input.expectedRevision().matches("0|[1-9][0-9]{0,18}")) invalid();
         try { Long.parseLong(input.expectedRevision()); } catch (NumberFormatException error) { invalid(); }
         if (input.changes() == null || input.changes().isEmpty() || input.changes().size() > MAX_CHANGES) invalid();
@@ -36,7 +40,7 @@ public class WorkspaceBatchCodec {
         long bytes = 0;
         for (FileChangeRequest change : input.changes()) {
             if (change == null) invalid();
-            validatePath(change.path());
+            validatePath(change.path(), language);
             if (!paths.add(change.path()) || change.kind() == null || !List.of("CREATE", "UPDATE", "DELETE").contains(change.kind())) invalid();
             String content = change.content() == null ? "" : change.content();
             if (change.kind().equals("DELETE") && !content.isEmpty()) invalid();
@@ -63,10 +67,13 @@ public class WorkspaceBatchCodec {
 
     /** Shared managed-path policy for writes and read-only recovery projections. */
     public static void validatePath(String path) {
+        validatePath(path, ProblemLanguage.JAVA_MAVEN);
+    }
+
+    public static void validatePath(String path, ProblemLanguage language) {
         if (path == null || path.length() > 4096 || !path.matches("[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*")
             || List.of(path.split("/")).stream().anyMatch(part -> part.equals(".") || part.equals(".."))) invalid();
-        if (path.equals("AGENTS.md") || path.endsWith("/AGENTS.md")
-            || !path.startsWith("src/main/java/") && !path.startsWith("src/test/java/")) throw new BusinessException(WorkspaceErrorCode.PATH_FORBIDDEN);
+        if (!language.editable(path)) throw new BusinessException(WorkspaceErrorCode.PATH_FORBIDDEN);
     }
 
     /** Validates text without interpreting it and returns its UTF-8 storage size. */

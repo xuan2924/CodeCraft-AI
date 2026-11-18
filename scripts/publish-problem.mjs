@@ -20,12 +20,16 @@ try {
     await cp(packageDirectory, snapshot, { recursive: true });
     const receipt = JSON.parse(await readFile(join(evidenceDirectory, 'receipt.json'), 'utf8'));
     const docker = (args) => execFileSync('docker', args, { encoding: 'utf8', timeout: 15000, maxBuffer: 1048576 }).trim();
+    let host;
+    if (receipt.verdict !== 'static-contract-only') {
     const image = JSON.parse(docker(['image', 'inspect', '--format', '{{json .}}', receipt.imageId]));
     const challengeImage = receipt.challenge ? JSON.parse(docker(['image', 'inspect', '--format', '{{json .}}', receipt.challenge.imageId])) : null;
-    const publication = await publicationFromSnapshot(snapshot, receipt, {
+    host = {
         daemonId: docker(['info', '--format', '{{.ID}}']), imageId: image.Id, platform: `${image.Os}/${image.Architecture}`,
         ...(challengeImage ? { challenge: { imageId: challengeImage.Id, platform: `${challengeImage.Os}/${challengeImage.Architecture}` } } : {}),
-    });
+    };
+    }
+    const publication = await publicationFromSnapshot(snapshot, receipt, host);
     let existing;
     try { existing = JSON.parse(await readFile(destination, 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -37,5 +41,5 @@ try {
         await writeFile(destination, JSON.stringify(publication, null, 2) + '\n', { flag: 'wx' });
     }
     console.log(`Local publication artifact: ${destination}`);
-    console.log('Local Docker image ID only; this is not a registry digest or cross-host publication.');
+    console.log(host ? 'Local Docker image ID only; not a cross-host publication.' : 'Static contract only; not executable.');
 } finally { await rm(temporary, { recursive: true, force: true }); }

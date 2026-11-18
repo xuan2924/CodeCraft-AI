@@ -32,7 +32,11 @@ public class WorkspaceJsonConfiguration implements WebMvcConfigurer {
     @Bean
     static RequestBodyPolicy workspaceRequestBodies() {
         var batches = java.util.regex.Pattern.compile("/api/exercises/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/file-batches");
-        return request -> request.getMethod().equals("POST") && batches.matcher(request.getServletPath()).matches() ? MAX_BATCH_JSON_BYTES : 0;
+        return request -> {
+            if (!request.getMethod().equals("POST")) return 0;
+            if (java.util.Set.of("/api/admin/problems/validate", "/api/admin/problems/publish").contains(request.getServletPath())) return 1024 * 1024;
+            return batches.matcher(request.getServletPath()).matches() ? MAX_BATCH_JSON_BYTES : 0;
+        };
     }
 
     @Override

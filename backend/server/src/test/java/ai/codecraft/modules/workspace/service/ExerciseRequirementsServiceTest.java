@@ -39,6 +39,6 @@ class ExerciseRequirementsServiceTest {
         assertThat(service.read("session", "exercise")).contains("CHALLENGE", "Public base", "Published discount challenge").doesNotContain("secret raw artifact");
     }
     private ProblemResponse problem(String requirements) {
-        return new ProblemResponse("version", "cart", "1.1.0", "Cart", requirements, 2700, List.of(), Map.of(), "digest", "image", "linux/amd64", "LOCAL", true, false);
+        return new ProblemResponse("version", "cart", "1.1.0", "Cart", requirements, 2700, List.of(), Map.of(), "digest", "image", "linux/amd64", "LOCAL", true, false, "JAVA_MAVEN", true);
     }
 }
