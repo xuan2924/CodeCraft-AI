@@ -21,6 +21,15 @@ spring:
       password: ${REDIS_PASSWORD:}
       timeout: 2s
       connect-timeout: 2s
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    connection-timeout: 2s
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    dynamic: false
   datasource:
     url: jdbc:postgresql://127.0.0.1:${POSTGRES_PORT:5432}/${POSTGRES_DB:codecraft}?connectTimeout=2&socketTimeout=3
     username: ${POSTGRES_USER}
@@ -35,6 +44,8 @@ spring:
     baseline-on-migrate: false
     validate-on-migrate: true
 codecraft:
+  async:
+    backend: ${ASYNC_BACKEND:local}
   realtime:
     backend: ${REALTIME_BACKEND:local}
   rate-limit:
@@ -44,6 +55,8 @@ mybatis:
     default-statement-timeout: 2
     local-cache-scope: STATEMENT
 workspace:
+  sandbox:
+    nodes: ${SANDBOX_NODES:}
   sandbox-host: ${SANDBOX_HOST:127.0.0.1}
   sandbox-port: ${SANDBOX_PORT:9090}
   publication-file: ${PROBLEM_PUBLICATION_FILE:}

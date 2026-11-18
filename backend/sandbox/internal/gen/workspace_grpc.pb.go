@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	WorkspaceStorage_NodeStatus_FullMethodName              = "/codecraft.workspace.v1.WorkspaceStorage/NodeStatus"
 	WorkspaceStorage_PrepareWorkspace_FullMethodName        = "/codecraft.workspace.v1.WorkspaceStorage/PrepareWorkspace"
 	WorkspaceStorage_QueryWorkspace_FullMethodName          = "/codecraft.workspace.v1.WorkspaceStorage/QueryWorkspace"
 	WorkspaceStorage_DeleteWorkspace_FullMethodName         = "/codecraft.workspace.v1.WorkspaceStorage/DeleteWorkspace"
@@ -61,6 +62,8 @@ const (
 //
 // Trusted Java-to-Go calls only. Public browser authorization belongs to Java.
 type WorkspaceStorageClient interface {
+	// Authenticated readiness and persistent volume identity, never an execution authorization.
+	NodeStatus(ctx context.Context, in *NodeStatusRequest, opts ...grpc.CallOption) (*NodeStatusResponse, error)
 	PrepareWorkspace(ctx context.Context, in *PrepareWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceSnapshot, error)
 	QueryWorkspace(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceSnapshot, error)
 	// Durable deletion fence; repeated calls finish cleanup without reopening the instance.
@@ -112,6 +115,16 @@ type workspaceStorageClient struct {
 
 func NewWorkspaceStorageClient(cc grpc.ClientConnInterface) WorkspaceStorageClient {
 	return &workspaceStorageClient{cc}
+}
+
+func (c *workspaceStorageClient) NodeStatus(ctx context.Context, in *NodeStatusRequest, opts ...grpc.CallOption) (*NodeStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeStatusResponse)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_NodeStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *workspaceStorageClient) PrepareWorkspace(ctx context.Context, in *PrepareWorkspaceRequest, opts ...grpc.CallOption) (*WorkspaceSnapshot, error) {
@@ -472,6 +485,8 @@ func (c *workspaceStorageClient) SyncTerminal(ctx context.Context, in *QueryTask
 //
 // Trusted Java-to-Go calls only. Public browser authorization belongs to Java.
 type WorkspaceStorageServer interface {
+	// Authenticated readiness and persistent volume identity, never an execution authorization.
+	NodeStatus(context.Context, *NodeStatusRequest) (*NodeStatusResponse, error)
 	PrepareWorkspace(context.Context, *PrepareWorkspaceRequest) (*WorkspaceSnapshot, error)
 	QueryWorkspace(context.Context, *QueryWorkspaceRequest) (*WorkspaceSnapshot, error)
 	// Durable deletion fence; repeated calls finish cleanup without reopening the instance.
@@ -525,6 +540,9 @@ type WorkspaceStorageServer interface {
 // pointer dereference when methods are called.
 type UnimplementedWorkspaceStorageServer struct{}
 
+func (UnimplementedWorkspaceStorageServer) NodeStatus(context.Context, *NodeStatusRequest) (*NodeStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method NodeStatus not implemented")
+}
 func (UnimplementedWorkspaceStorageServer) PrepareWorkspace(context.Context, *PrepareWorkspaceRequest) (*WorkspaceSnapshot, error) {
 	return nil, status.Error(codes.Unimplemented, "method PrepareWorkspace not implemented")
 }
@@ -646,6 +664,24 @@ func RegisterWorkspaceStorageServer(s grpc.ServiceRegistrar, srv WorkspaceStorag
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&WorkspaceStorage_ServiceDesc, srv)
+}
+
+func _WorkspaceStorage_NodeStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).NodeStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_NodeStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).NodeStatus(ctx, req.(*NodeStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _WorkspaceStorage_PrepareWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -1249,6 +1285,10 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "codecraft.workspace.v1.WorkspaceStorage",
 	HandlerType: (*WorkspaceStorageServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "NodeStatus",
+			Handler:    _WorkspaceStorage_NodeStatus_Handler,
+		},
 		{
 			MethodName: "PrepareWorkspace",
 			Handler:    _WorkspaceStorage_PrepareWorkspace_Handler,

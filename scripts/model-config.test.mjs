@@ -18,6 +18,25 @@ test('container model channel has a fixed Java destination and no upstream provi
 
 const base = 'POSTGRES_USER=fixture\nPOSTGRES_PASSWORD=fixture\n';
 
+test('RabbitMQ and multi-sandbox settings are explicit and secret-isolated', () => {
+  const values = parseConfig(base + 'ASYNC_BACKEND=rabbit\nRABBITMQ_PASSWORD=fixture-broker\nSANDBOX_NODES=default@one:9090,second@two:9090\n');
+  for (const service of ['web', 'sandbox', 'postgres']) {
+    const env = serviceEnv(values, service, { RABBITMQ_PASSWORD: 'host-secret', SANDBOX_NODES: 'host-nodes' });
+    for (const key of ['RABBITMQ_PASSWORD', 'RABBITMQ_USER', 'RABBITMQ_HOST', 'RABBITMQ_PORT', 'ASYNC_BACKEND', 'SANDBOX_NODES']) assert.equal(env[key], undefined);
+  }
+  for (const env of [serviceEnv(values, 'java', {}), javaComposeEnv(values)]) {
+    assert.equal(env.ASYNC_BACKEND, 'rabbit'); assert.equal(env.RABBITMQ_PASSWORD, 'fixture-broker');
+    assert.equal(env.SANDBOX_NODES, values.SANDBOX_NODES);
+  }
+  assert.equal(parseConfig(base).ASYNC_BACKEND, 'local');
+  for (const invalid of ['ASYNC_BACKEND=unknown', 'ASYNC_BACKEND=rabbit', 'RABBITMQ_PORT=0',
+    'SANDBOX_NODES=second@two:9090', 'SANDBOX_NODES=default@one:9090,default@two:9090',
+    'SANDBOX_NODES=default@one:0', 'WORKSPACE_EXECUTION_CONCURRENCY=65']) assert.throws(() => parseConfig(base + invalid));
+  const compose = readFileSync(new URL('../compose.yaml', import.meta.url), 'utf8');
+  assert.match(compose, /profiles: \[rabbit\]/); assert.match(compose, /profiles: \[sandbox-multi\]/);
+  assert.match(compose, /sandbox-secondary-data:\/var\/lib\/codecraft/);
+});
+
 test('Redis configuration is opt-in, validated and Java-only', () => {
   const values = parseConfig(base + 'REALTIME_BACKEND=redis\nRATE_LIMIT_BACKEND=redis\nREDIS_PASSWORD=fixture-redis\n');
   for (const service of ['web', 'sandbox', 'postgres']) {

@@ -39,6 +39,7 @@ const fileLimit = 1024 * 1024 // Existing v1 problem-package single-file contrac
 type Service struct {
 	rpc.UnimplementedWorkspaceStorageServer
 	root         string
+	storageID    string
 	key          string
 	publications []Publication
 	gate         chan struct{}
@@ -78,8 +79,12 @@ func NewService(root string, publications []Publication, key string, runtime *Ex
 	if err != nil {
 		return nil, err
 	}
+	storageID, err := storageIdentity(fd)
 	syscall.Close(fd)
-	s := &Service{root: root, key: key, gate: make(chan struct{}, 1), watches: make(chan struct{}, 16), now: time.Now}
+	if err != nil {
+		return nil, err
+	}
+	s := &Service{root: root, storageID: storageID, key: key, gate: make(chan struct{}, 1), watches: make(chan struct{}, 16), now: time.Now}
 	if runtime != nil {
 		s.executor, s.worker = runtime.Runner, runtime.Worker
 	}
@@ -122,6 +127,19 @@ func (s *Service) enter(ctx context.Context) (func(), error) {
 	keys := metadata.ValueFromIncomingContext(ctx, "x-codecraft-internal-key")
 	if len(keys) != 1 || subtle.ConstantTimeCompare([]byte(keys[0]), []byte(s.key)) != 1 {
 		return nil, status.Error(codes.Unauthenticated, "internal authentication required")
+	}
+	fd, err := directory(-1, s.root, false)
+	if err != nil {
+		return nil, storageError(err)
+	}
+	identity, readErr := readPath(fd, ".storage-id")
+	syscall.Close(fd)
+	if readErr != nil || string(identity) != s.storageID {
+		return nil, status.Error(codes.FailedPrecondition, "storage identity unavailable")
+	}
+	storage := metadata.ValueFromIncomingContext(ctx, "x-codecraft-storage-id")
+	if len(storage) > 0 && (len(storage) != 1 || storage[0] != s.storageID) {
+		return nil, status.Error(codes.FailedPrecondition, "storage identity changed")
 	}
 	select {
 	case <-ctx.Done():

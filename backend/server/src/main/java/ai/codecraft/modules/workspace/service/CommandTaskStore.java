@@ -38,6 +38,9 @@ import org.springframework.transaction.annotation.Propagation;
 /** Durable business intent only; external execution and measurement stay outside transactions. */
 @Service
 public class CommandTaskStore {
+    private SandboxRoutingStore routing;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setRouting(SandboxRoutingStore routing) { this.routing = routing; }
     private final ExecutionProperties executionLimits;
     private final IdentityTransactionService identity;
     private final IdentitySecrets secrets;
@@ -102,6 +105,7 @@ public class CommandTaskStore {
         if (exercise.revision() == null || exercise.revision() != revision) fail(WorkspaceErrorCode.REVISION_CONFLICT);
         if (!problems.executionAvailable(exercise.problemVersionId())) fail(WorkspaceErrorCode.COMMAND_UNAVAILABLE);
         admission.lockAdmission();
+        if (routing != null) routing.admitExecution(exerciseId);
         if (admission.occupiedExercise(exerciseId) != 0 || admission.occupied() >= executionLimits.concurrency()) fail(WorkspaceErrorCode.COMMAND_SLOT_BUSY);
         var now = clock.instant();
         var notAfter = actor.expiresAt().isBefore(exercise.deadlineAt()) ? actor.expiresAt() : exercise.deadlineAt();

@@ -31,7 +31,7 @@ class CommandTaskCoordinatorTest {
     @Test void lostStartResponseIsQueriedThenFencedRatherThanReplayed() {
         var accepted = task(false);
         var dispatched = task(true);
-        when(sandbox.inventory("", "")).thenReturn(ExecutionInventory.newBuilder().setHostEpoch(HOST).build());
+        when(sandbox.inventoryFor(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(""), org.mockito.ArgumentMatchers.eq(""))).thenReturn(ExecutionInventory.newBuilder().setHostEpoch(HOST).build());
         when(store.claim("task", HOST)).thenReturn(true, false);
         when(store.find("task")).thenReturn(dispatched);
         when(sandbox.startCommand(dispatched)).thenThrow(Status.UNAVAILABLE.asRuntimeException());

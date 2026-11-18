@@ -63,7 +63,8 @@ class WorkspaceJsonBoundaryTest {
         when(identity.authorizePrivateDelivery("session")).thenReturn(new ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO("owner", "USER", false, 1, Instant.MAX));
         when(exercises.find(exercise)).thenReturn(new ai.codecraft.modules.workspace.model.entity.ExerciseEntity(exercise, "owner", "problem", workspace, "prepare", "ENDED", 0L, "[]", 1, Instant.EPOCH, null, null, null, null, null));
         when(streams.find(task)).thenReturn(new ai.codecraft.modules.workspace.model.entity.TaskStreamEntity(task, "44444444-4444-4444-8444-444444444444", 0, 1));
-        runner.withBean(ai.codecraft.modules.workspace.config.ExecutionProperties.class, () -> new ai.codecraft.modules.workspace.config.ExecutionProperties(4))
+        runner.withBean(ai.codecraft.modules.workspace.service.SandboxRoutingStore.class, () -> mock(ai.codecraft.modules.workspace.service.SandboxRoutingStore.class))
+            .withBean(ai.codecraft.modules.workspace.config.ExecutionProperties.class, () -> new ai.codecraft.modules.workspace.config.ExecutionProperties(4))
             .withBean(ai.codecraft.modules.identity.service.IdentityTransactionService.class, () -> identity)
             .withBean(ai.codecraft.modules.identity.service.IdentitySecrets.class, () -> mock(ai.codecraft.modules.identity.service.IdentitySecrets.class))
             .withBean(ai.codecraft.modules.workspace.repository.ExerciseRepository.class, () -> exercises)

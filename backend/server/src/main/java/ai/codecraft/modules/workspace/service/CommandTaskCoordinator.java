@@ -59,7 +59,8 @@ public class CommandTaskCoordinator {
 
     public void observe(CommandTaskEntity original) {
         if (original.stopRequested()) { cancel(original); return; }
-        String epoch = original.dispatched() ? original.hostEpoch() : sandbox.inventory("", "").getHostEpoch();
+        if (!original.dispatched() && !original.quiescent()) sandbox.ensureExecutionReady(original.workspaceInstanceId());
+        String epoch = original.dispatched() ? original.hostEpoch() : sandbox.inventoryFor(original.workspaceInstanceId(), "", "").getHostEpoch();
         boolean claimed;
         try { claimed = store.claim(original.id(), epoch); }
         catch (IdentityFailure unavailable) {

@@ -61,14 +61,20 @@ public class EvaluationReportWorker {
         try {
             for (String exercise : store.pending()) {
                 if (!active.add(exercise)) continue;
-                try { workers.execute(() -> run(exercise)); }
+                try {
+                    workers.execute(() -> {
+                        try { store.expireRunning(exercise); }
+                        finally { active.remove(exercise); }
+                    });
+                }
                 catch (RejectedExecutionException full) { active.remove(exercise); break; }
             }
         } catch (RuntimeException failure) { LOG.warn("Evaluator discovery deferred ({})", failure.getClass().getSimpleName()); }
     }
-    public void run(String exercise) {
+    public void run(String exercise) { run(exercise, null, null); }
+    public void run(String exercise, Long generation, Integer attempt) {
         try {
-            var ticket = store.prepare(exercise);
+            var ticket = generation == null ? store.prepare(exercise) : store.prepare(exercise, generation, attempt);
             if (ticket == null) return;
             boolean dispatched = false;
             boolean regenerate = false;

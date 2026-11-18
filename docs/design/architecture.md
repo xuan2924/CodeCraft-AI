@@ -13,7 +13,10 @@ Browser (Vue 3 + Monaco + xterm + IndexedDB 草稿)
 Java 主后端 (Spring Boot 3 + MyBatis + Flyway + LangChain4j) ──▶ PostgreSQL 17
    │  gRPC / Protobuf（SANDBOX_RPC_KEY 内部鉴权，同 Linux 时钟域）
    ▼
-Go 执行服务 (Docker SDK) ──▶ 受限题目 / 开发容器（Linux cgroup + 禁网/开发隔离）
+Go 执行节点 (Docker SDK，同 Linux 时钟域、独立卷) ──▶ 受限题目 / 开发容器
+
+可选：Java ──▶ Redis（瞬态实时提示/限流）
+      PostgreSQL Outbox ──▶ Java Relay ──▶ RabbitMQ（交互/慢任务分级）
 ```
 
 ### 核心设计取舍
@@ -26,7 +29,7 @@ Go 执行服务 (Docker SDK) ──▶ 受限题目 / 开发容器（Linux cgrou
    - **面试官（Interviewer）与评测官（Evaluator）**：用管理员发布的平台模型 Key 与预算，绝对禁止改代码；这样做可以共用演练状态锁、存储预算账本与事件流设施。
 3. **前端状态单一事实来源**：
    - TanStack Vue Query 管理全部服务端状态；Pinia（`layoutStore`）只管面板布局等客户端 UI 状态；UI 组件库采用 shadcn-vue + Reka UI，主题色统一由 `tokens.ts` 同步到 Monaco 和 xterm。
-4. **当前部署前提**：面向可信受邀用户的本机 Linux Docker 部署，不引入 Redis 强制依赖（可选跨节点实时提示、限流与终端传输租约；不承载业务真相）、消息队列、向量库或容器预热池；同一用户同时最多只有 **1 场未结束演练**。
+4. **当前部署前提**：面向可信受邀用户的本机 Linux Docker 部署，Redis 与 RabbitMQ 均为可选 profile（分别负责实时提示/限流和可靠任务分级传输），PostgreSQL Outbox 与任务状态机仍是持久真相；支持同 Linux 时钟域内的多 Go 节点与演练持久卷亲和，不引入向量库或容器预热池；同一用户同时最多只有 **1 场未结束演练**。
 
 ## 权限、隐私与费用隔离
 

@@ -32,6 +32,13 @@ func (r *Runner) Configure(concurrency int, network, proxy string) error {
 	return nil
 }
 
+// Capacity reports readiness and occupied workers without granting a slot.
+func (r *Runner) Capacity() (int, int, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.active), r.concurrency, !r.blocked && !r.closed
+}
+
 // Caller owns mu. A workspace and its exercise each hold an exclusive slot.
 func (r *Runner) capacityBusy(input Input) bool {
 	if len(r.active) >= r.concurrency {

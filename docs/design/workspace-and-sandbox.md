@@ -62,8 +62,19 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 
 Go `ConfigureTerminalEnvironment` 已接入 Java Host LLM Proxy：受信任进程侧 provider 注入两个 Base URL、`CODECRAFT_PROXY_TOKEN` 及与之完全相同的 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` 临时别名；不从浏览器/proto 接收环境覆盖，不进入 Input/恢复标签/应用日志。Compose 默认启用受控通道，未配置 `SANDBOX_LLM_HOST_URL` 的部署不注入凭证；签发失败拒绝终端启动，绝不退回真实 Key。吊销与审计契约见 [模型接入与安全](model-access-and-security.md#5-容器-cli-的-host-llm-proxy)。
 
+### 6. 多沙箱节点与持久卷亲和
+
+- `SANDBOX_NODES=default@sandbox:9090,secondary@sandbox-secondary:9090` 配置最多 16 个唯一 nodeId/endpoint，必须包含存量默认节点 `default`；未配置时沿用原 SANDBOX_HOST/PORT。延续 ADR-0002，节点处于同一 Linux 时钟域，不宣称跨主机时钟安全。
+- V64 将存量演练绑定 default。所有 Java 实例使用相同节点清单；升级先让 Go 提供 NodeStatus，保留并核验原默认节点的数据卷，再启动新 Java。首次采纳 storageId 是迁移信任点，不能借此把旧节点指向新卷。新演练在创建事务中锁定节点候选，以健康、剩余槽位最多、nodeId 稳定排序选择并持久绑定；将未完成准备的绑定作为短期预留计入选择。并发分配在取锁后重新读取预留，避免使用等待锁前的旧快照。
+- 节点通过带内部鉴权的 `NodeStatus` 报告真实执行容量、hostEpoch、ready 和持久 `storageId`。Java 每 5 秒探测，连通健康租约 15 秒；超时、不合法状态、卷身份不符都不刷新健康。`ready=false` 与失联分开：可达但恢复阻塞的节点拒绝新分配/首次执行，仍允许查询、停止和清理，否则会形成“因待清理不 ready，却无法发清理 RPC”的闭环死锁。每个 Go 私有根以 fsync 保存 `.storage-id`，Java 一旦采纳便不自动更换；普通 RPC 携带该标识，Go 同时核对磁盘标识与请求标识，防止原 endpoint 重启到空白卷后重建错误工作区。该 64 字节节点元数据不归属任何单场存储账本。
+- 每场演练及其所有历史 workspace instance 始终回到同一节点：包括 prepare/retry、文件/grep/history、apply/gate、test/command/PTY、停止、计量、prune、collect 与 delete。节点不可用、配置缺失或 endpoint 不匹配即显式不可用，不从另一节点的 NOT_FOUND 推断“未执行”，不重新分配旧演练。
+- `hostEpoch` 和 inventory 游标按 node 分开；执行前读取绑定节点 inventory，不再查询默认节点的 epoch。原 Java admission 行锁下额外核验绑定节点健康及已接纳槽位，Go 仍最终限流。V64 移除历史遗留的全局 `one_host_test` 唯一索引，保留同演练排他与持久准入锁。
+- Compose 的 `sandbox-multi` profile 提供第二个 Go：独立数据卷、独立 egress 基础网络及地址，运行时命令网络仍按执行创建/回收。两节点共享只读题包发布清单，不共享工作目录。全局 `WORKSPACE_EXECUTION_CONCURRENCY` 与每节点 `SANDBOX_EXECUTION_CONCURRENCY` 分开配置；例如两节点各 4 槽，可显式设置全局为 8。
+- 完整拓扑：在 `.env` 设置两个 Redis backend、`ASYNC_BACKEND=rabbit`、所需密码和上述 SANDBOX_NODES，执行 `docker compose --profile redis --profile rabbit --profile sandbox-multi up`。已有绑定节点的 endpoint/卷变更必须经过停派发、原卷与身份核验及显式配置迁移，不能删除绑定或重置 storageId 逃避不可用状态。
+
 ## 关键源码入口
 
 - Java 题包与存储：`ProblemPublicationReader.java`、`WorkspaceWriteService.java`、`WorkspaceAiOperationService.java`、`WorkspaceHistoryService.java`、`StorageCapacityService.java`
+- 节点路由：`SandboxRoutingStore.java`、`SandboxClients.java`、`SandboxWorkspaceGateway.java`、`node_linux.go`
 - Go 磁盘与容器：`mutation_linux.go`、`testcopy_linux.go`、`freeze_linux.go`、`history_linux.go`、`capacity_linux.go`、`runner_linux.go`、`stop_linux.go`
 - 发布脚本：`scripts/publish-problem.mjs`、`scripts/validate-problem.mjs`

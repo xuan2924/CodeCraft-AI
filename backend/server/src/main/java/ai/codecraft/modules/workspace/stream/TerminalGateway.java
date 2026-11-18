@@ -131,7 +131,7 @@ public class TerminalGateway extends AbstractWebSocketHandler implements SubProt
                 }
                 if(closed.get())return;
                 if(task==null||!task.dispatched()||sandbox.command(task)==null)throw new IllegalStateException("Terminal dispatch timeout");
-                var stream=sandbox.terminal(this);
+                var stream=sandbox.terminal(task.workspaceInstanceId(),this);
                 if(closed.get()){call.cancel("terminal closed",null);return;}
                 var identity=QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
                     .setWorkspaceInstanceId(task.workspaceInstanceId()).setExecutionInstanceId(task.executionInstanceId());

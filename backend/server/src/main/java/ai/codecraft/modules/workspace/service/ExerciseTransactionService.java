@@ -33,6 +33,10 @@ public class ExerciseTransactionService {
     private final StorageCapacityStore capacity;
     private final ExerciseModelService models;
     private final PlatformBindingService platform;
+    private SandboxRoutingStore routing;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setRouting(SandboxRoutingStore routing) { this.routing = routing; }
 
     public ExerciseTransactionService(ExerciseRepository repository, IdentityTransactionService identity,
                                       ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination, RetentionProperties retention, StorageCapacityStore capacity, ExerciseModelService models, PlatformBindingService platform) {
@@ -70,6 +74,7 @@ public class ExerciseTransactionService {
         String operation = UUID.randomUUID().toString();
         repository.insert(new ExerciseEntity(exercise, user, version, instance, operation, "PREPARING", null, "[]",
             1, clock.instant(), null, null, null, null, null));
+        if (routing != null) routing.bind(exercise); // Required Spring injection; constructor-only unit fixtures have no remote nodes.
         platform.bind(exercise);
         repository.retention(exercise, Math.multiplyExact((long) retention.days(), 86400));
         repository.bindPreparationSession(exercise, session, authorization.expiresAt());

@@ -63,8 +63,16 @@ public class SandboxWorkspaceGateway {
     private final ManagedChannel channel;
     private final WorkspaceStorageGrpc.WorkspaceStorageBlockingStub stub;
     private final WorkspaceStorageGrpc.WorkspaceStorageStub streaming;
+    private final SandboxClients clients;
+    private final ai.codecraft.modules.workspace.service.SandboxRoutingStore routes;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public SandboxWorkspaceGateway(SandboxClients clients, ai.codecraft.modules.workspace.service.SandboxRoutingStore routes) {
+        this.clients = clients; this.routes = routes; channel = null; stub = null; streaming = null;
+    }
 
     public SandboxWorkspaceGateway(WorkspaceProperties properties) {
+        clients = null; routes = null;
         channel = ManagedChannelBuilder.forAddress(properties.sandboxHost(), properties.sandboxPort()).usePlaintext()
             .maxInboundMessageSize(2 * 1024 * 1024).build();
         Metadata metadata = new Metadata();
@@ -85,7 +93,7 @@ public class SandboxWorkspaceGateway {
                         .setWorkspaceInstanceId(execution.workspaceInstanceId()).setExecutionInstanceId(execution.executionInstanceId()));
                 }
             }
-            measured = client().measureExerciseStorage(request.build());
+            measured = exerciseClient(scope.exerciseId()).measureExerciseStorage(request.build());
             if (!measured.getExerciseId().equals(scope.exerciseId()) || !measured.getMeterEpoch().matches("[A-Z2-7]{26}")
                 || measured.getSequence() < 1 || measured.getBytes() < 0) throw new IllegalStateException("Invalid storage measurement");
         }
@@ -94,24 +102,40 @@ public class SandboxWorkspaceGateway {
     }
 
     public TestEvidencePruningReceipt pruneTestEvidence(String exercise, TestHistoryRecord record) {
-        return client().pruneTestEvidence(QueryTaskRequest.newBuilder().setExerciseId(exercise).setTaskId(record.taskId())
+        return client(record.workspaceInstanceId()).pruneTestEvidence(QueryTaskRequest.newBuilder().setExerciseId(exercise).setTaskId(record.taskId())
             .setWorkspaceInstanceId(record.workspaceInstanceId()).setExecutionInstanceId(record.executionInstanceId()).build());
     }
 
     public WorkspaceCollectionReceipt collectWorkspace(String instance, long revision, java.util.List<Long> references) {
-        return client().collectWorkspace(CollectWorkspaceRequest.newBuilder().setWorkspaceInstanceId(instance)
+        return client(instance).collectWorkspace(CollectWorkspaceRequest.newBuilder().setWorkspaceInstanceId(instance)
             .setExpectedRevision(revision).addAllRetainedRevisions(references).build());
     }
 
     public WorkspaceDeletionReceipt deleteWorkspace(String instance) {
-        return client().deleteWorkspace(QueryWorkspaceRequest.newBuilder().setWorkspaceInstanceId(instance).build());
+        return client(instance).deleteWorkspace(QueryWorkspaceRequest.newBuilder().setWorkspaceInstanceId(instance).build());
     }
 
-    public ExecutionInventory inventory(String after, String epoch) {
-        ExecutionInventory page = client().listExecutions(ExecutionInventoryRequest.newBuilder()
+    public void ensureExecutionReady(String instance) { if (routes != null) routes.requireExecutionReady(instance); }
+
+    public java.util.List<String> nodeIds() { return clients == null ? java.util.List.of("default") : clients.nodeIds(); }
+
+    public ExecutionInventory inventoryFor(String instance, String after, String epoch) {
+        return inventoryOn(routes == null ? "default" : routes.forInstance(instance).id(), after, epoch);
+    }
+
+    public ExecutionInventory inventory(String after, String epoch) { return inventoryOn("default", after, epoch); }
+
+    public ExecutionInventory inventoryOn(String node, String after, String epoch) {
+        ExecutionInventory page = (clients == null ? client() : clients.client(routes.require(node))).listExecutions(ExecutionInventoryRequest.newBuilder()
             .setAfterExecutionId(after).setHostEpoch(epoch).setLimit(100).build());
         if (!page.getHostEpoch().matches("[A-Z2-7]{26}") || page.getEntriesCount() > 100) throw new IllegalStateException("Invalid execution inventory");
         return page;
+    }
+
+    public io.grpc.stub.StreamObserver<ai.codecraft.workspace.v1.TerminalClientFrame> terminal(String instance,
+        io.grpc.stub.ClientResponseObserver<ai.codecraft.workspace.v1.TerminalClientFrame, ai.codecraft.workspace.v1.TerminalServerFrame> observer) {
+        if (clients == null) return terminal(observer);
+        return clients.stream(routes.forInstance(instance)).withDeadlineAfter(2, TimeUnit.HOURS).attachTerminal(observer);
     }
 
     public io.grpc.stub.StreamObserver<ai.codecraft.workspace.v1.TerminalClientFrame> terminal(
@@ -123,25 +147,25 @@ public class SandboxWorkspaceGateway {
     public CommandSnapshot startTerminal(CommandTaskEntity task) { return startCommand(task, true); }
 
     private CommandSnapshot startCommand(CommandTaskEntity task, boolean terminal) {
-        return client().startCommand(StartCommandRequest.newBuilder().setTerminal(terminal).setExerciseId(task.exerciseId()).setTaskId(task.id())
+        return client(task.workspaceInstanceId()).startCommand(StartCommandRequest.newBuilder().setTerminal(terminal).setExerciseId(task.exerciseId()).setTaskId(task.id())
             .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId())
             .setExpectedRevision(task.revision()).setGateEpoch(task.gateEpoch()).setNotAfterUnixMillis(task.notAfter().toEpochMilli())
             .setHostEpoch(task.hostEpoch()).setCommand(task.commandText()).setDirectory(task.workingDirectory()).build());
     }
 
-    public CommandSnapshot syncTerminal(CommandTaskEntity task) { return client().syncTerminal(commandIdentity(task)); }
+    public CommandSnapshot syncTerminal(CommandTaskEntity task) { return client(task.workspaceInstanceId()).syncTerminal(commandIdentity(task)); }
 
     public CommandSnapshot command(CommandTaskEntity task) {
-        try { return client().queryCommand(commandIdentity(task)); }
+        try { return client(task.workspaceInstanceId()).queryCommand(commandIdentity(task)); }
         catch (StatusRuntimeException error) {
             if (error.getStatus().getCode() == Status.Code.NOT_FOUND) return null;
             throw error;
         }
     }
 
-    public void reconcileCommand(CommandTaskEntity task) { client().reconcileTask(commandIdentity(task)); }
+    public void reconcileCommand(CommandTaskEntity task) { client(task.workspaceInstanceId()).reconcileTask(commandIdentity(task)); }
 
-    public StopTaskResponse stopCommand(CommandTaskEntity task) { return client().stopSystemTask(commandIdentity(task)); }
+    public StopTaskResponse stopCommand(CommandTaskEntity task) { return client(task.workspaceInstanceId()).stopSystemTask(commandIdentity(task)); }
 
     /** Reads a bounded historical projection without authorizing a write or starting an execution. */
     public WorkspaceHistoryPreview historyPreview(
@@ -149,16 +173,16 @@ public class SandboxWorkspaceGateway {
         var request = WorkspaceHistoryRequest.newBuilder().setWorkspaceInstanceId(change.workspaceInstanceId())
             .setBaseRevision(change.baseRevision()).setResultRevision(change.resultRevision()).setExpectedRevision(currentRevision)
             .setMode(mode).setTargetRevision(targetRevision == null ? 0 : targetRevision).build();
-        return client().withMaxInboundMessageSize(24 * 1024 * 1024).previewWorkspaceHistory(request);
+        return client(change.workspaceInstanceId()).withMaxInboundMessageSize(24 * 1024 * 1024).previewWorkspaceHistory(request);
     }
 
     public CommandChanges commandChanges(CommandTaskEntity task) {
         // Both the original and final managed trees can be 10 MiB; other RPCs
         // retain their existing small inbound limit.
-        return client().withMaxInboundMessageSize(24 * 1024 * 1024).readCommandChanges(commandIdentity(task));
+        return client(task.workspaceInstanceId()).withMaxInboundMessageSize(24 * 1024 * 1024).readCommandChanges(commandIdentity(task));
     }
 
-    public TestEvidencePruningReceipt pruneCommand(CommandTaskEntity task) { return client().pruneCommandEvidence(commandIdentity(task)); }
+    public TestEvidencePruningReceipt pruneCommand(CommandTaskEntity task) { return client(task.workspaceInstanceId()).pruneCommandEvidence(commandIdentity(task)); }
 
     private static QueryTaskRequest commandIdentity(CommandTaskEntity task) {
         return QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
@@ -176,21 +200,21 @@ public class SandboxWorkspaceGateway {
         if (authority != null) request.setPurpose("FINAL_VERIFICATION").setFinalVerification(FinalVerificationAuthority.newBuilder()
             .setFinalizationId(authority.finalizationId()).setAttemptId(authority.taskId()).setFreezeOperationId(authority.freezeOperationId())
             .setDeadlineUnixMillis(authority.deadlineAt().toEpochMilli()));
-        return client().startTest(request.build());
+        return client(task.workspaceInstanceId()).startTest(request.build());
     }
 
     public StopTaskResponse stopSystemTask(TestTaskEntity task) {
-        return client().stopSystemTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+        return client(task.workspaceInstanceId()).stopSystemTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
             .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()).build());
     }
 
     public GateResponse freeze(String instance, String operation, long epoch) {
-        return client().freeze(CloseGateRequest.newBuilder().setWorkspaceInstanceId(instance).setTransitionId(operation).setExpectedEpoch(epoch).build());
+        return client(instance).freeze(CloseGateRequest.newBuilder().setWorkspaceInstanceId(instance).setTransitionId(operation).setExpectedEpoch(epoch).build());
     }
 
     public TestTaskSnapshot task(TestTaskEntity task) {
         try {
-            return client().queryTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+            return client(task.workspaceInstanceId()).queryTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
                 .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()).build());
         } catch (StatusRuntimeException error) {
             if (error.getStatus().getCode() == Status.Code.NOT_FOUND) return null;
@@ -204,7 +228,7 @@ public class SandboxWorkspaceGateway {
         try (Context.CancellableContext observation = Context.current().withCancellation()) {
             Context previous = observation.attach();
             try {
-                var events = stub.withDeadlineAfter(500, TimeUnit.MILLISECONDS).watchTask(WatchTaskRequest.newBuilder()
+                var events = client(task.workspaceInstanceId()).withDeadlineAfter(500, TimeUnit.MILLISECONDS).watchTask(WatchTaskRequest.newBuilder()
                     .setTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
                         .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()))
                     .setStreamId(checkpoint.getStreamId()).setAfterSequence(checkpoint.getSequence()).build());
@@ -224,30 +248,30 @@ public class SandboxWorkspaceGateway {
     }
 
     public StopTaskResponse stopTask(TestTaskEntity task, TestStopEntity stop) {
-        return client().stopTask(StopTaskRequest.newBuilder().setTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+        return client(task.workspaceInstanceId()).stopTask(StopTaskRequest.newBuilder().setTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
             .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()))
             .setGateEpoch(stop.gateEpoch()).setNotAfterUnixMillis(stop.notAfter().toEpochMilli()).build());
     }
 
     public StopTaskResponse queryStop(TestTaskEntity task) {
-        return client().queryStop(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+        return client(task.workspaceInstanceId()).queryStop(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
             .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId()).build());
     }
 
     public TestTaskSnapshot reconcileTask(TestTaskEntity task) {
-        return client().reconcileTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
+        return client(task.workspaceInstanceId()).reconcileTask(QueryTaskRequest.newBuilder().setExerciseId(task.exerciseId()).setTaskId(task.id())
             .setExecutionInstanceId(task.executionInstanceId()).setWorkspaceInstanceId(task.workspaceInstanceId())
             .setObservedStateVersion(task.stateVersion()).build());
     }
 
     public WorkspaceSnapshot prepare(WorkspaceOperationEntity operation, ProblemVersionEntity problem, Instant notAfter) {
         try {
-            return client().queryWorkspace(QueryWorkspaceRequest.newBuilder()
+            return client(operation.workspaceInstanceId()).queryWorkspace(QueryWorkspaceRequest.newBuilder()
                 .setWorkspaceInstanceId(operation.workspaceInstanceId()).build());
         } catch (StatusRuntimeException error) {
             if (error.getStatus().getCode() != Status.Code.NOT_FOUND) throw error;
         }
-        return client().prepareWorkspace(PrepareWorkspaceRequest.newBuilder()
+        return client(operation.workspaceInstanceId()).prepareWorkspace(PrepareWorkspaceRequest.newBuilder()
             .setWorkspaceInstanceId(operation.workspaceInstanceId()).setOperationId(operation.id()).setNotAfterUnixMillis(notAfter.toEpochMilli())
             .setProblem(ProblemIdentity.newBuilder().setProblemId(problem.problemId()).setVersion(problem.version())
                 .setPackageSha256(problem.packageSha256()).setExecutionImageDigest(problem.executionImageDigest())
@@ -255,7 +279,7 @@ public class SandboxWorkspaceGateway {
     }
 
     public void closeGate(String instance, String transition) {
-        GateResponse gate = client().closeGate(CloseGateRequest.newBuilder().setWorkspaceInstanceId(instance)
+        GateResponse gate = client(instance).closeGate(CloseGateRequest.newBuilder().setWorkspaceInstanceId(instance)
             .setTransitionId(transition).setExpectedEpoch(0).build());
         if (!gate.getWorkspaceInstanceId().equals(instance) || !gate.getTransitionId().equals(transition)
             || gate.getEpoch() != 1 || !gate.getState().equals("CLOSED")) {
@@ -264,24 +288,24 @@ public class SandboxWorkspaceGateway {
     }
 
     public GateResponse gate(String instance) {
-        return client().queryGate(QueryWorkspaceRequest.newBuilder().setWorkspaceInstanceId(instance).build());
+        return client(instance).queryGate(QueryWorkspaceRequest.newBuilder().setWorkspaceInstanceId(instance).build());
     }
 
     public GateResponse closeGate(String instance, String transition, long epoch) {
-        return client().closeGate(CloseGateRequest.newBuilder().setWorkspaceInstanceId(instance)
+        return client(instance).closeGate(CloseGateRequest.newBuilder().setWorkspaceInstanceId(instance)
             .setTransitionId(transition).setExpectedEpoch(epoch).build());
     }
 
     public GateResponse openGate(String instance, String transition, long epoch) {
-        return client().openGate(CloseGateRequest.newBuilder().setWorkspaceInstanceId(instance)
+        return client(instance).openGate(CloseGateRequest.newBuilder().setWorkspaceInstanceId(instance)
             .setTransitionId(transition).setExpectedEpoch(epoch).build());
     }
 
-    public MutationReceipt apply(ApplyBatchRequest request) { return client().applyBatch(request); }
+    public MutationReceipt apply(ApplyBatchRequest request) { return client(request.getWorkspaceInstanceId()).applyBatch(request); }
 
     public MutationReceipt mutation(String instance, String request) {
         try {
-            return client().queryMutation(QueryMutationRequest.newBuilder().setWorkspaceInstanceId(instance).setRequestId(request).build());
+            return client(instance).queryMutation(QueryMutationRequest.newBuilder().setWorkspaceInstanceId(instance).setRequestId(request).build());
         } catch (StatusRuntimeException error) {
             if (error.getStatus().getCode() == Status.Code.NOT_FOUND) return null;
             throw error;
@@ -290,7 +314,7 @@ public class SandboxWorkspaceGateway {
 
     public WorkspaceSnapshot query(String instance) {
         try {
-            return client().queryWorkspace(QueryWorkspaceRequest.newBuilder().setWorkspaceInstanceId(instance).build());
+            return client(instance).queryWorkspace(QueryWorkspaceRequest.newBuilder().setWorkspaceInstanceId(instance).build());
         } catch (StatusRuntimeException error) {
             if (error.getStatus().getCode() == Status.Code.NOT_FOUND) return null;
             throw error;
@@ -298,17 +322,25 @@ public class SandboxWorkspaceGateway {
     }
 
     public WorkspaceSnapshot cancel(String instance, String operation) {
-        return client().cancelPreparation(CancelPreparationRequest.newBuilder()
+        return client(instance).cancelPreparation(CancelPreparationRequest.newBuilder()
             .setWorkspaceInstanceId(instance).setOperationId(operation).build());
     }
 
     public ReadWorkspaceFileResponse read(String instance, String path, long revision) {
-        return client().readWorkspaceFile(ReadWorkspaceFileRequest.newBuilder().setWorkspaceInstanceId(instance)
+        return client(instance).readWorkspaceFile(ReadWorkspaceFileRequest.newBuilder().setWorkspaceInstanceId(instance)
             .setPath(path).setExpectedRevision(revision).build());
     }
 
     public GrepWorkspaceResponse grep(GrepWorkspaceRequest request) {
-        return client().grepWorkspace(request);
+        return client(request.getWorkspaceInstanceId()).grepWorkspace(request);
+    }
+
+    private WorkspaceStorageGrpc.WorkspaceStorageBlockingStub client(String instance) {
+        return clients == null ? client() : clients.client(routes.forInstance(instance));
+    }
+
+    private WorkspaceStorageGrpc.WorkspaceStorageBlockingStub exerciseClient(String exercise) {
+        return clients == null ? client() : clients.client(routes.forExercise(exercise));
     }
 
     private WorkspaceStorageGrpc.WorkspaceStorageBlockingStub client() {
@@ -316,5 +348,5 @@ public class SandboxWorkspaceGateway {
     }
 
     @PreDestroy
-    public void close() { channel.shutdownNow(); }
+    public void close() { if (channel != null) channel.shutdownNow(); }
 }

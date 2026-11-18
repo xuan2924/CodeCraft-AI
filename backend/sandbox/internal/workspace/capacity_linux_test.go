@@ -12,9 +12,13 @@ import (
 func physicalBytes(t *testing.T, root string) uint64 {
 	t.Helper()
 	var total uint64
-	if err := filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		// The node-wide volume identity is infrastructure metadata, not exercise-owned storage.
+		if path == filepath.Join(root, ".storage-id") {
+			return nil
 		}
 		if !entry.IsDir() {
 			info, err := entry.Info()

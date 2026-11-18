@@ -5,9 +5,11 @@ import { root } from './process.mjs';
 const defaults = {
   POSTGRES_DB: 'codecraft', POSTGRES_PORT: '5432', JAVA_PORT: '8080',
   REDIS_HOST: '127.0.0.1', REDIS_PORT: '6379', REALTIME_BACKEND: 'local', RATE_LIMIT_BACKEND: 'postgresql',
+  ASYNC_BACKEND: 'local', RABBITMQ_HOST: '127.0.0.1', RABBITMQ_PORT: '5672', RABBITMQ_USER: 'codecraft',
+  SANDBOX_NODES: '', WORKSPACE_EXECUTION_CONCURRENCY: '4', SANDBOX_EXECUTION_CONCURRENCY: '4',
   SANDBOX_PORT: '9090', WEB_PORT: '5173', MODEL_CREDENTIAL_ROTATION_ENABLED: 'false',
 };
-const allowed = new Set([...Object.keys(defaults), 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'REDIS_PASSWORD',
+const allowed = new Set([...Object.keys(defaults), 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'REDIS_PASSWORD', 'RABBITMQ_PASSWORD',
   'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN', 'SANDBOX_RPC_KEY', 'PROBLEM_PUBLICATION_FILE',
   'MODEL_CREDENTIAL_ACTIVE_KEY_ID', 'MODEL_CREDENTIAL_KEYS', 'COPILOT_WEB_API_KEY', 'COPILOT_WEB_BASE_URL', 'COPILOT_WEB_TIMEOUT']);
 
@@ -39,7 +41,7 @@ export function parseConfig(text) {
   for (const key of ['POSTGRES_USER', 'POSTGRES_DB']) {
     if (!/^[a-z][a-z0-9_]{0,62}$/.test(values[key])) throw new Error(`${key} must be a lowercase database identifier`);
   }
-  for (const key of ['POSTGRES_PORT', 'JAVA_PORT', 'SANDBOX_PORT', 'WEB_PORT', 'REDIS_PORT']) {
+  for (const key of ['POSTGRES_PORT', 'JAVA_PORT', 'SANDBOX_PORT', 'WEB_PORT', 'REDIS_PORT', 'RABBITMQ_PORT']) {
     if (!/^\d+$/.test(values[key]) || Number(values[key]) < 1 || Number(values[key]) > 65535) {
       throw new Error(`${key} must be between 1 and 65535`);
     }
@@ -51,6 +53,20 @@ export function parseConfig(text) {
     throw new Error('Invalid Redis backend selection');
   }
   if (!/^[a-zA-Z0-9.-]+$/.test(values.REDIS_HOST)) throw new Error('Invalid REDIS_HOST');
+  if (!['local', 'rabbit'].includes(values.ASYNC_BACKEND)) throw new Error('Invalid ASYNC_BACKEND');
+  if (!/^[a-zA-Z0-9.-]+$/.test(values.RABBITMQ_HOST)) throw new Error('Invalid RABBITMQ_HOST');
+  if (values.ASYNC_BACKEND === 'rabbit' && (!values.RABBITMQ_PASSWORD || !values.RABBITMQ_USER)) throw new Error('RabbitMQ credentials required');
+  for (const key of ['WORKSPACE_EXECUTION_CONCURRENCY', 'SANDBOX_EXECUTION_CONCURRENCY']) {
+    if (!/^\d+$/.test(values[key]) || Number(values[key]) < 1 || Number(values[key]) > 64) throw new Error(`Invalid ${key}`);
+  }
+  if (values.SANDBOX_NODES) {
+    const nodes = values.SANDBOX_NODES.split(',');
+    if (nodes.length > 16 || nodes.some((value) => !/^[a-z][a-z0-9-]{0,31}@[A-Za-z0-9.-]+:[0-9]{1,5}$/.test(value)
+      || Number(value.split(':')[1]) < 1 || Number(value.split(':')[1]) > 65535)
+      || !nodes.some((value) => value.startsWith('default@'))
+      || new Set(nodes.map((value) => value.split('@')[0])).size !== nodes.length
+      || new Set(nodes.map((value) => value.split('@')[1])).size !== nodes.length) throw new Error('Invalid SANDBOX_NODES');
+  }
   if (values.PROBLEM_PUBLICATION_FILE && !/^[0-9a-f]{64}$/.test(values.SANDBOX_RPC_KEY ?? '')) {
     throw new Error('Published workspaces require a 32-byte lowercase hex SANDBOX_RPC_KEY');
   }
@@ -68,9 +84,10 @@ export function serviceEnv(values, service, inherited = process.env) {
   const keys = {
     java: ['POSTGRES_DB', 'POSTGRES_PORT', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'JAVA_PORT', 'SANDBOX_PORT',
       'REDIS_HOST', 'REDIS_PORT', 'REDIS_PASSWORD', 'REALTIME_BACKEND', 'RATE_LIMIT_BACKEND',
+      'ASYNC_BACKEND', 'RABBITMQ_HOST', 'RABBITMQ_PORT', 'RABBITMQ_USER', 'RABBITMQ_PASSWORD', 'SANDBOX_NODES', 'WORKSPACE_EXECUTION_CONCURRENCY',
       'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD', 'IDENTITY_FINGERPRINT_KEY', 'PUBLIC_ORIGIN',
       'SANDBOX_RPC_KEY', 'PROBLEM_PUBLICATION_FILE', 'MODEL_CREDENTIAL_ACTIVE_KEY_ID', 'MODEL_CREDENTIAL_KEYS', 'MODEL_CREDENTIAL_ROTATION_ENABLED', 'COPILOT_WEB_API_KEY', 'COPILOT_WEB_BASE_URL', 'COPILOT_WEB_TIMEOUT'],
-    sandbox: ['SANDBOX_PORT', 'SANDBOX_RPC_KEY'], web: ['JAVA_PORT', 'WEB_PORT'],
+    sandbox: ['SANDBOX_PORT', 'SANDBOX_RPC_KEY', 'SANDBOX_EXECUTION_CONCURRENCY'], web: ['JAVA_PORT', 'WEB_PORT'],
     postgres: ['POSTGRES_DB', 'POSTGRES_PORT', 'POSTGRES_USER', 'POSTGRES_PASSWORD'],
   }[service];
   if (!keys) throw new Error('Unknown service');

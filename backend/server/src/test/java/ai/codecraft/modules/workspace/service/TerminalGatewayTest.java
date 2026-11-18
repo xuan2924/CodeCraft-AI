@@ -48,7 +48,7 @@ class TerminalGatewayTest {
         doAnswer(call->{received.add(call.getArgument(0));return null;}).when(requests).onNext(any());
         ClientCallStreamObserver<TerminalClientFrame> control=mock(ClientCallStreamObserver.class);when(control.isReady()).thenReturn(true);
         var observer=new AtomicReference<ClientResponseObserver<TerminalClientFrame,TerminalServerFrame>>();
-        when(sandbox.terminal(any())).thenAnswer(call->{ClientResponseObserver<TerminalClientFrame,TerminalServerFrame> sink=call.getArgument(0);observer.set(sink);sink.beforeStart(control);sink.onNext(TerminalServerFrame.newBuilder().setOpened(true).build());return requests;});
+        when(sandbox.terminal(org.mockito.ArgumentMatchers.anyString(),any())).thenAnswer(call->{ClientResponseObserver<TerminalClientFrame,TerminalServerFrame> sink=call.getArgument(1);observer.set(sink);sink.beforeStart(control);sink.onNext(TerminalServerFrame.newBuilder().setOpened(true).build());return requests;});
         var socket=mock(WebSocketSession.class);when(socket.getId()).thenReturn("socket");when(socket.isOpen()).thenReturn(true);
         when(socket.getAttributes()).thenReturn(Map.of("terminal.task",task,"terminal.session","session"));
         var sent=new ArrayBlockingQueue<WebSocketMessage<?>>(8);

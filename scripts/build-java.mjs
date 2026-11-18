@@ -21,6 +21,12 @@ export function javaComposeEnv(values) {
   const env = {};
   for (const key of ['JAVA_PORT', 'BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD',
     'IDENTITY_FINGERPRINT_KEY', 'SANDBOX_RPC_KEY', 'MODEL_CREDENTIAL_ACTIVE_KEY_ID', 'MODEL_CREDENTIAL_KEYS']) env[key] = values[key] ?? '';
+  env.ASYNC_BACKEND = values.ASYNC_BACKEND ?? 'local';
+  env.RABBITMQ_USER = values.RABBITMQ_USER ?? 'codecraft';
+  env.RABBITMQ_PASSWORD = values.RABBITMQ_PASSWORD ?? '';
+  env.SANDBOX_NODES = values.SANDBOX_NODES || 'default@sandbox:9090';
+  env.WORKSPACE_EXECUTION_CONCURRENCY = values.WORKSPACE_EXECUTION_CONCURRENCY ?? '4';
+  env.SANDBOX_EXECUTION_CONCURRENCY = values.SANDBOX_EXECUTION_CONCURRENCY ?? '4';
   env.REDIS_PASSWORD = values.REDIS_PASSWORD ?? '';
   env.REALTIME_BACKEND = values.REALTIME_BACKEND ?? 'local';
   env.RATE_LIMIT_BACKEND = values.RATE_LIMIT_BACKEND ?? 'postgresql';

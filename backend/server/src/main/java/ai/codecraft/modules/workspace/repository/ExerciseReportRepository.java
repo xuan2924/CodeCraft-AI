@@ -16,7 +16,7 @@ public interface ExerciseReportRepository {
     String COLUMNS = "exercise_id::text,id::text,user_id::text,session_hash,platform_version_id::text,final_revision,verification,final_test_id::text,review_skipped,review_text,operation_id::text,generation,state,attempts,attempt_id::text,deadline_at,evidence::text,evaluation::text,reason,created_at,updated_at";
     @Select("SELECT " + COLUMNS + " FROM workspace_report WHERE exercise_id=#{exercise}::uuid")
     ExerciseReportEntity find(String exercise);
-    @Select("SELECT exercise_id::text FROM workspace_report WHERE state='QUEUED' OR (state IN ('PREPARING','RUNNING') AND deadline_at<=#{now}) ORDER BY updated_at,exercise_id LIMIT 16")
+    @Select("SELECT exercise_id::text FROM workspace_report WHERE state='RUNNING' AND deadline_at<=#{now} ORDER BY updated_at,exercise_id LIMIT 16")
     List<String> pending(Instant now);
     @Insert("INSERT INTO workspace_report(exercise_id,id,user_id,session_hash,platform_version_id,final_revision,verification,final_test_id,review_skipped,review_text,operation_id,state,created_at,updated_at) VALUES(#{exerciseId}::uuid,#{id}::uuid,#{userId}::uuid,#{sessionHash},#{platformVersionId}::uuid,#{finalRevision},#{verification},#{finalTestId}::uuid,#{reviewSkipped},#{reviewText},#{operationId}::uuid,'QUEUED',#{createdAt},#{updatedAt})")
     void insert(ExerciseReportEntity report);

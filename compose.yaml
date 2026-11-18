@@ -5,6 +5,15 @@ services:
     platform: linux/amd64
     user: "10001:10001"
     read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+        required: false
+      rabbitmq:
+        condition: service_healthy
+        required: false
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     tmpfs:
@@ -17,7 +26,13 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REALTIME_BACKEND: ${REALTIME_BACKEND:-local}
       RATE_LIMIT_BACKEND: ${RATE_LIMIT_BACKEND:-postgresql}
-      WORKSPACE_EXECUTION_CONCURRENCY: ${SANDBOX_EXECUTION_CONCURRENCY:-4}
+      ASYNC_BACKEND: ${ASYNC_BACKEND:-local}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: ${RABBITMQ_USER:-codecraft}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-}
+      SANDBOX_NODES: ${SANDBOX_NODES:-default@sandbox:9090}
+      WORKSPACE_EXECUTION_CONCURRENCY: ${WORKSPACE_EXECUTION_CONCURRENCY:-4}
       SANDBOX_HOST: sandbox
       SANDBOX_PORT: "9090"
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-codecraft}?connectTimeout=2&socketTimeout=3
@@ -44,7 +59,7 @@ services:
           create_host_path: false
     ports:
       - "127.0.0.1:${JAVA_PORT:-8080}:8080"
-  sandbox:
+  sandbox: &sandbox
     # Trusted coordinator only: Docker socket access is host-administrator authority.
     group_add: ["${DOCKER_SOCKET_GID:-0}"]
     stop_grace_period: 60s
@@ -55,7 +70,7 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    environment:
+    environment: &sandbox-env
       SANDBOX_PORT: "9090"
       SANDBOX_RPC_KEY: ${SANDBOX_RPC_KEY:-}
       SANDBOX_EXECUTION_VOLUME: "${COMPOSE_PROJECT_NAME}_sandbox-data"
@@ -75,6 +90,29 @@ services:
       - "127.0.0.1:${SANDBOX_PORT:-9090}:9090"
     volumes:
       - sandbox-data:/var/lib/codecraft
+      - /var/run/docker.sock:/docker.sock
+      - type: bind
+        source: ${CONTAINER_INPUTS_DIRECTORY:-./.runtime/container-inputs/unprepared}/publications.json
+        target: /publications.json
+        read_only: true
+        bind:
+          create_host_path: false
+  sandbox-secondary:
+    <<: *sandbox
+    profiles: [sandbox-multi]
+    environment:
+      <<: *sandbox-env
+      SANDBOX_EXECUTION_VOLUME: "${COMPOSE_PROJECT_NAME}_sandbox-secondary-data"
+      SANDBOX_COMMAND_NETWORK: "${COMPOSE_PROJECT_NAME}_command-egress-secondary"
+      SANDBOX_RPC_BIND: "172.29.0.3"
+    ports: []
+    networks:
+      default:
+        ipv4_address: 172.29.0.3
+      command-egress-secondary:
+        ipv4_address: 172.31.0.2
+    volumes:
+      - sandbox-secondary-data:/var/lib/codecraft
       - /var/run/docker.sock:/docker.sock
       - type: bind
         source: ${CONTAINER_INPUTS_DIRECTORY:-./.runtime/container-inputs/unprepared}/publications.json
@@ -111,6 +149,22 @@ services:
       retries: 30
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+  rabbitmq:
+    image: rabbitmq:4.1.4-alpine
+    profiles: [rabbit]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-codecraft}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-}
+    # Refuse an unauthenticated deployment. Never publish broker/management ports to the host.
+    entrypoint: ["sh", "-c", 'test -n "$$RABBITMQ_DEFAULT_PASS" || exit 1; exec docker-entrypoint.sh rabbitmq-server']
+    hostname: rabbitmq
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
 networks:
   default:
     ipam:
@@ -121,6 +175,13 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/24
+  command-egress-secondary:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
 volumes:
   sandbox-data:
+  sandbox-secondary-data:
+  rabbitmq-data:
   postgres-data:

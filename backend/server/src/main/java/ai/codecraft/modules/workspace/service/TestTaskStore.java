@@ -45,6 +45,9 @@ import org.springframework.transaction.annotation.Propagation;
 
 @Service
 public class TestTaskStore {
+    private SandboxRoutingStore routing;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setRouting(SandboxRoutingStore routing) { this.routing = routing; }
     private final ExecutionProperties executionLimits;
     private static final Set<String> TERMINAL = Set.of("PASSED", "FAILED", "TIMED_OUT", "STOPPED", "ENVIRONMENT_ERROR", "INTERRUPTED");
     private final IdentityTransactionService identity;
@@ -123,6 +126,7 @@ public class TestTaskStore {
             throw new BusinessException(WorkspaceErrorCode.TEST_TARGET_UNAVAILABLE);
         }
         tasks.lockAdmission();
+        if (routing != null) routing.admitExecution(exerciseId);
         if (tasks.occupiedExercise(exerciseId) != 0 || tasks.occupied() >= executionLimits.concurrency()) throw new BusinessException(WorkspaceErrorCode.TEST_SLOT_BUSY);
         Instant notAfter = authorization.expiresAt().isBefore(exercise.deadlineAt()) ? authorization.expiresAt() : exercise.deadlineAt();
         String id = UUID.randomUUID().toString();

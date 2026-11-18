@@ -29,8 +29,8 @@ public class TestTaskCoordinator {
     private final SandboxWorkspaceGateway sandbox;
     private final WorkspaceCoordinationStore coordination;
     private final WorkspaceWriteCoordinator fences;
-    private String inventoryCursor = "";
-    private String inventoryEpoch = "";
+    private record Cursor(String after, String epoch) { }
+    private final java.util.Map<String, Cursor> inventories = new java.util.HashMap<>();
 
     public TestTaskCoordinator(TestTaskStore store, SandboxWorkspaceGateway sandbox, WorkspaceCoordinationStore coordination,
         WorkspaceWriteCoordinator fences) {
@@ -49,8 +49,13 @@ public class TestTaskCoordinator {
     /** One bounded page per tick; a JVM restart safely begins from the first page. */
     @Scheduled(fixedDelay = 5000)
     public void reconcileInventory() {
+        for (String node : sandbox.nodeIds()) reconcileInventory(node);
+    }
+
+    private void reconcileInventory(String node) {
+        Cursor cursor = inventories.getOrDefault(node, new Cursor("", ""));
         try {
-            var page = sandbox.inventory(inventoryCursor, inventoryEpoch);
+            var page = sandbox.inventoryOn(node, cursor.after(), cursor.epoch());
             var known = store.inventoryTasks(page.getEntriesList().stream().map(entry -> entry.getTask().getExecutionInstanceId()).toList());
             for (var entry : page.getEntriesList()) {
                 var identity = entry.getTask();
@@ -64,10 +69,9 @@ public class TestTaskCoordinator {
                     || !task.workspaceInstanceId().equals(identity.getWorkspaceInstanceId())) throw new IllegalStateException("Inventory owner mismatch");
                 if (!entry.getQuiescent() || !entry.getCleanup().equals("SUCCEEDED") || !entry.getCopyCleanup().equals("SUCCEEDED")) observe(task);
             }
-            inventoryCursor = page.getNextExecutionId();
-            inventoryEpoch = inventoryCursor.isEmpty() ? "" : page.getHostEpoch();
+            inventories.put(node, new Cursor(page.getNextExecutionId(), page.getNextExecutionId().isEmpty() ? "" : page.getHostEpoch()));
         } catch (RuntimeException error) {
-            inventoryCursor = ""; inventoryEpoch = "";
+            inventories.remove(node);
             LOG.warn("Execution inventory remains unresolved ({})", error.getClass().getSimpleName());
         }
     }
@@ -118,7 +122,8 @@ public class TestTaskCoordinator {
     }
 
     public void observe(TestTaskEntity original) {
-        String hostEpoch = original.dispatched() ? original.hostEpoch() : sandbox.inventory("", "").getHostEpoch();
+        if (!original.dispatched() && !original.quiescent()) sandbox.ensureExecutionReady(original.workspaceInstanceId());
+        String hostEpoch = original.dispatched() ? original.hostEpoch() : sandbox.inventoryFor(original.workspaceInstanceId(), "", "").getHostEpoch();
         if (store.claim(original, hostEpoch)) {
             // A lost response remains dispatched forever. The next observation
             // queries the same ID rather than launching a replacement container.
@@ -141,7 +146,7 @@ public class TestTaskCoordinator {
         }
         // Refresh physical inventory before treating an absent registration as
         // a never-dispatched task. Lost files can be reconstructed for cleanup.
-        String currentHost = sandbox.inventory("", "").getHostEpoch();
+        String currentHost = sandbox.inventoryFor(task.workspaceInstanceId(), "", "").getHostEpoch();
         result = sandbox.task(task);
         if (result != null) { confirm(task, result); sandbox.reconcileTask(task); return; }
         GateResponse gate = sandbox.gate(task.workspaceInstanceId());

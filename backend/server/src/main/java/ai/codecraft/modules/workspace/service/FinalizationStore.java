@@ -35,6 +35,9 @@ import org.springframework.transaction.annotation.Transactional;
 /** Durable lifecycle transactions. No RPC is performed while database locks are held. */
 @Service
 public class FinalizationStore {
+    private SandboxRoutingStore routing;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setRouting(SandboxRoutingStore routing) { this.routing = routing; }
     private final ExecutionProperties executionLimits;
     private static final Set<String> VERIFIED = Set.of("PASSED", "FAILED", "TIMED_OUT");
     private static final Set<String> RETRYABLE = Set.of("ENVIRONMENT_ERROR", "INTERRUPTED", "STOPPED");
@@ -184,6 +187,7 @@ public class FinalizationStore {
         if (policy.exhausted(value)) { finish(value, "UNAVAILABLE", null); return null; }
         if (value.nextAttemptAt() != null && clock.instant().isBefore(value.nextAttemptAt())) return null;
         tasks.lockAdmission();
+        if (routing != null) routing.admitExecution(exerciseId);
         if (tasks.occupiedExercise(exerciseId) != 0 || tasks.occupied() >= executionLimits.concurrency()) return null;
         String id = UUID.randomUUID().toString();
         if (finals.allocate(exerciseId, id) != 1) return null;

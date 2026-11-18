@@ -27,6 +27,8 @@
 | **如何防止多页面、AI、Bash 和手动保存把代码互相覆盖？** | [工作区与沙箱](design/workspace-and-sandbox.md)、[任务恢复与实时事件](design/task-recovery-and-realtime.md) | `mutation_linux.go`、`WorkspaceWriteService.java`、`WorkspaceAiOperationService.java` |
 | **Windows 本地开发 + Docker Linux 容器时遇到过什么跨端坑？** | [01 底座演进](evolution/01-foundation.md)、[ADR-0002](adr/0002-java-go-shared-linux-clock.md)、[ADR-0003](adr/0003-accept-shared-system-clock-risk.md) | `compose.yaml`、`PreparationReceiptValidator.java` |
 | **服务重启或 SSE 断线重连后，怎么保证已扣费的 LLM 调用不重复发、未完工具不错乱？** | [任务恢复与实时事件](design/task-recovery-and-realtime.md) | `CopilotTaskStore.java`、`TaskEventTransport.java`、`TransientTaskStreamHub.java` |
+| **数据库提交与消息发布怎样避免漏任务，重复消息为什么不会重复收费？** | [任务恢复与实时事件](design/task-recovery-and-realtime.md) | `OutboxStore.java`、`OutboxRelay.java`、`WorkspaceOutboxHandler.java` |
+| **多个 Go 节点失联时为何不能直接换节点重跑？** | [工作区与沙箱](design/workspace-and-sandbox.md) | `SandboxRoutingStore.java`、`SandboxClients.java`、`node_linux.go` |
 | **流式输出写放大（PartialCapture）和空轮询是怎么发现并治理的？** | [05 深度升级](evolution/05-minimal-tools-depth.md)、[任务恢复与实时事件](design/task-recovery-and-realtime.md) | `CopilotPartialCapture.java`、`TransientTaskStreamHub.java`、`TaskWakeupPublisher.java` |
 | **沙箱执行怎么防越权、防符号链接、隔离 Challenge 隐藏测试？** | [工作区与沙箱](design/workspace-and-sandbox.md) | `runner_linux.go`、`testcopy_linux.go`、`ProblemPublicationReader.java` |
 | **512 MiB 单场存储预算怎么跨 Java Postgres 和 Go 磁盘协同计量？** | [ADR-0006](adr/0006-exercise-storage-reservations.md)、[ADR-0007](adr/0007-owner-recovery-stop-and-end.md) | `StorageCapacityService.java`、`StorageCapacityStore.java`、`capacity_linux.go` |
@@ -48,7 +50,7 @@
 | `modules/modelaccess` | 三协议 SDK 适配、凭证 AES-GCM 加解密与密钥轮换、用量计费 | `ModelInvocationService.java`、`ModelSdkClientFactory.java`、`ModelCredentialCipher.java`、`ModelCostCalculator.java` |
 | `modules/platformagent` | 管理员面试官/评测官配置、版本检查、发布与演练绑定 | `PlatformAgentService.java`、`PlatformCheckWorker.java`、`PlatformBindingService.java` |
 | `modules/skills` | 个人 Skill 包解析（YAML 安全检查）、版本快照与按需读取 | `CopilotSkillService.java`、`CopilotSkillContext.java` |
-| `infrastructure` | 内存流式广播、事务 `afterCommit` 唤醒、PG/Redis 滑动窗口限流 | `TransientTaskStreamHub.java`、`TaskWakeupPublisher.java`、`PostgresSlidingWindowRateLimiter.java` |
+| `infrastructure` | Redis 实时提示、事务唤醒、Outbox/Rabbit 分级任务、PG/Redis 限流 | `TaskRealtimeBus.java`、`OutboxRelay.java`、`OutboxStore.java`、`RabbitTaskConfiguration.java` |
 
 ### 2. Go 执行服务（`backend/sandbox/internal/`）
 

@@ -34,7 +34,7 @@ public interface TestTaskRepository {
     TestTaskEntity lock(String id);
     @Select("SELECT exercise_id::text,state,quiescent,go_state_version AS version,(history_pruning OR history_pruned_at IS NOT NULL) AS retired FROM workspace_test_task WHERE id=#{id}::uuid FOR UPDATE")
     TestResultCheckpointDTO resultCheckpoint(String id);
-    @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE NOT history_pruning AND history_pruned_at IS NULL AND (NOT quiescent OR snapshot IS NULL OR coalesce(snapshot->>'copyCleanup', 'UNKNOWN') NOT IN ('SUCCEEDED', 'NOT_CREATED') OR snapshot->>'cleanup' IS DISTINCT FROM 'SUCCEEDED') ORDER BY last_attempt_at, id LIMIT 16")
+    @Select("SELECT " + COLUMNS + " FROM workspace_test_task WHERE dispatched AND NOT history_pruning AND history_pruned_at IS NULL AND (NOT quiescent OR snapshot IS NULL OR coalesce(snapshot->>'copyCleanup', 'UNKNOWN') NOT IN ('SUCCEEDED', 'NOT_CREATED') OR snapshot->>'cleanup' IS DISTINCT FROM 'SUCCEEDED') ORDER BY last_attempt_at, id LIMIT 16")
     List<TestTaskEntity> pending();
     @Select("SELECT EXISTS (SELECT 1 FROM workspace_test_task WHERE id = #{id}::uuid AND (history_pruning OR history_pruned_at IS NOT NULL))")
     boolean retired(String id);

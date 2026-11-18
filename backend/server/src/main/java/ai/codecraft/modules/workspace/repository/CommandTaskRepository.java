@@ -30,7 +30,7 @@ public interface CommandTaskRepository {
     CommandTaskEntity receipt(@Param("exercise") String exercise, @Param("key") String key);
     @Select("SELECT " + SUMMARY + " FROM workspace_command WHERE exercise_id=#{exercise}::uuid AND NOT pruning AND NOT pruned AND (#{after}::uuid IS NULL OR (created_at,id)<(SELECT created_at,id FROM workspace_command WHERE id=#{after}::uuid AND exercise_id=#{exercise}::uuid)) ORDER BY created_at DESC, id DESC LIMIT 21")
     List<CommandTaskEntity> recent(@Param("exercise") String exercise, @Param("after") String after);
-    @Select("SELECT " + COLUMNS + " FROM workspace_command WHERE " + UNSETTLED + " ORDER BY last_checked_at, created_at, id LIMIT 16")
+    @Select("SELECT " + COLUMNS + " FROM workspace_command WHERE (dispatched OR stop_requested) AND " + UNSETTLED + " ORDER BY last_checked_at, created_at, id LIMIT 16")
     List<CommandTaskEntity> pending();
     @Select("SELECT EXISTS(SELECT 1 FROM workspace_command WHERE exercise_id=#{exercise}::uuid AND " + UNSETTLED + ")")
     boolean unsettled(String exercise);

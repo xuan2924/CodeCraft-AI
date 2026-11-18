@@ -1811,7 +1811,7 @@ class CopilotPersistenceIT {
         assertThat(data.changeContext(exercise, executionChild.id()).conversationId()).isEqualTo(exercise);
         assertThat(data.changeContext(exercise, executionChild.id()).taskId()).isEqualTo(child.id());
         var coordinator = new CommandTaskCoordinator(childCommands, sandbox);
-        when(sandbox.inventory(anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
+        when(sandbox.inventoryFor(anyString(), anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
         when(sandbox.startCommand(any())).thenThrow(Status.UNAVAILABLE.asRuntimeException());
         assertThatThrownBy(() -> coordinator.observe(executionChild)).isInstanceOf(StatusRuntimeException.class);
         tasks.stop(SESSION, parent.id(), "stop-delegating-parent");
@@ -3563,7 +3563,7 @@ class CopilotPersistenceIT {
         var approved = commandTools.decide(SESSION, command.id(), CONTROL, "approve-unknown", new CopilotProposalDecisionRequest("APPROVE", null));
         var child = childCommands.find(approved.commandTaskId());
         var coordinator = new CommandTaskCoordinator(childCommands, sandbox);
-        when(sandbox.inventory(anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
+        when(sandbox.inventoryFor(anyString(), anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
         when(sandbox.startCommand(any())).thenThrow(Status.UNAVAILABLE.asRuntimeException());
         assertThatThrownBy(() -> coordinator.observe(child)).isInstanceOf(StatusRuntimeException.class);
         tasks.stop(SESSION, task.id(), "stop-command-parent");
@@ -3589,7 +3589,7 @@ class CopilotPersistenceIT {
         var approved = commandTools.decide(SESSION, command.id(), CONTROL, "approve-exit", new CopilotProposalDecisionRequest("APPROVE", null));
         var child = childCommands.find(approved.commandTaskId());
         var coordinator = new CommandTaskCoordinator(childCommands, sandbox);
-        when(sandbox.inventory(anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
+        when(sandbox.inventoryFor(anyString(), anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
         when(sandbox.startCommand(any())).thenReturn(bashSnapshot(child, false));
         coordinator.observe(child);
         commandTools.recoverTask(task.id());
@@ -3777,7 +3777,7 @@ class CopilotPersistenceIT {
         boolean loseStart;
         long version = 1;
         TestExecution() {
-            when(sandbox.inventory(anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
+            when(sandbox.inventoryFor(anyString(), anyString(), anyString())).thenReturn(ExecutionInventory.newBuilder().setHostEpoch("A".repeat(26)).build());
             when(sandbox.startTest(any(), any())).thenAnswer(call -> {
                 starts.incrementAndGet();
                 if (loseStart) throw Status.UNAVAILABLE.asRuntimeException();

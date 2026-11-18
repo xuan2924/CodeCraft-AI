@@ -40,9 +40,20 @@ AI 请求动辄数十秒、Docker 测试随时可能被停止或遇到进程重�
 - Compose Redis 为可选 `redis` profile；同时配置两个 backend 与独立 `REDIS_PASSWORD` 后启动 `docker compose --profile redis up`。无宿主端口，健康检查 PING，64 MiB/noeviction 避免配额键被驱逐后静默放行。Redis 数据不是持久账本；部署在可信服务网络，密码只传 Java/Redis，不能传到浏览器或执行容器。
 - 可选真实 Redis 契约测试：独立临时 Redis 下设置 `RATE_LIMIT_REDIS_IT_RUN=disposable`、`RATE_LIMIT_REDIS_PORT`，运行 Maven `-Dtest=RedisConcurrentLeaseIT,RedisSlidingWindowRateLimiterIT,RedisTaskRealtimeIT test`；普通 `test/verify --quick` 不执行这些 IT。
 
+### 5. Transactional Outbox 与分级异步执行
+
+- **原子入队**：V63 为测试、命令（含终端）新增记录及报告进入 `QUEUED` 的状态转换建立触发器，同一个业务事务写 `outbox_events`。报告以 generation/attempt 去重，升级时补齐尚未派发的任务。触发器覆盖全部现有生产者，不在事务内调用 RabbitMQ、gRPC 或模型。
+- **至少一次，不宣称消息恰好一次**：`OutboxStore` 短事务以 `FOR UPDATE SKIP LOCKED` 每 lane 领取至多 4 条并保存 30s owner 租约；Relay 事务外发持久消息，收到 mandatory 路由成功及 publisher confirm 后才确认。旧 owner 不能确认新租约。发布结果未知保留/退避重试；`SENT` 10 分钟未被消费确认则重新投递。
+- **持久消费幂等**：消息仅携带 event UUID，业务身份和版本重新从 PG 读取。消费者获取 5 分钟 token 租约；完成/失败按 token 提交，重复完成或有效租约内重复消息不执行业务。DB 故障不 ACK，Broker 消费端限速重排；业务失败按 2/4/8/16s 重试，第 5 次进入持久死信记录，再由 Relay 确认发布 DLQ。Redis 不参与可靠任务所有权。
+- **分级与背压**：`ASYNC_BACKEND=rabbit` 使用 durable direct exchange `codecraft.tasks.v1`，`interactive`（测试/命令，2 consumers）和 `slow`（报告，1 consumer）独立队列；prefetch=1、手动 ACK。各工作队列上限 5000，独立 `.dead` 队列上限 10000，均 reject-publish。队列满、连接失败或无法路由时不记成功，PG 仍保留消息。默认 `local` 使用两个独立有界 lane 线程，仍走相同 Outbox/inbox 协议，不连接 Broker。
+- **未知副作用不重放**：消费端调用原 Coordinator/Worker 的持久 claim，已 dispatched 的执行只能 query/fence/reconcile；RUNNING 模型调用超时转 UNKNOWN，不自动重新收费。普通扫描仅恢复已派发执行、停止请求和 RUNNING 报告超时，不再绕过队列启动初次任务或重试 DLQ；报告明确无效响应的既有有限再生成会产生新的 attempt 事件；generation/attempt 在持有 owner 锁后再次核验，恢复扫描使用专门的超时收敛方法，不能凭过期查询结果启动 QUEUED 报告。
+- **治理与保留**：DONE 元数据保留 7 天并每次至多清理 100 条；未交付/DLQ 不自动过期丢弃。元数据计入演练预算，删除时退休事件，随后清理消费/死信记录。DLQ 是需运维介入的隔离态，不自动恢复执行、清零 dispatched、换 task ID 或重新调用模型；处理前先核对业务状态和原节点回执。未派发执行可通过原停止/结束通道安全取消；尚未付费派发的对应 generation/attempt 报告在 DLQ 时投影为 FAILED，允许用户显式重试，但 RUNNING/UNKNOWN 不被改写。本切片不新增管理员重放 HTTP 接口。
+- **部署/验证**：Rabbit 为可选 `rabbit` Compose profile，持久数据卷、健康检查、无宿主端口；配置 `ASYNC_BACKEND=rabbit` 和独立 Broker 账号密码后启用。真实契约测试由 `M3_IT_RUN=disposable`、`M3_IT_JDBC_URL`、`M3_IT_RABBIT_PORT` 保护，不加入 quick。
+
 ## 关键源码入口
 
 - 身份与限流：`IdentityService.java`、`CaptchaService.java`、`IdentityRevocationBarrier.java`、`PostgresSlidingWindowRateLimiter.java`
+- 可靠任务：`V63__outbox_events.sql`、`OutboxStore.java`、`OutboxRelay.java`、`RabbitTaskConfiguration.java`、`WorkspaceOutboxHandler.java`
 - 栅栏与删除清理：`WorkspaceFenceTransactionService.java`、`DeletionCoordinator.java`
 - 唤醒与流式推送：`TaskWakeupPublisher.java`、`TaskRealtimeBus.java`、`TransientTaskStreamHub.java`、`TaskEventTransport.java`
 - 前端请求与 SSE：`frontend/src/api/request.ts`、`frontend/src/api/useCommand.ts`、`frontend/src/workspace/useTaskStream.ts`

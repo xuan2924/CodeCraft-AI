@@ -7,6 +7,8 @@ option go_package = "codecraft.local/sandbox/internal/gen;statusv1";
 
 // Trusted Java-to-Go calls only. Public browser authorization belongs to Java.
 service WorkspaceStorage {
+  // Authenticated readiness and persistent volume identity, never an execution authorization.
+  rpc NodeStatus(NodeStatusRequest) returns (NodeStatusResponse);
   rpc PrepareWorkspace(PrepareWorkspaceRequest) returns (WorkspaceSnapshot);
   rpc QueryWorkspace(QueryWorkspaceRequest) returns (WorkspaceSnapshot);
   // Durable deletion fence; repeated calls finish cleanup without reopening the instance.
@@ -309,6 +311,15 @@ message StopTaskResponse {
   TestTaskSnapshot snapshot = 2;
   string host_epoch = 3; // Generation that accepted or observed this cancellation.
 }
+message NodeStatusRequest {}
+message NodeStatusResponse {
+  string storage_id = 1;
+  string host_epoch = 2;
+  uint32 active_slots = 3;
+  uint32 max_slots = 4;
+  bool ready = 5;
+}
+
 message ExecutionInventoryRequest {
   string after_execution_id = 1;
   uint32 limit = 2; // 1..100

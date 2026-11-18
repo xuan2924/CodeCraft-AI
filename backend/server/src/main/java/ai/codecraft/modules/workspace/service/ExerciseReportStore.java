@@ -126,12 +126,24 @@ public class ExerciseReportStore {
     @Transactional(readOnly = true)
     public List<String> pending() { return reports.pending(clock.instant()); }
     @Transactional
-    public ExerciseReportEntity prepare(String exercise) {
+    public void expireRunning(String exercise) {
+        var initial = reports.find(exercise);
+        if (initial == null) return;
+        identity.lockResourceOwner(initial.userId());
+        var current = reports.find(exercise);
+        if (current == null || !"RUNNING".equals(current.state()) || clock.instant().isBefore(current.deadlineAt())) return;
+        reports.finishAttempt(current.attemptId(), "UNKNOWN", clock.instant(), null, null, "EVALUATION_RESULT_UNKNOWN");
+        finish(current, "UNKNOWN", null, "EVALUATION_RESULT_UNKNOWN");
+    }
+    @Transactional
+    public ExerciseReportEntity prepare(String exercise) { return prepare(exercise, null, null); }
+    @Transactional
+    public ExerciseReportEntity prepare(String exercise, Long generation, Integer attempt) {
         var initial = reports.find(exercise);
         if (initial == null) return null;
         identity.lockResourceOwner(initial.userId());
         var report = reports.find(exercise);
-        if (report == null) return null;
+        if (report == null || (generation != null && (report.generation() != generation || report.attempts() != attempt))) return null;
         if ("RUNNING".equals(report.state())) {
             if (!clock.instant().isBefore(report.deadlineAt())) {
                 reports.finishAttempt(report.attemptId(), "UNKNOWN", clock.instant(), null, null, "EVALUATION_RESULT_UNKNOWN");

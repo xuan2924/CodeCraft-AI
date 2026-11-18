@@ -67,7 +67,7 @@ public class FinalizationCoordinator {
         value = store.find(exerciseId);
         boolean cancelled = cancelOutstanding(value);
         if (value.endedAt() != null && cancelled) store.cancelled(exerciseId);
-        if (allocated != null) tests.observe(allocated);
+        if (allocated != null && allocated.dispatched()) tests.observe(allocated);
     }
 
     private boolean cancelOutstanding(FinalizationEntity value) {
