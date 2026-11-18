@@ -100,6 +100,20 @@ class CopilotHttpTest {
         tasks = context.getBean(CopilotTaskService.class); identity = context.getBean(IdentityTransactionService.class);
         mvc = MockMvcBuilders.webAppContextSetup(context).addFilters(context.getBean("springSecurityFilterChain", Filter.class)).build();
     }
+    @Test void telemetryIsOwnerScopedAndPlatformMetricsRequireAdmin() throws Exception {
+        var telemetry = context.getBean(ai.codecraft.modules.copilot.service.CopilotTelemetryService.class);
+        String path = "/api/exercises/" + ID + "/copilot/telemetry";
+        var cookie = new Cookie(IdentityHttp.SESSION_COOKIE, TOKEN);
+        mvc.perform(get(path).servletPath(path).cookie(cookie)).andExpect(status().isOk());
+        verify(telemetry).exercise(HASH, ID);
+        String admin = "/api/admin/metrics/copilot";
+        mvc.perform(get(admin).servletPath(admin).cookie(cookie)).andExpect(status().isForbidden());
+        verify(telemetry, never()).platform();
+        when(identity.authenticate(HASH).user().role()).thenReturn("ADMIN");
+        mvc.perform(get(admin).servletPath(admin).cookie(cookie)).andExpect(status().isOk());
+        verify(telemetry).platform();
+    }
+
     @Test
     void usageIsAnAuthenticatedNoStoreReadWithoutStartingOrCompactingAnything() throws Exception {
         String path = "/api/exercises/" + ID + "/copilot/usage";
@@ -320,8 +334,11 @@ class CopilotHttpTest {
             .header("Idempotency-Key", "original").header("X-Operation-Credential", "control").contentType("application/json");
     }
     @Configuration @EnableWebMvc @EnableWebSecurity
-    @Import({IdentitySecurity.class, CopilotConversationController.class, CopilotController.class, CopilotApprovalController.class, CopilotSteerController.class, CopilotContextController.class, CopilotSkillController.class, CopilotCommandController.class, CopilotErrors.class, GlobalExceptionHandler.class})
+    @Import({IdentitySecurity.class, CopilotTelemetryController.class, CopilotConversationController.class, CopilotController.class, CopilotApprovalController.class, CopilotSteerController.class, CopilotContextController.class, CopilotSkillController.class, CopilotCommandController.class, CopilotErrors.class, GlobalExceptionHandler.class})
     static class Fixture {
+        @Bean ai.codecraft.modules.copilot.service.CopilotTelemetryService telemetry() {
+            return mock(ai.codecraft.modules.copilot.service.CopilotTelemetryService.class);
+        }
         @Bean TaskEventTransport transport() { return mock(TaskEventTransport.class); }
         @Bean CopilotConversationService conversations() { return mock(CopilotConversationService.class); }
         @Bean CopilotTaskService tasks() { return mock(CopilotTaskService.class); }

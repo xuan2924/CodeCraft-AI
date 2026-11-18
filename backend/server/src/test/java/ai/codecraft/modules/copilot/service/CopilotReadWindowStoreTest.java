@@ -64,11 +64,11 @@ class CopilotReadWindowStoreTest {
         when(steers.unstaged("task")).thenReturn(true);
         assertThat(store.beginReadTools("task", "worker", "turn", requests.subList(1, 3), null)).isEmpty();
         assertThat(store.beginReadTools("task", "different-worker", "turn", requests.subList(1, 3), null)).isEmpty();
-        verify(tasks, never()).tool(any());
+        verify(tasks, never()).tool(any(), anyInt());
     }
     @Test void rejectsSideEffectsAndOversizedWindowsBeforeAnyReservation() {
         assertThatThrownBy(() -> store.beginReadTools("task", "worker", "turn", List.of(request("bash")), null)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> store.beginReadTools("task", "worker", "turn", java.util.Collections.nCopies(5, request("read")), null)).isInstanceOf(IllegalArgumentException.class);
-        verify(tasks, never()).tool(any());
+        verify(tasks, never()).tool(any(), anyInt());
     }
 }

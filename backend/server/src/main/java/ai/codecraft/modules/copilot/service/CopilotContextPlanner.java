@@ -76,9 +76,14 @@ public class CopilotContextPlanner {
         for (int index = 0; index < Math.max(0, units.size() - limits.recentUnits()); index++) {
             for (var item : units.get(index)) oldEvidence.add(item.source().id());
         }
+        long microSavedBytes = 0;
         for (var item : items) {
             var message = oldEvidence.contains(item.source().id()) ? project(ChatMessageDeserializer.messageFromJson(item.source().payload()), item.source().id(), 512) : item.message();
-            history.add(requests.historyMessage(message, item.source().sequence() <= source.textHistoryThroughSequence()));
+            boolean foreign = item.source().sequence() <= source.textHistoryThroughSequence();
+            if (oldEvidence.contains(item.source().id()) && message instanceof ToolExecutionResultMessage) {
+                microSavedBytes += Math.max(0, requests.historyBytes(item.message(), foreign) - requests.historyBytes(message, foreign));
+            }
+            history.add(requests.historyMessage(message, foreign));
         }
         for (var payload : source.pendingUserPayloads()) {
             var message = ChatMessageDeserializer.messageFromJson(payload);
@@ -87,7 +92,7 @@ public class CopilotContextPlanner {
         }
         var request = requests.draft(history, source.lane());
         long estimate = requests.estimate(request);
-        var projection = new CopilotContextProjectionDTO(request, estimate, bytes(ChatMessageSerializer.messagesToJson(request.messages())));
+        var projection = new CopilotContextProjectionDTO(request, estimate, bytes(ChatMessageSerializer.messagesToJson(request.messages())), microSavedBytes);
         long occupied = estimate + target.model().maxOutputTokens();
         boolean safe = !source.hasMore() && occupied < window(target);
         boolean automatic = source.hasMore() || occupied * 100 >= window(target) * limits.triggerPercent();

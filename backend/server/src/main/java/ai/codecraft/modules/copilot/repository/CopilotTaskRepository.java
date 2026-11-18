@@ -29,8 +29,8 @@ public interface CopilotTaskRepository {
     void updatePlanningRevision(String id, String revision);
     @Update("UPDATE copilot_task SET planning_revision=#{revision}::bigint WHERE id=#{id}::uuid AND planning_revision IS NULL")
     void initializePlanningRevision(String id, String revision);
-    @Update("UPDATE copilot_tool SET outcome_code=#{code} WHERE id=#{id}::uuid AND completed_at IS NOT NULL")
-    void outcome(String id, String code);
+    @Update("UPDATE copilot_tool SET outcome_code=#{code},revision_conflict=#{revisionConflict} WHERE id=#{id}::uuid AND completed_at IS NOT NULL")
+    void outcome(String id, String code, boolean revisionConflict);
 
     @Update("UPDATE copilot_turn SET price_snapshot=#{snapshot} WHERE id=#{id}::uuid AND state='DISPATCHED'")
     void recordPrice(String id, String snapshot);
@@ -130,8 +130,8 @@ public interface CopilotTaskRepository {
     @Select("SELECT " + MESSAGE + " FROM copilot_conversation_message WHERE conversation_id=#{conversation}::uuid ORDER BY sequence")
     List<CopilotMessageEntity> context(String conversation);
 
-    @Insert("INSERT INTO copilot_tool(id,turn_id,task_id,exercise_id,position,call_id,name,arguments,state,created_at) VALUES(#{id}::uuid,#{turnId}::uuid,#{taskId}::uuid,#{exerciseId}::uuid,#{position},#{callId},#{name},#{arguments},'RUNNING',#{createdAt})")
-    void tool(CopilotToolEntity tool);
+    @Insert("INSERT INTO copilot_tool(id,turn_id,task_id,exercise_id,position,call_id,name,arguments,state,created_at,read_window_width) VALUES(#{tool.id}::uuid,#{tool.turnId}::uuid,#{tool.taskId}::uuid,#{tool.exerciseId}::uuid,#{tool.position},#{tool.callId},#{tool.name},#{tool.arguments},'RUNNING',#{tool.createdAt},#{width})")
+    void tool(CopilotToolEntity tool, int width);
     @Select("SELECT id::text,turn_id::text,task_id::text,exercise_id::text,position,call_id,name,arguments,state,result_message_id::text,created_at,completed_at FROM copilot_tool WHERE turn_id=#{turn}::uuid AND position=#{position}")
     CopilotToolEntity toolAt(String turn, int position);
     @Select("SELECT id::text,turn_id::text,task_id::text,exercise_id::text,position,call_id,name,arguments,state,result_message_id::text,created_at,completed_at FROM copilot_tool WHERE id=#{id}::uuid")
@@ -163,7 +163,7 @@ public interface CopilotTaskRepository {
 
     @Update("UPDATE copilot_turn SET configuration_payload=#{payload} WHERE id=#{turn}::uuid")
     void configuration(String turn, String payload);
-    @Update("UPDATE copilot_turn SET state=#{state},partial_text='',partial_thinking='',partial_sequence=partial_sequence+1,assistant_message_id=#{message}::uuid,input_tokens=#{input},output_tokens=#{output},total_tokens=#{total},usage_incomplete=#{incomplete},usage_payload=#{usagePayload},completed_at=#{now} WHERE id=#{id}::uuid AND state='DISPATCHED'")
+    @Update("UPDATE copilot_turn SET state=#{state},partial_text='',partial_thinking='',partial_sequence=partial_sequence+1,assistant_message_id=#{message}::uuid,input_tokens=#{input},output_tokens=#{output},total_tokens=#{total},usage_incomplete=#{incomplete},usage_payload=#{usagePayload},model_returned_at=#{now},completed_at=#{now} WHERE id=#{id}::uuid AND state='DISPATCHED'")
     int response(String id, String state, String message, Long input, Long output, Long total, boolean incomplete, String usagePayload, Instant now);
     @Update("UPDATE copilot_turn SET tool_position=tool_position+1,state=CASE WHEN #{last} THEN 'SUCCEEDED' ELSE 'TOOLS' END WHERE id=#{id}::uuid AND state='TOOLS' AND tool_position=#{expected}")
     int advanceTool(String id, int expected, boolean last);

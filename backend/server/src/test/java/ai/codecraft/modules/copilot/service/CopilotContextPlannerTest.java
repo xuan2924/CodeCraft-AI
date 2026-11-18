@@ -33,6 +33,10 @@ class CopilotContextPlannerTest {
     private final ToolExecutionRequest call = ToolExecutionRequest.builder().id("read-1").name("view_file").arguments("{\"path\":\"src/Main.java\"}").build();
 
     @Test void microCompactionFoldsOnlyOldCompleteUnitsBeforeTheAutomaticThreshold() {
+        compareMicro();
+    }
+
+    java.util.Map<String, Long> compareMicro() {
         var recentCall = ToolExecutionRequest.builder().id("recent-read").name("read").arguments("{}").build();
         var rows = List.of(row(1, UserMessage.from("goal")), row(2, AiMessage.builder().thinking("keep-old-thinking").toolExecutionRequests(List.of(call)).build()),
             row(3, ToolExecutionResultMessage.from(call, "old-content".repeat(100))),
@@ -50,6 +54,13 @@ class CopilotContextPlannerTest {
         assertThat(rows.get(2).payload()).contains("old-content".repeat(100));
         assertThat(plan.safe()).isTrue();
         assertThat(plan.automaticNeeded()).isFalse();
+        var keepAll = new CopilotContextPlanner(new CopilotRequestFactory(),
+            new CopilotContextProperties(80, 8, 8192, 4096, 8192, 512, 2048), new ObjectMapper(),
+            new CopilotProperties(2, 262144, 1048576, 16, 3, Duration.ofSeconds(130)));
+        long before = keepAll.plan(target(100000, ModelThinkingMode.OFF), input(rows, false)).projection().encodedBytes();
+        long after = plan.projection().encodedBytes();
+        assertThat(before - after).isPositive().isEqualTo(plan.projection().microSavedBytes());
+        return java.util.Map.of("beforeBytes", before, "afterBytes", after, "savedBytes", before - after);
     }
 
     @Test void microCompactionPreservesLongProviderCallIdsEvenWhenThePointerExceeds512Bytes() {

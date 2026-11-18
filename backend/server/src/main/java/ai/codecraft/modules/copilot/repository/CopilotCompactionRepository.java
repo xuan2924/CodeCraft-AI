@@ -116,6 +116,6 @@ public interface CopilotCompactionRepository {
         WHERE m.kind IN ('ASSISTANT','TOOL')
         """)
     long foreignThrough(String conversation, long after, String connection, String model, long connectionVersion, long modelVersion);
-    @Update("UPDATE copilot_turn SET estimated_input_tokens=#{estimate},context_input_bytes=#{bytes},context_version=#{version},context_summary_id=#{summary}::uuid,context_through_sequence=#{through},context_source_high_water=#{highWater},context_text_history_through=#{convertedThrough} WHERE id=#{turn}::uuid")
-    void dispatchContext(String turn, long estimate, long bytes, long version, String summary, long through, long highWater, long convertedThrough);
+    @Update("UPDATE copilot_turn SET estimated_input_tokens=#{estimate},context_input_bytes=#{bytes},micro_saved_bytes=#{saved},context_version=#{version},context_summary_id=#{summary}::uuid,context_through_sequence=#{through},context_source_high_water=#{highWater},context_text_history_through=#{convertedThrough} WHERE id=#{turn}::uuid")
+    void dispatchContext(String turn, long estimate, long bytes, long saved, long version, String summary, long through, long highWater, long convertedThrough);
 }

@@ -191,7 +191,7 @@ public class CopilotExecutionStore {
         tasks.recordPrice(turn.id(), evidence.price(target, turn.createdAt()));
         tasks.historyMode(turn.id(), converted);
         contexts.dispatchContext(turn.id(), prepared.plan().projection().estimatedTokens(), prepared.plan().projection().encodedBytes(),
-            ticket.version(), ticket.summaryId(), ticket.throughSequence(), tasks.lastSequence(task.conversationId()), ticket.textHistoryThroughSequence());
+            prepared.plan().projection().microSavedBytes(), ticket.version(), ticket.summaryId(), ticket.throughSequence(), tasks.lastSequence(task.conversationId()), ticket.textHistoryThroughSequence());
         if (!adjustments.isEmpty()) {
             if (steers.applied(id, turn.id(), clock.instant()) != adjustments.size()) throw new IllegalStateException("Steer dispatch lost its ordered instructions");
             for (var steer : adjustments) operations.settle(task.exerciseId(), steer.id(), true);
@@ -290,7 +290,8 @@ public class CopilotExecutionStore {
             operations.reserve(task.sessionHash(), task.exerciseId(), operation, definition == null ? "COPILOT_READ" : definition.opKind(), measurement,
                 definition == null ? 512 * 1024 : definition.preparationCredit());
             var tool = new CopilotToolEntity(operation, turnId, id, task.exerciseId(), start + offset, request.id(), request.name(), request.arguments(), "RUNNING", null, clock.instant(), null);
-            tasks.tool(tool);
+            int width = offset == 0 && definition != null && definition.rereadable() ? requests.size() : 0;
+            tasks.tool(tool, width);
             result.add(tool);
         }
         signals.changed(id);
@@ -412,7 +413,7 @@ public class CopilotExecutionStore {
         try {
             var body = TOOL_JSON.readTree(result.text());
             var code = ToolOutcome.classify(body);
-            tasks.outcome(tool.id(), code.name());
+            tasks.outcome(tool.id(), code.name(), body != null && "REVISION_CONFLICT".equals(body.path("code").asText()));
             if (code == ToolOutcome.Code.OK) {
                 String revision = null;
                 if ("APPLIED".equals(body.path("code").asText())) {
@@ -423,7 +424,7 @@ public class CopilotExecutionStore {
                 if (revision != null && revision.matches("0|[1-9][0-9]{0,18}")) tasks.updatePlanningRevision(task.id(), revision);
             }
         } catch (JsonProcessingException malformed) {
-            tasks.outcome(tool.id(), ToolOutcome.Code.LEGACY_UNCLASSIFIED.name());
+            tasks.outcome(tool.id(), ToolOutcome.Code.LEGACY_UNCLASSIFIED.name(), false);
         }
 
         tasks.batchProgress(turn.id(), secrets.fingerprint((previous == null ? "" : previous) + "\n" + tool.name() + "\n" + tool.arguments() + "\n" + result.text()));
@@ -452,7 +453,7 @@ public class CopilotExecutionStore {
                 ChatMessageSerializer.messageToJson(ToolExecutionResultMessage.from(request, result)), clock.instant()));
             if (existing != null && ("RUNNING".equals(existing.state()) || "WAITING_APPROVAL".equals(existing.state()))) {
                 tasks.completeTool(existing.id(), "INTERRUPTED", message, clock.instant());
-                tasks.outcome(existing.id(), ToolOutcome.Code.DENIED.name());
+                tasks.outcome(existing.id(), ToolOutcome.Code.DENIED.name(), false);
                 operations.settle(task.exerciseId(), existing.id(), false);
             }
         }
