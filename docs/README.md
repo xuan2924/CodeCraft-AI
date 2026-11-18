@@ -15,7 +15,11 @@
    - [03 编码体验扩展](evolution/03-agent-experience.md)
    - [04 完整面试流程与 UI 重塑](evolution/04-interview-ui.md)
    - [05 Pi 极简工具链与有状态深度升级](evolution/05-minimal-tools-depth.md)
-3. **按面试深挖方向或准备修改的模块精读对应专题与 ADR**。
+3. **快速上手演示与面试复盘（新入口）**：
+   - [面试速通图谱](interview-mastery-map.md)：3 天路线 + 6 个高频深挖卡片 + 诚实边界。
+   - [实操演示手册](cursor-demo-playbook.md)：类 Cursor 编码体验与 `/admin/operations` 沙箱发布动线。
+   - [验证证据台账](verification-evidence-ledger.md)：严格区分真 Docker、PG+脚本基准、前端单测的三层实证。
+4. **按面试深挖方向或准备修改的模块精读对应专题与 ADR**。
 
 ---
 
@@ -35,6 +39,9 @@
 | **用户 API Key 怎么安全保存？不信任内网限制时怎么控 SSRF？** | [模型接入与安全](design/model-access-and-security.md)、[ADR-0004](adr/0004-model-url-https-only.md) | `ModelCredentialCipher.java`、`ModelConnectionValidator.java`、`ModelCredentialRotationCoordinator.java` |
 | **如何防止模型编造 `expected_revision`、怎么把工具改造得像 Pi 一样流畅？** | [05 深度升级](evolution/05-minimal-tools-depth.md)、[Copilot Loop 与工具](design/copilot-loop-and-tools.md) | `CopilotToolCatalog.java`、`CopilotReadTools.java`、`CopilotProposalPreparation.java` |
 | **面试官怎么做到不泄露挑战题目、分主题渐进提示和基于代码证据追问？** | [面试与评测](design/interview-evaluation.md) | `InterviewerWorker.java`、`InterviewerContextCollector.java`、`ExercisePauseStore.java` |
+
+| **面向候选人与管理员：怎么用这套类 Cursor 工作台与沙箱题库系统？** | [实操演示手册](cursor-demo-playbook.md) | `WorkspacePage.vue`、`AdminOperationsPage.vue`、`validate-problem.mjs` |
+| **面向面试官与本人复盘：3 天速通与核心架构深挖图谱** | [面试速通图谱](interview-mastery-map.md)、[验证证据台账](verification-evidence-ledger.md) | `CopilotRunner.java`、`CopilotContextPlanner.java`、`CopilotReplayEvalTest.java` |
 
 ---
 

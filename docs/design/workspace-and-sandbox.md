@@ -22,7 +22,7 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 ### 2. 路径、链接防御与开发/验收隔离
 
 - **全面禁用链接**：题包与工作区禁止任何符号链接、硬链接和 Windows junction，每次读写在 Linux 下逐级校验真实路径与演练归属，禁止目录穿越。
-- **可编辑范围锁定**：固定只允许修改题目声明的 Java 目录（`src/main/java`、`src/test/java`），并强制保护 `pom.xml` 和各级只读 `AGENTS.md` 指导文件。
+- **可编辑范围锁定**：发布契约和 Java 写入层按服务端语言档案限定根目录、保护根构建描述文件（可编辑根下的同名普通文件仍可写和预览）和各级 `AGENTS.md`。缺省 `JAVA_MAVEN` 仍为 `src/main/java`、`src/test/java`；`PYTHON_PYTEST` 为声明式 `src`、`tests`，`executionSupported=false`，创建演练即拒绝，不交给当前 Go/Maven 执行器。
 - **双模式 Docker 执行**：
   - **权威受控测试（`run_tests` / 手动验收）**：完全禁网，只读挂载镜像内权威测试 `/opt/acceptance` 与离线 Maven 仓库，用户 `src/test/java` 不参与权威判定；带 CPU/内存/PID/tmpfs 与 30s 保护性超时。
   - **开发 Bash（`bash`）**：运行在独立可写容器副本中，每次执行建立独立 `internal` Docker bridge，仅连接该命令与 Go 协调器；不同命令不共享二层网络，无公网直连路由。通过内置 HTTP / HTTPS CONNECT 代理下载白名单依赖，执行后按可管理范围同步改动并推进 `revision`。
@@ -35,6 +35,8 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 
 - 为防止开发 `bash` 在基础阶段偷读镜像中的 `/opt/acceptance` 挑战测试，题包内 `challenge/` 拥有**独立的离线验证镜像**，两张镜像的 `initial/` 工程必须逐字节一致。
 - 发布时通过 `scripts/publish-problem.mjs` 验证初始工程预期失败、参考解全通过以及禁网隔离，生成绑定本机镜像 ID 的 `.runtime/problem-publication.json`。
+
+管理员 `/api/admin/problems` 可列出含下架版本的元数据；`validate` 和 `publish` 接收有界 publication artifact JSON，而非服务器文件路径。Python 维护流程只生成 `static-contract-only` 回执，绑定题包及发布输入 SHA，不声称 Docker 镜像、平台、执行环境或测试实绩。artifact 仅接受无 BOM 的严格 UTF-8，拒绝 JSON 键值内 NUL 或孤立代理项。发布键按管理员隔离，相同键绑定原始请求字节摘要；相同版本不能覆盖不同 artifact。`/{id}/availability` 仅改变新建准入，不替换已运行实例的题包，也不会自动安装镜像或刷新 Go 节点的本地受信任题包清单。
 
 ### 4. 跨端 512 MiB 统一容量预算（ADR-0006）
 

@@ -54,6 +54,12 @@
 - Explore 窗口按原始工具位置登记并一次性停放父任务，所有子任务终态后在同一归属锁事务中登记回执、依序回填并唤醒。停止、演练结束及权限撤销会停止所有等待子任务；恢复只对账，不重发模型请求。V60 保留 EXECUTE 单等待/CHILD 单写约束，并以 1–3 槽位唯一索引约束 Explore 并发。
 - 摘要 JSON 仍为 `goal / decisions / changes / state / evidence` 五字段：保留文件路径与修改意图、精确验证命令及通过/失败/跳过信号、已证伪路径和下一步；提案、未知副作用与未运行验证不能写成成功事实。
 
+## 只读遥测与回放
+
+`GET /api/exercises/{exerciseId}/copilot/telemetry` 校验演练归属，返回 `totals` 与最近 20 项 `recentTasks`。`GET /api/admin/metrics/copilot` 仅对 ADMIN 返回跨演练数值汇总。账本复用任务、轮次、工具与委派检查点；不为统计另发请求、不重放工具。只读窗口利用率为已登记读槽数 /（窗口数 × 4）；无窗口时为 null。模型、工具耗时为已观测生命周期之和（工具可能等待审批、并行时间会重叠），不是进程 CPU 时间。`chatInputTokens/chatOutputTokens/chatCacheReadTokens/chatCacheWriteTokens` 只累计 CHAT 已知值，全缺失为 null，不含 SUMMARY；要比较总用量请查 usage 按 purpose 的分组。`recoveredRevisionConflicts` 只计最终成功任务中，冲突后有后续轮次成功读、且再后续轮次出现同名同参数工具 OK 的冲突；两次相同冲突只归最近一次。放弃旧操作并直接回答不算重试成功。
+
+设置 `COPILOT_IT_JDBC_URL` 指向可创建临时数据库的 PostgreSQL fixture 后运行 `CopilotReplayEvalTest`，结果位于 `backend/server/target/copilot-eval-report.{json,md}`。`DETERMINISTIC_SCRIPTED_BASELINE` 表示使用脚本模型而非供应商跑分；不配置测试数据库时跳过此项。
+
 ## 关键源码入口
 
 - Loop 核心：`CopilotCoordinator.java`、`CopilotRunner.java`、`CopilotPartialCapture.java`、`CopilotToolCatalog.java`、`CopilotToolExecutor.java`
