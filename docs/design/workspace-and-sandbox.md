@@ -51,7 +51,7 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 - **关门与崩溃**：CloseGate 先持久关闭，再等待终端强杀、进程静默与容器清理证明，才返回成功；重放也重复核查。Freeze 使用同一屏障，DeleteWorkspace 先写墓碑，终端清理回调在墓碑下只能拒绝提交并收敛。15s 内无法确认则返回不可用，不能把失败当完成。Java 暂停/收尾主动关闭对应 WS；身份撤销由持续鉴权及 Go gate 双重收敛。Go 重启不续接旧 PTY，按原登记停止/清理并保留草稿。
 - **真实 PTY**：Docker `Tty + OpenStdin` 提供控制终端，原始字节保留 Ctrl+C/Ctrl+D，resize 使用 Docker resize 触发 SIGWINCH。单次附着；输入/输出片段至多 16 KiB，队列有界，背压终止会话。未附着 30s、输入空闲 5min、总运行 2h 或原授权/演练到期任一先到即终止；heartbeat 不续租写权限或输入空闲期限。
 
-#### HTTP / WebSocket 对接契约（不涉及前端实现）
+#### HTTP / WebSocket 对接与前端契约（`InteractivePtyTerminal.vue` / `terminalApi.ts`）
 
 1. `POST /api/exercises/{id}/terminal/session`，JSON `{ "expectedRevision": "7" }`；携带现有 Cookie、CSRF、`X-Operation-Credential`、`Idempotency-Key`。返回 `commandId / ticket / webSocketPath / protocol / gateEpoch / expiresAt`，票据最多 30s，仅保存散列。
 2. 使用返回路径建 WS，subprotocols 为 `["codecraft.terminal.v1", "ticket.<ticket>"]`。服务端只回显第一个协议；禁止把票据放 URL/query。握手必须有精确匹配 `publicOrigin` 的 Origin，并核验 Cookie 身份、原 session/authVersion、exercise、当前 gateEpoch 后事务性一次消费。

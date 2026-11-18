@@ -45,9 +45,9 @@
 | 目录 / 模块 | 职责说明 | 核心入口文件（先看这几个） |
 |---|---|---|
 | `modules/identity` | 登录会话、图片验证码、CSRF、密码哈希与会话撤销 | `IdentityService.java`、`CaptchaService.java`、`IdentityRevocationBarrier.java` |
-| `modules/workspace` | 演练生命周期、暂停/挑战/冻结、受控测试、面试官与报告 | `ExerciseService.java`、`WorkspaceAiOperationService.java`、`ExercisePauseStore.java`、`TestTaskService.java`、`InterviewerWorker.java`、`ReportTimelineReader.java` |
+| `modules/workspace` | 演练生命周期、暂停/挑战/冻结、受控测试、Dev PTY、面试官与报告 | `ExerciseService.java`、`WorkspaceAiOperationService.java`、`TerminalGateway.java`、`TestTaskService.java`、`InterviewerWorker.java`、`ReportTimelineReader.java` |
 | `modules/copilot` | 自管 Loop、工具目录、审批、steer/follow-up/BTW/子任务、压缩 | `CopilotCoordinator.java`、`CopilotRunner.java`、`CopilotToolCatalog.java`、`CopilotToolExecutor.java`、`CopilotProposalService.java` |
-| `modules/modelaccess` | 三协议 SDK 适配、凭证 AES-GCM 加解密与密钥轮换、用量计费 | `ModelInvocationService.java`、`ModelSdkClientFactory.java`、`ModelCredentialCipher.java`、`ModelCostCalculator.java` |
+| `modules/modelaccess` | 三协议 SDK 适配、凭证加解密轮换、用量计费与 Host LLM Proxy | `ModelInvocationService.java`、`ModelSdkClientFactory.java`、`ModelCredentialCipher.java`、`ModelCostCalculator.java`、`LlmProxyController.java` |
 | `modules/platformagent` | 管理员面试官/评测官配置、版本检查、发布与演练绑定 | `PlatformAgentService.java`、`PlatformCheckWorker.java`、`PlatformBindingService.java` |
 | `modules/skills` | 个人 Skill 包解析（YAML 安全检查）、版本快照与按需读取 | `CopilotSkillService.java`、`CopilotSkillContext.java` |
 | `infrastructure` | Redis 实时提示、事务唤醒、Outbox/Rabbit 分级任务、PG/Redis 限流 | `TaskRealtimeBus.java`、`OutboxRelay.java`、`OutboxStore.java`、`RabbitTaskConfiguration.java` |
@@ -56,14 +56,14 @@
 
 | 目录 | 职责说明 | 核心入口文件 |
 |---|---|---|
-| `workspace/` | 不可变 `commit-*` 文件树、路径/符号链接防御、栅栏、冻结、历史撤销与计量 | `service_linux.go`、`mutation_linux.go`、`gate_linux.go`、`freeze_linux.go`、`testcopy_linux.go`、`capacity_linux.go` |
-| `execution/` | Docker 受限容器运行测试与开发 Bash、分段耗时遥测、孤儿清理与恢复 | `runner_linux.go`、`stop_linux.go`、`recovery_linux.go`、`orphans_linux.go` |
+| `workspace/` | 不可变 `commit-*` 文件树、路径/符号链接防御、多节点卷身份、栅栏、冻结与计量 | `service_linux.go`、`node_linux.go`、`mutation_linux.go`、`gate_linux.go`、`freeze_linux.go`、`capacity_linux.go` |
+| `execution/` | Docker 受限容器运行测试、Egress 白名单代理与 Dev PTY、孤儿清理与恢复 | `runner_linux.go`、`network_linux.go`、`terminal_linux.go`、`stop_linux.go`、`recovery_linux.go`、`orphans_linux.go` |
 
 ### 3. 前端 Web IDE（`frontend/src/`）
 
 | 目录 / 文件 | 职责说明 | 核心入口文件 |
 |---|---|---|
 | 全局壳层与网络 | 路由表、统一请求与原键恢复、SSE 订阅、主题 Token | `routes.ts`、`api/request.ts`、`api/useCommand.ts`、`workspace/useTaskStream.ts`、`shell/AppShell.vue` |
-| `workspace/` | 三栏工作台、Monaco 编辑、IndexedDB 本地草稿、倒计时、面试官与报告 | `WorkspacePage.vue`、`drafts.ts`、`useExerciseTimer.ts`、`InterviewerPanel.vue`、`ReportPanel.vue` |
+| `workspace/` | 三栏工作台、Monaco 编辑、xterm Dev PTY、草稿、倒计时、面试官与报告 | `WorkspacePage.vue`、`InteractivePtyTerminal.vue`、`terminalApi.ts`、`drafts.ts`、`InterviewerPanel.vue`、`ReportPanel.vue` |
 | `copilot/` | 多会话容器、工具结果卡片、Diff 审批、Steer/Follow-up/BTW/子任务 | `CopilotConversations.vue`、`CopilotPanel.vue`、`CopilotToolResult.vue`、`CopilotProposals.vue` |
 | `modelaccess/` & `platformagent/` | 个人模型管理与演练切换、管理员平台角色发布 | `ModelSettingsPage.vue`、`ExerciseModelPicker.vue`、`PlatformAgentsPage.vue` |

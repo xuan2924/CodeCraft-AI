@@ -8,7 +8,7 @@ CodeCraft-AI 是一个面向 AI 结对编程面试的工程演练与评估平台
 
 ```text
 Browser (Vue 3 + Monaco + xterm + IndexedDB 草稿)
-   │  REST + SSE（HttpOnly Cookie + CSRF + X-Operation-Credential）
+   │  REST + SSE + WebSocket PTY（HttpOnly Cookie + CSRF + X-Operation-Credential + 一次性 WS 票据）
    ▼
 Java 主后端 (Spring Boot 3 + MyBatis + Flyway + LangChain4j) ──▶ PostgreSQL 17
    │  gRPC / Protobuf（SANDBOX_RPC_KEY 内部鉴权，同 Linux 时钟域）

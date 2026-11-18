@@ -36,7 +36,7 @@
 - **鉴权与吊销**：独立 SecurityFilterChain 接受三种代理认证头，不使用 Cookie/CSRF，原 `/api/**` 策略不变。每次调用及长流每 200ms 检查终端所属 session/authVersion、ACTIVE、OPEN、epoch、截止时间、停止/静默状态；数据库异常失败关闭。响应提交前吊销返回 403；提交后的 SSE 尽可能发送 `error/forbidden`，取消上游并断流，不能更改已提交的 HTTP 200。静默上游也主动检测，不依赖新数据到达。
 - **转发边界**：只使用演练已选连接/模型，协议不匹配返回 400，不替 CLI 转换历史；覆盖请求中的 model，限制输出到配置上限（至多 16384），禁止多候选 `n>1` 与 Responses 后台任务。真实上游仍遵守 HTTPS/禁重定向；不转发浏览器 Cookie、内部 RPC Key 或任意上游响应头。上游状态显式保留，正文中实际 Key 及其 JSON 转义形式脱敏，不自动重试。
 - **资源与记账**：32 个在途上游槽位、每用户 5 次/秒突发及 30 次/分钟、每演练 300 次/小时；请求 1MiB、响应总量 16MiB、JSON 8MiB、单个 SSE 事件 1MiB、单次最长 5 分钟。按供应商累计 usage 合并，不将重复流片段累加；cache read/write 分离，reasoning 为 output 子集单独留存。缺失字段/价格保持未知，中断调用不声明完整费用。
-- **审计与兼容展示**：`model_proxy_call` 在转发前写 STARTED，完成后写状态、耗时边界、端点、请求/响应字节摘要、工具信号、usage 与价格快照，不保存原始提示/响应。异常退出留下 STARTED 表示未知，不伪造成功或重试；6 分钟后不再阻止删除。通过 `ExerciseDataContributor` 计入容量并随演练删除。复盘时间线标记 `CLI_PROXY`；Copilot 面板将 CLI 与原生请求合并为已有 `CHAT` 分组，保留现有前端解析契约，无需修改 frontend。
+- **审计与兼容展示**：`model_proxy_call` 在转发前写 STARTED，完成后写状态、耗时边界、端点、请求/响应字节摘要、工具信号、usage 与价格快照，不保存原始提示/响应。异常退出留下 STARTED 表示未知，不伪造成功或重试；6 分钟后不再阻止删除。通过 `ExerciseDataContributor` 计入容量并随演练删除。复盘时间线在 `ReportPanel.vue` 标记 `CLI_PROXY`；Copilot 面板将 CLI 与原生请求合并为已有 `CHAT` 分组。
 
 可选 Node CLI：当前题包/主测试镜像不保证含 Node。需要 Claude Code/Codex/Pi 时，在受控发布的开发镜像层预装固定版本 Node LTS 与 CLI；不要把凭证烘焙进镜像或通过 `docker build --build-arg` 传入，不在 `verify --quick` 安装或下载 CLI。CLI 必须使用注入的 Base URL 与临时 Key；协议必须与本场已选连接一致。
 
@@ -45,3 +45,4 @@
 - 配置与选择：`ModelConnectionService.java`、`ModelConfigurationService.java`、`ExerciseModelService.java`、`ModelCheckCoordinator.java`
 - 调用与客户端：`ModelInvocationService.java`、`ModelSdkClientFactory.java`、`BoundedModelHttpClientBuilder.java`、`ModelConnectionValidator.java`
 - 加密与计费：`ModelCredentialCipher.java`、`ModelCredentialRotationCoordinator.java`、`ModelCostCalculator.java`
+- 容器 Host Proxy：`LlmProxyController.java`、`LlmProxyService.java`、`ProxyTokens.java`、`ProxyAuditService.java`
