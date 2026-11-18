@@ -13,6 +13,7 @@ export const router = createRouter({ history: createWebHistory(), routes: [
   { ...routes.catalog, component: () => import('./catalog/CatalogPage.vue') },
   { ...routes.history, component: () => import('./catalog/HistoryPage.vue') },
   { ...routes.platformAgents, component: () => import('./platformagent/PlatformAgentsPage.vue') },
+  { ...routes.adminOperations, component: () => import('./platformagent/AdminOperationsPage.vue') },
   { ...routes.models, component: () => import('./modelaccess/ModelSettingsPage.vue') },
   { ...routes.skills, component: () => import('./skills/SkillPage.vue') },
 ] });

@@ -10,7 +10,10 @@ it('shows reported occupancy separately, waits after compaction, and drops late 
     windowSource: 'USER_CONFIGURATION', inputTokens: '12345', dispatchedAt: '2026-11-15T00:00:00Z' }, totals: [], costs: [] };
   vi.mocked(api.usage).mockResolvedValue(reported);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const wrapper = mount(CopilotUsage, { props: { owner: 'owner', exerciseId: 'first' }, global: { plugins: [[VueQueryPlugin, { queryClient: client }]] } });
+  const wrapper = mount(CopilotUsage, {
+    props: { owner: 'owner', exerciseId: 'first' },
+    global: { plugins: [[VueQueryPlugin, { queryClient: client }]], stubs: { CopilotTelemetryCard: true } },
+  });
   try {
     await flushPromises();
     expect(wrapper.text()).toContain('12345 / 128000');

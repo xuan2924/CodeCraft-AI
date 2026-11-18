@@ -2,7 +2,9 @@ import { ApiError, object, ownerHeaders, post, request } from '../api/request';
 
 export interface Problem {
   problemVersionId: string; problemId?: string; title: string; version: string; requirements: string;
-  durationSeconds: number; editableRoots: string[]; acceptanceFiles: Record<string, string>; executionAvailable?: boolean; hasChallenge?: boolean;
+  durationSeconds: number; editableRoots: string[]; acceptanceFiles: Record<string, string>;
+  language?: string; executionSupported?: boolean; executionAvailable?: boolean; hasChallenge?: boolean;
+  executionImageDigest?: string | null; platform?: string | null;
 }
 export interface Exercise {
   exerciseId: string; problemVersionId: string; workspaceInstanceId: string; state: string;
@@ -51,17 +53,28 @@ export async function problems(signal: AbortSignal): Promise<Problem[]> {
   return data.map((value: unknown) => {
     if (!object(value) || typeof value.problemVersionId !== 'string' || typeof value.title !== 'string'
       || typeof value.version !== 'string' || typeof value.requirements !== 'string' || typeof value.durationSeconds !== 'number'
+      || (value.language !== undefined && typeof value.language !== 'string')
+      || (value.executionSupported !== undefined && typeof value.executionSupported !== 'boolean')
       || (value.executionAvailable !== undefined && typeof value.executionAvailable !== 'boolean')
       || (value.hasChallenge !== undefined && typeof value.hasChallenge !== 'boolean')
+      || (value.executionImageDigest !== undefined && value.executionImageDigest !== null && typeof value.executionImageDigest !== 'string')
+      || (value.platform !== undefined && value.platform !== null && typeof value.platform !== 'string')
       || !strings(value.editableRoots) || !object(value.acceptanceFiles)) return invalid();
     const acceptanceFiles: Record<string, string> = {};
     for (const [path, content] of Object.entries(value.acceptanceFiles)) {
       if (typeof content !== 'string') return invalid();
       acceptanceFiles[path] = content;
     }
+    const language = typeof value.language === 'string' ? value.language : 'JAVA_MAVEN';
+    const executionSupported = value.executionSupported !== undefined ? value.executionSupported : language === 'JAVA_MAVEN';
     return { problemVersionId: value.problemVersionId, problemId: typeof value.problemId === 'string' ? value.problemId : undefined,
       title: value.title, version: value.version, requirements: value.requirements,
-      durationSeconds: value.durationSeconds, editableRoots: value.editableRoots, acceptanceFiles, executionAvailable: value.executionAvailable === true, hasChallenge: value.hasChallenge === true };
+      durationSeconds: value.durationSeconds, editableRoots: value.editableRoots, acceptanceFiles,
+      language, executionSupported,
+      executionAvailable: executionSupported && value.executionAvailable === true,
+      hasChallenge: value.hasChallenge === true,
+      executionImageDigest: value.executionImageDigest ?? null,
+      platform: value.platform ?? null };
   });
 }
 export async function current(signal: AbortSignal, selectedExercise?: string, owner?: string): Promise<Exercise | null> {

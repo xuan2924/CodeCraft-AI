@@ -28,6 +28,7 @@ const links = computed(() => {
   if (ready.value && props.identity?.role === 'ADMIN') {
     return [
       { ...routes.platformAgents, label: 'Agent 策略', icon: Settings2, matches: [routes.platformAgents.name] },
+      { ...routes.adminOperations, label: '题库与遥测', icon: Library, matches: [routes.adminOperations.name] },
       { ...routes.feedback, label: '授权反馈', icon: ShieldCheck, matches: [routes.feedback.name] },
       { ...routes.account, label: '账号管理', icon: ShieldCheck, matches: [routes.account.name, routes.status.name] },
     ];

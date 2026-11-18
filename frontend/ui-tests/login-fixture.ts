@@ -10,6 +10,7 @@ import AccountPage from '../src/auth/AccountPage.vue';
 import CatalogPage from '../src/catalog/CatalogPage.vue';
 import HistoryPage from '../src/catalog/HistoryPage.vue';
 import PlatformAgentsPage from '../src/platformagent/PlatformAgentsPage.vue';
+import AdminOperationsPage from '../src/platformagent/AdminOperationsPage.vue';
 import WorkspacePage from '../src/workspace/WorkspacePage.vue';
 import FeedbackPage from '../src/workspace/FeedbackPage.vue';
 import ModelSettingsPage from '../src/modelaccess/ModelSettingsPage.vue';
@@ -26,6 +27,7 @@ const router = createRouter({
     { path: '/practice', name: 'catalog', component: CatalogPage },
     { path: '/history', name: 'history', component: HistoryPage },
     { path: '/admin/platform-agents', name: 'platform-agents', component: PlatformAgentsPage },
+    { path: '/admin/operations', name: 'admin-operations', component: AdminOperationsPage },
     { path: '/workspace', name: 'workspace', component: WorkspacePage },
     { path: '/models', name: 'models', component: ModelSettingsPage },
     { path: '/skills', name: 'skills', component: SkillPage },
@@ -37,6 +39,7 @@ const selectedRoutes: Record<string, string> = {
   catalog: '/practice',
   history: '/history',
   platform: '/admin/platform-agents',
+  operations: '/admin/operations',
   workspace: '/workspace',
   feedback: '/feedback',
   models: '/models',

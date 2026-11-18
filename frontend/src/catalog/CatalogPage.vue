@@ -42,7 +42,7 @@ watch([favorites.error, current.error], (errors) => {
 });
 const currentTitle = computed(() => catalogue.data.value?.find(entry => entry.problemVersionId === current.data.value?.problemVersionId)?.title ?? '当前演练');
 const search = ref('');
-const languageFilter = ref<'ALL' | 'JAVA'>('ALL');
+const languageFilter = ref<'ALL' | 'JAVA' | 'PYTHON'>('ALL');
 const onlyFavorites = ref(false);
 const selectedGroupKey = ref('');
 const selectedVersionId = ref('');
@@ -52,11 +52,18 @@ const page = ref(0);
 const languageItems = [
   { id: 'ALL', label: '全部' },
   { id: 'JAVA', label: 'Java' },
+  { id: 'PYTHON', label: 'Python' },
 ];
+
+function languageLabel(language?: string): string {
+  return language === 'PYTHON_PYTEST' ? 'Python' : 'Java';
+}
 
 const saved = computed(() => new Set(favorites.data.value?.map((entry) => entry.problemId)));
 const filtered = computed(() => (catalogue.data.value ?? []).filter((entry) => entry.title.toLowerCase().includes(search.value.toLowerCase())
-  && (languageFilter.value === 'ALL' || languageFilter.value === 'JAVA')
+  && (languageFilter.value === 'ALL'
+    || (languageFilter.value === 'JAVA' && (entry.language ?? 'JAVA_MAVEN') === 'JAVA_MAVEN')
+    || (languageFilter.value === 'PYTHON' && entry.language === 'PYTHON_PYTEST'))
   && (!onlyFavorites.value || !!entry.problemId && saved.value.has(entry.problemId))));
 
 const grouped = computed<ProblemGroup[]>(() => {
@@ -115,7 +122,8 @@ const create = useCommand<{ exerciseId: string; state: string }>(() => owner.val
   void client.invalidateQueries({ queryKey: ['workspace', owner.value, 'current'] });
   void router.push({ name: routes.workspace.name, query: { exercise: result.exerciseId } });
 }, policy);
-const startReason = computed(() => !detail.value?.executionAvailable ? '该版本执行环境不可用' : current.data.value ? '请先继续或结束当前演练'
+const startReason = computed(() => detail.value?.executionSupported === false ? '该语言暂不支持沙箱执行'
+  : !detail.value?.executionAvailable ? '该版本执行环境不可用' : current.data.value ? '请先继续或结束当前演练'
   : current.isPending.value || current.isError.value ? '请先确认进行中演练' : create.pending.value ? '正在创建，请稍候'
   : create.uncertain.value ? '请核对原创建操作' : '');
 
@@ -124,7 +132,7 @@ function toggle(problem: string) {
   void favorite.submit((_key, signal) => api.setFavorite(user, problem, desired, signal));
 }
 function start() {
-  if (!detail.value || !detail.value.executionAvailable || current.data.value || current.isError.value || current.isPending.value) return;
+  if (!detail.value || detail.value.executionSupported === false || !detail.value.executionAvailable || current.data.value || current.isError.value || current.isPending.value) return;
   const version = detail.value.problemVersionId, user = owner.value;
   void create.submit((key, signal) => workspace.act({ path: '/api/exercises', body: { problemVersionId: version }, key }, signal, undefined, user));
 }
@@ -234,7 +242,7 @@ function start() {
             :items="languageItems"
             label="语言筛选"
             size="compact"
-            @update:model-value="(val) => (languageFilter = val as 'ALL' | 'JAVA')"
+            @update:model-value="(val) => (languageFilter = val as 'ALL' | 'JAVA' | 'PYTHON')"
           />
         </div>
         <label class="favorite-filter">
@@ -362,11 +370,21 @@ function start() {
                 <span class="choice-main">
                   <strong class="choice-title">{{ group.title }}</strong>
                   <span class="choice-meta font-mono-num">
-                    <span>Java</span>
+                    <span>{{ languageLabel(group.versions[0]?.language) }}</span>
                     <span>{{ group.versions.length > 1 ? `${group.versions.length} 版本` : `v${group.versions[0]?.version}` }}</span>
                     <span>{{ (group.versions[0]?.durationSeconds ?? 0) / 60 }} 分钟</span>
                     <span
-                      v-if="!group.versions.some(v => v.executionAvailable)"
+                      v-if="!group.versions.some(v => v.executionSupported !== false)"
+                      class="choice-warn"
+                    >
+                      <span
+                        class="ui-status-dot"
+                        data-tone="warning"
+                      />
+                      暂不支持执行
+                    </span>
+                    <span
+                      v-else-if="!group.versions.some(v => v.executionAvailable)"
                       class="choice-warn"
                     >
                       <span
@@ -467,7 +485,7 @@ function start() {
       >
         <div class="drawer-meta-bar">
           <div class="drawer-meta-left font-mono-num">
-            <span class="drawer-tag">Java</span>
+            <span class="drawer-tag">{{ languageLabel(detail.language) }}</span>
             <SegmentedTabs
               v-if="activeGroup && activeGroup.versions.length > 1"
               v-model="selectedVersionId"
@@ -513,14 +531,14 @@ function start() {
           <div class="drawer-footer-status">
             <span
               class="ui-status-dot"
-              :data-tone="!detail.executionAvailable ? 'warning' : current.data.value ? 'muted' : 'accent'"
+              :data-tone="detail.executionSupported === false || !detail.executionAvailable ? 'warning' : current.data.value ? 'muted' : 'accent'"
             />
             <span
               class="status-label"
-              :class="{ 'is-warning': !detail.executionAvailable }"
-              :role="!detail.executionAvailable ? 'alert' : undefined"
+              :class="{ 'is-warning': detail.executionSupported === false || !detail.executionAvailable }"
+              :role="detail.executionSupported === false || !detail.executionAvailable ? 'alert' : undefined"
             >
-              {{ !detail.executionAvailable ? '该版本执行环境不可用' : current.data.value ? '已有进行中的演练' : '就绪' }}
+              {{ detail.executionSupported === false ? '该语言暂不支持沙箱执行' : !detail.executionAvailable ? '该版本执行环境不可用' : current.data.value ? '已有进行中的演练' : '就绪' }}
             </span>
           </div>
           <div class="drawer-footer-actions">

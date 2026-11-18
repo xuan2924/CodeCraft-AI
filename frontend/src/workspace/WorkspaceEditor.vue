@@ -11,7 +11,7 @@ import { listDrafts, putDraft, readDraftEpoch, removeDraft, type Draft } from '.
 import CodeEditor from './CodeEditor.vue';
 import ClosedDrafts from './ClosedDrafts.vue';
 
-const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean; testBusy?: boolean; testTarget?: 'base' | 'challenge'; answeringClosed?: boolean }>();
+const props = defineProps<{ owner: string; exercise: api.Exercise; file?: api.WorkspaceFile; selected: string; credential: string; locked?: boolean; testBusy?: boolean; testTarget?: 'base' | 'challenge'; answeringClosed?: boolean; editableRoots?: string[] }>();
 const emit = defineEmits<{ saved: []; select: [path: string]; 'stale-control': []; 'run-test': [revision: string]; 'write-busy': [value: boolean] }>();
 const buffers = reactive(new Map<string, Buffer>());
 const deleted = reactive(new Map<string, string>());
@@ -70,7 +70,11 @@ let loadGeneration = 0;
 interface Pending { key: string; revision: string; changes: api.FileChange[]; operationId?: string; select?: string }
 const unresolved = ref<Pending | null>(null);
 watch(() => busy.value || unresolved.value !== null, value => emit('write-busy', value), { immediate: true, flush: 'sync' });
-const editorLocked = computed(() => props.locked || props.answeringClosed || props.exercise.state !== 'ACTIVE' || !current.value || !/^src\/(main|test)\/java\//.test(props.selected) ||
+const allowedRoots = computed(() => props.editableRoots?.length ? props.editableRoots : ['src/main/java', 'src/test/java']);
+function isEditablePath(path: string): boolean {
+  return allowedRoots.value.some(root => path.startsWith(`${root}/`));
+}
+const editorLocked = computed(() => props.locked || props.answeringClosed || props.exercise.state !== 'ACTIVE' || !current.value || !isEditablePath(props.selected) ||
   unresolved.value?.changes.some((change) => change.path === props.selected && change.kind === 'DELETE') === true);
 const leaving = ref(false);
 let finishLeave: ((value: boolean) => void) | undefined;
@@ -460,6 +464,10 @@ onScopeDispose(() => {
         class="editor-empty-crumb"
       >工作区代码</span>
       <div class="breadcrumb-tools">
+        <span
+          role="status"
+          class="backup-inline-status"
+        >{{ backup }}</span>
         <Button
           variant="ghost"
           size="small"
@@ -477,10 +485,6 @@ onScopeDispose(() => {
         <details class="local-backups-details">
           <summary>备份</summary>
           <div class="local-backups-popover">
-            <span
-              role="status"
-              class="backup-inline-status"
-            >{{ backup }}</span>
             <ClosedDrafts
               :owner="owner"
               :exercise-id="exercise"
@@ -967,8 +971,12 @@ onScopeDispose(() => {
 }
 
 .backup-inline-status {
-  font-size: 11.5px;
-  color: var(--oc-fg-muted);
+  font-size: 11px;
+  color: var(--oc-fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
 }
 
 .editor-primary-column {

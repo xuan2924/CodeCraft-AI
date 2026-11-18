@@ -47,6 +47,7 @@ onMounted(() => {
   instance = editor.create(host.value, {
     theme: installEditorTheme(editor),
     model: null,
+    editContext: false,
     minimap: { enabled: false },
     ariaLabel: '文件编辑器',
     scrollBeyondLastLine: false,

@@ -9,5 +9,6 @@ export const routes = {
   feedback: { name: 'feedback', path: '/feedback' },
   models: { name: 'models', path: '/models' },
   platformAgents: { name: 'platform-agents', path: '/admin/platform-agents' },
+  adminOperations: { name: 'admin-operations', path: '/admin/operations' },
   skills: { name: 'skills', path: '/skills' },
 } as const;

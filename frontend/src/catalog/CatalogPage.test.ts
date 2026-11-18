@@ -104,3 +104,28 @@ it('groups multiple versions of the same problem and switches versions cleanly',
   expect(document.body.textContent).toContain('该版本执行环境不可用');
   page.unmount(); document.body.innerHTML = ''; client.clear();
 });
+
+it('separates unsupported language profiles from unavailable environments and blocks starting', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path === '/api/auth/session') return ok({ id: 'owner', username: 'user', role: 'USER', passwordChangeRequired: false, expiresAt: '2030-01-01T00:00:00Z' });
+    if (path === '/api/problem-favorites') return ok([]);
+    if (path === '/api/exercises/current') return new Response(JSON.stringify({ code: 'RESOURCE_NOT_FOUND' }), { status: 404 });
+    if (path === '/api/problems') return ok([
+      { problemId: 'py-algo', problemVersionId: 'v-py', title: 'Python 静态契约题', version: '1.0.0', requirements: '静态展示', durationSeconds: 1800, editableRoots: ['src', 'tests'], acceptanceFiles: {}, language: 'PYTHON_PYTEST', executionSupported: false, executionAvailable: false, executionImageDigest: null, platform: null },
+    ]);
+    throw new Error(`Unexpected request ${path}`);
+  }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'catalog', component: CatalogPage },
+    { path: '/workspace', name: 'workspace', component: { template: '<div />' } }, { path: '/history', name: 'history', component: { template: '<div />' } }] });
+  await router.push('/');
+  const page = mount(CatalogPage, { attachTo: document.body, global: { plugins: [[VueQueryPlugin, { queryClient: client }], router] } });
+  await flushPromises();
+  expect(page.text()).toContain('Python');
+  expect(page.text()).toContain('暂不支持执行');
+  await page.get('.problem-choice').trigger('click');
+  await flushPromises();
+  expect(document.body.textContent).toContain('该语言暂不支持沙箱执行');
+  page.unmount(); document.body.innerHTML = ''; client.clear();
+});

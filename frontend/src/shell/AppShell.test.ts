@@ -7,7 +7,7 @@ import type { Identity } from '../auth/api';
 
 const user: Identity = { id: 'user-1', username: '受邀用户', role: 'USER', passwordChangeRequired: false, expiresAt: '2030-01-01T00:00:00Z' };
 async function setup(identity: Identity | null = user) {
-  const router = createRouter({ history: createMemoryHistory(), routes: ['status', 'account', 'catalog', 'history', 'workspace', 'models', 'skills', 'platform-agents', 'feedback'].map((name) => ({ name, path: `/${name}`, component: { template: '<p>页面</p>' } })) });
+  const router = createRouter({ history: createMemoryHistory(), routes: ['status', 'account', 'catalog', 'history', 'workspace', 'models', 'skills', 'platform-agents', 'admin-operations', 'feedback'].map((name) => ({ name, path: `/${name}`, component: { template: '<p>页面</p>' } })) });
   await router.push('/workspace');
   const wrapper = mount(AppShell, { props: { identity, pending: false, failed: false }, slots: { default: '<p>业务内容</p>' }, global: { plugins: [router, createPinia()] } });
   return { wrapper, router };
@@ -28,6 +28,7 @@ describe('application navigation', () => {
     await wrapper.setProps({ identity: { ...user, id: 'admin-1', role: 'ADMIN' } });
     expect(toggle.attributes('aria-expanded')).toBe('false');
     expect(wrapper.text()).toContain('账号管理');
+    expect(wrapper.text()).toContain('题库与遥测');
     expect(wrapper.text()).not.toContain('AI 配置');
     expect(wrapper.text()).not.toContain('演练工作区');
     wrapper.unmount();

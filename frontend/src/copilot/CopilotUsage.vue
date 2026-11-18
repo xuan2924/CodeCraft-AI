@@ -6,6 +6,7 @@ import Tooltip from '../components/ui/Tooltip.vue';
 import { usage } from './usageApi';
 import { commandPolicy, errorMessage } from './errors';
 import UsageSummary from '../modelaccess/UsageSummary.vue';
+import CopilotTelemetryCard from './CopilotTelemetryCard.vue';
 
 const props = withDefaults(defineProps<{
   owner: string;
@@ -145,6 +146,10 @@ const ringDash = computed(() => {
         派发模型：{{ result.data.value.context.modelId }}
       </p>
       <UsageSummary :data="result.data.value" />
+      <CopilotTelemetryCard
+        :owner="owner"
+        :exercise-id="exerciseId"
+      />
     </template>
   </section>
 </template>
