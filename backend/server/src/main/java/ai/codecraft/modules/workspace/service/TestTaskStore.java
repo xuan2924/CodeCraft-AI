@@ -126,8 +126,9 @@ public class TestTaskStore {
             throw new BusinessException(WorkspaceErrorCode.TEST_TARGET_UNAVAILABLE);
         }
         tasks.lockAdmission();
-        if (routing != null) routing.admitExecution(exerciseId);
+        // An unresolved durable owner remains busy even when its sandbox is closed to new placements.
         if (tasks.occupiedExercise(exerciseId) != 0 || tasks.occupied() >= executionLimits.concurrency()) throw new BusinessException(WorkspaceErrorCode.TEST_SLOT_BUSY);
+        if (routing != null) routing.admitExecution(exerciseId);
         Instant notAfter = authorization.expiresAt().isBefore(exercise.deadlineAt()) ? authorization.expiresAt() : exercise.deadlineAt();
         String id = UUID.randomUUID().toString();
         var operation = new WorkspaceOperationEntity(id, authorization.userId(), exerciseId, exercise.workspaceInstanceId(),

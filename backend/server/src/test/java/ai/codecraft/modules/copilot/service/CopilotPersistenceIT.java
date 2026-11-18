@@ -350,6 +350,7 @@ class CopilotPersistenceIT {
             CopilotTaskRepository.class, CopilotConversationRepository.class, CopilotFollowupRepository.class, CopilotBtwRepository.class, CopilotDelegationRepository.class, CopilotRetentionRepository.class, CopilotProposalRepository.class, CopilotTestRepository.class, CopilotCommandRepository.class, CommandTaskRepository.class, CopilotApprovalModeRepository.class, CopilotSteerRepository.class, CopilotCompactionRepository.class, CopilotUsageRepository.class, SkillSnapshotRepository.class, SkillRepository.class,
             TestTaskRepository.class, TaskStreamRepository.class, FinalizationRepository.class, WorkspaceMaintenanceRepository.class, DeletionRepository.class, WorkspaceHistoryRepository.class)) config.addMapper(mapper);
         config.addMapper(ai.codecraft.modules.modelaccess.repository.ProxyAuditRepository.class);
+        config.addMapper(ai.codecraft.modules.copilot.repository.CopilotTelemetryRepository.class);
         var factory = new SqlSessionFactoryBean(); factory.setDataSource(source); factory.setConfiguration(config);
         sql = new SqlSessionTemplate(factory.getObject());
     }
@@ -656,6 +657,9 @@ class CopilotPersistenceIT {
         assertThat(after.context().inputTokens()).isNull();
         assertThat(after.totals()).filteredOn(total -> "SUMMARY".equals(total.purpose())).singleElement()
             .satisfies(total -> assertThat(total.totalTokens()).isEqualTo("20"));
+        var chat = after.totals().stream().filter(total -> "CHAT".equals(total.purpose())).findFirst().orElseThrow();
+        assertThat(evalTotals().chatInputTokens()).isEqualTo(Long.valueOf(chat.inputTokens()));
+        assertThat(evalTotals().chatOutputTokens()).isEqualTo(Long.valueOf(chat.outputTokens()));
         assertThat(after.costs()).isEmpty();
     }
 
@@ -1732,6 +1736,108 @@ class CopilotPersistenceIT {
         assertThat(repository.context(exercise).stream().filter(row -> "TOOL".equals(row.kind()))).hasSize(9);
         assertThat(repository.context(exercise)).anyMatch(row -> row.payload().contains("COPILOT_DELEGATION_LIMIT"));
         assertThat(data.quiescent(exercise)).isTrue();
+    }
+
+    ai.codecraft.modules.copilot.model.dto.CopilotTelemetryResponse.Totals evalTotals() {
+        return sql.getMapper(ai.codecraft.modules.copilot.repository.CopilotTelemetryRepository.class).exercise(exercise);
+    }
+
+    Map<String, Long> evalReads(boolean batch, int count) throws Exception {
+        var task = startTask(SESSION, exercise, CONTROL, "eval", "Parent research goal", true, measurement);
+        var active = new AtomicInteger();
+        var peak = new AtomicInteger();
+        var original = files.read(SESSION, exercise, "src/Main.java");
+        String content = "// private evidence line\n".repeat(100);
+        when(files.read(SESSION, exercise, "src/Main.java")).thenAnswer(call -> {
+            peak.accumulateAndGet(active.incrementAndGet(), Math::max);
+            try { Thread.sleep(80); } finally { active.decrementAndGet(); }
+            return new WorkspaceFileResponse(original.workspaceInstanceId(), "1", "src/Main.java", content);
+        });
+        var issued = new AtomicInteger();
+        var finalBytes = new AtomicInteger();
+        doAnswer(call -> {
+            ChatRequest request = call.getArgument(1);
+            var reads = new ArrayList<ToolExecutionRequest>();
+            while (issued.get() < count) {
+                int line = issued.incrementAndGet();
+                reads.add(ToolExecutionRequest.builder().id("read-" + line).name("read")
+                    .arguments("{\"path\":\"src/Main.java\",\"start_line\":" + line + "}").build());
+                if (!batch) break;
+            }
+            if (reads.isEmpty()) finalBytes.set(ChatMessageSerializer.messagesToJson(request.messages()).getBytes(StandardCharsets.UTF_8).length);
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(reads.isEmpty() ? AiMessage.from("Findings") : AiMessage.from(reads)).build(), 100);
+        }).when(driver).call(any(), any(), any(), anyInt(), any());
+        long start = System.nanoTime();
+        runner.run(task.id(), UUID.randomUUID().toString());
+        long ms = (System.nanoTime() - start) / 1000000;
+        assertThat(repository.find(task.id()).state()).as("reason: %s", repository.find(task.id()).reason()).isEqualTo("SUCCEEDED");
+        assertThat(peak.get()).isEqualTo(batch ? count : 1);
+        var totals = evalTotals();
+        assertThat(totals.readSlotsUsed()).isEqualTo((long) count);
+        assertThat(totals.readWindows()).isEqualTo(batch ? 1 : count);
+        assertThat(totals.chatCacheReadTokens()).isNull();
+        return Map.of("wallMs", ms, "peakReads", (long) peak.get(), "readWindows", totals.readWindows(), "rounds", totals.rounds(), "parentRequestBytes", (long) finalBytes.get());
+    }
+
+    int evalAskRetry() throws Exception {
+        var workspace = new ProposalWorkspace();
+        var task = beginProposal(workspace, false);
+        String first = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
+        String reason = "Use 43 instead";
+        proposals.decide(SESSION, first, CONTROL, "reject", new CopilotProposalDecisionRequest("REJECT", reason), null);
+        doAnswer(call -> {
+            ChatRequest request = call.getArgument(1);
+            assertThat(ChatMessageSerializer.messagesToJson(request.messages())).contains(reason);
+            var original = workspace.proposal();
+            var revised = ToolExecutionRequest.builder().id("adjusted-proposal").name(original.name())
+                .arguments(original.arguments().replace("42", "43")).build();
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(revised)).build(), 100);
+        }).when(driver).call(any(), any(), any(), anyInt(), any());
+        runner.run(task.id(), UUID.randomUUID().toString());
+        String second = proposals.list(SESSION, task.id(), 0).items().stream().filter(row -> !first.equals(row.id())).findFirst().orElseThrow().id();
+        proposals.decide(SESSION, second, CONTROL, "approve", new CopilotProposalDecisionRequest("APPROVE", null), measurement);
+        writeCoordinator.recover(); proposals.recoverTask(task.id());
+        doAnswer(call -> new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Revised edit applied")).build(), 100))
+            .when(driver).call(any(), any(), any(), anyInt(), any());
+        runner.run(task.id(), UUID.randomUUID().toString());
+        assertThat(workspace.source).contains("43");
+        assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
+        assertThat(workspace.applies.get()).isOne();
+        return workspace.applies.get();
+    }
+
+    Map<String, Long> evalExplore() throws Exception {
+        var parent = beginExplorations(3);
+        var bindings = sql.getMapper(CopilotDelegationRepository.class).pendingAll(parent.id());
+        assertThat(bindings).hasSize(3);
+        var original = files.read(SESSION, exercise, "src/Main.java");
+        when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(new WorkspaceFileResponse(original.workspaceInstanceId(), "1", "src/Main.java", "// private evidence line\n".repeat(100)));
+        var barrier = new java.util.concurrent.CyclicBarrier(3);
+        var nextLine = new AtomicInteger();
+        doAnswer(call -> {
+            ChatRequest request = call.getArgument(1);
+            boolean done = request.messages().stream().anyMatch(ToolExecutionResultMessage.class::isInstance);
+            if (!done) barrier.await(20, java.util.concurrent.TimeUnit.SECONDS);
+            var read = ToolExecutionRequest.builder().name("read").id("child-read")
+                .arguments("{\"path\":\"src/Main.java\",\"start_line\":" + (done ? 1 : nextLine.incrementAndGet()) + "}").build();
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(done ? AiMessage.from("Finding") : AiMessage.from(read)).build(), 100);
+        }).when(driver).call(any(), any(), any(), anyInt(), any());
+        try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var workers = bindings.stream().map(binding -> pool.submit(() -> runner.run(binding.childTaskId(), UUID.randomUUID().toString()))).toList();
+            for (var worker : workers) worker.get(60, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        delegations.recover(parent.id());
+        var bytes = new AtomicInteger();
+        doAnswer(call -> {
+            ChatRequest request = call.getArgument(1);
+            String history = ChatMessageSerializer.messagesToJson(request.messages());
+            assertThat(history).contains("Finding").doesNotContain("private evidence line");
+            bytes.set(history.getBytes(StandardCharsets.UTF_8).length);
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Findings")).build(), 100);
+        }).when(driver).call(any(), any(), any(), anyInt(), any());
+        runner.run(parent.id(), UUID.randomUUID().toString());
+        assertThat(repository.find(parent.id()).state()).isEqualTo("SUCCEEDED");
+        return Map.of("children", evalTotals().exploreChildren(), "parentRequestBytes", (long) bytes.get());
     }
 
     private CopilotTaskResponse beginExplorations(int count) throws Exception {

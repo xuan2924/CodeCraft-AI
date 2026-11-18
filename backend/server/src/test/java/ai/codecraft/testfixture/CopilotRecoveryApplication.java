@@ -9,7 +9,8 @@ import ai.codecraft.modules.modelaccess.gateway.ModelSdkClientFactory;
 import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationDTO;
 import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationLimitsDTO;
 import ai.codecraft.modules.modelaccess.service.ModelConnectionValidator;
-import ai.codecraft.modules.workspace.config.WorkspaceProperties;
+import ai.codecraft.modules.workspace.gateway.SandboxClients;
+import ai.codecraft.modules.workspace.service.SandboxRoutingStore;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
 import ai.codecraft.modules.workspace.model.entity.FinalTaskAuthorityEntity;
@@ -90,7 +91,10 @@ public final class CopilotRecoveryApplication {
                                         if (goal.equals("fixture-stream")) {
                                             if (Files.exists(evidence.resolve("stream-issued.txt"))) throw new IllegalStateException("Unknown model call was replayed");
                                             persist("stream-issued.txt", "issued\n");
-                                            subscriber.onNext(new PartialResponse("Incomplete fixture preview"));
+                                            subscriber.onNext(new PartialResponse("Incomplete fixture"));
+                                            // Checkpoints are driven by arriving chunks, not a background timer.
+                                            Thread.sleep(2100);
+                                            subscriber.onNext(new PartialResponse(" preview"));
                                             return;
                                         }
                                         subscriber.onNext(new CompleteResponse(ChatResponse.builder().aiMessage(answer(request, goal)).build()));
@@ -106,8 +110,8 @@ public final class CopilotRecoveryApplication {
         }
 
         @Bean @Primary
-        SandboxWorkspaceGateway faultGateway(WorkspaceProperties properties) {
-            return new SandboxWorkspaceGateway(properties) {
+        SandboxWorkspaceGateway faultGateway(SandboxClients clients, SandboxRoutingStore routes) {
+            return new SandboxWorkspaceGateway(clients, routes) {
                 @Override public MutationReceipt apply(ApplyBatchRequest request) {
                     append("applies.txt", request.getOperationId() + "\n");
                     for (String point : List.of("write-before", "write-after")) {

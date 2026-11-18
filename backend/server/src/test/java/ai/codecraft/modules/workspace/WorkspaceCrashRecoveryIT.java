@@ -3,6 +3,7 @@ package ai.codecraft.modules.workspace;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import ai.codecraft.testfixture.WorkspaceCrashApplication;
+import ai.codecraft.testfixture.RecoveryChildRuntime;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -50,11 +51,19 @@ class WorkspaceCrashRecoveryIT {
                 String newPassword = UUID.randomUUID() + "-recovery";
                 request("POST", "/api/auth/password", Map.of("currentPassword", password, "newPassword", newPassword), "change-password", null, 204);
                 login(username, newPassword);
+                String user = "recovery_user";
+                String temporary = request("POST", "/api/admin/users", Map.of("username", user), "create-owner", null, 201).at("/data/temporaryPassword").asText();
+                request("POST", "/api/auth/logout", Map.of(), "logout", null, 204);
+                login(user, temporary);
+                String userPassword = UUID.randomUUID() + "-recovery";
+                request("POST", "/api/auth/password", Map.of("currentPassword", temporary, "newPassword", userPassword), "user-password", null, 204);
+                login(user, userPassword);
                 String problem = request("GET", "/api/problems", null, null, null, 200).path("data").get(0).path("problemVersionId").asText();
                 String exercise = request("POST", "/api/exercises", Map.of("problemVersionId", problem), "create", null, 202).path("data").path("exerciseId").asText();
                 String base = "/api/exercises/" + exercise;
                 awaitState(base, "READY");
                 String credential = request("POST", base + "/control/acquire", Map.of(), "control", null, 200).path("data").path("credential").asText();
+                selectCheckedModel(base, credential);
                 request("POST", base + "/start", Map.of(), "start", credential, 200);
                 try {
                     HttpResponse<String> response = send("POST", base + "/file-batches", Map.of("expectedRevision", "0", "changes", List.of(
@@ -98,7 +107,9 @@ class WorkspaceCrashRecoveryIT {
                 assertThat(taskResult.path("executionInstanceId").asText()).isEqualTo(taskReceipt.get(1));
                 assertThat(taskResult.path("revision").asText()).isEqualTo("1");
                 assertThat(taskResult.path("cursor").asText()).isNotBlank();
-                assertThat(request("GET", base + "/tasks", null, null, null, 200).path("data")).hasSize(1);
+                var history = request("GET", base + "/tasks", null, null, null, 200).at("/data/tasks");
+                assertThat(history).hasSize(1);
+                assertThat(history.get(0).path("executionInstanceId").asText()).isEqualTo(taskReceipt.get(1));
                 assertThat(Files.exists(taskReplayed)).as("Java restart must never replay StartTest").isFalse();
             } catch (Exception | Error error) {
                 failure = error;
@@ -121,19 +132,43 @@ class WorkspaceCrashRecoveryIT {
         csrf = request("GET", "/api/auth/csrf", null, null, null, 200).path("data").path("token").asText();
     }
 
+    private void selectCheckedModel(String base, String credential) throws Exception {
+        String connection = request("POST", "/api/model-connections", Map.of("name", "Recovery", "baseUrl", "https://workspace-browser.invalid",
+            "protocol", "OPENAI_CHAT", "preset", "CUSTOM", "apiKey", "workspace-browser-not-real"), "connection", null, 201).at("/data/id").asText();
+        String model = request("POST", "/api/model-connections/" + connection + "/models", Map.of("name", "Recovery", "modelId", "workspace-browser-fixture",
+            "contextWindow", 100000, "maxOutputTokens", 2048, "thinkingMode", "OFF"), "model", null, 201).at("/data/id").asText();
+        String check = request("POST", "/api/model-configurations/" + model + "/checks", Map.of("feeAcknowledged", true), "check", null, 202).at("/data/id").asText();
+        long until = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+        String state;
+        do {
+            state = request("GET", "/api/model-checks/" + check, null, null, null, 200).at("/data/check/status").asText();
+            if (!List.of("QUEUED", "RUNNING").contains(state)) break;
+            Thread.sleep(100);
+        } while (System.nanoTime() < until);
+        assertThat(state).isEqualTo("SUCCEEDED");
+        request("POST", base + "/model", Map.of("connectionId", connection, "modelConfigurationId", model,
+            "connectionConfigurationVersion", "1", "modelConfigurationVersion", "1"), "select", credential, 200);
+    }
+
     private void start(String mode, Path marker, Path log) throws Exception {
-        application = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-            "-cp", System.getProperty("surefire.test.class.path"), WorkspaceCrashApplication.class.getName(),
-            mode, marker.toString(), Integer.toString(port)).redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+            "-cp", RecoveryChildRuntime.classPath(), WorkspaceCrashApplication.class.getName(),
+            mode, marker.toString(), Integer.toString(port));
+        builder.environment().put("WORKSPACE_BROWSER_E2E", "disposable");
+        builder.environment().put("MODEL_CREDENTIAL_ACTIVE_KEY_ID", "fixture");
+        builder.environment().put("MODEL_CREDENTIAL_KEYS", "fixture:" + wrapping);
+        application = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
         long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
         while (System.nanoTime() < deadline && application.isAlive()) {
             try {
-                if (send("GET", "/api/internal/status", null, null, null).statusCode() == 200) return;
+                if (send("GET", "/api/internal/status", null, null, null).statusCode() == 200 && RecoveryChildRuntime.hasReadyNode()) return;
             } catch (IOException notReady) { /* bounded readiness polling */ }
             Thread.sleep(100);
         }
         throw new IllegalStateException("Child readiness failed; inspect " + log);
     }
+
+    private final String wrapping = java.util.Base64.getEncoder().encodeToString(new java.security.SecureRandom().generateSeed(32));
 
     private void stop() throws Exception {
         if (application == null || !application.isAlive()) return;

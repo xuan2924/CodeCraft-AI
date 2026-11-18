@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import ai.codecraft.modules.identity.security.IdentityHttp;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.testfixture.CopilotRecoveryApplication;
+import ai.codecraft.testfixture.RecoveryChildRuntime;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -228,13 +229,13 @@ class CopilotCrashRecoveryIT {
     }
     private void start(String mode) throws Exception {
         Path log = evidence.resolve(++boot + "-" + mode + ".log");
-        var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(), "-cp", System.getProperty("surefire.test.class.path"),
+        var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(), "-cp", RecoveryChildRuntime.classPath(),
             CopilotRecoveryApplication.class.getName(), mode, evidence.toString(), Integer.toString(port));
         builder.environment().put("MODEL_CREDENTIAL_ACTIVE_KEY_ID", "fixture"); builder.environment().put("MODEL_CREDENTIAL_KEYS", "fixture:" + wrapping);
         application = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
         long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
         while (application.isAlive() && System.nanoTime() < until) {
-            try { if (send("GET", "/api/internal/status", null, null, null).statusCode() == 200) return; }
+            try { if (send("GET", "/api/internal/status", null, null, null).statusCode() == 200 && (boot != 1 || RecoveryChildRuntime.hasReadyNode())) return; }
             catch (IOException notReady) { /* bounded startup readiness, not time-policy validation */ }
             Thread.sleep(100);
         }

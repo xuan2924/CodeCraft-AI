@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { reserveTracerNetworks, fixtureCompose as renderCompose } from './tracer-networks.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile, rm, copyFile, readdir } from 'node:fs/promises';
@@ -49,7 +50,7 @@ if (copilotTests && (!workspaceMode || !boundaryOnly || workspaceTest || process
 }
 if ((copilotTests || copilotBrowser) && !liveCredential?.trim()) throw new Error('Paid Copilot validation requires DEEPSEEK (or DeepSeek) in the environment');
 if (copilotBrowser || workspaceBrowser) maven(['-q', '-DskipTests', 'package']);
-else if (copilotTests || copilotRecovery) maven(['-q', '-DskipTests', 'test-compile']);
+else if (copilotTests || copilotRecovery || process.argv.includes('--workspace-recovery-only')) maven(['-q', '-DskipTests', 'test-compile']);
 const recoveryOnly = process.argv.includes('--workspace-recovery-only');
 if (recoveryOnly && (!workspaceMode || !boundaryOnly || workspaceTest)) {
   throw new Error('--workspace-recovery-only requires --workspace --boundary-only without --workspace-test');
@@ -83,7 +84,10 @@ const values = {
 const envFile = join(directory, '.env');
 await writeFile(envFile, Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n'), { mode: 0o600 });
 await Promise.all(reservations.map((server) => new Promise((resolve) => server.close(resolve))));
-const composeArgs = ['compose', '-p', project, '--env-file', envFile, '-f', join(root, 'compose.yaml')];
+// Isolate disposable tracer addresses from development stacks using the default subnets.
+const fixtureCompose = join(directory, 'compose.yaml');
+let tracerNetworks;
+const composeArgs = ['compose', '--project-directory', root, '-p', project, '--env-file', envFile, '-f', fixtureCompose];
 async function configureBrowserModels() {
   if (!copilotBrowser && !workspaceBrowser) return;
   const support = join(directory, 'model-budget');
@@ -259,6 +263,8 @@ try {
   composeEnv.JAVA_IMAGE = await buildJavaImage();
   Object.assign(composeEnv, javaComposeEnv(values));
   // Fail fast if built artifacts or matching browser are missing; see README setup.
+  tracerNetworks = reserveTracerNetworks(project);
+  await writeFile(fixtureCompose, renderCompose(await readFile(join(root, 'compose.yaml'), 'utf8'), project, tracerNetworks.octet));
   compose(['up', '-d', '--wait', 'postgres']);
   if (identityMode && !smoke) {
     compose(['exec', '-T', 'postgres', 'psql', '-U', values.POSTGRES_USER, '-d', values.POSTGRES_DB,
@@ -401,6 +407,7 @@ try {
     if (ids) run('docker', ['rm', '-f', ...ids.split(/\s+/)]);
   } catch (error) { failures.push(error); }
   try { compose(['down', '--volumes', '--remove-orphans']); } catch (error) { failures.push(error); }
+  try { tracerNetworks?.release(); } catch (error) { failures.push(error); }
   try { await rm(envFile, { force: true }); } catch (error) { failures.push(error); }
   if ((copilotBrowser || copilotTests) && liveCredential) {
     try {

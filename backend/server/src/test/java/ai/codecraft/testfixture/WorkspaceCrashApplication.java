@@ -2,7 +2,8 @@ package ai.codecraft.testfixture;
 
 import ai.codecraft.ServerApplication;
 import ai.codecraft.fixture.CaptchaFixture;
-import ai.codecraft.modules.workspace.config.WorkspaceProperties;
+import ai.codecraft.modules.workspace.gateway.SandboxClients;
+import ai.codecraft.modules.workspace.service.SandboxRoutingStore;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.workspace.v1.ApplyBatchRequest;
 import ai.codecraft.workspace.v1.MutationReceipt;
@@ -40,8 +41,8 @@ public final class WorkspaceCrashApplication {
     static class FaultConfiguration {
         @Bean
         @Primary
-        SandboxWorkspaceGateway crashGateway(WorkspaceProperties properties) {
-            return new SandboxWorkspaceGateway(properties) {
+        SandboxWorkspaceGateway crashGateway(SandboxClients clients, SandboxRoutingStore routes) {
+            return new SandboxWorkspaceGateway(clients, routes) {
                 @Override
                 public MutationReceipt apply(ApplyBatchRequest request) {
                     if (!crash) {
@@ -62,12 +63,12 @@ public final class WorkspaceCrashApplication {
                 }
 
                 @Override
-                public TestTaskSnapshot startTest(TestTaskEntity task) {
+                public TestTaskSnapshot startTest(TestTaskEntity task, ai.codecraft.modules.workspace.model.entity.FinalTaskAuthorityEntity authority) {
                     if (mode.equals("task-recover")) {
                         persist("START_REPLAYED\n");
                         Runtime.getRuntime().halt(138);
                     }
-                    TestTaskSnapshot result = super.startTest(task);
+                    TestTaskSnapshot result = super.startTest(task, authority);
                     if (mode.equals("task-crash")) {
                         persist(result.getTaskId() + "\n" + result.getExecutionInstanceId() + "\n");
                         Runtime.getRuntime().halt(137);
