@@ -74,7 +74,7 @@ public class ExerciseTransactionService {
         String operation = UUID.randomUUID().toString();
         repository.insert(new ExerciseEntity(exercise, user, version, instance, operation, "PREPARING", null, "[]",
             1, clock.instant(), null, null, null, null, null));
-        if (routing != null) routing.bind(exercise); // Required Spring injection; constructor-only unit fixtures have no remote nodes.
+        if (routing != null) routing.bind(exercise, problems.find(version).packageSha256()); // Required Spring injection; constructor-only unit fixtures have no remote nodes.
         platform.bind(exercise);
         repository.retention(exercise, Math.multiplyExact((long) retention.days(), 86400));
         repository.bindPreparationSession(exercise, session, authorization.expiresAt());

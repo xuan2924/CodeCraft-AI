@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"syscall"
 
 	rpc "codecraft.local/sandbox/internal/gen"
@@ -39,7 +40,7 @@ func (s *Service) NodeStatus(ctx context.Context, request *rpc.NodeStatusRequest
 		return nil, err
 	}
 	defer release()
-	result := &rpc.NodeStatusResponse{StorageId: s.storageID}
+	result := &rpc.NodeStatusResponse{StorageId: s.storageID, LoadedPackageSha256: slices.Clone(s.loadedPackageSHA256)}
 	if s.executor != nil {
 		active, maximum, ready := s.executor.Capacity()
 		result.HostEpoch = s.executor.HostEpoch()

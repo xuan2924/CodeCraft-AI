@@ -216,3 +216,31 @@ it('updates transient copilot_preview monotonically by epoch/sequence and clears
   await flushPromises();
   expect(wrapper.find('[aria-label="未确认回复预览"]').exists()).toBe(false);
 });
+
+it('resubscribes after 2s disconnect timer and cancels pending reconnect on cleanup', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const closes = [vi.fn(), vi.fn()];
+  let callIndex = 0;
+  const watch = vi.fn<typeof api.watchTask>(() => closes[callIndex++] ?? vi.fn());
+  const snapshots: api.Snapshot[] = [];
+  let disconnects = 0;
+  const stop = api.reconnectTaskStream(
+    watch,
+    exercise,
+    task.id,
+    (s) => snapshots.push(s),
+    () => { disconnects++; },
+    () => {},
+  );
+  expect(watch).toHaveBeenCalledTimes(1);
+  watch.mock.calls[0]![3]();
+  expect(disconnects).toBe(1);
+  expect(closes[0]).toHaveBeenCalledTimes(1);
+  expect(watch).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(watch).toHaveBeenCalledTimes(2);
+  watch.mock.calls[1]![3]();
+  stop();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(watch).toHaveBeenCalledTimes(2);
+});

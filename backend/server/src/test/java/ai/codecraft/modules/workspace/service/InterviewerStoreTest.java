@@ -19,7 +19,7 @@ import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.platformagent.service.PlatformBindingService;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import ai.codecraft.modules.workspace.model.dto.InterviewerRequest;
-import ai.codecraft.modules.platformagent.model.entity.PlatformVersionEntity;
+import ai.codecraft.modules.platformagent.model.dto.PlatformBindingDTO;
 import ai.codecraft.modules.workspace.model.entity.InterviewerTaskEntity;
 import ai.codecraft.modules.workspace.repository.ExerciseRepository;
 import ai.codecraft.modules.workspace.repository.InterviewerRepository;
@@ -116,7 +116,7 @@ class InterviewerStoreTest {
     @Test
     void hintLevelsUseSuccessfulCountsPerTopicAndCapAtThree() {
         authorize("ACTIVE");
-        var version = mock(PlatformVersionEntity.class);
+        var version = mock(PlatformBindingDTO.class);
         when(version.id()).thenReturn("version");
         when(platform.version(anyString(), any())).thenReturn(version);
         when(tasks.successfulHints("exercise", "rounding")).thenReturn(0, 1, 2, 8);
@@ -157,7 +157,7 @@ class InterviewerStoreTest {
     @Test
     void acceptedAndClaimedQuestionsSignalOnlyAfterDurableTransitions() {
         authorize("READY");
-        var version = mock(PlatformVersionEntity.class);
+        var version = mock(PlatformBindingDTO.class);
         when(version.id()).thenReturn("version");
         when(platform.version(anyString(), any())).thenReturn(version);
         var accepted = store.accept("session", "exercise", "key", "control", "question", null);

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,6 +13,24 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+func TestNodeStatusAdvertisesTrustedPreparePackages(t *testing.T) {
+	a, b := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	var publications []Publication
+	for _, sha := range []string{b, a, b} {
+		publications = append(publications, Publication{Identity: &rpc.ProblemIdentity{PackageSha256: sha}, InitialFiles: map[string]string{"pom.xml": "fixture"}, Challenge: &ChallengePublication{Identity: &rpc.ProblemIdentity{PackageSha256: strings.Repeat("c", 64), ExecutionImageDigest: "separate"}, Execution: &ExecutionPolicy{}}})
+	}
+	s, err := NewService(t.TempDir(), publications, a, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publications[0].Identity.PackageSha256 = strings.Repeat("d", 64)
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-codecraft-internal-key", a))
+	got, err := s.NodeStatus(ctx, &rpc.NodeStatusRequest{})
+	if err != nil || !slices.Equal(got.GetLoadedPackageSha256(), []string{a, b}) {
+		t.Fatalf("loaded prepare packages: %v %v", got, err)
+	}
+}
 
 func TestNodeStorageIdentityPersistsAndFencesWrongVolume(t *testing.T) {
 	root := t.TempDir()
@@ -26,7 +45,7 @@ func TestNodeStorageIdentityPersistsAndFencesWrongVolume(t *testing.T) {
 	}
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-codecraft-internal-key", key))
 	result, err := second.NodeStatus(ctx, &rpc.NodeStatusRequest{})
-	if err != nil || result.StorageId != first.storageID || result.Ready {
+	if err != nil || result.StorageId != first.storageID || len(result.LoadedPackageSha256) != 0 || result.Ready {
 		t.Fatalf("invalid readiness: %v %+v", err, result)
 	}
 	wrong := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-codecraft-internal-key", key, "x-codecraft-storage-id", strings.Repeat("b", 64)))

@@ -58,7 +58,8 @@ public class SandboxClients {
                     .nodeStatus(NodeStatusRequest.getDefaultInstance());
                 if (!status.getStorageId().matches("[0-9a-f]{64}") || !status.getHostEpoch().matches("[A-Z2-7]{26}")
                     || status.getMaxSlots() < 1 || status.getMaxSlots() > 64 || status.getActiveSlots() > status.getMaxSlots()
-                    || repository.healthy(node.id(), node.endpoint(), status.getStorageId(), status.getHostEpoch(), status.getActiveSlots(), status.getMaxSlots(), status.getReady()) != 1) {
+                    || status.getLoadedPackageSha256Count() > 256 || status.getLoadedPackageSha256List().stream().anyMatch(value -> !value.matches("[0-9a-f]{64}"))
+                    || repository.healthy(node.id(), node.endpoint(), status.getStorageId(), status.getHostEpoch(), status.getActiveSlots(), status.getMaxSlots(), status.getReady(), String.join(",", status.getLoadedPackageSha256List())) != 1) {
                     repository.unhealthy(node.id());
                 }
             } catch (RuntimeException unavailable) {

@@ -21,7 +21,7 @@ import ai.codecraft.modules.modelaccess.service.ModelUsageAccounting;
 import ai.codecraft.modules.platformagent.config.PlatformAgentProperties;
 import ai.codecraft.modules.platformagent.model.PlatformRole;
 import ai.codecraft.modules.platformagent.model.dto.PlatformDefinitionDTO;
-import ai.codecraft.modules.platformagent.model.entity.PlatformVersionEntity;
+import ai.codecraft.modules.platformagent.model.dto.PlatformBindingDTO;
 import ai.codecraft.modules.platformagent.service.PlatformBindingService;
 import ai.codecraft.modules.platformagent.service.PlatformDefinitions;
 import ai.codecraft.modules.workspace.model.entity.ExerciseReportEntity;
@@ -52,7 +52,7 @@ class EvaluationReportWorkerTest {
     private final ModelInvocationDTO target = new ModelInvocationDTO(null, model, "platform-secret");
     @BeforeEach
     void prepare() {
-        var version = new PlatformVersionEntity("version", PlatformRole.EVALUATOR, "definition", "PUBLISHED", 1, 1, "key", "nonce", "ciphertext", now, now);
+        var version = new PlatformBindingDTO("version", "definition", "key", "nonce", "ciphertext");
         var definition = new PlatformDefinitionDTO(null, model, "Bound evaluator", List.of(), "INTERVIEW_V1");
         when(store.prepare("exercise")).thenReturn(ticket);
         when(collector.collect(ticket)).thenReturn(List.of());

@@ -81,7 +81,7 @@ class LlmProxyTest {
         when(limiter.admit(any())).thenReturn(true);
         var accounting = new ModelUsageAccounting(new ModelUsageNormalizer(), new ModelPriceCatalog(), new ModelCostCalculator());
         var audit = new ProxyAuditService(repository, clock);
-        service = new LlmProxyService(tokens, authority, validator, accounting, audit, new ProxyAdmissionStore(tokens, audit), limiter, json, clock);
+        service = new LlmProxyService(tokens, authority, validator, accounting, audit, new ProxyAdmissionStore(tokens, audit, mock(ai.codecraft.modules.workspace.service.StorageCapacityStore.class)), limiter, json, clock);
         mvc = MockMvcBuilders.standaloneSetup(new LlmProxyController(tokens, service, json)).build();
     }
     @AfterEach void cleanup() { upstream.stop(0); service.close(); }
@@ -90,9 +90,11 @@ class LlmProxyTest {
         when(connection.protocol()).thenReturn(protocol);
         boolean anthropic = protocol == ModelProtocol.ANTHROPIC;
         String data = anthropic
-            ? "{\"content\":[{\"type\":\"tool_use\"}],\"usage\":{\"input_tokens\":10,\"output_tokens\":4,\"cache_read_input_tokens\":2,\"cache_creation_input_tokens\":3}}"
-            : "{\"choices\":[{\"message\":{\"tool_calls\":[{}]}}],\"usage\":{\"prompt_tokens\":15,\"completion_tokens\":4,\"prompt_tokens_details\":{\"cached_tokens\":2},\"completion_tokens_details\":{\"reasoning_tokens\":1}}}";
-        String body = stream ? "data: " + data + "\n\ndata: [DONE]\n\n" : data;
+            ? "{\"type\":\"message\",\"stop_reason\":\"tool_use\",\"content\":[{\"type\":\"tool_use\"}],\"usage\":{\"input_tokens\":10,\"output_tokens\":4,\"cache_read_input_tokens\":2,\"cache_creation_input_tokens\":3}}"
+            : "{\"choices\":[{\"finish_reason\":\"tool_calls\",\"message\":{\"tool_calls\":[{}]}}],\"usage\":{\"prompt_tokens\":15,\"completion_tokens\":4,\"prompt_tokens_details\":{\"cached_tokens\":2},\"completion_tokens_details\":{\"reasoning_tokens\":1}}}";
+        if (protocol == ModelProtocol.OPENAI_RESPONSES) data = data.replace("\"choices\":[", "\"status\":\"completed\",\"output\":[{\"type\":\"function_call\"}],\"ignored\":[");
+        String marker = anthropic ? "{\"type\":\"message_stop\"}" : protocol == ModelProtocol.OPENAI_RESPONSES ? "{\"type\":\"response.completed\"}" : "[DONE]";
+        String body = stream ? "data: " + data + "\n\ndata: " + marker + "\n\n" : data;
         upstream.createContext("/", exchange -> {
             key.set(exchange.getRequestHeaders().getFirst(anthropic ? "x-api-key" : "Authorization"));
             payload.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
@@ -111,6 +113,19 @@ class LlmProxyTest {
         verify(repository).start(anyString(), eq(ID), eq(clock.instant()), anyString(), anyInt(), anyString());
         verify(repository).finish(anyString(), eq(clock.instant()), eq("SUCCEEDED"), anyLong(), eq(1), any(), receipt.capture());
         assertThat(receipt.getValue().factsPayload()).contains("\"inputTokens\":15", "\"outputTokens\":4", "\"cacheReadTokens\":2");
+        assertThat(receipt.getValue().amount()).isNull();
+    }
+    @Test void eofAfterUsageDoesNotCompleteOrPriceTheCall() throws Exception {
+        upstream.createContext("/", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().write("data: {\"usage\":{\"completion_tokens\":4}}\n\n".getBytes(StandardCharsets.UTF_8)); exchange.close();
+        });
+        call(path(ModelProtocol.OPENAI_CHAT), "{\"stream\":true}");
+        var receipt = ArgumentCaptor.forClass(ModelUsageReceiptDTO.class);
+        verify(repository).finish(anyString(), any(), eq("UPSTREAM_INCOMPLETE"), anyLong(), eq(0), any(), receipt.capture());
+        assertThat(receipt.getValue().priceReason()).isEqualTo("CALL_INCOMPLETE");
         assertThat(receipt.getValue().amount()).isNull();
     }
     @Test void upstreamErrorsAreNotRetriedAndSecretsAreRedacted() throws Exception {

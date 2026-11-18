@@ -12,7 +12,7 @@ class EvaluationReportValidatorTest {
     private final EvaluationReportValidator validator = new EvaluationReportValidator(new ObjectMapper());
     private final List<ReportEvidenceDTO> evidence = List.of(
         new ReportEvidenceDTO("test:final", "FINAL_TEST", "final", "冻结修订验收通过", "PASSED", false),
-        new ReportEvidenceDTO("file:7:Main.java", "FILE", "Main.java", "冻结文件", "class Main {}", false),
+        new ReportEvidenceDTO("file:7:Main.java", "FILE", "src/main/java/Main.java", "冻结文件", "class Main {}", false),
         new ReportEvidenceDTO("message:1", "COPILOT_MESSAGE", "message-1", "已记录的审查反馈", "请补充溢出边界测试", false),
         new ReportEvidenceDTO("trace", "CONTEXT_TRACE", "exercise", "Objective usage", "{}", false),
         new ReportEvidenceDTO("timeline", "TIMELINE", "exercise", "Objective timeline", "[]", false),

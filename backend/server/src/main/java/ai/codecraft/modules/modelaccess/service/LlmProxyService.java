@@ -84,10 +84,10 @@ public class LlmProxyService {
             new RateLimitPolicy("cli-proxy-user", grant.user(), Duration.ofMinutes(1), 30),
             new RateLimitPolicy("cli-proxy-exercise", grant.exercise(), Duration.ofHours(1), 300)))) { response.setStatus(429); return; }
         URI base = validator.baseUri(target.connection().baseUrl());
-        if (base.getRawQuery() != null) { response.setStatus(400); return; }
-        String url = base.toString().replaceFirst("/+$", "");
+        String url = (base.getScheme() + "://" + base.getRawAuthority() + base.getRawPath()).replaceFirst("/+$", "");
+        String query = base.getRawQuery() == null ? "" : "?" + base.getRawQuery();
         if (anthropic && !url.endsWith("/v1")) url += "/v1";
-        var builder = HttpRequest.newBuilder(URI.create(url + "/" + suffix)).timeout(Duration.ofMinutes(5))
+        var builder = HttpRequest.newBuilder(URI.create(url + "/" + suffix + query)).timeout(Duration.ofMinutes(5))
             .header("Content-Type", "application/json").header("Accept", "application/json, text/event-stream");
         if (anthropic) {
             builder.header("x-api-key", target.credential()).header("anthropic-version", "2023-06-01");
@@ -99,7 +99,7 @@ public class LlmProxyService {
         HttpRequest upstream = builder.POST(HttpRequest.BodyPublishers.ofByteArray(json.writeValueAsBytes(request))).build();
         String price = accounting.price(target, clock.instant());
         String id = admission.begin(token, suffix, body.length, price);
-        var usage = new ProxyUsage(anthropic);
+        var usage = new ProxyUsage(suffix);
         var queue = new ArrayBlockingQueue<Packet>(8);
         var stream = new AtomicReference<InputStream>();
         Future<?> work = null;
@@ -148,8 +148,8 @@ public class LlmProxyService {
                 }
                 if (packet.end()) {
                     if (packet.status() == -1) throw new java.io.IOException("Upstream unavailable");
-                    if (buffer.size() > 0) emit(buffer.toByteArray(), sse, usage, target.credential(), response);
-                    state = status >= 200 && status < 300 ? usage.failed() ? "UPSTREAM_ERROR" : "SUCCEEDED" : "UPSTREAM_" + status;
+                    if (buffer.size() > 0 && !sse) emit(buffer.toByteArray(), false, usage, target.credential(), response);
+                    state = status >= 200 && status < 300 ? usage.failed() ? "UPSTREAM_ERROR" : usage.completed() ? "SUCCEEDED" : "UPSTREAM_INCOMPLETE" : "UPSTREAM_" + status;
                     return;
                 }
             }
@@ -201,15 +201,19 @@ public class LlmProxyService {
         if (sse) {
             StringBuilder data = new StringBuilder();
             for (String line : text.split("\\r?\\n")) if (line.startsWith("data:")) data.append(line.substring(5).stripLeading()).append('\n');
-            accept(data.toString(), usage);
-        } else accept(text, usage);
+            if ("[DONE]".equals(data.toString().strip())) usage.doneMarker();
+            else accept(data.toString(), usage, true);
+        } else accept(text, usage, false);
         String escaped = json.writeValueAsString(secret);
         text = text.replace(secret, "[REDACTED]").replace(escaped.substring(1, escaped.length() - 1), "[REDACTED]");
         response.getOutputStream().write(text.getBytes(StandardCharsets.UTF_8));
         response.flushBuffer();
     }
-    private void accept(String text, ProxyUsage usage) {
-        try { var node = json.readTree(text); if (node != null) usage.accept(node); }
+    private void accept(String text, ProxyUsage usage, boolean streaming) {
+        try {
+            var node = json.reader().with(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readTree(text);
+            if (node != null) usage.accept(node, streaming);
+        }
         catch (java.io.IOException ignored) { /* Keep unknown usage and preserve upstream error bodies. */ }
     }
 }

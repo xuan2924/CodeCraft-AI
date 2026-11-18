@@ -174,7 +174,7 @@ import ai.codecraft.modules.workspace.service.ReportExerciseData;
 import ai.codecraft.modules.workspace.model.dto.ReportReviewRequest;
 import ai.codecraft.modules.platformagent.service.PlatformBindingService;
 import ai.codecraft.modules.platformagent.model.PlatformRole;
-import ai.codecraft.modules.platformagent.model.entity.PlatformVersionEntity;
+import ai.codecraft.modules.platformagent.model.dto.PlatformBindingDTO;
 import ai.codecraft.modules.workspace.service.FinalizationStore;
 import ai.codecraft.modules.workspace.service.FinalVerificationPolicy;
 import ai.codecraft.modules.workspace.config.FinalizationProperties;
@@ -413,12 +413,10 @@ class CopilotPersistenceIT {
         capacityRepository.initialize(exercise);
         var capacityStore = proxy(new StorageCapacityStore(capacityRepository, exercises, writes, identity, budget, clock, data), StorageCapacityStore.class);
         var platformBindings = mock(PlatformBindingService.class);
-        when(platformBindings.version(exercise, PlatformRole.EVALUATOR)).thenReturn(new PlatformVersionEntity(UUID.randomUUID().toString(), PlatformRole.EVALUATOR,
-            "{}", "PUBLISHED", 1, 1, "fixture", "fixture", "fixture", clock.instant(), clock.instant()));
+        when(platformBindings.version(exercise, PlatformRole.EVALUATOR)).thenReturn(new PlatformBindingDTO(UUID.randomUUID().toString(), "{}", "fixture", "fixture", "fixture"));
         reports = proxy(new ExerciseReportStore(sql.getMapper(ExerciseReportRepository.class), exercises, sql.getMapper(FinalizationRepository.class), identity,
             platformBindings, capacityStore, secrets, json, clock, mock(ReportTimelineReader.class), mock(TaskWakeupPublisher.class)), ExerciseReportStore.class);
-        when(platformBindings.version(exercise, PlatformRole.INTERVIEWER)).thenReturn(new PlatformVersionEntity(UUID.randomUUID().toString(), PlatformRole.INTERVIEWER,
-            "{}", "PUBLISHED", 1, 1, "fixture", "fixture", "fixture", clock.instant(), clock.instant()));
+        when(platformBindings.version(exercise, PlatformRole.INTERVIEWER)).thenReturn(new PlatformBindingDTO(UUID.randomUUID().toString(), "{}", "fixture", "fixture", "fixture"));
         interviewer = proxy(new InterviewerStore(sql.getMapper(InterviewerRepository.class), exercises, identity, coordination, platformBindings,
             mock(ExerciseModelService.class), capacityStore, secrets, clock, mock(TaskWakeupPublisher.class), new TransientTaskStreamHub()), InterviewerStore.class);
         feedback = proxy(new FeedbackStore(sql.getMapper(FeedbackRepository.class), exercises, reports, interviewer, identity, secrets, capacityStore, clock), FeedbackStore.class);
@@ -474,7 +472,7 @@ class CopilotPersistenceIT {
         capacity = new StorageCapacityService(capacityStore, sandbox, mock(WorkspaceMaintenanceCoordinator.class));
         var followupRepository = sql.getMapper(CopilotFollowupRepository.class);
         followups = proxy(new CopilotFollowupStore(followupRepository, repository, tasks, conversations, identity, coordination, operations, clock), CopilotFollowupStore.class);
-        followupService = new CopilotFollowupService(followups, capacity, followupRepository, clock);
+        followupService = new CopilotFollowupService(followups, capacity, followupRepository, clock, coordination);
         btwStore = proxy(new CopilotBtwStore(sql.getMapper(CopilotBtwRepository.class), sql.getMapper(CopilotConversationRepository.class), conversations,
             repository, tasks, identity, secrets, operations, clock), CopilotBtwStore.class);
         btw = new CopilotBtwService(btwStore, capacity, json);
@@ -1262,12 +1260,13 @@ class CopilotPersistenceIT {
         approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
         var workspace = new ProposalWorkspace();
         var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
-        when(files.read(SESSION, exercise, ProposalWorkspace.PATH)).thenAnswer(call -> {
+        var read = ToolExecutionRequest.builder().id("before-proposal").name("view_file").arguments("{\"path\":\"" + ProposalWorkspace.PATH + "\"}").build();
+        when(files.read(SESSION, exercise, ProposalWorkspace.PATH)).thenReturn(workspace.file()).thenAnswer(call -> {
             steers.accept(SESSION, task.id(), CONTROL, "during-preparation", new CopilotSteerRequest("Do not modify files"));
             return workspace.file();
         });
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
-            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(workspace.proposal()))).build(), 100),
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(read, workspace.proposal()))).build(), 100),
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("No edit performed")).build(), 100));
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(proposals.list(SESSION, task.id(), 0).items().getFirst().state()).isEqualTo("INVALIDATED");
@@ -1964,9 +1963,10 @@ class CopilotPersistenceIT {
         var parent = beginDelegation(); var child = delegations.list(SESSION, parent.id()).getFirst().child();
         approvalModes.change(SESSION, exercise, CONTROL, "delegated-auto", new CopilotApprovalModeRequest("AUTO", "0"));
         var workspace = new ProposalWorkspace();
+        var read = ToolExecutionRequest.builder().id("before-proposal").name("view_file").arguments("{\"path\":\"" + ProposalWorkspace.PATH + "\"}").build();
         var proposal = workspace.proposal();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenReturn(
-            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(proposal))).build(), 100),
+            new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(read, proposal))).build(), 100),
             new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from("Revision conflict; no child edit was applied.")).build(), 100));
         runner.run(child.id(), UUID.randomUUID().toString());
         var pending = proposals.list(SESSION, child.id(), 0).items().getFirst();
@@ -3032,6 +3032,7 @@ class CopilotPersistenceIT {
         new ProposalWorkspace();
         jdbc.execute("ALTER SEQUENCE copilot_proposal_sequence_seq RESTART WITH 8");
         var requests = new ArrayList<ToolExecutionRequest>();
+        requests.add(ToolExecutionRequest.builder().id("before-history").name("view_file").arguments("{\"path\":\"" + ProposalWorkspace.PATH + "\"}").build());
         for (int index = 0; index < 5; index++) requests.add(ToolExecutionRequest.builder().id("history-" + index).name("propose_changes")
             .arguments("{\"expected_revision\":\"1\",\"changes\":[{\"kind\":\"UPDATE\",\"path\":\"" + ProposalWorkspace.PATH
                 + "\",\"content\":\"class Main { int version = " + index + "; }\"}]}").build());
@@ -3052,9 +3053,10 @@ class CopilotPersistenceIT {
     @Test
     void autoProposalCapturesTheModeAtRegistrationRatherThanModelDispatch() throws Exception {
         var workspace = new ProposalWorkspace();
+        var read = ToolExecutionRequest.builder().id("before-proposal").name("view_file").arguments("{\"path\":\"" + ProposalWorkspace.PATH + "\"}").build();
         when(driver.call(any(), any(), any(), anyInt(), any())).thenAnswer(call -> {
             approvalModes.change(SESSION, exercise, CONTROL, "during-generation", new CopilotApprovalModeRequest("AUTO", "0"));
-            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(workspace.proposal()))).build(), 100);
+            return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(read, workspace.proposal()))).build(), 100);
         });
         var task = startTask(SESSION, exercise, CONTROL, "start", "Change the class", true, measurement);
         runner.run(task.id(), UUID.randomUUID().toString());

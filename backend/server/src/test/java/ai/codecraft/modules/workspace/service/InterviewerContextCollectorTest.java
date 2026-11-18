@@ -59,6 +59,16 @@ class InterviewerContextCollectorTest {
         when(history.recent("session", "exercise", Long.MAX_VALUE)).thenReturn(new WorkspaceHistoryResponse("exercise", List.of(), null));
         assertThat(collector.collect(dispatch("DEFENSE"))).contains("Untrusted saved editable source", "src/main/java/A.java", "[truncated]").doesNotContain("src/main/java/E.java");
         verify(exercises, never()).read("session", "exercise", "src/main/java/E.java");
+        var change = mock(ai.codecraft.modules.workspace.model.dto.WorkspaceChangeResponse.class);
+        when(change.retained()).thenReturn(true); when(change.source()).thenReturn("MANUAL"); when(change.id()).thenReturn("last"); when(change.resultRevision()).thenReturn("7");
+        when(history.recent("session", "exercise", Long.MAX_VALUE)).thenReturn(new WorkspaceHistoryResponse("exercise", List.of(change), null));
+        var preview = mock(ai.codecraft.modules.workspace.model.dto.WorkspaceHistoryPreviewResponse.class);
+        when(preview.changes()).thenReturn(List.of(new ai.codecraft.modules.workspace.model.dto.WorkspaceFileDifferenceResponse("UPDATE", "src/main/java/E.java", "old", "new")));
+        when(history.preview("session", "exercise", "last", "7", "DIFF", null)).thenReturn(preview);
+        when(exercises.read("session", "exercise", "src/main/java/E.java")).thenReturn(new WorkspaceFileResponse("instance", "7", "src/main/java/E.java", "new"));
+        assertThat(collector.collect(dispatch("DEFENSE"))).contains("src/main/java/E.java").doesNotContain("src/main/java/D.java");
+        when(change.source()).thenReturn("AI_PATCH");
+        assertThat(collector.collect(dispatch("DEFENSE"))).contains("src/main/java/E.java").doesNotContain("src/main/java/D.java");
         when(exercises.read("session", "exercise", "src/main/java/A.java")).thenReturn(new WorkspaceFileResponse("instance", "8", "src/main/java/A.java", "changed"));
         assertThatThrownBy(() -> collector.collect(dispatch("DEFENSE"))).hasMessage("Defense revision changed");
     }

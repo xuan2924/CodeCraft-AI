@@ -65,7 +65,7 @@ const controller = new globalThis.AbortController();
 let disposed = false;
 let backupTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
 let pollTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
-let backupQueue = Promise.resolve();
+let backupQueue: Promise<boolean> = Promise.resolve(true);
 let loadGeneration = 0;
 interface Pending { key: string; revision: string; changes: api.FileChange[]; operationId?: string; select?: string }
 const unresolved = ref<Pending | null>(null);
@@ -112,7 +112,7 @@ function scheduleBackup() {
   if (backupTimer) globalThis.clearTimeout(backupTimer);
   backupTimer = globalThis.setTimeout(() => { void flushBackup(); }, 300);
 }
-function flushBackup(): Promise<void> {
+function flushBackup(): Promise<boolean> {
   if (backupTimer) globalThis.clearTimeout(backupTimer);
   backupTimer = undefined;
   const drafts = [...buffers.values()].filter(dirty).map((value): Draft => ({ owner, exercise, id: pageId,
@@ -127,7 +127,11 @@ function flushBackup(): Promise<void> {
       if (previous) { await removeDraft(previous); persisted.delete(path); }
     }
     if (!disposed) backup.value = drafts.length ? '本地草稿已更新；不等于已保存到工作区，仅限此浏览器。' : '当前页面没有未保存修改；其他页面的草稿不受影响。';
-  }).catch(() => { if (!disposed) backup.value = '本地草稿更新失败，请及时保存或复制内容。'; });
+    return true;
+  }).catch(() => {
+    if (!disposed) backup.value = '本地草稿更新失败，请及时保存或复制内容。';
+    return false;
+  });
   return backupQueue;
 }
 function edit(value: string) {
@@ -231,7 +235,7 @@ async function saveForLogout(): Promise<boolean> {
 }
 async function prepareEnd(choice: 'save' | 'discard' | 'retain'): Promise<boolean> {
   if (disposed) return false;
-  if (choice === 'retain') { await flushBackup(); return !disposed; }
+  if (choice === 'retain') { const persistedOk = await flushBackup(); return persistedOk && !disposed; }
   if (busy.value || unresolved.value || disposed || !canWrite.value) return false;
   if (choice === 'save') return saveForLogout();
   return discardAll();

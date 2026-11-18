@@ -152,15 +152,15 @@ func (t *Terminal) Resize(ctx context.Context, cols, rows uint32) error {
 }
 
 // Terminal returns an exact owned, single-attach PTY; it never starts an execution.
-func (r *Runner) Terminal(identity TaskIdentity) (*Terminal, error) {
+func (r *Runner) Terminal(ctx context.Context, identity TaskIdentity) (*Terminal, error) {
 	r.terminalMu.Lock()
 	defer r.terminalMu.Unlock()
 	t := r.terminals[identity.ExecutionID]
-	if t == nil {
-		return nil, ErrBusy
+	record, err := r.Query(ctx, identity.ExecutionID)
+	if err != nil {
+		return nil, err
 	}
-	record, err := r.Query(context.Background(), identity.ExecutionID)
-	if err != nil || record.State != "RUNNING" {
+	if t == nil || record.State != "RUNNING" {
 		return nil, ErrBusy
 	}
 	if !identity.matches(t.input) {
@@ -198,47 +198,51 @@ func (r *Runner) terminalExpired(id string) bool {
 
 // TerminalBusy prevents a second writer from racing an admitted development copy.
 func (r *Runner) TerminalBusy(ctx context.Context, workspace, publishingExecution string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for id, input := range r.active {
-		if input.WorkspaceID == workspace && input.Command != nil && input.Command.Terminal {
-			record, err := r.Query(ctx, id)
-			if err != nil || !record.Quiescent || (record.CopyCleanup != "SUCCEEDED" && id != publishingExecution) {
-				return true
-			}
-		}
-	}
-	if r.blocked {
-		after := ""
-		for {
-			entries, next, err := r.List(ctx, after, 100)
-			if err != nil {
-				return true
-			}
-			for _, entry := range entries {
-				if entry.Identity.WorkspaceID != workspace || (entry.Quiescent && entry.CopyCleanup == "SUCCEEDED") {
-					continue
-				}
-				record, err := r.Query(ctx, entry.Identity.ExecutionID)
-				if err != nil || (record.Input.Command != nil && record.Input.Command.Terminal && (!record.Quiescent || entry.Identity.ExecutionID != publishingExecution)) {
-					return true
-				}
-			}
-			if next == "" {
-				break
-			}
-			after = next
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	for id := range r.pendingTerminals[workspace] {
+		record, err := r.Query(ctx, id)
+		if err != nil || !record.Quiescent || (record.CopyCleanup != "SUCCEEDED" && id != publishingExecution) {
+			return true
 		}
 	}
 	return false
+}
+
+// indexTerminal runs under stateMu (or during construction). Only unresolved
+// registrations are retained, including those awaiting copy publication.
+func (r *Runner) indexTerminal(record Result) {
+	in := record.Input
+	if in.Command == nil || !in.Command.Terminal {
+		return
+	}
+	entries := r.pendingTerminals[in.WorkspaceID]
+	if record.Quiescent && record.Cleanup == "SUCCEEDED" && record.CopyCleanup == "SUCCEEDED" {
+		delete(entries, in.ExecutionID)
+		if len(entries) == 0 {
+			delete(r.pendingTerminals, in.WorkspaceID)
+		}
+		return
+	}
+	if entries == nil {
+		if r.pendingTerminals == nil {
+			r.pendingTerminals = make(map[string]map[string]TaskIdentity)
+		}
+		entries = make(map[string]TaskIdentity)
+		r.pendingTerminals[in.WorkspaceID] = entries
+	}
+	entries[in.ExecutionID] = TaskIdentity{WorkspaceID: in.WorkspaceID, ExerciseID: in.ExerciseID, TaskID: in.TaskID, ExecutionID: in.ExecutionID}
 }
 
 // QuiesceTerminal stops only the stream's exact instance. A late disconnect must
 // never terminate a newly opened terminal for the same exercise.
 func (r *Runner) QuiesceTerminal(ctx context.Context, identity TaskIdentity) error {
 	record, err := r.Stop(ctx, identity)
-	if err != nil || record == nil {
+	if err != nil {
 		return err
+	}
+	if record == nil {
+		return errors.New("registered terminal lacks quiescence evidence")
 	}
 	if record.Input.Command == nil || !record.Input.Command.Terminal {
 		return ErrConflict
@@ -263,30 +267,16 @@ func (r *Runner) QuiesceTerminal(ctx context.Context, identity TaskIdentity) err
 // QuiesceTerminals is called after a durable write fence. It waits for process
 // quiescence only, not copy publication (whose caller may hold the workspace lock).
 func (r *Runner) QuiesceTerminals(ctx context.Context, workspace string) error {
-	after := ""
-	for {
-		entries, next, err := r.List(ctx, after, 100)
-		if err != nil {
+	r.stateMu.Lock()
+	var pending []TaskIdentity
+	for _, identity := range r.pendingTerminals[workspace] {
+		pending = append(pending, identity)
+	}
+	r.stateMu.Unlock()
+	for _, identity := range pending {
+		if err := r.QuiesceTerminal(ctx, identity); err != nil {
 			return err
 		}
-		for _, entry := range entries {
-			if entry.Identity.WorkspaceID != workspace {
-				continue
-			}
-			record, err := r.Query(ctx, entry.Identity.ExecutionID)
-			if err != nil {
-				return err
-			}
-			if record.Input.Command == nil || !record.Input.Command.Terminal {
-				continue
-			}
-			if err = r.QuiesceTerminal(ctx, entry.Identity); err != nil {
-				return err
-			}
-		}
-		if next == "" {
-			return nil
-		}
-		after = next
 	}
+	return ctx.Err()
 }

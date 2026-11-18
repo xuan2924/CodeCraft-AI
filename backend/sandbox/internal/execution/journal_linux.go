@@ -83,6 +83,9 @@ func (r *Runner) repairResults(ctx context.Context) error {
 		if !uuid.MatchString(id) {
 			return errors.New("invalid recovery receipt name")
 		}
+		if _, live := r.active[id]; live {
+			continue
+		}
 		receipt, err := r.readRecoveryReceipt(id)
 		if err != nil {
 			return err
@@ -132,6 +135,7 @@ func (r *Runner) repairResults(ctx context.Context) error {
 			record.CopyCleanup = "PENDING"
 		}
 		appendEvents(&record, Result{})
+		r.indexTerminal(record)
 		if err = r.writeRecoveryReceipt(record); err != nil {
 			return err
 		}

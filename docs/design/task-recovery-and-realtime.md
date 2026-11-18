@@ -24,10 +24,10 @@ AI 请求动辄数十秒、Docker 测试随时可能被停止或遇到进程重�
 
 | 通道 | 载体与序号 | 持久化策略 | 作用与重连行为 |
 |---|---|---|---|
-| **瞬态流式预览** | `copilot_preview`（无 SSE `id:`，`previewEpoch` + `previewSequence`） | 有界本地枢纽 + 可选 Redis Pub/Sub（每节点最多 128 任务 × 32 KiB） | 分片毫秒级直推前端渲染；数据库预览检查点降频为 **≥ 2 秒** 一次 |
-| **权威持久事件** | `copilot_snapshot` / 任务终态事件（带持久 `cursor`） | PostgreSQL 落库 + 事务 `afterCommit` 唤醒推送 | 前端断线重连带 `Last-Event-ID` 对齐快照；若游标过期发 `reset` 全量重建 |
+| **瞬态流式预览** | `copilot_preview`（无 SSE `id:`，`previewEpoch` + `previewSequence`） | 有界本地枢纽 + 可选 Redis Pub/Sub（每节点最多 128 任务 × 32 KiB，满槽自动淘汰最久未更新项） | 分片毫秒级直推前端渲染；数据库预览检查点降频为 **≥ 2 秒** 一次 |
+| **权威持久事件** | `copilot_snapshot`（状态机最新快照）与测试任务流（带持久 `cursor`） | PostgreSQL 落库 + 事务 `afterCommit` 唤醒推送 | Copilot 重连后直接拉取当前最新任务快照并配合消息查询收敛；测试日志流为追加流，重连先 REST 对齐再带 `?after=` 游标续传 |
 
-- **事件驱动低延迟调度**：Copilot、面试官、评测官与 AUTO 审批均接入 `TaskWakeupPublisher`（事务提交后发送轻量唤醒信号，由有界异步池立即拉起 Worker），同时保留数据库轮询扫描兜底。
+- **事件驱动低延迟调度**：Copilot、面试官与 AUTO 审批接入 `TaskWakeupPublisher`，事务提交后发送轻量唤醒信号立即拉起 Worker；评测报告（`EVALUATION`）属于数十秒级慢任务，首次派发统一经过 `OutboxRelay`（500ms 轮询，保证本地模式与 RabbitMQ 模式的租约和死信语义完全一致），其唤醒信号专门用于触发 `expireRunning` 超时回收扫描。
 - **跨 Java 节点提示**：`REALTIME_BACKEND=redis` 启用 `TaskRealtimeBus`，在固定版本频道发布完整预览、clear、持久事件通知与任务 lane 唤醒；接收端只更新本地有界预览或调度已有读取器，仍逐批鉴权。发送单线程、队列 128，节点 ID 去除自身回声，不再次转发收到的消息。断网、满队列或坏消息记录丢弃提示，由持久扫描恢复；不在提交线程做 Redis IO。默认 `local` 不连接 Redis。
 - **重连不是 Redis 重放**：不引入第二套 `Last-Event-ID` 或 Redis 历史日志。Pub/Sub 断线期间的瞬态分片可丢失，后续完整预览/PG 检查点修复；关键快照与终态仍由 PG cursor 重放。Redis 重启不改变任务所有权，也不触发未知收费请求重试。
 

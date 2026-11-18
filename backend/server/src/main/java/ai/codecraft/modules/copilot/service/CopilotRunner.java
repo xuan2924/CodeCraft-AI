@@ -107,9 +107,7 @@ public class CopilotRunner {
                         var window = requests.subList(position, exploreEnd);
                         var admitted = capacity.admit(current.sessionHash(), current.exerciseId(), measurement -> store.beginExploreTools(id, worker, batch.id(), window, measurement));
                         if (admitted.isEmpty()) {
-                            if (store.steerAtBoundary(id, worker)) continue loop;
-                            var stopped = store.current(id, worker);
-                            if (stopped != null && stopped.stopRequested()) store.finish(id, worker, "STOPPED", "USER_STOP");
+                            if (retryAfterDenied(id, worker)) continue loop;
                             return;
                         }
                         var outcome = tools.executeExplorations(current, worker, admitted);
@@ -131,9 +129,7 @@ public class CopilotRunner {
                         var window = requests.subList(position, end);
                         var admitted = capacity.admit(current.sessionHash(), current.exerciseId(), measurement -> store.beginReadTools(id, worker, batch.id(), window, measurement));
                         if (admitted.isEmpty()) {
-                            if (store.steerAtBoundary(id, worker)) continue loop;
-                            var stopped = store.current(id, worker);
-                            if (stopped != null && stopped.stopRequested()) store.finish(id, worker, "STOPPED", "USER_STOP");
+                            if (retryAfterDenied(id, worker)) continue loop;
                             return;
                         }
                         if (!executeReads(current, worker, admitted, requests)) return;
@@ -143,9 +139,7 @@ public class CopilotRunner {
                     var request = requests.get(position);
                     var tool = capacity.admit(current.sessionHash(), current.exerciseId(), measurement -> store.beginTool(id, worker, batch.id(), request, measurement));
                     if (tool == null) {
-                        if (store.steerAtBoundary(id, worker)) continue loop;
-                        var stopped = store.current(id, worker);
-                        if (stopped != null && stopped.stopRequested()) store.finish(id, worker, "STOPPED", "USER_STOP");
+                        if (retryAfterDenied(id, worker)) continue loop;
                         return;
                     }
                     var outcome = tools.execute(current, worker, tool);
@@ -166,6 +160,13 @@ public class CopilotRunner {
                 "STORAGE_BUDGET_EXCEEDED", "STORAGE_METER_UNAVAILABLE", CopilotErrorCode.COPILOT_CONTEXT_REQUIRED.code()).contains(code);
             store.finish(id, worker, paused ? "PAUSED" : "FAILED", code);
         } catch (JsonProcessingException invalid) { store.finish(id, worker, "FAILED", "TOOL_RESULT_ENCODING_FAILED"); }
+    }
+
+    private boolean retryAfterDenied(String id, String worker) {
+        if (store.steerAtBoundary(id, worker)) return true;
+        var current = store.current(id, worker);
+        if (current != null && current.stopRequested()) store.finish(id, worker, "STOPPED", "USER_STOP");
+        return false;
     }
 
     private boolean executeReads(CopilotTaskEntity task, String worker, List<CopilotToolEntity> admitted, List<ToolExecutionRequest> requests)

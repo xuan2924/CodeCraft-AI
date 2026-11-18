@@ -58,6 +58,7 @@ class CopilotProposalPreparationTest {
     @Test void exactEditsUseOriginalOffsetsAndPreserveCrLf() throws Exception {
         var edits = json.readTree("[{\"oldText\":\"first\\nsecond\",\"newText\":\"new\\ntext\"}]");
         assertThat(CopilotProposalPreparation.exactEdit("a", "first\r\nsecond\r\nthird", edits)).isEqualTo("new\r\ntext\r\nthird");
+        assertThat(CopilotProposalPreparation.exactEdit("a", "keep\nfirst\r\nsecond\r\nthird\nend", edits)).isEqualTo("keep\nnew\r\ntext\r\nthird\nend");
         var independent = json.readTree("[{\"oldText\":\"abc\",\"newText\":\"xyz\"},{\"oldText\":\"xyz\",\"newText\":\"end\"}]");
         assertThat(CopilotProposalPreparation.exactEdit("a", "abc xyz", independent)).isEqualTo("xyz end");
         assertThatThrownBy(() -> CopilotProposalPreparation.exactEdit("a", "abc abc", independent)).hasMessage("EDIT_AMBIGUOUS_MATCH");

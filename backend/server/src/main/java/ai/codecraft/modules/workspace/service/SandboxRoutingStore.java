@@ -18,11 +18,11 @@ public class SandboxRoutingStore {
     private final Clock clock;
     public SandboxRoutingStore(SandboxNodeRepository repository, Clock clock) { this.repository = repository; this.clock = clock; }
     @Transactional(propagation = Propagation.MANDATORY)
-    public void bind(String exercise) {
+    public void bind(String exercise, String digest) {
         // Lock all candidate rows in deterministic order before computing reservations; serializes Java node choices.
-        repository.candidates();
+        repository.candidates(digest);
         // A fresh READ COMMITTED statement after waiting for locks sees the preceding allocator's binding.
-        var nodes = repository.candidates();
+        var nodes = repository.candidates(digest);
         String existing = repository.bound(exercise);
         if (existing != null) return;
         repository.bind(exercise, select(nodes, clock.instant()).id());

@@ -81,7 +81,7 @@ public class ExerciseChallengeStore {
         String reason = entered != null ? "ENTERED" : !available ? "NO_CHALLENGE" : !answering(exercise) ? "NOT_ACTIVE" : eligible ? "ELIGIBLE" : "CURRENT_BASE_PASS_AND_IDLE_REQUIRED";
         return new ExerciseChallengeResponse(available, entered != null, eligible, reason,
             entered == null ? null : Long.toString(entered.enteredRevision()), entered == null ? null : entered.baseTestId(),
-            entered == null ? null : publications.challenge(problems.find(exercise.problemVersionId())));
+            entered == null ? null : publications.challenge(problems.find(exercise.problemVersionId()), java.util.Set.copyOf(problems.loadedPackages())));
     }
     private boolean answering(ExerciseEntity exercise) {
         return "ACTIVE".equals(exercise.state()) && exercise.deadlineAt() != null && clock.instant().isBefore(exercise.deadlineAt());

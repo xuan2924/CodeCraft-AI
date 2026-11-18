@@ -30,7 +30,7 @@ class CopilotExploreMigrationIT {
             String legacy = id();
             jdbc.update("INSERT INTO copilot_delegation(tool_id,exercise_id,parent_task_id,child_task_id,conversation_id,goal,state,created_at) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?::uuid,'legacy','WAITING',now())",
                 legacy, exercise, parent, id(), id());
-            var flyway = Flyway.configure().dataSource(source).locations("classpath:db/migration").load();
+            var flyway = Flyway.configure().dataSource(source).locations("classpath:db/migration").target("60").load();
             assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
             assertThat(flyway.migrate().migrationsExecuted).isZero();
             assertThat(jdbc.queryForObject("SELECT mode FROM copilot_delegation WHERE tool_id=?::uuid", String.class, legacy)).isEqualTo("EXECUTE");

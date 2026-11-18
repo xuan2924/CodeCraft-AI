@@ -61,7 +61,7 @@ public class EvaluationReportValidator {
                     ids.add(id);
                     objective |= Set.of("FILE", "CHANGE", "FINAL_TEST", "COPILOT_MESSAGE", "INTERVIEWER_MESSAGE", "TIMELINE", "CONTEXT_TRACE").contains(item.kind());
                     finalTest |= "FINAL_TEST".equals(item.kind());
-                    sourceCode |= "FILE".equals(item.kind());
+                    sourceCode |= "FILE".equals(item.kind()) && ReportEvidenceCollector.sourceFile(item.source());
                     collaboration |= Set.of("COPILOT_MESSAGE", "INTERVIEWER_MESSAGE", "CHANGE", "TIMELINE", "CONTEXT_TRACE").contains(item.kind());
                 }
                 if (score != null && (!objective

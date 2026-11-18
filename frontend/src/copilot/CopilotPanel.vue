@@ -347,36 +347,26 @@ watch([() => props.owner, () => props.exerciseId, () => task.value?.id, running]
   connected.value = false;
   transientPreview.value = null;
   if (!id || !active) return;
-  const controller = new globalThis.AbortController();
-  let close = () => {};
-  let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
-  let disposed = false;
-  function connect() {
-    if (disposed) return;
-    close();
-    close = api.watchTask(exercise, id!, () => {
-      if (disposed) return;
+  const stop = api.reconnectTaskStream(
+    api.watchTask,
+    exercise,
+    id,
+    () => {
       connected.value = true;
       transientPreview.value = null;
       void client.invalidateQueries({ queryKey: ['copilot', owner, exercise, 'task'] });
-    }, () => {
-      if (disposed) return;
+    },
+    () => {
       connected.value = false;
       transientPreview.value = null;
-      close();
-      if (timer === undefined) timer = globalThis.setTimeout(() => { timer = undefined; connect(); }, 2000);
-    }, controller.signal, (incoming) => {
-      if (disposed) return;
+    },
+    (incoming) => {
       transientPreview.value = api.nextTransientPreview(transientPreview.value, incoming, id, running.value);
-    });
-  }
-  connect();
+    },
+  );
   cleanup(() => {
-    disposed = true;
     transientPreview.value = null;
-    controller.abort();
-    close();
-    if (timer !== undefined) globalThis.clearTimeout(timer);
+    stop();
   });
 }, { immediate: true });
 

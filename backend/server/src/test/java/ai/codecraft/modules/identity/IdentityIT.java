@@ -244,7 +244,7 @@ class IdentityIT {
             assertThat(platformBindings.version(nextExercise, PlatformRole.INTERVIEWER).id()).isEqualTo(newer);
             admin.post("/api/admin/platform-agents/" + first + "/credential", Map.of("expectedRevision", "2", "apiKey", "replacement-fixture-key"), "rotate", 200);
             var bound = platformBindings.version(oldExercise, PlatformRole.INTERVIEWER);
-            assertThat(bound.credentialRevision()).isEqualTo(2);
+            assertThat(jdbc.queryForObject("SELECT credential_revision FROM platform_agent_version WHERE id=?::uuid", Long.class, bound.id())).isEqualTo(2L);
             assertThat(platformBindings.invocation(bound).credential()).isEqualTo("replacement-fixture-key");
             assertThat(jdbc.queryForObject("SELECT definition::text FROM platform_agent_version WHERE id=?::uuid", String.class, first))
                 .doesNotContain("replacement-fixture-key", "fixture-platform-secret");

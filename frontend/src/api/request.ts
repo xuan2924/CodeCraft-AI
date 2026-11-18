@@ -8,7 +8,7 @@ export async function request(path: string, signal: AbortSignal, options: Reques
   const response = await fetch(path, { ...options, credentials: 'same-origin', cache: 'no-store',
     signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) });
   if (response.status === 204) return null;
-  const body: unknown = await response.json();
+  const body: unknown = await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(response.status, object(body) && typeof body.code === 'string' ? body.code : 'REQUEST_FAILED');
   if (!object(body) || body.code !== 'OK' || !('data' in body)) throw new ApiError(502, 'INVALID_RESPONSE');
   return body.data;
@@ -18,7 +18,7 @@ export async function download(path: string, signal: AbortSignal, owner: string,
   const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', headers: ownerHeaders(owner),
     signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) });
   if (!response.ok) {
-    const body: unknown = await response.json();
+    const body: unknown = await response.json().catch(() => null);
     throw new ApiError(response.status, object(body) && typeof body.code === 'string' ? body.code : 'REQUEST_FAILED');
   }
   if (response.headers.get('Content-Type')?.split(';')[0] !== mediaType) throw new ApiError(502, 'INVALID_RESPONSE');

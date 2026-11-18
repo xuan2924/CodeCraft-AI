@@ -60,7 +60,9 @@ public class ProblemPublicationReader {
             json.writeValueAsString(artifact));
     }
 
-    public ProblemResponse describe(ProblemVersionEntity version) {
+    public ProblemResponse describe(ProblemVersionEntity version) { return describe(version, false); }
+
+    public ProblemResponse describe(ProblemVersionEntity version, boolean loaded) {
         try {
             JsonNode artifact = json.readTree(version.artifact());
             validate(artifact);
@@ -72,14 +74,16 @@ public class ProblemPublicationReader {
             var language = language(manifest);
             return new ProblemResponse(version.id(), version.problemId(), version.version(), manifest.path("title").asText(),
                 artifact.path("requirements").asText(), manifest.path("durationSeconds").asInt(), List.copyOf(roots),
-                Map.copyOf(acceptance), version.packageSha256(), version.executionImageDigest(), version.platform(), language.executionSupported ? "LOCAL_DOCKER_IMAGE_ID" : "NONE", language.executionSupported && manifest.path("execution").isObject(), manifest.has("challenge"), language.name(), language.executionSupported);
+                Map.copyOf(acceptance), version.packageSha256(), version.executionImageDigest(), version.platform(), language.executionSupported ? "LOCAL_DOCKER_IMAGE_ID" : "NONE", loaded && language.executionSupported && manifest.path("execution").isObject(), manifest.has("challenge"), language.name(), language.executionSupported);
         } catch (IOException error) {
             throw new IllegalStateException("Stored publication is invalid", error);
         }
     }
 
     /** Hidden companion projection. The caller must establish that this exercise entered its challenge. */
-    public ProblemResponse challenge(ProblemVersionEntity version) {
+    public ProblemResponse challenge(ProblemVersionEntity version) { return challenge(version, java.util.Set.of()); }
+
+    public ProblemResponse challenge(ProblemVersionEntity version, java.util.Set<String> loaded) {
         try {
             JsonNode artifact = json.readTree(version.artifact());
             validate(artifact);
@@ -87,7 +91,7 @@ public class ProblemPublicationReader {
             JsonNode companion = challengeArtifact(artifact);
             JsonNode identity = companion.path("identity");
             return describe(new ProblemVersionEntity(version.id(), identity.path("problem_id").asText(), identity.path("version").asText(),
-                identity.path("package_sha256").asText(), identity.path("execution_image_digest").asText(), identity.path("platform").asText(), companion.toString()));
+                identity.path("package_sha256").asText(), identity.path("execution_image_digest").asText(), identity.path("platform").asText(), companion.toString()), loaded.contains(version.packageSha256()));
         } catch (IOException error) { throw new IllegalStateException("Stored challenge is invalid", error); }
     }
 

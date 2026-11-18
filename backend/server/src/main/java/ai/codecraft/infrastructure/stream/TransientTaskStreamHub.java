@@ -1,7 +1,6 @@
 package ai.codecraft.infrastructure.stream;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -15,7 +14,7 @@ public final class TransientTaskStreamHub {
     private static final int MAX_TASKS = 128;
     private static final int MAX_PREVIEW_BYTES = 32768;
     private static final int MAX_SUBSCRIBERS = 128;
-    private final Map<String, Preview> previews = new HashMap<>();
+    private final LinkedHashMap<String, Preview> previews = new LinkedHashMap<>();
     private final CopyOnWriteArrayList<Consumer<String>> listeners = new CopyOnWriteArrayList<>();
     private final AtomicLong sequence = new AtomicLong();
 
@@ -50,8 +49,8 @@ public final class TransientTaskStreamHub {
 
     private void acceptPreview(String task, String turn, byte[] frame) {
         synchronized (this) {
-            if (!previews.containsKey(task) && previews.size() >= MAX_TASKS) return;
-            previews.put(task, new Preview(turn, sequence.incrementAndGet(), frame));
+            if (!previews.containsKey(task) && previews.size() >= MAX_TASKS) previews.pollFirstEntry();
+            previews.putLast(task, new Preview(turn, sequence.incrementAndGet(), frame));
         }
         notifyListeners(task);
     }

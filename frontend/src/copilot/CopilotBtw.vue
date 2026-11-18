@@ -183,48 +183,23 @@ function onComposerKeydown(event: globalThis.KeyboardEvent) {
 watch([() => props.owner, () => props.exerciseId, conversation, () => task.value?.id, running], ([owner, exercise, sideId, id, active], _old, cleanup) => {
   transientPreview.value = null;
   if (!sideId || !id || !active) return;
-  const controller = new globalThis.AbortController();
-  let close = () => {};
-  let disposed = false;
-  let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
   function refresh() {
-    if (!disposed) {
-      transientPreview.value = null;
-      void client.invalidateQueries({ queryKey: ['copilot', owner, exercise, 'task', sideId] });
-    }
-  }
-  function connect() {
-    if (disposed) return;
-    close();
-    close = api.watchTask(
-      exercise,
-      id!,
-      refresh,
-      () => {
-        if (disposed) return;
-        refresh();
-        close();
-        if (timer === undefined) {
-          timer = globalThis.setTimeout(() => {
-            timer = undefined;
-            connect();
-          }, 2000);
-        }
-      },
-      controller.signal,
-      incoming => {
-        if (disposed) return;
-        transientPreview.value = api.nextTransientPreview(transientPreview.value, incoming, id, running.value);
-      },
-    );
-  }
-  connect();
-  cleanup(() => {
-    disposed = true;
     transientPreview.value = null;
-    controller.abort();
-    close();
-    if (timer !== undefined) globalThis.clearTimeout(timer);
+    void client.invalidateQueries({ queryKey: ['copilot', owner, exercise, 'task', sideId] });
+  }
+  const stop = api.reconnectTaskStream(
+    api.watchTask,
+    exercise,
+    id,
+    refresh,
+    refresh,
+    incoming => {
+      transientPreview.value = api.nextTransientPreview(transientPreview.value, incoming, id, running.value);
+    },
+  );
+  cleanup(() => {
+    transientPreview.value = null;
+    stop();
   });
 });
 

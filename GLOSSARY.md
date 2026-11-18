@@ -15,7 +15,7 @@
 
 | 术语 | 含义与取值 | 核心作用 |
 |---|---|---|
-| **生命周期（`phase` / `lifecycleState`）** | `PREPARING → READY → ACTIVE ↔ PAUSED → CLOSING → FINAL_TESTING → ENDED` | 决定什么时候能看题、改代码、跑测试、暂停与收尾 |
+| **生命周期（`state`）** | `PREPARING → READY / PREPARATION_FAILED → ACTIVE ↔ PAUSING / PAUSED / RESUMING → CLOSING → FINAL_TESTING → ENDED` | 决定什么时候能看题、改代码、跑测试、暂停与收尾（暂停剩余毫秒数存于 `pause.remainingMillis`） |
 | **题目阶段（`stage`）** | `BASE`（基础题）或 `CHALLENGE`（可选追加挑战） | 决定向用户和 AI 公开的题面与权威测试目标 |
 | **工作区版本（`revision`）** | 正式工作区已保存内容与结构每次真实变化后递增的整数 | 标识代码基准，保存与 Patch 应用必须匹配当前基线 |
 | **草稿（Draft）** | 仅保存在浏览器 IndexedDB 的未提交编辑内容 | 不参与 AI 读取与受控测试，也不会随刷新直接覆盖服务端代码 |

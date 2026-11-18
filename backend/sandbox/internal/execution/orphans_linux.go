@@ -30,6 +30,11 @@ func (r *Runner) recoverOrphans(ctx context.Context) error {
 		if !uuid.MatchString(id) || item.Labels["codecraft.execution.owner"] != r.owner {
 			return errors.New("unowned execution remains isolated")
 		}
+		// A live worker owns its Create/receipt publication window. Never
+		// reconstruct its state while retaining another execution's evidence.
+		if _, live := r.active[id]; live {
+			continue
+		}
 		record, queryErr := r.Query(ctx, id)
 		previous, metaErr := r.readRecoveryReceipt(id)
 		if queryErr == nil && record.ContainerID != "" {

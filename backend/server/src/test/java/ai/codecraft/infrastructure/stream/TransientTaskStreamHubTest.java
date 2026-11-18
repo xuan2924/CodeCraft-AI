@@ -47,8 +47,12 @@ class TransientTaskStreamHubTest {
         hub.preview("task", "turn", new byte[]{4});
         assertEquals(first.sequence() + 1, hub.latest("task").sequence());
         assertThrows(IllegalArgumentException.class, () -> hub.preview("task", "turn", new byte[32769]));
-        for (int index = 0; index < 200; index++) hub.preview("task" + index, "turn", bytes);
-        assertNull(hub.latest("task199"));
+        for (int index = 0; index < 127; index++) hub.preview("task" + index, "turn", bytes);
+        hub.preview("task", "updated", bytes);
+        hub.preview("new", "turn", bytes);
+        assertEquals("turn", hub.latest("new").turnId());
+        assertEquals("updated", hub.latest("task").turnId());
+        assertNull(hub.latest("task0"));
         hub.clear("task");
         assertNull(hub.latest("task"));
     }

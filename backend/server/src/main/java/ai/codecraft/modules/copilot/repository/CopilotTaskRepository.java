@@ -21,8 +21,10 @@ public interface CopilotTaskRepository {
 
     @Update("UPDATE copilot_task SET reference_count=#{count} WHERE id=#{id}::uuid")
     void referenceCount(String id, int count);
-    @Select("SELECT message.payload FROM copilot_tool tool JOIN copilot_message message ON message.id=tool.result_message_id WHERE tool.turn_id=(SELECT id FROM copilot_turn WHERE task_id=#{id}::uuid ORDER BY ordinal DESC LIMIT 1) AND tool.name IN ('read','view_file') AND tool.outcome_code='OK' ORDER BY tool.position DESC LIMIT 1")
-    String latestReadResult(String id);
+    @Update("UPDATE copilot_tool SET read_revision=#{revision}::bigint WHERE id=#{tool}::uuid")
+    void recordReadRevision(String tool, String revision);
+    @Select("SELECT DISTINCT arguments::jsonb->>'path' FROM copilot_tool WHERE task_id=#{task}::uuid AND read_revision=#{revision}::bigint")
+    List<String> readPaths(String task, String revision);
     @Select("SELECT planning_revision::text FROM copilot_task WHERE id=#{id}::uuid")
     String planningRevision(String id);
     @Update("UPDATE copilot_task SET planning_revision=greatest(planning_revision,#{revision}::bigint) WHERE id=#{id}::uuid")

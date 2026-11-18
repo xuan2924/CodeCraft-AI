@@ -109,6 +109,13 @@ class PublicationConcurrencyTest {
             assertThat(same).allMatch(r -> r.getStatus() == 200);
             String id = json.readTree(same[0].getContentAsByteArray()).at("/data/id").asText();
             assertThat(json.readTree(same[1].getContentAsByteArray()).at("/data/id").asText()).isEqualTo(id);
+            var down = "{\"available\":false}".getBytes();
+            var up = "{\"available\":true}".getBytes();
+            String route = id + "/availability";
+            assertThat(call(route, "down", down).getStatus()).isEqualTo(200);
+            assertThat(call(route, "up", up).getStatus()).isEqualTo(200);
+            assertThat(call(route, "down", down).getStatus()).isEqualTo(200);
+            assertThat(call(route, "down", up).getStatus()).isEqualTo(409);
             assertThatThrownBy(() -> versions.requireAvailable(id)).hasMessage("EXECUTION_UNSUPPORTED");
             assertThat(call("publish", "same", "{}".getBytes()).getStatus()).isEqualTo(409);
             // Two valid artifact variants compete for a fresh version, not an already established winner.

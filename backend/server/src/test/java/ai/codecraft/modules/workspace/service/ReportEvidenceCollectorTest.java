@@ -34,7 +34,7 @@ class ReportEvidenceCollectorTest {
     private ExerciseResponse frozen(String revision) {
         var result = mock(ExerciseResponse.class);
         when(result.state()).thenReturn("ENDED"); when(result.revision()).thenReturn(revision); when(result.workspaceInstanceId()).thenReturn("instance");
-        when(result.paths()).thenReturn(List.of("Main.java")); return result;
+        when(result.paths()).thenReturn(List.of("AGENTS.md", "src/main/java/guide.md", "src/main/java/Main.java")); return result;
     }
     @Test
     void frozenSnapshotIsReusedWithoutReadingCurrentFilesOrPrivateConversations() {
@@ -56,13 +56,15 @@ class ReportEvidenceCollectorTest {
         when(exercises.find("session", "exercise")).thenReturn(correct);
         var file = mock(WorkspaceFileResponse.class);
         when(file.revision()).thenReturn("7"); when(file.content()).thenReturn("汉".repeat(2000));
-        when(exercises.read("session", "exercise", "Main.java")).thenReturn(file);
+        when(exercises.read("session", "exercise", "src/main/java/Main.java")).thenReturn(file);
         when(requirements.published("exercise")).thenReturn("只使用当前阶段的公开需求");
         when(history.recent("session", "exercise", Long.MAX_VALUE)).thenReturn(new WorkspaceHistoryResponse("exercise", List.of(), null));
         var trace = mock(ExerciseReportResponse.class);
         when(reports.view("session", "exercise")).thenReturn(trace);
         when(reports.encode(any())).thenReturn("{}");
         var evidence = collector.collect(ticket(null));
+        verify(exercises, never()).read("session", "exercise", "src/main/java/guide.md");
+        verify(exercises, never()).read("session", "exercise", "AGENTS.md");
         var source = evidence.stream().filter(value -> value.kind().equals("FILE")).findFirst().orElseThrow();
         assertThat(source.truncated()).isTrue(); assertThat(source.content().getBytes(StandardCharsets.UTF_8).length).isLessThanOrEqualTo(4096);
         assertThat(source.content()).doesNotContain("�");

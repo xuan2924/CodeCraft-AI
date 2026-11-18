@@ -133,20 +133,20 @@ class OutboxPersistenceIT {
         var event = store.begin(id, token); store.complete(event, token);
         assertThat(store.begin(id, UUID.randomUUID().toString())).isNull();
         nodes.register("default", "one:9090"); nodes.register("second", "two:9090");
-        assertThat(nodes.healthy("default", "one:9090", "a".repeat(64), "A".repeat(26), 3, 4, true)).isEqualTo(1);
-        assertThat(nodes.healthy("second", "two:9090", "b".repeat(64), "B".repeat(26), 0, 4, true)).isEqualTo(1);
+        assertThat(nodes.healthy("default", "one:9090", "a".repeat(64), "A".repeat(26), 0, 4, true, "other")).isEqualTo(1);
+        assertThat(nodes.healthy("second", "two:9090", "b".repeat(64), "B".repeat(26), 2, 4, true, "wanted")).isEqualTo(1);
         var routing = new SandboxRoutingStore(nodes, Clock.systemUTC());
         String exercise = UUID.randomUUID().toString();
-        transaction.executeWithoutResult(status -> routing.bind(exercise));
+        transaction.executeWithoutResult(status -> routing.bind(exercise, "wanted"));
         assertThat(nodes.bound(exercise)).isEqualTo("second");
         transaction.executeWithoutResult(status -> routing.admitExecution(exercise));
         assertThat(nodes.occupied("second")).isZero();
-        assertThat(nodes.healthy("second", "two:9090", "c".repeat(64), "C".repeat(26), 0, 4, true)).isZero();
-        assertThat(nodes.healthy("second", "two:9090", "b".repeat(64), "B".repeat(26), 0, 4, false)).isEqualTo(1);
+        assertThat(nodes.healthy("second", "two:9090", "c".repeat(64), "C".repeat(26), 0, 4, true, "wanted")).isZero();
+        assertThat(nodes.healthy("second", "two:9090", "b".repeat(64), "B".repeat(26), 0, 4, false, "wanted")).isEqualTo(1);
         assertThat(routing.forExercise(exercise).ready()).isFalse(); // Recovery routes stay usable while dispatch is blocked.
         assertThatThrownBy(() -> routing.admitExecution(exercise)).hasMessage("WORKSPACE_UNAVAILABLE");
         nodes.unhealthy("second");
-        transaction.executeWithoutResult(status -> routing.bind(exercise));
+        transaction.executeWithoutResult(status -> routing.bind(exercise, "wanted"));
         assertThat(nodes.bound(exercise)).isEqualTo("second");
         assertThatThrownBy(() -> routing.forExercise(exercise)).hasMessage("WORKSPACE_UNAVAILABLE");
     }

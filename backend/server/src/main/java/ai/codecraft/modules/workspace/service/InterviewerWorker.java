@@ -70,7 +70,9 @@ public class InterviewerWorker {
 
     public void run(String id) {
         try {
-            var dispatch = store.claim(id);
+            ai.codecraft.modules.workspace.model.dto.InterviewerDispatchDTO dispatch;
+            try { dispatch = store.claim(id); }
+            catch (BusinessException denied) { store.rejectQueued(id, denied.code()); return; }
             if (dispatch == null) return;
             String answer = null;
             String error = null;

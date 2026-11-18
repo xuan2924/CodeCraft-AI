@@ -13,8 +13,14 @@ public class ProxyUsage {
     private Long reasoning;
     private int tools;
     private boolean failed;
-    public ProxyUsage(boolean anthropic) { this.anthropic = anthropic; }
-    public void accept(JsonNode root) {
+    private final String endpoint;
+    private boolean completed;
+    public ProxyUsage(boolean anthropic) { this(anthropic ? "messages" : "chat/completions"); }
+    public ProxyUsage(String endpoint) { this.endpoint = endpoint; this.anthropic = "messages".equals(endpoint); }
+    public void doneMarker() { if ("chat/completions".equals(endpoint)) completed = true; }
+    public boolean completed() { return completed; }
+    public void accept(JsonNode root) { accept(root, true); }
+    public void accept(JsonNode root, boolean streaming) {
         JsonNode usage = root.path("usage");
         if (root.has("message")) usage = root.path("message").path("usage");
         if (root.has("response")) usage = root.path("response").path("usage");
@@ -30,7 +36,12 @@ public class ProxyUsage {
             reasoning = maximum(reasoning, number(usage.path(usage.has("output_tokens") ? "output_tokens_details" : "completion_tokens_details"), "reasoning_tokens"));
         }
         String type = root.path("type").asText();
-        if ("error".equals(type) || "response.failed".equals(type)) failed = true;
+        if (root.hasNonNull("error") || "error".equals(type) || "response.failed".equals(type) || "response.incomplete".equals(type)) failed = true;
+        completed |= switch (endpoint) {
+            case "messages" -> streaming ? "message_stop".equals(type) : "message".equals(type) && root.path("content").isArray() && root.path("stop_reason").isTextual();
+            case "responses" -> streaming ? "response.completed".equals(type) : "completed".equals(root.path("status").asText()) && root.path("output").isArray();
+            default -> !streaming && root.path("choices").path(0).path("message").isObject() && root.path("choices").path(0).path("finish_reason").isTextual();
+        };
         if ("content_block_start".equals(type) && "tool_use".equals(root.path("content_block").path("type").asText())) tools++;
         if ("response.output_item.added".equals(type) && "function_call".equals(root.path("item").path("type").asText())) tools++;
         for (JsonNode block : root.path("content")) if ("tool_use".equals(block.path("type").asText())) tools++;

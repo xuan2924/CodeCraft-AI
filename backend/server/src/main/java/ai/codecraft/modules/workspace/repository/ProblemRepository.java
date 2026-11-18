@@ -28,6 +28,9 @@ public interface ProblemRepository {
     @Select("SELECT coalesce(artifact->'manifest'->>'language','JAVA_MAVEN')='JAVA_MAVEN' AND coalesce(jsonb_typeof(artifact->'manifest'->'execution') = 'object', false) FROM problem_version WHERE id = #{id}::uuid")
     boolean executionAvailable(String id);
 
+    @Select("SELECT DISTINCT unnest(loaded_packages) FROM sandbox_node WHERE ready AND healthy_until>clock_timestamp()")
+    List<String> loadedPackages();
+
     String ADMIN_FIELDS = "id::text,problem_id,version,coalesce(artifact->'manifest'->>'language','JAVA_MAVEN') AS language, "
         + "coalesce(artifact->'manifest'->>'language','JAVA_MAVEN')='JAVA_MAVEN' AS execution_supported,package_sha256,available";
 
@@ -36,6 +39,11 @@ public interface ProblemRepository {
 
     @Select("SELECT id::text,problem_id,version,package_sha256 FROM problem_version WHERE problem_id=#{problem} AND version=#{version}")
     AdminProblemResponse.Published published(String problem, String version);
+
+    @Insert("INSERT INTO problem_availability_receipt(actor_id,request_key,version_id,available) VALUES(#{actor}::uuid,#{key},#{id}::uuid,#{available}) ON CONFLICT DO NOTHING")
+    int claimAvailability(String actor, String key, String id, boolean available);
+    @Select("SELECT EXISTS(SELECT 1 FROM problem_availability_receipt WHERE actor_id=#{actor}::uuid AND request_key=#{key} AND version_id=#{id}::uuid AND available=#{available})")
+    boolean sameAvailability(String actor, String key, String id, boolean available);
 
     @Update("UPDATE problem_version SET available=#{available} WHERE id=#{id}::uuid")
     int availability(String id, boolean available);

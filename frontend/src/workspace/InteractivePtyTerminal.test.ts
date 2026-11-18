@@ -86,6 +86,10 @@ class FakeWebSocket {
   triggerBinary(bytes: Uint8Array) {
     this.onmessage?.({ data: bytes.buffer } as MessageEvent);
   }
+  triggerClose(wasClean = false, code = 1006) {
+    this.readyState = FakeWebSocket.CLOSED;
+    this.onclose?.({ wasClean, code } as CloseEvent);
+  }
 }
 
 const sampleExercise = (revision = '7', ws = workspaceId): Exercise => ({
@@ -284,5 +288,78 @@ it('preserves draft notice on CONFLICT exit without emitting changed and signals
 
   await wrapper.setProps({ exercise: sampleExercise('7', '10000000-0000-0000-0000-000000000099') });
   expect(mockTerminals[0]!.reset).toHaveBeenCalled();
+  wrapper.unmount();
+});
+
+it('reconciles authoritative command state after abnormal WebSocket close without exit frame', async () => {
+  let currentSync: 'SYNCED' | 'CONFLICT' = 'SYNCED';
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (url) => {
+    const path = String(url);
+    if (path.endsWith('/csrf')) return okJson({ token: 'csrf-token' });
+    if (path.endsWith('/terminal/sessions')) return okJson([]);
+    if (path.endsWith('/terminal/session')) {
+      return okJson({
+        commandId,
+        ticket: 't-reconnect',
+        webSocketPath: `/api/exercises/${exerciseId}/terminal/ws`,
+        protocol: 'codecraft.terminal.v1',
+        gateEpoch: '5',
+        expiresAt: '2026-11-18T12:02:00Z',
+      }, 202);
+    }
+    if (path.includes(`/commands/${commandId}`)) {
+      return okJson({
+        id: commandId,
+        exerciseId,
+        workspaceInstanceId: workspaceId,
+        executionInstanceId: '10000000-0000-0000-0000-000000000088',
+        revision: '7',
+        stateVersion: '1',
+        droppedBytes: '0',
+        command: 'bash',
+        directory: '.',
+        state: 'STOPPED',
+        reason: '',
+        stopRequested: false,
+        quiescent: true,
+        synchronization: currentSync,
+        synchronizationReason: '',
+        synchronizedRevision: currentSync === 'SYNCED' ? '8' : null,
+        changed: currentSync === 'SYNCED',
+        exitCode: null,
+        logs: [],
+        logsIncomplete: false,
+        cleanup: 'SUCCEEDED',
+        copyCleanup: 'SUCCEEDED',
+        createdAt: '2026-11-18T12:00:00Z',
+        completedAt: '2026-11-18T12:00:05Z',
+      });
+    }
+    return okJson({});
+  }));
+
+  const wrapper = mount(InteractivePtyTerminal, {
+    props: { owner: 'user-1', exercise: sampleExercise(), credential: 'cred-abc', disabled: false },
+  });
+  await vi.waitFor(() => expect(mockTerminals).toHaveLength(1));
+
+  await wrapper.get('[data-testid="pty-start-btn"]').trigger('click');
+  await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+  const ws1 = FakeWebSocket.instances[0]!;
+  ws1.triggerOpen();
+  ws1.triggerText({ type: 'opened', commandId });
+  ws1.triggerClose(false, 1006);
+  await vi.waitFor(() => expect(wrapper.emitted('changed')).toHaveLength(1));
+  expect(wrapper.text()).toContain('已将改动同步为版本 r8');
+
+  currentSync = 'CONFLICT';
+  await wrapper.get('[data-testid="pty-start-btn"]').trigger('click');
+  await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+  const ws2 = FakeWebSocket.instances[1]!;
+  ws2.triggerOpen();
+  ws2.triggerText({ type: 'opened', commandId });
+  ws2.triggerClose(false, 1006);
+  await vi.waitFor(() => expect(wrapper.text()).toContain('容器内存在未同步修改，已作为草稿安全保留'));
+  expect(wrapper.emitted('changed')).toHaveLength(1);
   wrapper.unmount();
 });

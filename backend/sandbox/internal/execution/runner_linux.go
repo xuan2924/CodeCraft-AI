@@ -226,6 +226,8 @@ func (r *Runner) finished(ctx context.Context, result Result) {
 		r.blocked = true
 	} else if !r.running {
 		r.blocked = false
+		r.stateMu.Lock()
+		defer r.stateMu.Unlock()
 		if err := r.inventory(context.WithoutCancel(ctx)); err != nil {
 			r.blocked = true
 		}

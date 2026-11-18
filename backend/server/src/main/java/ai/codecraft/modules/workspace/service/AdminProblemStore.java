@@ -55,9 +55,14 @@ public class AdminProblemStore {
         return result;
     }
     @Transactional
-    public void availability(String session, String id, Boolean available) {
-        authorize(session, true);
+    public void availability(String session, String id, String key, Boolean available) {
+        String actor = authorize(session, true);
+        validateKey(key);
         if (available == null) throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
+        if (repository.claimAvailability(actor, key, id, available) == 0) {
+            if (!repository.sameAvailability(actor, key, id, available)) throw new BusinessException(WorkspaceErrorCode.IDEMPOTENCY_CONFLICT);
+            return;
+        }
         if (repository.availability(id, available) != 1) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
     }
 }

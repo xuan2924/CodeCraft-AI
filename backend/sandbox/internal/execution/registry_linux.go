@@ -46,7 +46,8 @@ type Runner struct {
 	terminalMu          sync.Mutex
 	terminals           map[string]*Terminal
 	terminalEnvironment func(context.Context, Input) ([]string, error)
-	stateMu             sync.Mutex // Orders durable intent and result publication.
+	stateMu             sync.Mutex                         // Orders durable intent and result publication.
+	pendingTerminals    map[string]map[string]TaskIdentity // workspace -> unresolved terminals; protected by stateMu
 	blocked             bool
 	running             bool
 	active              map[string]Input
@@ -170,6 +171,7 @@ func (r *Runner) inventory(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		r.indexTerminal(record)
 		records[id] = record.ContainerID
 		if task := record.Input.TaskID; task != "" {
 			if previous, exists := r.tasks[task]; exists && previous != id {
@@ -398,10 +400,22 @@ func (r *Runner) persistOrdered(result Result) error {
 	if err != nil {
 		return err
 	}
+	// A failed fsync can leave a visible receipt. Track unresolved intent
+	// before either write; forget it only after confirmed clean publication.
+	clean := result.Quiescent && result.Cleanup == "SUCCEEDED" && result.CopyCleanup == "SUCCEEDED"
+	if !clean {
+		r.indexTerminal(result)
+	}
 	if err = r.writeRecoveryReceipt(result); err != nil {
 		return err
 	}
-	return r.writeRegistry(result.Input.ExecutionID+".json", data)
+	if err = r.writeRegistry(result.Input.ExecutionID+".json", data); err != nil {
+		return err
+	}
+	if clean {
+		r.indexTerminal(result)
+	}
+	return nil
 }
 
 func (r *Runner) writeRegistry(destination string, data []byte) (err error) {

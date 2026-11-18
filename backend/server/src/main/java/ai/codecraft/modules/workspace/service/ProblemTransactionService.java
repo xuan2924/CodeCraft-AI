@@ -20,6 +20,9 @@ public class ProblemTransactionService {
     }
 
     @Transactional(readOnly = true)
+    public java.util.Set<String> loadedPackages() { return java.util.Set.copyOf(repository.loadedPackages()); }
+
+    @Transactional(readOnly = true)
     public List<ProblemVersionEntity> list() { return repository.list(); }
 
     @Transactional

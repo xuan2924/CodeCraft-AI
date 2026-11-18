@@ -47,35 +47,39 @@ function finalization(value: unknown): Finalization | null {
 export interface WorkspaceFile { workspaceInstanceId: string; revision: string; path: string; content: string }
 function strings(value: unknown): value is string[] { return Array.isArray(value) && value.every((entry) => typeof entry === 'string'); }
 function invalid(): never { throw new ApiError(502, 'INVALID_RESPONSE'); }
+function parseProblem(value: unknown): Problem {
+  if (!object(value) || typeof value.problemVersionId !== 'string' || typeof value.title !== 'string'
+    || typeof value.version !== 'string' || typeof value.requirements !== 'string' || typeof value.durationSeconds !== 'number'
+    || (value.language !== undefined && typeof value.language !== 'string')
+    || (value.executionSupported !== undefined && typeof value.executionSupported !== 'boolean')
+    || (value.executionAvailable !== undefined && typeof value.executionAvailable !== 'boolean')
+    || (value.hasChallenge !== undefined && typeof value.hasChallenge !== 'boolean')
+    || (value.executionImageDigest !== undefined && value.executionImageDigest !== null && typeof value.executionImageDigest !== 'string')
+    || (value.platform !== undefined && value.platform !== null && typeof value.platform !== 'string')
+    || !strings(value.editableRoots) || !object(value.acceptanceFiles)) return invalid();
+  const acceptanceFiles: Record<string, string> = {};
+  for (const [path, content] of Object.entries(value.acceptanceFiles)) {
+    if (typeof content !== 'string') return invalid();
+    acceptanceFiles[path] = content;
+  }
+  const language = typeof value.language === 'string' ? value.language : 'JAVA_MAVEN';
+  const executionSupported = value.executionSupported !== undefined ? value.executionSupported : language === 'JAVA_MAVEN';
+  return { problemVersionId: value.problemVersionId, problemId: typeof value.problemId === 'string' ? value.problemId : undefined,
+    title: value.title, version: value.version, requirements: value.requirements,
+    durationSeconds: value.durationSeconds, editableRoots: value.editableRoots, acceptanceFiles,
+    language, executionSupported,
+    executionAvailable: executionSupported && value.executionAvailable === true,
+    hasChallenge: value.hasChallenge === true,
+    executionImageDigest: value.executionImageDigest ?? null,
+    platform: value.platform ?? null };
+}
 export async function problems(signal: AbortSignal): Promise<Problem[]> {
   const data = await request('/api/problems', signal);
   if (!Array.isArray(data)) return invalid();
-  return data.map((value: unknown) => {
-    if (!object(value) || typeof value.problemVersionId !== 'string' || typeof value.title !== 'string'
-      || typeof value.version !== 'string' || typeof value.requirements !== 'string' || typeof value.durationSeconds !== 'number'
-      || (value.language !== undefined && typeof value.language !== 'string')
-      || (value.executionSupported !== undefined && typeof value.executionSupported !== 'boolean')
-      || (value.executionAvailable !== undefined && typeof value.executionAvailable !== 'boolean')
-      || (value.hasChallenge !== undefined && typeof value.hasChallenge !== 'boolean')
-      || (value.executionImageDigest !== undefined && value.executionImageDigest !== null && typeof value.executionImageDigest !== 'string')
-      || (value.platform !== undefined && value.platform !== null && typeof value.platform !== 'string')
-      || !strings(value.editableRoots) || !object(value.acceptanceFiles)) return invalid();
-    const acceptanceFiles: Record<string, string> = {};
-    for (const [path, content] of Object.entries(value.acceptanceFiles)) {
-      if (typeof content !== 'string') return invalid();
-      acceptanceFiles[path] = content;
-    }
-    const language = typeof value.language === 'string' ? value.language : 'JAVA_MAVEN';
-    const executionSupported = value.executionSupported !== undefined ? value.executionSupported : language === 'JAVA_MAVEN';
-    return { problemVersionId: value.problemVersionId, problemId: typeof value.problemId === 'string' ? value.problemId : undefined,
-      title: value.title, version: value.version, requirements: value.requirements,
-      durationSeconds: value.durationSeconds, editableRoots: value.editableRoots, acceptanceFiles,
-      language, executionSupported,
-      executionAvailable: executionSupported && value.executionAvailable === true,
-      hasChallenge: value.hasChallenge === true,
-      executionImageDigest: value.executionImageDigest ?? null,
-      platform: value.platform ?? null };
-  });
+  return data.map(parseProblem);
+}
+export async function problem(id: string, signal: AbortSignal): Promise<Problem> {
+  return parseProblem(await request(`/api/problems/${encodeURIComponent(id)}`, signal));
 }
 export async function current(signal: AbortSignal, selectedExercise?: string, owner?: string): Promise<Exercise | null> {
   let value: unknown;

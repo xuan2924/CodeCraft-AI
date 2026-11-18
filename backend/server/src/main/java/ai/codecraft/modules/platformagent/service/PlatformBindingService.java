@@ -7,6 +7,7 @@ import ai.codecraft.modules.modelaccess.security.ModelCredentialCipher;
 import ai.codecraft.modules.platformagent.model.PlatformRole;
 import ai.codecraft.modules.platformagent.model.dto.PlatformDefinitionDTO;
 import ai.codecraft.modules.platformagent.model.entity.PlatformVersionEntity;
+import ai.codecraft.modules.platformagent.model.dto.PlatformBindingDTO;
 import ai.codecraft.modules.platformagent.model.exception.PlatformAgentErrorCode;
 import ai.codecraft.modules.platformagent.repository.PlatformAgentRepository;
 import org.springframework.stereotype.Service;
@@ -38,13 +39,17 @@ public class PlatformBindingService {
     }
 
     @Transactional(readOnly = true)
-    public PlatformVersionEntity version(String exercise, PlatformRole role) {
+    public PlatformBindingDTO version(String exercise, PlatformRole role) {
         var version = repository.bound(exercise, role);
         if (version == null || version.credentialCiphertext() == null) throw unavailable();
-        return version;
+        return binding(version);
     }
 
-    public ModelInvocationDTO invocation(PlatformVersionEntity version) {
+    private PlatformBindingDTO binding(PlatformVersionEntity version) {
+        return new PlatformBindingDTO(version.id(), version.definition(), version.credentialKeyId(), version.credentialNonce(), version.credentialCiphertext());
+    }
+    ModelInvocationDTO invocation(PlatformVersionEntity version) { return invocation(binding(version)); }
+    public ModelInvocationDTO invocation(PlatformBindingDTO version) {
         PlatformDefinitionDTO definition = definitions.decode(version.definition());
         if (!PlatformDefinitions.POLICY_VERSION.equals(definition.policyVersion())) throw unavailable();
         String credential = cipher.decrypt("platform", version.id(), new EncryptedCredentialDTO(version.credentialKeyId(), version.credentialNonce(), version.credentialCiphertext()));

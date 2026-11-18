@@ -37,7 +37,7 @@ public interface ProxyAuditRepository {
     List<ModelUsageTotalsResponse> totals(String exercise);
     @Select("SELECT 'CLI_PROXY' AS purpose,cost_currency AS currency,sum(estimated_cost)::text AS amount,count(*)::text AS priced_calls FROM model_proxy_call WHERE exercise_id=#{exercise}::uuid AND estimated_cost IS NOT NULL GROUP BY cost_currency")
     List<ModelCostSubtotalResponse> costs(String exercise);
-    @Select("SELECT coalesce(sum(pg_column_size(c)),0) FROM model_proxy_call c WHERE exercise_id=#{exercise}::uuid")
+    @Select("SELECT coalesce(sum(pg_column_size(c) + CASE WHEN completed_at IS NULL THEN 4096 ELSE 0 END),0) FROM model_proxy_call c WHERE exercise_id=#{exercise}::uuid")
     long bytes(String exercise);
     @Select("SELECT NOT EXISTS(SELECT 1 FROM model_proxy_call WHERE exercise_id=#{exercise}::uuid AND completed_at IS NULL AND created_at>clock_timestamp()-interval '6 minutes')")
     boolean quiescent(String exercise);

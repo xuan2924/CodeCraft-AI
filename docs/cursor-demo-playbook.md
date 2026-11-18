@@ -18,7 +18,7 @@
 - 入口组件：[WorkspacePage.vue](../frontend/src/workspace/WorkspacePage.vue)、[WorkspaceEditor.vue](../frontend/src/workspace/WorkspaceEditor.vue)、[CodeEditor.vue](../frontend/src/workspace/CodeEditor.vue)。
 - **操作权抢占**：进入 `/workspace` 后先点击 **「接管操作权」**，顶部出现 **「持有操作权」** 后才允许编辑与保存（防止多标签页竞态写覆盖）。
 - **多文件作用域策略**：可编辑根目录不再写死 Java 路径，改为消费后端题目契约返回的 `editableRoots`（未指定时兼容默认 `['src/main/java', 'src/test/java']`），由 [`isEditablePath`](../frontend/src/workspace/WorkspaceEditor.vue#L74-L76) 判定，`README.md` / `pom.xml` / 验收测试保持只读审阅。
-- **非入侵式草稿状态**：编辑器顶部工具栏始终可见 `<span role="status" class="backup-inline-status">`（[WorkspaceEditor.vue#L467-L470](../frontend/src/workspace/WorkspaceEditor.vue#L467-L470)），输入后立即本地加密/作用域持久化，页面刷新后仍会提示 **「恢复此草稿」** 而不覆盖远端基线。
+- **非入侵式草稿状态**：编辑器顶部工具栏始终可见 `<span role="status" class="backup-inline-status">`（[WorkspaceEditor.vue#L467-L470](../frontend/src/workspace/WorkspaceEditor.vue#L467-L470)），输入后经 300ms 防抖写入浏览器同源 IndexedDB（按账号、演练、路径与登录代次 `epoch` 作用域隔离；若落盘失败会显式阻止“保留草稿并暂停/结束”），页面刷新后仍会提示 **「恢复此草稿」** 而不覆盖远端基线。
 - **推荐体验题目**：`sliding-window-rate-limiter` v1.0.0 涵盖三个相互依赖文件：
   - `src/main/java/limiter/QuotaKey.java`
   - `src/main/java/limiter/Rule.java`
@@ -47,11 +47,11 @@
 在发布新题或修改已有题包前，先用项目脚本走通真容器验证（`initial` 必须预期失败、`reference` 必须全绿、包含隔离 / 日志溢出 / 超时终止测试）：
 
 ```bash
-# 校验多文件动态限流器题包（含 base 9 用例与 challenge 14 用例）并产出发布 JSON
-node scripts/validate-problem.mjs problems/sliding-window-rate-limiter/1.0.0 ./tmp-receipts ./tmp-rate-limiter-artifact.json
+# 1. 仅校验多文件动态限流器题包（含 base 9 用例与 challenge 14 用例）并产出校验回执 receipt.json（接受 0 或 2 个参数）
+node scripts/validate-problem.mjs problems/sliding-window-rate-limiter/1.0.0 ./tmp-receipts
 
-# 纯静态契约打包（如 PYTHON_PYTEST 题包或跳过镜像构建的校验包）
-node scripts/publish-problem.mjs <problemDir> <receiptDir> <outputJson>
+# 2. 校验并生成可发布的题包快照 JSON（内部强制重跑 validate-problem.mjs；JAVA_MAVEN 会构建并绑定本机镜像 ID，PYTHON_PYTEST 则仅验证静态契约，接受 0 或 3 个参数）
+node scripts/publish-problem.mjs problems/sliding-window-rate-limiter/1.0.0 ./tmp-receipts ./tmp-rate-limiter-artifact.json
 ```
 
 > 参考题包结构：[problems/sliding-window-rate-limiter/1.0.0/manifest.json](../problems/sliding-window-rate-limiter/1.0.0/manifest.json) 与 [challenge/manifest.json](../problems/sliding-window-rate-limiter/1.0.0/challenge/manifest.json)。
@@ -61,5 +61,5 @@ node scripts/publish-problem.mjs <problemDir> <receiptDir> <outputJson>
 - **核心运维操作**：
   1. **全平台 Copilot 遥测看板**：调用 `GET /api/admin/metrics/copilot`（[CopilotTelemetryController.java#L26-L29](../backend/server/src/main/java/ai/codecraft/modules/copilot/controller/CopilotTelemetryController.java#L26-L29)）按 15s 刷新全平台脱敏汇总（无代码内容、无私有提示词原文，只暴露计数/耗时/字节）。
   2. **题包在线校验（Dry-run）**：粘贴发布 JSON 文本，调用 `POST /api/admin/problems/validate`（[AdminProblemController.java#L34-L38](../backend/server/src/main/java/ai/codecraft/modules/workspace/controller/AdminProblemController.java#L34-L38)）即时解析 `problemId`、`version`、`language`、`executionSupported`、`hasChallenge` 与 `packageSha256`。
-  3. **带 `Idempotency-Key` 的幂等发布**：调用 `POST /api/admin/problems/publish`（[AdminProblemStore.java#L47-L56](../backend/server/src/main/java/ai/codecraft/modules/workspace/service/AdminProblemStore.java#L47-L56)）；重复提交同 key + 同包返回首次结果，同 key 换包返回 `IDEMPOTENCY_CONFLICT`（`409`）。
-  4. **即时上下架切换**：调用 `PATCH /api/admin/problems/{id}/availability` 切换 `available` 状态；下架版本在 `FOR SHARE` 并发开题锁保护下无法被新开演练（[AdminProblemStoreTest.java#L41-L46](../backend/server/src/test/java/ai/codecraft/modules/workspace/service/AdminProblemStoreTest.java#L41-L46)），但不破坏进行中演练的版本快照。
+  3. **带 `Idempotency-Key` 的幂等发布**：调用 `POST /api/admin/problems/publish`（[AdminProblemStore.java#L47-L56](../backend/server/src/main/java/ai/codecraft/modules/workspace/service/AdminProblemStore.java#L47-L56)）；重复提交同 key + 同包返回首次结果，同 key 换包返回 `IDEMPOTENCY_CONFLICT`（`409`）；超过 1 MiB 返回 `413 REQUEST_TOO_LARGE` 并立即解锁界面。
+  4. **即时上下架切换**：调用 `POST /api/admin/problems/{id}/availability` 切换 `available` 状态；下架版本在 `FOR SHARE` 并发开题锁保护下无法被新开演练（[AdminProblemStoreTest.java#L41-L46](../backend/server/src/test/java/ai/codecraft/modules/workspace/service/AdminProblemStoreTest.java#L41-L46)），而进行中的演练通过按版本 ID（`GET /api/problems/{problemVersionId}`）独立加载题面与执行配置，不受目录上下架影响。注意：在线发布到 PostgreSQL 不会自动替远端 Go 沙箱节点拉取镜像或刷新启动清单。

@@ -127,6 +127,7 @@ export function problemErrorMessage(error: unknown): string {
     IDEMPOTENCY_CONFLICT: '同一幂等键已绑定不同题包内容，请更换新幂等键或核对原文。',
     PUBLICATION_CONFLICT: '相同 problemId 与 version 已存在且内容不一致，请递增版本号发布。',
     INVALID_REQUEST: '题包 Artifact JSON 格式或编码不合法。',
+    REQUEST_TOO_LARGE: '题包 Artifact 超过 1 MiB 大小限制，请精简后再试。',
     RESOURCE_NOT_FOUND: '指定题包版本不存在。',
   };
   if ([401, 403].includes(error.status)) return '需要有效管理员身份，请重新确认登录。';

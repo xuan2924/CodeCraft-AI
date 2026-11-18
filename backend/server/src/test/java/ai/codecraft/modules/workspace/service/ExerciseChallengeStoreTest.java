@@ -64,7 +64,7 @@ class ExerciseChallengeStoreTest {
         assertThat(state.publishedChallenge()).isNull();
         assertThatThrownBy(() -> store.enter("session", "exercise", "enter", "credential", null))
             .isInstanceOf(BusinessException.class).hasMessage("REVISION_CONFLICT");
-        verify(publications, never()).challenge(any());
+        verify(publications, never()).challenge(any(), any());
         verify(challenges, never()).enter(anyString(), anyString(), anyLong(), anyString(), any());
     }
 
@@ -81,7 +81,7 @@ class ExerciseChallengeStoreTest {
         assertThat(state.baseTestId()).isEqualTo("base-test");
         assertThat(new ExerciseChallengeData(challenges).protectedTestRecords("exercise")).containsExactly("base-test");
         verify(exercises, never()).start(anyString(), any(), any());
-        verify(publications).challenge(problems.find("version"));
+        verify(publications).challenge(problems.find("version"), java.util.Set.of());
     }
 
     @Test

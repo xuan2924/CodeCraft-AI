@@ -26,18 +26,14 @@ public interface CopilotFollowupRepository {
     @Select("SELECT COALESCE(max(sequence),0) FROM copilot_followup WHERE conversation_id=#{conversation}::uuid AND state='DISPATCHED'")
     long dispatchedSequence(String conversation);
     @Select("""
-        SELECT q.id::text FROM copilot_followup q JOIN workspace_exercise e ON e.id=q.exercise_id
-        WHERE (q.state IN ('WAITING','PAUSED') AND (
-          e.state NOT IN ('ACTIVE','PAUSING','PAUSED','RESUMING')
-          OR (e.state IN ('ACTIVE','PAUSING') AND e.deadline_at<=#{now})
-          OR (q.state='WAITING' AND e.state IN ('PAUSING','PAUSED','RESUMING'))))
-        OR (q.state='WAITING' AND e.state='ACTIVE' AND e.deadline_at>#{now}
-          AND NOT EXISTS(SELECT 1 FROM copilot_followup p WHERE p.conversation_id=q.conversation_id AND p.sequence<q.sequence AND p.state IN ('WAITING','PAUSED'))
+        SELECT q.id::text,q.sequence,q.exercise_id::text AS exercise,q.state,
+          (q.state='WAITING' AND NOT EXISTS(SELECT 1 FROM copilot_followup p WHERE p.conversation_id=q.conversation_id AND p.sequence<q.sequence AND p.state IN ('WAITING','PAUSED'))
           AND NOT EXISTS(SELECT 1 FROM copilot_task t WHERE t.exercise_id=q.exercise_id AND t.lane='MAIN' AND t.state IN ('QUEUED','RUNNING','PAUSED','WAITING_APPROVAL','WAITING_WRITE','WAITING_TEST','WAITING_COMMAND','WAITING_CHILD','STOPPING'))
           AND NOT EXISTS(SELECT 1 FROM copilot_compaction c WHERE c.exercise_id=q.exercise_id AND c.state IN ('WAITING','RUNNING') AND NOT EXISTS(SELECT 1 FROM copilot_btw b WHERE b.conversation_id=c.conversation_id) AND NOT EXISTS(SELECT 1 FROM copilot_delegation d WHERE d.conversation_id=c.conversation_id)))
-        ORDER BY q.sequence LIMIT 32
+        AS dispatchable FROM copilot_followup q WHERE q.state IN ('WAITING','PAUSED') AND q.sequence>#{after}
+        ORDER BY q.sequence LIMIT 128
         """)
-    List<String> candidates(Instant now);
+    List<ai.codecraft.modules.copilot.model.dto.FollowupProbeDTO> probes(long after);
     @Insert("INSERT INTO copilot_followup(id,exercise_id,conversation_id,user_id,session_hash,control_hash,request_key,text,anchor_task_id,anchor_sequence,state,created_at) VALUES(#{id}::uuid,#{exerciseId}::uuid,#{conversationId}::uuid,#{userId}::uuid,#{sessionHash},#{controlHash},#{requestKey},#{text},#{anchorTaskId}::uuid,#{anchorSequence},'WAITING',#{createdAt})")
     void insert(CopilotFollowupEntity row);
     @Update("UPDATE copilot_followup SET state='DISPATCHED',task_id=#{task}::uuid,reason=NULL,completed_at=#{now} WHERE id=#{id}::uuid AND state='WAITING'")

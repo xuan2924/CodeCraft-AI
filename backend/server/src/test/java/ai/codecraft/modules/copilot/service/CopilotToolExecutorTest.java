@@ -94,6 +94,19 @@ class CopilotToolExecutorTest {
         return new CopilotTaskEntity("task", "exercise", "user", "session", "key", "fingerprint", "RUNNING", null,
             false, "worker", Instant.MAX, Instant.EPOCH, null, "conversation", lane);
     }
+    @org.junit.jupiter.api.Test
+    void readOfBAtNewRevisionCannotAuthorizeOverwritingA() throws Exception {
+        when(tasks.planningRevision("task")).thenReturn("8");
+        when(tasks.readPaths("task", "7")).thenReturn(List.of("a"));
+        when(tasks.readPaths("task", "8")).thenReturn(List.of("b"));
+        var diff = new ai.codecraft.modules.copilot.model.dto.CopilotFileDiffDTO("a", "UPDATE", "user saved", "stale overwrite");
+        var prepared = new CopilotProposalPreparedDTO("instance", "8", "{}", "[]", List.of(diff));
+        when(preparation.prepare(any(), any(), eq("write"), any())).thenReturn(prepared);
+        var outcome = (ToolOutcome.Completed) executor.execute(task("MAIN"), "worker", tool("write", "{\"path\":\"a\",\"content\":\"stale overwrite\"}"));
+        assertThat(outcome.outcomeCode()).isEqualTo(ToolOutcome.Code.CONFLICT);
+        verify(proposals, never()).register(any(), any(), any(), any());
+    }
+
     private CopilotToolEntity tool(String name, String input) {
         return new CopilotToolEntity("tool", "turn", "task", "exercise", 0, "call", name, input, "RUNNING", null, Instant.EPOCH, null);
     }

@@ -103,16 +103,22 @@ public class CopilotProposalPreparation {
             replacements.add(new CopilotTextReplacementDTO(index, matchEnd, replacement));
         }
         replacements.sort(Comparator.comparingInt(CopilotTextReplacementDTO::start));
+        int[] offsets = new int[source.length() + 1];
+        for (int i = 0; i < source.length(); i++) {
+            offsets[i + 1] = offsets[i] + (original.startsWith("\r\n", offsets[i]) ? 2 : 1);
+        }
         int end = 0;
         var output = new StringBuilder();
         for (var replacement : replacements) {
             int start = replacement.start();
             if (start < end) throw new CopilotEditException("EDIT_OVERLAPPING_MATCH", path, lineCount);
-            output.append(source, end, start).append(replacement.text());
+            int newline = original.indexOf('\n', offsets[start]);
+            if (newline < 0) newline = original.lastIndexOf('\n', offsets[start]);
+            boolean crlf = newline > 0 && original.charAt(newline - 1) == '\r';
+            output.append(original, offsets[end], offsets[start]).append(crlf ? replacement.text().replace("\n", "\r\n") : replacement.text());
             end = replacement.end();
         }
-        output.append(source, end, source.length());
-        return original.contains("\r\n") ? output.toString().replace("\n", "\r\n") : output.toString();
+        return output.append(original, offsets[end], original.length()).toString();
     }
 
     private static int[] whitespaceMatch(String path, String source, String old, int lineCount) {

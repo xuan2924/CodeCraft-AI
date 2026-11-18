@@ -42,8 +42,8 @@ public class AdminProblemController {
         return ApiResponse.success(problems.publish(IdentityHttp.sessionHash(request), key, artifact, store));
     }
     @PostMapping("/{id}/availability")
-    public ApiResponse<Void> availability(@PathVariable UUID id, @RequestBody AdminProblemResponse.Availability change, HttpServletRequest request) {
-        store.availability(IdentityHttp.sessionHash(request), id.toString(), change.available());
+    public ApiResponse<Void> availability(@PathVariable UUID id, @RequestBody AdminProblemResponse.Availability change, @RequestHeader("Idempotency-Key") String key, HttpServletRequest request) {
+        store.availability(IdentityHttp.sessionHash(request), id.toString(), key, change.available());
         return ApiResponse.success(null);
     }
 }

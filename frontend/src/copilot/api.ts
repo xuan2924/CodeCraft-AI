@@ -365,3 +365,50 @@ export function watchTask(
     } catch { failed(); }
   }, failed, signal);
 }
+
+export function reconnectTaskStream(
+  watch: typeof watchTask,
+  exercise: string,
+  id: string,
+  onSnapshot: (snapshot: Snapshot) => void,
+  onDisconnect: () => void,
+  onPreview: (preview: PreviewEvent) => void,
+): () => void {
+  const controller = new globalThis.AbortController();
+  let close = () => {};
+  let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+  let disposed = false;
+  function connect() {
+    if (disposed) return;
+    close();
+    close = watch(
+      exercise,
+      id,
+      (value) => {
+        if (!disposed) onSnapshot(value);
+      },
+      () => {
+        if (disposed) return;
+        onDisconnect();
+        close();
+        if (timer === undefined) {
+          timer = globalThis.setTimeout(() => {
+            timer = undefined;
+            connect();
+          }, 2000);
+        }
+      },
+      controller.signal,
+      (incoming) => {
+        if (!disposed) onPreview(incoming);
+      },
+    );
+  }
+  connect();
+  return () => {
+    disposed = true;
+    controller.abort();
+    close();
+    if (timer !== undefined) globalThis.clearTimeout(timer);
+  };
+}

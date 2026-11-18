@@ -25,8 +25,8 @@
 - **核心工具**：
   - `read`：单次最多 200 行 / 64 KiB，超限自动分页并提示续读位置；**只有 `read` 真实返回 `OK` 时，才按需加载对应目录的只读 `AGENTS.md`**。
   - `grep`：Java 完成授权后以当前修订发起单次 `GrepWorkspace` RPC；Go 校验 `commit-*` 树后扫描，保留字面量/无回溯正则子集、路径前缀、上下文、200 行与 64 KiB 上限，返回前重验修订；Java 返回前再次核对授权与修订。`find` 继续匹配已发布路径。
-  - `edit` / `write`：`edit` 优先精确替换；仅在未命中时尝试整行首尾空格/Tab 归一化后的唯一匹配，仍拒绝多处或重叠匹配，保留 CRLF。失败返回总行数和有界的建议重读行号，不回显整份源码。
-  - `edit` / `write` / `run_tests` / `bash` 的模型 schema 不暴露 `expected_revision`，服务端注入任务私有 `planningRevision`；旧格式显式传入的版本不匹配仍返回 `REVISION_CONFLICT`，外部保存不会被自动覆盖。
+  - `edit` / `write`：`edit` 优先精确替换；仅在未命中时尝试整行首尾空格/Tab 归一化后的唯一匹配，仍拒绝多处或重叠匹配，且按原文件偏移切片拼接，保留未修改区间的原始换行符（混合换行文件不会误改未选中行）。失败返回总行数和有界的建议重读行号，不回显整份源码。
+  - `edit` / `write` / `run_tests` / `bash` 的模型 schema 不暴露 `expected_revision`，服务端注入任务私有 `planningRevision`（旧格式显式传入版本不匹配仍返回 `REVISION_CONFLICT`）；对已有文件执行覆盖写或 `edit` 修改/删除时，额外校验**该目标文件本身**已在当前修订下被 `read` 成功读取（`read_revision`），防止读 B 文件误解锁对 A 文件的盲写覆盖。
   - `run_tests` / `bash` / `load_skill` / `read_source` / `read_evidence` / `delegate_task` / `web_search` / `web_read`（并保留历史工具名兼容）。
 
 连续只读工具（含历史别名、Skill、证据与 Web 读取）以最多 4 个为一个安全点窗口：短事务一次登记各自存储预留与 `RUNNING` 标记，事务外并发 IO，按 `position` 顺序逐一提交结果并推进游标。`steer` 在已登记窗口排空后、下一工具之前生效；等待期间轮询归属与停止，停止/中断取消未结束任务并沿用现有批次配对补齐及预留结算。已登记未完成的工具不自动重放（Web 调用可能计费）；写入、测试、命令和委派不进入并行窗口。

@@ -38,7 +38,7 @@ func TestRealTerminalPTYResizeControlCAndEOF(t *testing.T) {
 	var terminal *execution.Terminal
 	identity := execution.TaskIdentity{ExerciseID: input.ExerciseID, TaskID: input.TaskID, ExecutionID: input.ExecutionID, WorkspaceID: input.WorkspaceID}
 	for terminal == nil {
-		terminal, err = runner.Terminal(identity)
+		terminal, err = runner.Terminal(owner, identity)
 		if err != nil {
 			select {
 			case <-owner.Done():

@@ -33,15 +33,22 @@ public class InterviewerContextCollector {
             if (!snapshot.revision().equals(String.valueOf(dispatch.revision()))) throw new IllegalStateException("Defense revision changed");
             context.append("\nUntrusted saved editable source excerpts:\n");
             var language = ProblemLanguage.valueOf(tasks.problemLanguage(snapshot.problemVersionId()));
-            for (String path : snapshot.paths().stream()
-                .filter(language::editable)
-                .sorted().limit(4).toList()) {
+            var changes = history.recent(dispatch.sessionHash(), dispatch.exerciseId(), Long.MAX_VALUE).changes().stream().limit(8).toList();
+            var paths = new java.util.LinkedHashSet<String>();
+            for (var change : changes) {
+                if (!change.retained() || Long.parseLong(change.resultRevision()) > dispatch.revision()) continue;
+                var preview = history.preview(dispatch.sessionHash(), dispatch.exerciseId(), change.id(), snapshot.revision(), "DIFF", null);
+                preview.changes().stream().map(file -> file.path()).filter(snapshot.paths()::contains).filter(language::editable).forEach(paths::add);
+                if (paths.size() >= 4) break;
+            }
+            snapshot.paths().stream().filter(language::editable).sorted().forEach(paths::add);
+            for (String path : paths.stream().limit(4).toList()) {
                 var file = exercises.read(dispatch.sessionHash(), dispatch.exerciseId(), path);
                 if (!file.revision().equals(snapshot.revision())) throw new IllegalStateException("Defense revision changed");
                 context.append(path).append('\n').append(excerpt(file.content(), 2048)).append('\n');
             }
             context.append("\nRecent saved changes (at or before evidence revision):\n");
-            for (var change : history.recent(dispatch.sessionHash(), dispatch.exerciseId(), Long.MAX_VALUE).changes().stream().limit(8).toList()) {
+            for (var change : changes) {
                 if (Long.parseLong(change.resultRevision()) <= dispatch.revision()) {
                     context.append(change.source()).append(" r").append(change.baseRevision()).append(" -> r")
                         .append(change.resultRevision()).append('\n');

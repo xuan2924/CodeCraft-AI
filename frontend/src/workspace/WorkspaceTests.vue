@@ -39,6 +39,7 @@ const controller = new globalThis.AbortController();
 let disposed = false;
 async function dispatch(input: { key: string; revision: string; target: 'base' | 'challenge' }) {
   if (disposed || sending.value || !props.credential || props.exercise.state !== 'ACTIVE') return;
+  const wasUncertain = unknown.value !== null;
   sending.value = true; error.value = ''; unknown.value = input;
   try {
     const result = await api.startTest(exerciseId, workspaceId, input.revision, input.key, props.credential, controller.signal, input.target);
@@ -51,12 +52,13 @@ async function dispatch(input: { key: string; revision: string; target: 'base' |
   } catch (failure) {
     if (disposed) return;
     error.value = message(failure);
-    if (failure instanceof ApiError && [400, 404, 409, 410, 429].includes(failure.status)) unknown.value = null;
+    if (!wasUncertain && failure instanceof ApiError && [400, 404, 409, 410, 429].includes(failure.status)) unknown.value = null;
     if (failure instanceof ApiError && failure.code === 'STALE_CONTROL') emit('stale-control');
   } finally { if (!disposed) sending.value = false; }
 }
 async function stop(input = stopUnknown.value ?? { task: chosen.value, key: globalThis.crypto.randomUUID(), ownerRecovery: false }) {
   if (disposed || stopping.value || props.exercise.state !== 'ACTIVE' || (input.ownerRecovery ? !props.recoveryAllowed : !props.credential)) return;
+  const wasUncertain = stopUnknown.value !== null;
   stopping.value = true; error.value = ''; stopUnknown.value = input;
   try {
     const result = input.ownerRecovery ? await api.recoveryStopTest(exerciseId, workspaceId, input.task, input.key, controller.signal)
@@ -70,7 +72,7 @@ async function stop(input = stopUnknown.value ?? { task: chosen.value, key: glob
   } catch (failure) {
     if (disposed) return;
     error.value = message(failure);
-    if (failure instanceof ApiError && [400, 404, 409, 410, 429].includes(failure.status)) stopUnknown.value = null;
+    if (!wasUncertain && failure instanceof ApiError && [400, 404, 409, 410, 429].includes(failure.status)) stopUnknown.value = null;
     if (failure instanceof ApiError && failure.code === 'STALE_CONTROL') emit('stale-control');
   } finally { if (!disposed) stopping.value = false; }
 }

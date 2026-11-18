@@ -81,7 +81,7 @@ watch([metrics.error, problems.error], (errors) => {
 });
 
 const policy = {
-  definitiveRejection: (failure: unknown) => failure instanceof ApiError && [400, 401, 403, 404, 409, 422, 429].includes(failure.status),
+  definitiveRejection: (failure: unknown) => failure instanceof ApiError && [400, 401, 403, 404, 409, 413, 422, 429].includes(failure.status),
   errorMessage: api.problemErrorMessage,
   identityFailure: (failure: unknown) => failure instanceof ApiError && [401, 403].includes(failure.status),
 };

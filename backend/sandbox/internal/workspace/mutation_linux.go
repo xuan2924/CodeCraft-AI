@@ -152,14 +152,6 @@ func (s *Service) applyBatchLocked(ctx context.Context, request *rpc.ApplyBatchR
 		r.Snapshot.Paths = append(r.Snapshot.Paths, path)
 	}
 	sort.Strings(r.Snapshot.Paths)
-	encoded, err := json.Marshal(r)
-	if err != nil {
-		return nil, storageError(err)
-	}
-	// Never evict a receipt to admit a new write. Retention/GC requires Java's references.
-	if len(encoded) > fileLimit {
-		return nil, status.Error(codes.ResourceExhausted, "workspace receipt capacity exhausted")
-	}
 	if err = publish(ctx, fd, sequence+1, r, files, s.beforeMutationPublish, s.now, deadline); err != nil {
 		return nil, storageError(err)
 	}

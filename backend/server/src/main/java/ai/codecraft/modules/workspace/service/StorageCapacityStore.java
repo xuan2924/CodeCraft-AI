@@ -181,12 +181,24 @@ public class StorageCapacityStore {
     private void spend(WorkspaceOperationEntity operation, StorageMeterEntity meter, long growth) {
         if (growth < 4096) throw new IllegalArgumentException("Storage growth must cover admission metadata");
         long ceiling = limits.maxBytes() - (operation.kind().equals("FINAL_TEST") ? PROTECTED_RECOVERY : limits.recoveryBytes());
+        checkGrowth(operation.exerciseId(), meter, growth, ceiling);
+        capacity.reserve(operation.id(), operation.exerciseId(), growth, clock.instant());
+    }
+
+    /** DB-only growth is committed under the same meter lock; open audit rows charge their remaining receipt headroom. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void admitAudit(String exercise, long growth) {
+        var meter = capacity.lock(exercise);
+        if (meter == null || meter.meterEpoch() == null || meter.sequence() < 1) unavailable();
+        checkGrowth(exercise, meter, growth, limits.maxBytes() - limits.recoveryBytes());
+    }
+
+    private void checkGrowth(String exercise, StorageMeterEntity meter, long growth, long ceiling) {
         try {
-            long committed = Math.addExact(meter.bytes(), databaseBytes(operation.exerciseId()));
-            long charged = Math.addExact(committed, capacity.reservedBytes(operation.exerciseId()));
+            long committed = Math.addExact(meter.bytes(), databaseBytes(exercise));
+            long charged = Math.addExact(committed, capacity.reservedBytes(exercise));
             if (Math.addExact(charged, growth) > ceiling) throw new BusinessException(WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED);
         } catch (ArithmeticException overflow) { throw new BusinessException(WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED); }
-        capacity.reserve(operation.id(), operation.exerciseId(), growth, clock.instant());
     }
 
     private long databaseBytes(String id) { return Math.addExact(capacity.databaseBytes(id), data.retainedBytes(id)); }

@@ -15,11 +15,15 @@
    - [03 编码体验扩展](evolution/03-agent-experience.md)
    - [04 完整面试流程与 UI 重塑](evolution/04-interview-ui.md)
    - [05 Pi 极简工具链与有状态深度升级](evolution/05-minimal-tools-depth.md)
-3. **快速上手演示与面试复盘（新入口）**：
-   - [面试速通图谱](interview-mastery-map.md)：3 天路线 + 6 个高频深挖卡片 + 诚实边界。
+3. **快速上手演示与面试复盘（核心入口）**：
+   - [面试速通图谱与七大后端考点面经表](interview-mastery-map.md)：3 天读代码路线 + 6 个高频深挖卡片 + **高可用/故障恢复/一致性/幂等/扩展/限流/取舍**直答话术。
    - [实操演示手册](cursor-demo-playbook.md)：类 Cursor 编码体验与 `/admin/operations` 沙箱发布动线。
    - [验证证据台账](verification-evidence-ledger.md)：严格区分真 Docker、PG+脚本基准、前端单测的三层实证。
-4. **按面试深挖方向或准备修改的模块精读对应专题与 ADR**。
+4. **初学者读代码推荐顺序（先主干、后边界）**：
+   - **第一遍抓业务主线**：`ExerciseService.java`（演练生命周期）→ `CopilotCoordinator.java` + `CopilotRunner.java`（Agent Loop）→ `service_linux.go` + `mutation_linux.go`（Go 原子提交）→ `WorkspacePage.vue` + `CopilotPanel.vue`（前端主工作台）。
+   - **第二遍看跨端可靠性**：`OutboxRelay.java` + `OutboxStore.java`（发件箱）→ `StorageCapacityStore.java`（512 MiB 配额与保底池）→ `gate_linux.go` + `runner_linux.go`（栅栏与容器隔离）。
+   - **第三遍看安全与模型接入**：`IdentitySecurity.java`（Cookie/CSRF/代理链）→ `LlmProxyService.java` + `ModelCredentialCipher.java`（容器代理与密钥环）→ `egress.go`（防 DNS Rebinding 代理）。
+5. **按面试深挖方向或准备修改的模块精读对应专题与 ADR**。
 
 ---
 

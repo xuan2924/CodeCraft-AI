@@ -176,14 +176,6 @@ public class CopilotExecutionStore {
         boolean converted = ticket.textHistory();
         var request = prepared.plan().projection().request();
         tasks.initializePlanningRevision(task.id(), String.valueOf(exercise.revision()));
-        String readResult = tasks.latestReadResult(task.id());
-        if (readResult != null) {
-            var observed = (ToolExecutionResultMessage) ChatMessageDeserializer.messageFromJson(readResult);
-            try {
-                String revision = TOOL_JSON.readTree(observed.text()).path("revision").asText(null);
-                if (revision != null && revision.matches("0|[1-9][0-9]{0,18}")) tasks.updatePlanningRevision(task.id(), revision);
-            } catch (JsonProcessingException malformed) { throw new IllegalStateException("Successful read evidence is invalid", malformed); }
-        }
         tasks.turn(turn);
         skills.markExplicitLoaded(task.userId(), task.id(), turn.createdAt());
         tasks.configuration(turn.id(), prepared.configurationPayload());
@@ -416,7 +408,10 @@ public class CopilotExecutionStore {
             tasks.outcome(tool.id(), code.name(), body != null && "REVISION_CONFLICT".equals(body.path("code").asText()));
             if (code == ToolOutcome.Code.OK) {
                 String revision = null;
-                if ("APPLIED".equals(body.path("code").asText())) {
+                if ("read".equals(CopilotToolCatalog.canonical(tool.name())) && "OK".equals(body.path("code").asText())) {
+                    revision = body.path("revision").asText(null);
+                    if (revision != null && body.path("lines").path(0).asText().startsWith(TOOL_JSON.readTree(tool.arguments()).path("path").asText() + ":")) tasks.recordReadRevision(tool.id(), revision);
+                } else if ("APPLIED".equals(body.path("code").asText())) {
                     revision = body.path("revision").asText(null);
                 } else if ("COMMAND_RESULT".equals(body.path("code").asText())) {
                     revision = body.path("result").path("synchronizedRevision").asText(null);

@@ -59,7 +59,15 @@ watch(() => route.query.exercise, (id) => {
 });
 const deletedExercise = ref('');
 const exercise = computed(() => active.data.value?.exerciseId === deletedExercise.value ? null : active.data.value);
-const problem = computed(() => catalogue.data.value?.find((item) => item.problemVersionId === exercise.value?.problemVersionId));
+const boundProblemId = computed(() => exercise.value?.problemVersionId ?? '');
+const boundProblem = useQuery({
+  queryKey: ['workspace', owner, 'problem', boundProblemId],
+  queryFn: ({ signal }) => api.problem(boundProblemId.value, signal),
+  enabled: computed(() => allowed.value && !!boundProblemId.value && !!catalogue.data.value
+    && !catalogue.data.value.some((item) => item.problemVersionId === boundProblemId.value)),
+  retry: false,
+});
+const problem = computed(() => catalogue.data.value?.find((item) => item.problemVersionId === exercise.value?.problemVersionId) ?? boundProblem.data.value);
 const challenge = useQuery({ queryKey: ['workspace', owner, 'challenge', computed(() => exercise.value?.exerciseId)],
   queryFn: ({ signal }) => challengeApi.read(owner.value, exercise.value!.exerciseId, signal),
   enabled: computed(() => allowed.value && !!exercise.value?.revision), retry: false, refetchInterval: 2000 });

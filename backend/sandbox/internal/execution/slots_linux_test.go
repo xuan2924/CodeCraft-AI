@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,8 @@ func TestParallelSlotsReachDockerAndPreserveWorkspaceExclusion(t *testing.T) {
 	release := make(chan struct{})
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/containers/json"):
+			fmt.Fprint(w, `[]`)
 		case strings.HasSuffix(r.URL.Path, "/containers/create"):
 			entered <- struct{}{}
 			<-release
@@ -63,6 +66,32 @@ func TestParallelSlotsReachDockerAndPreserveWorkspaceExclusion(t *testing.T) {
 			t.Fatalf("same workspace admitted: %v", err)
 		}
 	}
+	// All workers are parked in Create. Both forms of retention must still
+	// complete for a separate quiescent workspace, without disturbing a slot.
+	ctx := context.Background()
+	now := time.Now()
+	for _, prune := range []bool{true, false} {
+		if err := runner.persist(Result{Input: input, StartedAt: now, FinishedAt: &now, State: "STOPPED", Cleanup: "SUCCEEDED", CopyCleanup: "SUCCEEDED", Quiescent: true}); err != nil {
+			t.Fatal(err)
+		}
+		if prune {
+			err = runner.PruneExecution(ctx, TaskIdentity{input.ExerciseID, input.TaskID, input.ExecutionID, input.WorkspaceID})
+		} else {
+			err = runner.DeleteWorkspace(ctx, input.WorkspaceID)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runner.Query(ctx, input.ExecutionID); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("retained evidence: %v", err)
+		}
+		input.ExecutionID = "50000000-0000-0000-0000-000000000001"
+		input.TaskID = input.ExecutionID
+		input.Subpath = input.WorkspaceID + "/command-" + input.ExecutionID + "/tree"
+	}
+	input.ExecutionID = "60000000-0000-0000-0000-000000000001"
+	input.TaskID = input.ExecutionID
+	input.Subpath = input.WorkspaceID + "/command-" + input.ExecutionID + "/tree"
 	if err := start(input); !errors.Is(err, ErrBusy) {
 		t.Fatalf("fifth workspace admitted: %v", err)
 	}

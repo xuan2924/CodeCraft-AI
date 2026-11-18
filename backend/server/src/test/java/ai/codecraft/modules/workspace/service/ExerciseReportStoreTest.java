@@ -18,7 +18,7 @@ import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.platformagent.model.PlatformRole;
-import ai.codecraft.modules.platformagent.model.entity.PlatformVersionEntity;
+import ai.codecraft.modules.platformagent.model.dto.PlatformBindingDTO;
 import ai.codecraft.modules.platformagent.service.PlatformBindingService;
 import ai.codecraft.modules.workspace.model.dto.EvaluationReportDTO;
 import ai.codecraft.modules.workspace.model.dto.ReportReviewRequest;
@@ -60,7 +60,7 @@ class ExerciseReportStoreTest {
         when(frozen.endedAt()).thenReturn(now);
         when(frozen.verification()).thenReturn("PASSED");
         when(finals.find("exercise")).thenReturn(frozen);
-        var version = mock(PlatformVersionEntity.class);
+        var version = mock(PlatformBindingDTO.class);
         when(version.id()).thenReturn("version");
         when(platform.version("exercise", PlatformRole.EVALUATOR)).thenReturn(version);
     }

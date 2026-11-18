@@ -17,7 +17,10 @@ public class CopilotFollowupService {
     private final StorageCapacityService capacity;
     private final CopilotFollowupRepository queue;
     private final Clock clock;
-    public CopilotFollowupService(CopilotFollowupStore store, StorageCapacityService capacity, CopilotFollowupRepository queue, Clock clock) {
+    private final ai.codecraft.modules.workspace.service.WorkspaceCoordinationStore workspace;
+    private long cursor;
+    public CopilotFollowupService(CopilotFollowupStore store, StorageCapacityService capacity, CopilotFollowupRepository queue, Clock clock, ai.codecraft.modules.workspace.service.WorkspaceCoordinationStore workspace) {
+        this.workspace = workspace;
         this.store = store; this.capacity = capacity; this.queue = queue; this.clock = clock;
     }
     public CopilotFollowupResponse enqueue(String session, String exercise, String conversation, String credential, String key, CopilotFollowupRequest input) {
@@ -30,7 +33,22 @@ public class CopilotFollowupService {
     }
     public List<CopilotFollowupResponse> recent(String session, String exercise, String conversation) { return store.recent(session, exercise, conversation); }
     public CopilotFollowupResponse cancel(String session, String exercise, String conversation, String id) { return store.cancel(session, exercise, conversation, id); }
-    public List<String> pending() { return queue.candidates(clock.instant()); }
+    public synchronized List<String> pending() {
+        var probes = queue.probes(cursor);
+        if (probes.isEmpty()) { cursor = 0; return List.of(); }
+        var phases = workspace.phases(probes.stream().map(row -> row.exercise()).distinct().toList()).stream()
+            .collect(java.util.stream.Collectors.toMap(phase -> phase.id(), phase -> phase));
+        var ready = new java.util.ArrayList<String>();
+        var now = clock.instant();
+        for (var probe : probes) {
+            cursor = probe.sequence();
+            var phase = phases.get(probe.exercise());
+            if (phase == null || phase.ended(now) || ("ACTIVE".equals(phase.state()) ? probe.dispatchable() : "WAITING".equals(probe.state()))) ready.add(probe.id());
+            if (ready.size() == 32) return ready;
+        }
+        if (probes.size() < 128) cursor = 0;
+        return ready;
+    }
     public void dispatch(String id) {
         var ready = store.ready(id);
         if (ready == null) return;

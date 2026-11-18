@@ -318,6 +318,8 @@ message NodeStatusResponse {
   uint32 active_slots = 3;
   uint32 max_slots = 4;
   bool ready = 5;
+  // Trusted base publications eligible for PrepareWorkspace; empty means none.
+  repeated string loaded_package_sha256 = 6;
 }
 
 message ExecutionInventoryRequest {

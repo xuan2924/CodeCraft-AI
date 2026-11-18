@@ -133,12 +133,15 @@ func (s *Service) AttachTerminal(stream grpc.BidiStreamingServer[rpc.TerminalCli
 	ready := time.NewTimer(10 * time.Second)
 	defer ready.Stop()
 	for {
-		terminal, err = s.executor.Terminal(identity)
+		terminal, err = s.executor.Terminal(stream.Context(), identity)
 		if err == nil {
 			break
 		}
+		if errors.Is(err, execution.ErrConflict) || errors.Is(err, execution.ErrTerminalAttached) {
+			return status.Error(codes.FailedPrecondition, "terminal ownership conflict or already attached")
+		}
 		if !errors.Is(err, execution.ErrBusy) {
-			return status.Error(codes.FailedPrecondition, "terminal ownership conflict")
+			return storageError(err)
 		}
 		select {
 		case <-stream.Context().Done():

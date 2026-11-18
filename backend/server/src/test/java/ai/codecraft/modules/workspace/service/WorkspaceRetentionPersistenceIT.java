@@ -235,7 +235,7 @@ class WorkspaceRetentionPersistenceIT {
     @Test
     void unconfirmedCopyCleanupRemainsInRecoveryEvenAfterExecutionQuiescence() throws Exception {
         String recovering = task(1, true, 1);
-        jdbc.update("UPDATE workspace_test_task SET snapshot=jsonb_set(snapshot,'{copyCleanup}','\"UNKNOWN\"') WHERE id=?::uuid", recovering);
+        jdbc.update("UPDATE workspace_test_task SET dispatched=true, snapshot=jsonb_set(snapshot,'{copyCleanup}','\"UNKNOWN\"') WHERE id=?::uuid", recovering);
         assertThat(tasks.pending().stream().map(ai.codecraft.modules.workspace.model.entity.TestTaskEntity::id)).contains(recovering);
         assertThat(maintenance.pruningPlan(exercise)).isEmpty();
         assertThat(deletion.reconciled(exercise)).isFalse();

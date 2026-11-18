@@ -12,7 +12,7 @@
 
 ## 快速启动
 
-1. **配置环境变量**：在根目录复制 `.env.example` 为 `.env`（已被 Git 忽略），填写数据库账号密码、初始管理员、随机 `IDENTITY_FINGERPRINT_KEY`（32 字节 Hex）、`SANDBOX_RPC_KEY`（32 字节 Hex）及 `MODEL_CREDENTIAL_*` 加密密钥环。`.env` 由脚本按字面量解析，**不要 `source .env`**。
+1. **配置环境变量**：在根目录复制 `.env.example` 为 `.env`（已被 Git 忽略），填写数据库账号密码、初始管理员、随机 `IDENTITY_FINGERPRINT_KEY`（32 字节 Hex）、`SANDBOX_RPC_KEY`（32 字节 Hex）及 `MODEL_CREDENTIAL_*` 加密密钥环（`.env.example` 已默认启用 `PROBLEM_PUBLICATION_FILE=.runtime/problem-publication.json`）。`.env` 由脚本按字面量解析，**不要 `source .env`**。
 2. **安装依赖、生成契约并启动数据库**：
 
 ```powershell
@@ -21,10 +21,12 @@ npm --prefix frontend ci
 node scripts/dev.mjs postgres
 ```
 
-3. **验证并发布题包**（默认发布单文件题 `problems/cart-total/1.1.0` 至 `.runtime/problem-publication.json`；如需发布多文件题可传入 `problems/order-settlement-engine/1.0.0`）：
+3. **验证并发布题包**（默认发布单文件题 `problems/cart-total/1.1.0` 至 `.runtime/problem-publication.json`；如需发布多文件题可传入 3 个参数，例如 `problems/order-settlement-engine/1.0.0` 或 `problems/sliding-window-rate-limiter/1.0.0`）：
 
 ```powershell
 node scripts/publish-problem.mjs
+# 多文件题包示例（需传 3 个参数：[package-dir evidence-dir publication-file]）：
+# node scripts/publish-problem.mjs problems/order-settlement-engine/1.0.0 problems/.validation .runtime/problem-publication.json
 ```
 
 4. **分别启动沙箱、Java 后端与前端**：

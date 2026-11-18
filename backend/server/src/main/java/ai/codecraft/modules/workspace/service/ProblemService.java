@@ -58,6 +58,12 @@ public class ProblemService {
         }
     }
 
-    public List<ProblemResponse> list() { return store.list().stream().map(publications::describe).toList(); }
-    public ProblemResponse describe(String id) { return publications.describe(store.find(id)); }
+    public List<ProblemResponse> list() {
+        var loaded = store.loadedPackages();
+        return store.list().stream().map(version -> publications.describe(version, loaded.contains(version.packageSha256()))).toList();
+    }
+    public ProblemResponse describe(String id) {
+        var version = store.find(id);
+        return publications.describe(version, store.loadedPackages().contains(version.packageSha256()));
+    }
 }

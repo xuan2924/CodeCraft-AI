@@ -55,8 +55,13 @@ func (r *Runner) deleteEvidence(ctx context.Context, workspace string, exact *Ta
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed || r.running {
+	if r.closed {
 		return ErrBusy
+	}
+	for id, active := range r.active {
+		if (exact == nil && active.WorkspaceID == workspace) || (exact != nil && id == exact.ExecutionID) {
+			return ErrBusy
+		}
 	}
 	r.stateMu.Lock()
 	defer r.stateMu.Unlock()

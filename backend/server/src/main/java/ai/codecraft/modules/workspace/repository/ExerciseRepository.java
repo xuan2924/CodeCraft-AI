@@ -42,6 +42,9 @@ public interface ExerciseRepository {
     @Select("SELECT " + EXERCISE_COLUMNS + " FROM workspace_exercise WHERE id = #{id}::uuid")
     ExerciseEntity find(String id);
 
+    @Select("<script>SELECT id::text,state,deadline_at FROM workspace_exercise WHERE id IN <foreach item='id' collection='ids' open='(' separator=',' close=')'>#{id}::uuid</foreach></script>")
+    List<ai.codecraft.modules.workspace.model.dto.ExercisePhaseDTO> phases(@Param("ids") List<String> ids);
+
     @Select("SELECT " + EXERCISE_COLUMNS + " FROM workspace_exercise WHERE user_id = #{user}::uuid AND state <> 'ENDED'")
     ExerciseEntity current(String user);
 

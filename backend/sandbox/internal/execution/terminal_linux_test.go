@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -39,11 +41,25 @@ func TestPTYRawInputResizeSingleAttachAndBoundedOutput(t *testing.T) {
 	}
 	terminal := r.newTerminal(in, a)
 	identity := TaskIdentity{ExerciseID: in.ExerciseID, TaskID: in.TaskID, ExecutionID: in.ExecutionID, WorkspaceID: in.WorkspaceID}
-	if _, err = r.Terminal(identity); err != nil {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err = r.Terminal(cancelled, identity); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled attach: %v", err)
+	}
+	if _, err = r.Terminal(context.Background(), identity); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = r.Terminal(identity); !errors.Is(err, ErrTerminalAttached) {
+	if _, err = r.Terminal(context.Background(), identity); !errors.Is(err, ErrTerminalAttached) {
 		t.Fatal("second PTY attached")
+	}
+	if err := os.WriteFile(filepath.Join(r.root, in.ExecutionID+".json"), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.Terminal(context.Background(), identity); err == nil || errors.Is(err, ErrBusy) || errors.Is(err, ErrTerminalAttached) {
+		t.Fatalf("corrupt attach evidence: %v", err)
+	}
+	if err = r.QuiesceTerminals(context.Background(), "20000000-0000-0000-0000-000000000001"); err != nil {
+		t.Fatalf("unrelated corrupt terminal blocked gate: %v", err)
 	}
 	received := make(chan []byte, 1)
 	go func() { data := make([]byte, 3); _, _ = io.ReadFull(b, data); received <- data }()

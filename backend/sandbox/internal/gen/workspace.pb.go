@@ -2876,14 +2876,16 @@ func (*NodeStatusRequest) Descriptor() ([]byte, []int) {
 }
 
 type NodeStatusResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	StorageId     string                 `protobuf:"bytes,1,opt,name=storage_id,json=storageId,proto3" json:"storage_id,omitempty"`
-	HostEpoch     string                 `protobuf:"bytes,2,opt,name=host_epoch,json=hostEpoch,proto3" json:"host_epoch,omitempty"`
-	ActiveSlots   uint32                 `protobuf:"varint,3,opt,name=active_slots,json=activeSlots,proto3" json:"active_slots,omitempty"`
-	MaxSlots      uint32                 `protobuf:"varint,4,opt,name=max_slots,json=maxSlots,proto3" json:"max_slots,omitempty"`
-	Ready         bool                   `protobuf:"varint,5,opt,name=ready,proto3" json:"ready,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	StorageId   string                 `protobuf:"bytes,1,opt,name=storage_id,json=storageId,proto3" json:"storage_id,omitempty"`
+	HostEpoch   string                 `protobuf:"bytes,2,opt,name=host_epoch,json=hostEpoch,proto3" json:"host_epoch,omitempty"`
+	ActiveSlots uint32                 `protobuf:"varint,3,opt,name=active_slots,json=activeSlots,proto3" json:"active_slots,omitempty"`
+	MaxSlots    uint32                 `protobuf:"varint,4,opt,name=max_slots,json=maxSlots,proto3" json:"max_slots,omitempty"`
+	Ready       bool                   `protobuf:"varint,5,opt,name=ready,proto3" json:"ready,omitempty"`
+	// Trusted base publications eligible for PrepareWorkspace; empty means none.
+	LoadedPackageSha256 []string `protobuf:"bytes,6,rep,name=loaded_package_sha256,json=loadedPackageSha256,proto3" json:"loaded_package_sha256,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *NodeStatusResponse) Reset() {
@@ -2949,6 +2951,13 @@ func (x *NodeStatusResponse) GetReady() bool {
 		return x.Ready
 	}
 	return false
+}
+
+func (x *NodeStatusResponse) GetLoadedPackageSha256() []string {
+	if x != nil {
+		return x.LoadedPackageSha256
+	}
+	return nil
 }
 
 type ExecutionInventoryRequest struct {
@@ -3993,7 +4002,7 @@ const file_workspace_proto_rawDesc = "" +
 	"\bsnapshot\x18\x02 \x01(\v2(.codecraft.workspace.v1.TestTaskSnapshotR\bsnapshot\x12\x1d\n" +
 	"\n" +
 	"host_epoch\x18\x03 \x01(\tR\thostEpoch\"\x13\n" +
-	"\x11NodeStatusRequest\"\xa8\x01\n" +
+	"\x11NodeStatusRequest\"\xdc\x01\n" +
 	"\x12NodeStatusResponse\x12\x1d\n" +
 	"\n" +
 	"storage_id\x18\x01 \x01(\tR\tstorageId\x12\x1d\n" +
@@ -4001,7 +4010,8 @@ const file_workspace_proto_rawDesc = "" +
 	"host_epoch\x18\x02 \x01(\tR\thostEpoch\x12!\n" +
 	"\factive_slots\x18\x03 \x01(\rR\vactiveSlots\x12\x1b\n" +
 	"\tmax_slots\x18\x04 \x01(\rR\bmaxSlots\x12\x14\n" +
-	"\x05ready\x18\x05 \x01(\bR\x05ready\"~\n" +
+	"\x05ready\x18\x05 \x01(\bR\x05ready\x122\n" +
+	"\x15loaded_package_sha256\x18\x06 \x03(\tR\x13loadedPackageSha256\"~\n" +
 	"\x19ExecutionInventoryRequest\x12,\n" +
 	"\x12after_execution_id\x18\x01 \x01(\tR\x10afterExecutionId\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\rR\x05limit\x12\x1d\n" +

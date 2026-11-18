@@ -15,6 +15,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
+import ai.codecraft.modules.workspace.model.dto.ExercisePhaseDTO;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,6 +71,8 @@ public class WorkspaceCoordinationStore {
     public WorkspaceTransitionEntity transition(String id) { return writes.transition(id); }
     @Transactional(readOnly = true)
     public WorkspaceControlEntity control(String id) { return writes.control(id); }
+    @Transactional(readOnly = true)
+    public List<ExercisePhaseDTO> phases(List<String> ids) { return exercises.phases(ids); }
     @Transactional(readOnly = true)
     public ExerciseEntity exercise(String id) { return exercises.find(id); }
     @Transactional(readOnly = true)

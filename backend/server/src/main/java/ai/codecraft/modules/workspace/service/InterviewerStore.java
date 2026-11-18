@@ -141,6 +141,15 @@ public class InterviewerStore {
     }
 
     @Transactional
+    public void rejectQueued(String id, String reason) {
+        var task = tasks.find(id);
+        if (task == null) return;
+        identity.lockResourceOwner(task.userId());
+        task = tasks.find(id);
+        if (task != null && "QUEUED".equals(task.state())) complete(task, null, reason, null);
+    }
+
+    @Transactional
     public boolean recordPrice(String id, String price) {
         var task = tasks.find(id);
         if (task == null) return false;

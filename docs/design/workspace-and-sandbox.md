@@ -17,6 +17,7 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 ```
 
 - **唯一版本号 `revision`**：仅当文件内容或结构真实改变时递增；相同内容保存不递增。任何写操作都会严格校验基线版本，不存在静默自动合并。
+- **为什么用 `manifest.json` 原子替换而不引入嵌入式 SQLite**：工作区提交必须与源码文件树在同一个 Linux 文件系统内靠单次目录级 `rename(stage-* → commit-*)` 达成原子可见，避免数据库提交成功但目录树半成品的双状态分裂；单个源码文件限制为 `1 MiB`（防止超大单文件撑爆内存与 Diff 视图），而含幂等写回执的 `manifest.json` 独立上限为 `16 MiB`（达到上限报错 `ResourceExhausted`，不丢弃已有回执），避免高频保存因历史回执累积而阻塞正常编辑。
 - **稳定测试副本**：运行受控测试时，Go 在协调锁下从确定的 `revision` 复制一份独立副本供容器使用，原工作区立刻释放给用户继续编辑，互不阻塞。
 
 ### 2. 路径、链接防御与开发/验收隔离
@@ -36,7 +37,7 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 - 为防止开发 `bash` 在基础阶段偷读镜像中的 `/opt/acceptance` 挑战测试，题包内 `challenge/` 拥有**独立的离线验证镜像**，两张镜像的 `initial/` 工程必须逐字节一致。
 - 发布时通过 `scripts/publish-problem.mjs` 验证初始工程预期失败、参考解全通过以及禁网隔离，生成绑定本机镜像 ID 的 `.runtime/problem-publication.json`。
 
-管理员 `/api/admin/problems` 可列出含下架版本的元数据；`validate` 和 `publish` 接收有界 publication artifact JSON，而非服务器文件路径。Python 维护流程只生成 `static-contract-only` 回执，绑定题包及发布输入 SHA，不声称 Docker 镜像、平台、执行环境或测试实绩。artifact 仅接受无 BOM 的严格 UTF-8，拒绝 JSON 键值内 NUL 或孤立代理项。发布键按管理员隔离，相同键绑定原始请求字节摘要；相同版本不能覆盖不同 artifact。`/{id}/availability` 仅改变新建准入，不替换已运行实例的题包，也不会自动安装镜像或刷新 Go 节点的本地受信任题包清单。
+管理员 `/api/admin/problems` 可列出含下架版本的元数据；`validate` 和 `publish` 接收有界 publication artifact JSON，而非服务器文件路径。Python 维护流程只生成 `static-contract-only` 回执，绑定题包及发布输入 SHA，不声称 Docker 镜像、平台、执行环境或测试实绩。artifact 仅接受无 BOM 的严格 UTF-8，拒绝 JSON 键值内 NUL 或孤立代理项。发布与上下架均按管理员与 `Idempotency-Key` 幂等隔离，相同发布键绑定原始请求字节摘要，相同版本不能覆盖不同 artifact。`/{id}/availability` 仅改变新建准入，不替换已运行实例的题包，也不会自动安装镜像或刷新 Go 节点的本地受信任题包清单；进行中的演练通过按版本 ID 查询题面保持独立快照；目录页 `executionAvailable` 综合 `NodeStatus.loaded_package_sha256` 反映当前健康节点是否已真实加载该基础题包（空列表代表未加载，不包含仅供挑战的子镜像）。
 
 ### 4. 跨端 512 MiB 统一容量预算（ADR-0006）
 
@@ -50,7 +51,7 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 - **文件与缓存**：仅挂载独立 `command-*/tree` 到 `/project`，绝不挂载工作区根、commit、base 或收据。额外屏蔽镜像 `/opt/acceptance`。每工作区 `dev-cache` 持久挂载到 `/cache`（Maven/npm/home），继承原 CPU/内存/PID/seccomp/Egress 隔离。缓存计入原 512 MiB 账本，不享配额豁免；树和缓存合计按 `min(WorkMiB,128 MiB)` 及 20,000 条目监控，仍是周期性监测而非文件系统硬配额。
 - **显式提交**：`sync` 先在原 gateEpoch/revision 授权下持久记录提交意图，再停止整个容器；确认所有进程退出后，按普通命令的受保护路径、链接、文件数/大小规则校验并原子提交。提交后结束本会话；新会话从已提交 revision 重建，复用缓存，不复活 shell/后台进程。
 - **默认保留草稿**：Ctrl+D、断网、主动关闭、暂停、交卷及撤权不隐式 sync。有修改则记录 `CONFLICT / TERMINAL_DRAFT`，可通过原 commands changes 接口读取并人工恢复；无修改为 `UNCHANGED`。已明确请求 sync 的会话仍必须在最终发布时再次通过 gate/revision 校验；关门后拒绝旧授权发布。
-- **关门与崩溃**：CloseGate 先持久关闭，再等待终端强杀、进程静默与容器清理证明，才返回成功；重放也重复核查。Freeze 使用同一屏障，DeleteWorkspace 先写墓碑，终端清理回调在墓碑下只能拒绝提交并收敛。15s 内无法确认则返回不可用，不能把失败当完成。Java 暂停/收尾主动关闭对应 WS；身份撤销由持续鉴权及 Go gate 双重收敛。Go 重启不续接旧 PTY，按原登记停止/清理并保留草稿。
+- **关门与崩溃**：CloseGate 先持久关闭，再按工作区索引 `pendingTerminals`（启动恢复时重建，与无关工作区和损坏记录隔离）等待目标工作区的终端强杀、进程静默与容器清理证明，才返回成功；重放也重复核查。同节点上无关工作区的活跃执行同样不再阻塞已静默工作区的 `PruneExecution` / `DeleteWorkspace` 物理回收。Freeze 使用同一屏障，DeleteWorkspace 先写墓碑，终端清理回调在墓碑下只能拒绝提交并收敛。15s 内无法确认则返回不可用，不能把失败当完成。Java 暂停/收尾主动关闭对应 WS；身份撤销由持续鉴权及 Go gate 双重收敛。Go 重启不续接旧 PTY，按原登记停止/清理并保留草稿。
 - **真实 PTY**：Docker `Tty + OpenStdin` 提供控制终端，原始字节保留 Ctrl+C/Ctrl+D，resize 使用 Docker resize 触发 SIGWINCH。单次附着；输入/输出片段至多 16 KiB，队列有界，背压终止会话。未附着 30s、输入空闲 5min、总运行 2h 或原授权/演练到期任一先到即终止；heartbeat 不续租写权限或输入空闲期限。
 
 #### HTTP / WebSocket 对接与前端契约（`InteractivePtyTerminal.vue` / `terminalApi.ts`）
@@ -68,7 +69,7 @@ Go `ConfigureTerminalEnvironment` 已接入 Java Host LLM Proxy：受信任进�
 
 - `SANDBOX_NODES=default@sandbox:9090,secondary@sandbox-secondary:9090` 配置最多 16 个唯一 nodeId/endpoint，必须包含存量默认节点 `default`；未配置时沿用原 SANDBOX_HOST/PORT。延续 ADR-0002，节点处于同一 Linux 时钟域，不宣称跨主机时钟安全。
 - V64 将存量演练绑定 default。所有 Java 实例使用相同节点清单；升级先让 Go 提供 NodeStatus，保留并核验原默认节点的数据卷，再启动新 Java。首次采纳 storageId 是迁移信任点，不能借此把旧节点指向新卷。新演练在创建事务中锁定节点候选，以健康、剩余槽位最多、nodeId 稳定排序选择并持久绑定；将未完成准备的绑定作为短期预留计入选择。并发分配在取锁后重新读取预留，避免使用等待锁前的旧快照。
-- 节点通过带内部鉴权的 `NodeStatus` 报告真实执行容量、hostEpoch、ready 和持久 `storageId`。Java 每 5 秒探测，连通健康租约 15 秒；超时、不合法状态、卷身份不符都不刷新健康。`ready=false` 与失联分开：可达但恢复阻塞的节点拒绝新分配/首次执行，仍允许查询、停止和清理，否则会形成“因待清理不 ready，却无法发清理 RPC”的闭环死锁。每个 Go 私有根以 fsync 保存 `.storage-id`，Java 一旦采纳便不自动更换；普通 RPC 携带该标识，Go 同时核对磁盘标识与请求标识，防止原 endpoint 重启到空白卷后重建错误工作区。该 64 字节节点元数据不归属任何单场存储账本。
+- 节点通过带内部鉴权的 `NodeStatus` 报告真实执行容量、`hostEpoch`、`ready`、持久 `storageId` 与已加载的基础题包摘要列表 `loaded_package_sha256`（字段 6，去重排序，空列表代表未加载任何可执行题包）。Java 每 5 秒探测，连通健康租约 15 秒；超时、不合法状态、卷身份不符都不刷新健康，绑定新演练时仅从已加载目标题包摘要的节点中择优分配。`ready=false` 与失联分开：可达但恢复阻塞的节点拒绝新分配/首次执行，仍允许查询、停止和清理，否则会形成“因待清理不 ready，却无法发清理 RPC”的闭环死锁。每个 Go 私有根以 fsync 保存 `.storage-id`，Java 一旦采纳便不自动更换；普通 RPC 携带该标识，Go 同时核对磁盘标识与请求标识，防止原 endpoint 重启到空白卷后重建错误工作区。该 64 字节节点元数据不归属任何单场存储账本。
 - 每场演练及其所有历史 workspace instance 始终回到同一节点：包括 prepare/retry、文件/grep/history、apply/gate、test/command/PTY、停止、计量、prune、collect 与 delete。节点不可用、配置缺失或 endpoint 不匹配即显式不可用，不从另一节点的 NOT_FOUND 推断“未执行”，不重新分配旧演练。
 - `hostEpoch` 和 inventory 游标按 node 分开；执行前读取绑定节点 inventory，不再查询默认节点的 epoch。原 Java admission 行锁下额外核验绑定节点健康及已接纳槽位，Go 仍最终限流。V64 移除历史遗留的全局 `one_host_test` 唯一索引，保留同演练排他与持久准入锁。
 - Compose 的 `sandbox-multi` profile 提供第二个 Go：独立数据卷、独立 egress 基础网络及地址，运行时命令网络仍按执行创建/回收。两节点共享只读题包发布清单，不共享工作目录。全局 `WORKSPACE_EXECUTION_CONCURRENCY` 与每节点 `SANDBOX_EXECUTION_CONCURRENCY` 分开配置；例如两节点各 4 槽，可显式设置全局为 8。

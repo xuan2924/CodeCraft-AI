@@ -29,6 +29,11 @@ public class ReportEvidenceCollector {
         this.exercises = exercises; this.tests = tests; this.history = history; this.conversations = conversations;
         this.copilot = copilot; this.interviewer = interviewer; this.reports = reports; this.requirements = requirements;
     }
+    static boolean sourceFile(String path) {
+        return path != null && (path.endsWith(".java") && ProblemLanguage.JAVA_MAVEN.editable(path)
+            || path.endsWith(".py") && ProblemLanguage.PYTHON_PYTEST.editable(path));
+    }
+
     @Transactional(propagation = Propagation.NEVER)
     public List<ReportEvidenceDTO> collect(ExerciseReportEntity report) {
         if (report.evidence() != null) return reports.evidence(report);
@@ -56,7 +61,7 @@ public class ReportEvidenceCollector {
             "Timeline samples at most 64 retained events; pruned test history may be absent. Legacy reference counts default to zero. "
                 + "Use objective evidence for COLLABORATION and VALIDATION. Never mechanically penalize proposal rejection rate, AI usage volume or hint counts. "
                 + "Clarify/defense and hint usage count only successful published answers; steer counts applied corrections; skill counts successful loads.", true));
-        var paths = frozen.paths().stream().sorted().toList();
+        var paths = frozen.paths().stream().filter(ReportEvidenceCollector::sourceFile).sorted().toList();
         for (String path : paths.stream().limit(16).toList()) {
             var file = exercises.read(session, exercise, path);
             if (!file.revision().equals(frozen.revision())) throw new IllegalStateException("Frozen file revision changed");

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,21 +33,28 @@ var uuid = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 var digest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var segment = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 
+// Receipts survive commit collection. Bound the aggregate independently of
+// source files; never evict replay evidence to admit another mutation.
+const manifestLimit = 16 << 20
+
+var errManifestCapacity = fmt.Errorf("workspace manifest and retained mutation receipts exceed %d bytes; existing receipts remain replayable", manifestLimit)
+
 const fileLimit = 1024 * 1024 // Existing v1 problem-package single-file contract.
 
 // Service coordinates all operations on one private storage root. The process
 // entrypoint must hold exclusive ownership of that root across service instances.
 type Service struct {
 	rpc.UnimplementedWorkspaceStorageServer
-	root         string
-	storageID    string
-	key          string
-	publications []Publication
-	gate         chan struct{}
-	watches      chan struct{}
-	executor     *execution.Runner
-	worker       context.Context
-	now          func() time.Time // Business authority clock; production uses the shared system clock.
+	root                string
+	storageID           string
+	key                 string
+	publications        []Publication
+	loadedPackageSHA256 []string // sorted unique base publication digests
+	gate                chan struct{}
+	watches             chan struct{}
+	executor            *execution.Runner
+	worker              context.Context
+	now                 func() time.Time // Business authority clock; production uses the shared system clock.
 	// Test-only synchronization, configured before serving; never exposed by RPC or configuration.
 	beforeMutationPublish func(context.Context)
 }
@@ -119,7 +127,12 @@ func NewService(root string, publications []Publication, key string, runtime *Ex
 			return nil, err
 		}
 		s.publications = append(s.publications, copy)
+		if sha := copy.Identity.PackageSha256; digest.MatchString(sha) {
+			s.loadedPackageSHA256 = append(s.loadedPackageSHA256, sha)
+		}
 	}
+	slices.Sort(s.loadedPackageSHA256)
+	s.loadedPackageSHA256 = slices.Compact(s.loadedPackageSHA256)
 	return s, nil
 }
 
@@ -462,6 +475,9 @@ func storageError(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return status.FromContextError(err).Err()
 	}
+	if errors.Is(err, errManifestCapacity) {
+		return status.Error(codes.ResourceExhausted, errManifestCapacity.Error())
+	}
 	return status.Error(codes.Unavailable, "workspace storage cannot confirm result")
 }
 func directory(parent int, name string, create bool) (int, error) {
@@ -473,6 +489,10 @@ func directory(parent int, name string, create bool) (int, error) {
 	return syscall.Openat(parent, name, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 }
 func readPath(parent int, path string) ([]byte, error) {
+	return readLimitedPath(parent, path, fileLimit)
+}
+
+func readLimitedPath(parent int, path string, limit int64) ([]byte, error) {
 	parts := strings.Split(path, "/")
 	fd, err := syscall.Dup(parent)
 	if err != nil {
@@ -497,11 +517,11 @@ func readPath(parent int, path string) ([]byte, error) {
 	if err := syscall.Fstat(fileFD, &info); err != nil {
 		return nil, err
 	}
-	if info.Mode&syscall.S_IFMT != syscall.S_IFREG || info.Nlink != 1 || info.Size > fileLimit {
+	if info.Mode&syscall.S_IFMT != syscall.S_IFREG || info.Nlink != 1 || info.Size > limit {
 		return nil, fmt.Errorf("unsafe file")
 	}
-	data, err := io.ReadAll(io.LimitReader(file, fileLimit+1))
-	if len(data) > fileLimit {
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if int64(len(data)) > limit {
 		return nil, fmt.Errorf("file too large")
 	}
 	return data, err
@@ -558,7 +578,7 @@ func latest(parent int, expectedID string) (*record, string, error) {
 }
 
 func readCommit(parent int, expectedID, name string) (*record, string, error) {
-	data, err := readPath(parent, name+"/manifest.json")
+	data, err := readLimitedPath(parent, name+"/manifest.json", manifestLimit)
 	if err != nil {
 		return nil, "", err
 	}
@@ -621,8 +641,8 @@ func publish(ctx context.Context, parent int, sequence uint64, r *record, files 
 	if err != nil {
 		return err
 	}
-	if len(data) > fileLimit {
-		return fmt.Errorf("commit record too large")
+	if len(data) > manifestLimit {
+		return errManifestCapacity
 	}
 	if err = writePath(stageFD, "manifest.json", data); err != nil {
 		return err

@@ -129,6 +129,14 @@ it('displays sanitized copilot metrics, problem execution support, and validates
   await flushPromises();
   expect(opsApi.publishProblem).toHaveBeenCalled();
   expect(page.text()).toContain('已发布题包：rate-limiter v1.0.1');
+
+  const { ApiError } = await import('../api/request');
+  vi.mocked(opsApi.publishProblem).mockRejectedValueOnce(new ApiError(413, 'REQUEST_TOO_LARGE'));
+  await page.get('#problem-artifact-input').setValue('{"oversized":true}');
+  await page.findAll('button').find(b => b.text() === '幂等发布到目录')!.trigger('click');
+  await flushPromises();
+  expect(page.text()).not.toContain('原幂等键重试');
+  expect(page.findAll('button').find(b => b.text() === '幂等发布到目录')!.attributes('disabled')).toBeUndefined();
   page.unmount();
   client.clear();
 });

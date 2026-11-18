@@ -20,7 +20,7 @@ import ai.codecraft.modules.modelaccess.service.ModelUsageAccounting;
 import ai.codecraft.modules.platformagent.config.PlatformAgentProperties;
 import ai.codecraft.modules.platformagent.model.PlatformRole;
 import ai.codecraft.modules.platformagent.model.dto.PlatformDefinitionDTO;
-import ai.codecraft.modules.platformagent.model.entity.PlatformVersionEntity;
+import ai.codecraft.modules.platformagent.model.dto.PlatformBindingDTO;
 import ai.codecraft.modules.platformagent.service.PlatformBindingService;
 import ai.codecraft.modules.platformagent.service.PlatformDefinitions;
 import ai.codecraft.modules.workspace.model.dto.InterviewerDispatchDTO;
@@ -48,7 +48,7 @@ class InterviewerWorkerTest {
         Instant now = Instant.parse("2026-01-01T00:00:00Z");
         var model = new ModelConfigurationResponse("m", "c", "Platform", "model", 8192, 2048, ModelThinkingMode.OFF, null, null, null, "1", "1", "USER_CONFIGURATION", false);
         var target = new ModelInvocationDTO(null, model, "platform-secret");
-        var version = new PlatformVersionEntity("version", PlatformRole.INTERVIEWER, "definition", "PUBLISHED", 1, 1, "key", "nonce", "ciphertext", now, now);
+        var version = new PlatformBindingDTO("version", "definition", "key", "nonce", "ciphertext");
         var definition = new PlatformDefinitionDTO(null, model, "Bound platform instruction", List.of(), "INTERVIEW_V1");
         when(store.claim("task")).thenReturn(new InterviewerDispatchDTO("task", "exercise", "What must I implement?", "READY", "BASE", 0L, "CLARIFY", "general", 1, "session", version, now.plusSeconds(120)), null);
         when(bindings.invocation(version)).thenReturn(target);
@@ -72,6 +72,9 @@ class InterviewerWorkerTest {
                 .doesNotContain("platform-secret", "ciphertext");
             verify(store).finish("task", "Implement the published requirements.", null, null);
             verify(bindings, never()).bind(any());
+            when(store.claim("expired")).thenThrow(new ai.codecraft.common.exception.BusinessException(ai.codecraft.modules.modelaccess.model.exception.ModelAccessErrorCode.MODEL_CHECK_REQUIRED));
+            worker.run("expired");
+            verify(store).rejectQueued("expired", "MODEL_CHECK_REQUIRED");
         } finally { worker.close(); }
     }
     @Test

@@ -88,6 +88,15 @@ it('backs up but never submits or deletes dirty content for owner recovery endin
   expect(api.save).not.toHaveBeenCalled(); expect(drafts.removeDraft).not.toHaveBeenCalled();
 });
 
+it('refuses prepareEnd retain when local draft backup fails so pause or recovery end cannot drop unsaved edits', async () => {
+  vi.mocked(drafts.putDraft).mockRejectedValueOnce(new Error('idb quota failure'));
+  const page = render(); await flushPromises();
+  await page.get('textarea').setValue('unsaved work that failed idb');
+  expect(await page.vm.$.exposed?.prepareEnd('retain')).toBe(false);
+  expect(page.text()).toContain('本地草稿更新失败');
+  expect(page.get('textarea').element.value).toBe('unsaved work that failed idb');
+});
+
 it('retains local drafts read-only at expiry without submitting or deleting them', async () => {
   const page = render(); await flushPromises();
   await page.get('textarea').setValue('keep after expiry');

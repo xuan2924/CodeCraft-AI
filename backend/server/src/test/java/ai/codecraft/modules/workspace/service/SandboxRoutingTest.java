@@ -30,11 +30,11 @@ class SandboxRoutingTest {
             .hasMessage("WORKSPACE_UNAVAILABLE");
         var repository = mock(SandboxNodeRepository.class);
         var store = new SandboxRoutingStore(repository, Clock.fixed(now, ZoneOffset.UTC));
-        when(repository.candidates()).thenReturn(List.of(busy, free));
-        store.bind("new"); verify(repository).bind("new", "secondary");
+        when(repository.candidates("package")).thenReturn(List.of(busy, free));
+        store.bind("new", "package"); verify(repository).bind("new", "secondary");
         when(repository.bound("existing")).thenReturn("default");
         when(repository.node("default")).thenReturn(node("default", 0, 0, false));
-        store.bind("existing");
+        store.bind("existing", "package");
         verify(repository, never()).bind(org.mockito.ArgumentMatchers.eq("existing"), anyString());
         assertThatThrownBy(() -> store.forExercise("existing")).hasMessage("WORKSPACE_UNAVAILABLE");
         assertThatThrownBy(() -> store.forInstance("unregistered")).hasMessage("WORKSPACE_UNAVAILABLE");
