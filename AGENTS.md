@@ -17,8 +17,8 @@
 2. **风险优先与不缩水**：授权校验、幂等、未知副作用对账、资源清理等核心逻辑必须落地，并用确定性测试（可控时钟、替身/注入故障、临时目录或测试库）覆盖正常与关键失败分支。
 3. **反过度工程**：优先复用现有模块与成熟依赖，不提前建设通用框架、无用接口包装或仅为拆行数的短类；避免大段复制粘贴逻辑。
 4. **验证与汇报诚实**：
-   - 开发中运行受影响模块的编译、静态检查与单测；完整收口运行 `node scripts/verify.mjs --quick`。
-   - 需要跨服务或真实 Docker/浏览器证据时按需运行对应脚本（如 `test-execution.mjs`、`test-tracer.mjs`），不编造未运行的验证结果，不把替身测试说成真实环境实测。
+    - 开发中运行受影响模块的编译、静态检查与单测；完整收口运行 `node scripts/verify.mjs --quick`。
+    - 需要跨服务或真实 Docker/浏览器证据时按需运行对应脚本（如 `test-execution.mjs`、`test-tracer.mjs`），不编造未运行的验证结果，不把替身测试说成真实环境实测。
 5. **文档同步**：协议或架构变更时同步精简更新对应的 `docs/design/` 或 `docs/adr/`，保持文档简短、讲清因果、不写防御性空话。
 
 ## 安全与提交约定
@@ -31,3 +31,4 @@
 - 领域约定：[领域文档](docs/agents/domain.md)
 - 风险顺序：[风险优先实施](docs/agents/risk-first-delivery.md)
 - 任务约定：[任务管理](docs/agents/issue-tracker.md) 与 [分诊标签](docs/agents/triage-labels.md)
+- GPT 专属准则（**仅限 GPT / Codex / Astra / Sol 模型必读，Gemini / Claude 等其他模型请勿读取**）：[GPT 模型专属指令](docs/agents/gpt-codex.md)
