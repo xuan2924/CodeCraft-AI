@@ -15,7 +15,7 @@
 ### 2. 多连接管理与演练内切换（ADR-0005 / ADR-0008）
 
 - **个人配置与演练解耦**：用户在个人中心管理多个连接（一条连接共享 Base URL/协议/Key，下挂多个模型配置）。演练内显式选择“连接 + 模型”，修改个人配置不会静默篡改正在跑的演练，需要用户显式应用修订。
-- **开始前强校验，演练中免测试切换**：进入演练实施阶段前必须完成一次真实模型检查；开始后在个人已保存模型间切换不再强制重新发收费探测，运行中切换在当前完整工具批次收敛后生效。
+- **按需校验与免过期复用（阶段 6 演进）**：进入演练实施阶段（`READY → ACTIVE`）不再强绑定个人模型检查，候选人可直接进入编码，首次使用 Copilot 时再要求有效个人模型配置；个人模型检查通过后不再设置 30 分钟强制过期（状态中 `basic/tool.validUntil` 为 `null`，`valid` 仅取决于当前配置版本与成功结果）；开始后在个人已保存模型间切换不强制重做收费探测，运行中切换在当前完整工具批次收敛后生效。
 - **跨兼容域历史转换**：从不兼容的协议或推理模式切换过来时，必须等当前工具批次完整配对后，将旧批次转为带来源标注的只读文本历史，绝不伪造推理签名。
 
 ### 3. 版本化密钥环加密、在线轮换与 SSRF 边界
@@ -32,7 +32,7 @@
 ### 5. 容器 CLI 的 Host LLM Proxy
 
 - **受控通道**：Compose 中仅可信 Go 协调器配置 `SANDBOX_LLM_HOST_URL=http://java:8080`。执行容器仍在独立 internal bridge；`egress:3128` 仅反代三个精确 POST 路径：`/internal/llm-proxy/anthropic/v1/messages`、`/internal/llm-proxy/openai/v1/chat/completions`、`/internal/llm-proxy/openai/v1/responses`。拒绝 query、编码路径和任意宿主 CONNECT；原 Maven/npm 公网白名单不变。
-- **签发与隔离**：Go 在受信任 `ConfigureTerminalEnvironment` 回调内以 RPC 内部密钥调用 Java `/internal/llm-grants`，该签发路径不对执行容器开放。Java 签发绑定 terminal task、exercise、user、gateEpoch 的 15 分钟 HMAC 凭证；签名密钥仅在 Java 进程内，重启全部失效。容器的 `CODECRAFT_PROXY_TOKEN`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY` 均是该临时令牌；真实模型 Key 只由 Java 解析并加入上游请求。不进入 Input、恢复标签或应用日志；到期需重开终端，不提供无授权续租。
+- **签发与隔离**：Go 在受信任 `ConfigureTerminalEnvironment` 回调内以 RPC 内部密钥调用 Java `/internal/llm-grants`，该签发路径不对执行容器开放。Java 签发绑定 terminal task、exercise、user、gateEpoch 的临时 HMAC 凭证，有效期由 `HOST_LLM_PROXY_TOKEN_TTL` 配置（默认放宽至 **60 分钟**，安全撤权由 200ms 实时状态吊销守住）；签名密钥仅在 Java 进程内，重启全部失效。容器的 `CODECRAFT_PROXY_TOKEN`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY` 均是该临时令牌；真实模型 Key 只由 Java 解析并加入上游请求。不进入 Input、恢复标签或应用日志；到期需重开终端，不提供无授权续租。
 - **鉴权与吊销**：独立 SecurityFilterChain 接受三种代理认证头，不使用 Cookie/CSRF，原 `/api/**` 策略不变。每次调用及长流每 200ms 检查终端所属 session/authVersion、ACTIVE、OPEN、epoch、截止时间、停止/静默状态；数据库异常失败关闭。响应提交前吊销返回 403；提交后的 SSE 尽可能发送 `error/forbidden`，取消上游并断流，不能更改已提交的 HTTP 200。静默上游也主动检测，不依赖新数据到达。
 - **转发边界**：只使用演练已选连接/模型，协议不匹配返回 400，不替 CLI 转换历史；覆盖请求中的 model，限制输出到配置上限（至多 16384），禁止多候选 `n>1` 与 Responses 后台任务。真实上游仍遵守 HTTPS/禁重定向并保留连接自身配置的 query 参数（同时拒绝 CLI 入站请求携带 query）；不转发浏览器 Cookie、内部 RPC Key 或任意上游响应头。上游状态显式保留，正文中实际 Key 及其 JSON 转义形式脱敏，不自动重试；流式或非流式响应必须观察到各协议明确的完成事件（如 `message_stop`、`[DONE]`、`response.completed`）才标记 `SUCCEEDED`，提前断流一律记为 `UPSTREAM_INCOMPLETE` 且不按完整成功结算。
 - **资源与记账**：32 个在途上游槽位、每用户 5 次/秒突发及 30 次/分钟、每演练 300 次/小时；请求 1MiB、响应总量 16MiB、JSON 8MiB、单个 SSE 事件 1MiB、单次最长 5 分钟。请求开始前通过 `StorageCapacityStore.admitAudit` 在 512 MiB 演练预算内校验并计入未完成记录预留（4096 B，完成后替换为实际行大小）。按供应商累计 usage 合并，不将重复流片段累加；cache read/write 分离，reasoning 为 output 子集单独留存。缺失字段/价格保持未知，中断调用不声明完整费用。

@@ -9,7 +9,10 @@
 ### 1. 分层状态与本地草稿保护（`drafts.ts`）
 
 - **草稿与正式代码分离**：编辑器未保存修改仅保存在浏览器同源 IndexedDB（主键为 `[owner, exercise, path, id]`，按编辑器页面实例隔离并记录基线 `revision` 与账号登录代次 `epoch`），输入后 300ms 防抖写入；绝不把本地草稿当作已提交给 AI 或测试的正式代码。
-- **冲突处理**：保存或 AI 应用推进服务端 `revision` 时，若本地存在草稿且基线已过期，提供双栏 Diff（本地草稿 vs 当前服务端）由用户手工整理后显式保存，不做危险的自动合并。
+- **按内容/指纹消除伪冲突**：`editorBuffer.observe` 在本地 dirty 且服务端全局 `revision` 推进时，先比对文件 `contentSha256`（若返回）或 `content === baseContent`；仅当该文件服务端内容真实变化时才标记冲突并进入双栏 Diff，无关文件变动只静默推进基线版本。
+- **聊天输入草稿与输入法防护**：`CopilotPanel` 将输入草稿作用域（`owner/exerciseId/conversationId`）与写操作凭证 `credential` 解耦，切换会话或重新接管控制权不丢未发送文本/Skill/引用，切换账号自动隔离清理；`steer` 请求返回仅在当前文本等于已发快照时清空，避免抹掉等待期间的新输入；Enter 提交带中文输入法 `isComposing` 守卫。
+- **PTY 互斥边界显式化与收口**：`InteractivePtyTerminal` 启动前复用 `prepareCommand` 保存编辑器草稿并对齐最新 `revision`；PTY 活跃期间前端显式提示并锁定编辑器保存与 Copilot 写入，避免编辑末端才遭遇 `TERMINAL_BUSY`；终端产生 `CONFLICT` 未同步草稿时，横幅提供一键跳转该 `commandId` 的 Diff 视图。
+- **安全 Markdown 与低噪轮询**：`CopilotMessageBody` 基于 `marked.lexer` AST 通过 Vue VNode 受控渲染标题、加粗、行内代码、列表、引用、表格与白名单 `http/https` 链接（禁用 `v-html`，原始 HTML token 按纯文本输出）；Copilot 终态与 SSE 在线期间停止无意义的 2s 周期轮询；管理台题包校验结果绑定当前输入快照，修改文本后立即失效旧校验状态。
 - **安全退出与删除墓碑**：暂停或选择“保留草稿结束”前必须确认本地草稿落盘成功（若 IndexedDB 写入失败则拦截状态变更并提示复制）；退出登录前逐份检查当前账号未保存草稿（支持保存后退出、丢弃退出或取消）；当演练在服务端被确认删除时，前端同一 IndexedDB 事务清除本地草稿并写入删除墓碑，防止迟到防抖写入把草稿复活。
 
 ### 2. 命令幂等与前端组件结构

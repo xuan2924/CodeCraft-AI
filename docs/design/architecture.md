@@ -29,7 +29,7 @@ Go 执行节点 (Docker SDK，同 Linux 时钟域、独立卷) ──▶ 受限�
    - **面试官（Interviewer）与评测官（Evaluator）**：用管理员发布的平台模型 Key 与预算，绝对禁止改代码；这样做可以共用演练状态锁、存储预算账本与事件流设施。
 3. **前端状态单一事实来源**：
    - TanStack Vue Query 管理全部服务端状态；Pinia（`layoutStore`）只管面板布局等客户端 UI 状态；UI 组件库采用 shadcn-vue + Reka UI，主题色统一由 `tokens.ts` 同步到 Monaco 和 xterm。
-4. **当前部署前提**：面向可信受邀用户的本机 Linux Docker 部署，Redis 与 RabbitMQ 均为可选 profile（分别负责实时提示/限流和可靠任务分级传输），PostgreSQL Outbox 与任务状态机仍是持久真相；支持同 Linux 时钟域内的多 Go 节点与演练持久卷亲和，不引入向量库或容器预热池；同一用户同时最多只有 **1 场未结束演练**。
+4. **当前部署前提**：面向可信受邀用户的本机 Linux Docker 部署，Redis、RabbitMQ 与 MinIO/S3 均为可选 profile（分别负责实时提示/限流、可靠任务分级传输、冻结快照冷归档与跨节点恢复），PostgreSQL Outbox 与任务状态机仍是持久真相；支持同 Linux 时钟域内的多 Go 节点与演练持久卷亲和，不引入向量库或容器预热池；单用户同时未结束演练上限由 `EXERCISE_MAX_UNFINISHED` 配置（默认 `1`，本地开发可调大，`GET /api/exercises/current` 返回最新创建的未结束演练）。
 
 ## 权限、隐私与费用隔离
 

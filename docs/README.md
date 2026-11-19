@@ -9,12 +9,13 @@
 1. **先花 5 分钟对齐概念与全局边界**：
    - [术语表](../GLOSSARY.md)：理清 `演练 / 任务 / 修订 / 栅栏 Epoch` 的边界。
    - [系统架构与职责边界](design/architecture.md)：理解 Java、Go、Vue 三端如何各司其职，为什么不拆微服务。
-2. **再花 10 分钟顺一遍项目是怎么演进的**（按阶段拆分的 5 张短卡片）：
+2. **再花 10 分钟顺一遍项目是怎么演进的**（按阶段拆分的 6 张短卡片）：
    - [01 工程底座与跨端沙箱](evolution/01-foundation.md)
    - [02 持久 Copilot 循环](evolution/02-copilot-loop.md)
    - [03 编码体验扩展](evolution/03-agent-experience.md)
    - [04 完整面试流程与 UI 重塑](evolution/04-interview-ui.md)
    - [05 Pi 极简工具链与有状态深度升级](evolution/05-minimal-tools-depth.md)
+   - [06 存储内核 CAS 化、Harness 精度与黄金路径收口](evolution/06-cas-harness-and-golden-path.md)
 3. **快速上手演示与面试复盘（核心入口）**：
    - [面试速通图谱与七大后端考点面经表](interview-mastery-map.md)：3 天读代码路线 + 6 个高频深挖卡片 + **高可用/故障恢复/一致性/幂等/扩展/限流/取舍**直答话术。
    - [实操演示手册](cursor-demo-playbook.md)：类 Cursor 编码体验与 `/admin/operations` 沙箱发布动线。

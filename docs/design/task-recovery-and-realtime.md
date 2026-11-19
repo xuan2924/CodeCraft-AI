@@ -24,7 +24,7 @@ AI 请求动辄数十秒、Docker 测试随时可能被停止或遇到进程重�
 
 | 通道 | 载体与序号 | 持久化策略 | 作用与重连行为 |
 |---|---|---|---|
-| **瞬态流式预览** | `copilot_preview`（无 SSE `id:`，`previewEpoch` + `previewSequence`） | 有界本地枢纽 + 可选 Redis Pub/Sub（每节点最多 128 任务 × 32 KiB，满槽自动淘汰最久未更新项） | 分片毫秒级直推前端渲染；数据库预览检查点降频为 **≥ 2 秒** 一次 |
+| **瞬态流式预览** | `copilot_preview`（无 SSE `id:`，`previewEpoch` + `previewSequence`） | 有界本地枢纽 + 可选 Redis Pub/Sub（每节点最多 128 任务 × 32 KiB，满槽自动淘汰最久未更新项） | 推送滚动尾段（正文 4096 / 思考 1024 UTF-16 码元，超长持续向前滚动不再静止卡住）及工具参数生成进度（`toolName` + `toolArgumentBytes`，不传未校验参数原文）；数据库预览检查点降频为 **≥ 2 秒** 一次 |
 | **权威持久事件** | `copilot_snapshot`（状态机最新快照）与测试任务流（带持久 `cursor`） | PostgreSQL 落库 + 事务 `afterCommit` 唤醒推送 | Copilot 重连后直接拉取当前最新任务快照并配合消息查询收敛；测试日志流为追加流，重连先 REST 对齐再带 `?after=` 游标续传 |
 
 - **事件驱动低延迟调度**：Copilot、面试官与 AUTO 审批接入 `TaskWakeupPublisher`，事务提交后发送轻量唤醒信号立即拉起 Worker；评测报告（`EVALUATION`）属于数十秒级慢任务，首次派发统一经过 `OutboxRelay`（500ms 轮询，保证本地模式与 RabbitMQ 模式的租约和死信语义完全一致），其唤醒信号专门用于触发 `expireRunning` 超时回收扫描。

@@ -6,19 +6,23 @@
 
 ## 关键设计决策
 
-### 1. 不可变目录树与原子提交（`commit-*`）
+### 1. 本地 CAS 内容寻址存储与原子提交（`blobs/<sha256>` + `commit-*`）
 
-Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重命名）都在同一文件系统下完成：
+Go 不在原目录就地修改文件，也不在每次提交时复制整棵 `tree/` 目录树，而是采用**实例级不可变 CAS Blob 池 + 轻量 Commit Manifest**：
 
 ```text
-获取工作区串行锁 → 校验 gateEpoch 与预期修订(revision)
-  → 在 stage-* 目录完整准备新文件树与 manifest
+获取工作区级细粒度协调锁（s.locks.acquire(ctx, workspaceInstanceId)；NodeStatus 等节点级只读探测不进工作区锁）
+  → 校验 gateEpoch 与预期修订(revision)
+  → 仅将新增/变更源码文件按 SHA-256 去重写入 blobs/<sha256>（已存在则直接复用，空变更零文件重写）
+  → 在 stage-* 目录准备含 path -> sha256 映射与幂等回执的 manifest.json
   → fsync 后原子 rename 为下一个 commit-* 目录（唯一可见提交点）
 ```
 
-- **唯一版本号 `revision`**：仅当文件内容或结构真实改变时递增；相同内容保存不递增。任何写操作都会严格校验基线版本，不存在静默自动合并。
-- **为什么用 `manifest.json` 原子替换而不引入嵌入式 SQLite**：工作区提交必须与源码文件树在同一个 Linux 文件系统内靠单次目录级 `rename(stage-* → commit-*)` 达成原子可见，避免数据库提交成功但目录树半成品的双状态分裂；单个源码文件限制为 `1 MiB`（防止超大单文件撑爆内存与 Diff 视图），而含幂等写回执的 `manifest.json` 独立上限为 `16 MiB`（达到上限报错 `ResourceExhausted`，不丢弃已有回执），避免高频保存因历史回执累积而阻塞正常编辑。
-- **稳定测试副本**：运行受控测试时，Go 在协调锁下从确定的 `revision` 复制一份独立副本供容器使用，原工作区立刻释放给用户继续编辑，互不阻塞。
+- **唯一版本号 `revision` 与文件级 `contentSha256`**：仅当文件内容或结构真实改变时递增 `revision`；相同内容保存不递增。`ReadWorkspaceFile`、`QueryWorkspace` 与写回执向上游暴露权威的文件级小写 `contentSha256`，直接支撑前端按内容消解伪冲突与 Copilot 按 `path + contentSha256` 读前写校验。
+- **为什么用 `manifest.json` 原子替换而不引入嵌入式 SQLite**：工作区提交必须与本地 `blobs/` 在同一个 Linux 文件系统内靠目录级 `rename(stage-* → commit-*)` 达成原子可见，避免数据库提交成功但文件半成品的双状态分裂；单个源码文件限制为 `1 MiB`，而含幂等写回执的 `manifest.json` 独立上限为 `16 MiB`。
+- **按需物化运行目录与共享开发缓存**：`ReadWorkspaceFile`、`GrepWorkspace`、`PreviewWorkspaceHistory` 直接按 `r.Hashes` 读取 `blobs/<sha256>`；仅在启动受控测试（`PrepareTestCopy`）或开发命令/PTY（`StartCommand`）时按 `r.Hashes` 物化独立运行副本。普通开发 `bash` 与交互 PTY 统一复用每工作区有界的 `dev-cache`（挂载至 `/cache`，屏蔽 `/opt/acceptance`），消除每次 `mvn test` 的冷启动。
+- **单长驻观察与变更驱动落盘（`Runner.observe`）**：执行期间仅启动单个长驻 `collectFile` 观察协程阻塞等待 `/work/result-status` 就绪（取代每 500ms 反复启动 Docker exec），且仅在日志增量或状态变化时落盘（`logs.checkpoint`），消除空闲 PTY 的周期性写放大。
+- **可选 S3/MinIO 冻结冷归档与跨节点恢复（`archive_linux.go`）**：日常编辑热路径绝不直连对象存储；配置 `SANDBOX_ARCHIVE_*`（Compose `--profile s3` 或 `--profile minio`）后，仅在 `Freeze` 冻结成功时采用 Go 标准库 SigV4 客户端按 `blobs/<sha256>` 去重上传源码与冻结清单（返回 `archive_sha256`），健康节点可通过受信 RPC `HydrateFrozen` 按需拉取并校验恢复只读冻结实例。Java 演练删除栅栏阻止对已删除演练发起恢复，远端共享 CAS Blob 不随单工作区删除而盲删。
 
 ### 2. 路径、链接防御与开发/验收隔离
 
@@ -39,10 +43,10 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 
 管理员 `/api/admin/problems` 可列出含下架版本的元数据；`validate` 和 `publish` 接收有界 publication artifact JSON，而非服务器文件路径。Python 维护流程只生成 `static-contract-only` 回执，绑定题包及发布输入 SHA，不声称 Docker 镜像、平台、执行环境或测试实绩。artifact 仅接受无 BOM 的严格 UTF-8，拒绝 JSON 键值内 NUL 或孤立代理项。发布与上下架均按管理员与 `Idempotency-Key` 幂等隔离，相同发布键绑定原始请求字节摘要，相同版本不能覆盖不同 artifact。`/{id}/availability` 仅改变新建准入，不替换已运行实例的题包，也不会自动安装镜像或刷新 Go 节点的本地受信任题包清单；进行中的演练通过按版本 ID 查询题面保持独立快照；目录页 `executionAvailable` 综合 `NodeStatus.loaded_package_sha256` 反映当前健康节点是否已真实加载该基础题包（空列表代表未加载，不包含仅供挑战的子镜像）。
 
-### 4. 跨端 512 MiB 统一容量预算（ADR-0006）
+### 4. 跨端 512 MiB 统一容量预算与轻重准入分流（ADR-0006 v2）
 
 - Java 业务记录 + Go 磁盘文件/日志共享单场 **512 MiB** 预算：其中 **256 MiB** 固定预留给结束冻结与最多 3 次最终验收尝试（每次 56 MiB），普通开发最多使用其余 256 MiB。
-- Java 在事务内先预留额度，待副作用完成后再以 Go 返回的带 `meterEpoch` 与单调序号快照结算，乱序快照不会错误拉低已占账本。
+- **轻重准入分流**：对话、面试官提问、Copilot 只读工具/审批/steer、页面凭证等轻交互走 `admitLight`，直接基于 Java 持久化的最近一次 Go 计量快照 + 增量预留完成事务内准入，**零跨进程磁盘扫描**；仅在预估总占用达到 80% 高水位线、触发超额回收重试，或执行重磁盘任务（准备、受控测试、Bash/PTY）时才调用 Go `MeasureExerciseStorage()` 并以带 `meterEpoch` 与单调序号的快照结算。
 - 已结束演练默认保留 30 天，每用户最多保留 20 场历史；删除时先在 Java 撤销访问，再由后台按指数退避重试清理物理目录。
 
 ### 5. 个人 Dev 会话与交互 PTY
@@ -52,7 +56,7 @@ Go 不在原目录就地修改文件，每次变更（创建/修改/删除/重�
 - **显式提交**：`sync` 先在原 gateEpoch/revision 授权下持久记录提交意图，再停止整个容器；确认所有进程退出后，按普通命令的受保护路径、链接、文件数/大小规则校验并原子提交。提交后结束本会话；新会话从已提交 revision 重建，复用缓存，不复活 shell/后台进程。
 - **默认保留草稿**：Ctrl+D、断网、主动关闭、暂停、交卷及撤权不隐式 sync。有修改则记录 `CONFLICT / TERMINAL_DRAFT`，可通过原 commands changes 接口读取并人工恢复；无修改为 `UNCHANGED`。已明确请求 sync 的会话仍必须在最终发布时再次通过 gate/revision 校验；关门后拒绝旧授权发布。
 - **关门与崩溃**：CloseGate 先持久关闭，再按工作区索引 `pendingTerminals`（启动恢复时重建，与无关工作区和损坏记录隔离）等待目标工作区的终端强杀、进程静默与容器清理证明，才返回成功；重放也重复核查。同节点上无关工作区的活跃执行同样不再阻塞已静默工作区的 `PruneExecution` / `DeleteWorkspace` 物理回收。Freeze 使用同一屏障，DeleteWorkspace 先写墓碑，终端清理回调在墓碑下只能拒绝提交并收敛。15s 内无法确认则返回不可用，不能把失败当完成。Java 暂停/收尾主动关闭对应 WS；身份撤销由持续鉴权及 Go gate 双重收敛。Go 重启不续接旧 PTY，按原登记停止/清理并保留草稿。
-- **真实 PTY**：Docker `Tty + OpenStdin` 提供控制终端，原始字节保留 Ctrl+C/Ctrl+D，resize 使用 Docker resize 触发 SIGWINCH。单次附着；输入/输出片段至多 16 KiB，队列有界，背压终止会话。未附着 30s、输入空闲 5min、总运行 2h 或原授权/演练到期任一先到即终止；heartbeat 不续租写权限或输入空闲期限。
+- **真实 PTY**：Docker `Tty + OpenStdin` 提供控制终端，原始字节保留 Ctrl+C/Ctrl+D，resize 使用 Docker resize 触发 SIGWINCH。单次附着；输入/输出片段至多 16 KiB，队列有界，背压终止会话。未附着 30s、输入空闲默认 **30min**（由 `SANDBOX_PTY_IDLE_TIMEOUT` 配置）、总运行 2h 或原授权/演练到期任一先到即终止；heartbeat 不续租写权限或输入空闲期限。
 
 #### HTTP / WebSocket 对接与前端契约（`InteractivePtyTerminal.vue` / `terminalApi.ts`）
 

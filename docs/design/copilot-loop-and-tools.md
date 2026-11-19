@@ -24,9 +24,9 @@
 - **静态统一目录**：`CopilotToolCatalog` 集中声明每个工具的 schema、通道白名单（`MAIN / CHILD / BTW`）、参数限额与空间预留，替代早期散落各处的硬编码判断；用 `ToolOutcome(Suspended / Completed(outcomeCode))` 区分挂起等待与业务结果。
 - **核心工具**：
   - `read`：单次最多 200 行 / 64 KiB，超限自动分页并提示续读位置；**只有 `read` 真实返回 `OK` 时，才按需加载对应目录的只读 `AGENTS.md`**。
-  - `grep`：Java 完成授权后以当前修订发起单次 `GrepWorkspace` RPC；Go 校验 `commit-*` 树后扫描，保留字面量/无回溯正则子集、路径前缀、上下文、200 行与 64 KiB 上限，返回前重验修订；Java 返回前再次核对授权与修订。`find` 继续匹配已发布路径。
+  - `grep`：Java 完成授权后以当前修订发起单次 `GrepWorkspace` RPC；Go 校验 `commit-*` 快照后直接按 `blobs/<sha256>` 扫描，由 Go 原生 `regexp.Compile`（RE2 线性时间引擎，天然无回溯 ReDoS 风险）作为唯一正则语法权威（支持 `foo|bar`、`class\s+Foo` 等常规正则），保留 512 字符模式上限、路径前缀、上下文、200 行与 64 KiB 上限，返回前重验修订；Java 返回前再次核对授权与修订。`find` 继续匹配已发布路径。
   - `edit` / `write`：`edit` 优先精确替换；仅在未命中时尝试整行首尾空格/Tab 归一化后的唯一匹配，仍拒绝多处或重叠匹配，且按原文件偏移切片拼接，保留未修改区间的原始换行符（混合换行文件不会误改未选中行）。失败返回总行数和有界的建议重读行号，不回显整份源码。
-  - `edit` / `write` / `run_tests` / `bash` 的模型 schema 不暴露 `expected_revision`，服务端注入任务私有 `planningRevision`（旧格式显式传入版本不匹配仍返回 `REVISION_CONFLICT`）；对已有文件执行覆盖写或 `edit` 修改/删除时，额外校验**该目标文件本身**已在当前修订下被 `read` 成功读取（`read_revision`），防止读 B 文件误解锁对 A 文件的盲写覆盖。
+  - `edit` / `write` / `run_tests` / `bash` 的模型 schema 不暴露 `expected_revision`，服务端注入任务私有 `planningRevision`（旧格式显式传入版本不匹配仍返回 `REVISION_CONFLICT`）；对已有文件执行覆盖写或 `edit` 修改/删除时，按 **`path + contentSha256`** 校验该目标文件当前内容指纹已被本任务 `read` 读取（或由本任务刚成功写入更新），既防止盲写覆盖未观察内容，又消除“修改文件 A 推进全局 revision 导致已读且未变的文件 B 失效重读”的摩擦。
   - `run_tests` / `bash` / `load_skill` / `read_source` / `read_evidence` / `delegate_task` / `web_search` / `web_read`（并保留历史工具名兼容）。
 
 连续只读工具（含历史别名、Skill、证据与 Web 读取）以最多 4 个为一个安全点窗口：短事务一次登记各自存储预留与 `RUNNING` 标记，事务外并发 IO，按 `position` 顺序逐一提交结果并推进游标。`steer` 在已登记窗口排空后、下一工具之前生效；等待期间轮询归属与停止，停止/中断取消未结束任务并沿用现有批次配对补齐及预留结算。已登记未完成的工具不自动重放（Web 调用可能计费）；写入、测试、命令和委派不进入并行窗口。
@@ -45,7 +45,7 @@
 | **`New` / `Fork`** | 同一工作区上的多条对话分支 | `Fork` 必须落在工具调用与结果完整配对的安全点；**切换对话只换聊天，不复制或回滚代码文件** |
 | **`btw` 旁支** | 主线旁展开的只读技术讨论 | 不打断主任务执行，用户可选择将讨论结论显式带回主线 |
 | **`delegate_task`** | `EXECUTE`（默认）为单写 `CHILD`；`EXPLORE` 为只读调研 | 连续 Explore 请求最多 3 个一组原子启动，全部收敛后按原 position 回填；每父任务累计最多 8 个，所有子任务均禁止递归委派 |
-| **上下文压缩** | 先零调用 Micro-compaction，再按窗口压力决定 LLM 摘要 | 最近 `recentUnits` 完整单元之外的大型可重读结果优先投影为约 512 字节证据指针（超长调用 ID 必须完整保留）；保留工具配对及思维字段，近期单元仍使用原有投影上限，**不改原始持久证据** |
+| **上下文压缩与双轨预算** | Token 预算与 JSON 传输字节上限分离，先零调用 Micro-compaction，再按窗口压力决定 LLM 摘要 | Token 估算结合会话最近真实 `usage.inputTokens` 动态校准（系数限制在 `0.5~3.0` 并统一应用于主请求与摘要请求），仅与模型 `contextWindow` 比较；UTF-8 编码字节数仅与 `execution.contextBytes()` 比较，不再混用单位取 `Math.min`。最近 `recentUnits` 完整单元之外的大型可重读结果优先投影为约 512 字节证据指针 |
 | **Skill 快照** | 按需加载任务指导包 | 个人原件上限 50 个 / 5 MiB；任务启动时固定已启用版本快照，`steer` 不刷新 |
 
 ### 4. Explore 与工程态摘要边界
