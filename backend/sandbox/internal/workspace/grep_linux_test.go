@@ -29,7 +29,7 @@ func TestGrepWorkspaceCommittedTreeAndLimits(t *testing.T) {
 	if err != nil || !result.Truncated || len(result.Lines) != 4 {
 		t.Fatalf("match limit: %v %v", result, err)
 	}
-	request.Pattern, request.IsRegex, request.Limit = "^a.*b$", true, 200
+	request.Pattern, request.IsRegex, request.Limit = `^(a|c).*b{1}$`, true, 200
 	result, err = client.GrepWorkspace(authorized(t), request)
 	if err != nil || len(result.Lines) != 5 {
 		t.Fatalf("regex: %v %v", result, err)
@@ -39,7 +39,7 @@ func TestGrepWorkspaceCommittedTreeAndLimits(t *testing.T) {
 		t.Fatalf("stale: %v", err)
 	}
 	request.ExpectedRevision = 0
-	for _, pattern := range []string{"(a+)+$", "a|b", "a*", "^a**", "["} {
+	for _, pattern := range []string{"^a**", "[", `(?=hit)`, `(a)\1`} {
 		request.Pattern = pattern
 		if _, err = client.GrepWorkspace(authorized(t), request); status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("unsafe regex %s: %v", pattern, err)
@@ -65,7 +65,7 @@ func TestGrepWorkspaceRejectsCorruptOrLinkedTrees(t *testing.T) {
 		root := t.TempDir()
 		client, close := connect(t, root)
 		writable(t, client)
-		path := filepath.Join(root, instance, "commit-00000000000000000000", "tree", "src", "main", "java", "Main.java")
+		path := filepath.Join(root, instance, "blobs", fixtureBlobHash())
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
 		}

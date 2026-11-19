@@ -76,7 +76,7 @@ func (s *Service) commandBudget(ctx context.Context, input execution.Input) erro
 	defer root.Close()
 	var bytes int64
 	budget := int64(maxCommandWorkingBytes)
-	if input.Command != nil && input.Command.Terminal && input.Limits.WorkMiB > 0 {
+	if input.Limits.WorkMiB > 0 {
 		budget = min(budget, input.Limits.WorkMiB*1024*1024)
 	}
 	entries := 0
@@ -118,18 +118,15 @@ func (s *Service) commandBudget(ctx context.Context, input execution.Input) erro
 	if err := scan(root); err != nil {
 		return err
 	}
-	if input.Command != nil && input.Command.Terminal {
-		cacheFD, err := directory(parent, "dev-cache", false)
-		if err != nil {
-			return err
-		}
-		defer syscall.Close(cacheFD)
-		cache, err := os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", cacheFD))
-		if err != nil {
-			return err
-		}
-		defer cache.Close()
-		return scan(cache)
+	cacheFD, err := directory(parent, "dev-cache", false)
+	if err != nil {
+		return err
 	}
-	return nil
+	defer syscall.Close(cacheFD)
+	cache, err := os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", cacheFD))
+	if err != nil {
+		return err
+	}
+	defer cache.Close()
+	return scan(cache)
 }

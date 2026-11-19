@@ -18,7 +18,7 @@ import (
 
 // CloseGate serializes with all file publications and durably fences late writes.
 func (s *Service) CloseGate(ctx context.Context, request *rpc.CloseGateRequest) (*rpc.GateResponse, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func (s *Service) CloseGate(ctx context.Context, request *rpc.CloseGateRequest) 
 // OpenGate activates only the exact closed transition. Replays return historical
 // receipts without changing the current gate; a delayed Open cannot undo a Close.
 func (s *Service) OpenGate(ctx context.Context, request *rpc.CloseGateRequest) (*rpc.GateResponse, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (s *Service) OpenGate(ctx context.Context, request *rpc.CloseGateRequest) (
 
 // QueryGate returns durable fencing authority, not a process-local cache.
 func (s *Service) QueryGate(ctx context.Context, request *rpc.QueryWorkspaceRequest) (*rpc.GateResponse, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}

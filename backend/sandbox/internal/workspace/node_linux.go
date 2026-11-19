@@ -35,7 +35,7 @@ func storageIdentity(fd int) (string, error) {
 
 // NodeStatus is authenticated and reports a durable volume identity plus process readiness.
 func (s *Service) NodeStatus(ctx context.Context, request *rpc.NodeStatusRequest) (*rpc.NodeStatusResponse, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, "")
 	if err != nil {
 		return nil, err
 	}

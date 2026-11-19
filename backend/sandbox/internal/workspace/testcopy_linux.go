@@ -29,7 +29,7 @@ type testCopyRecord struct {
 // the same coordinator as ApplyBatch and CloseGate. It does not reserve an
 // execution slot or authorize container creation; the executor must do both.
 func (s *Service) PrepareTestCopy(ctx context.Context, request *rpc.PrepareTestCopyRequest) (*rpc.TestCopyReceipt, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func (s *Service) prepareTestCopyLocked(ctx context.Context, request *rpc.Prepar
 	if !copyGateAuthorized(gates, request.GateEpoch, request.ExpectedRevision, request.NotAfterUnixMillis, request.FinalVerification) {
 		return nil, status.Error(codes.FailedPrecondition, "copy gate closed or stale")
 	}
-	current, commit, err := latest(fd, request.WorkspaceInstanceId)
+	current, _, err := latest(fd, request.WorkspaceInstanceId)
 	if err != nil {
 		return nil, storageError(err)
 	}
@@ -93,7 +93,7 @@ func (s *Service) prepareTestCopyLocked(ctx context.Context, request *rpc.Prepar
 		if err = ctx.Err(); err != nil {
 			return nil, storageError(err)
 		}
-		content, readErr := readPath(fd, commit+"/tree/"+path)
+		content, readErr := readPath(fd, "blobs/"+current.Hashes[path])
 		if readErr != nil {
 			return nil, storageError(readErr)
 		}
@@ -114,7 +114,7 @@ func (s *Service) prepareTestCopyLocked(ctx context.Context, request *rpc.Prepar
 // QueryTestCopy observes durable input without creating a copy or execution.
 // A missing receipt is not permission to replay an uncertain execution start.
 func (s *Service) QueryTestCopy(ctx context.Context, request *rpc.QueryTestCopyRequest) (*rpc.TestCopyReceipt, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +197,7 @@ func hasTestCopies(parent int) (bool, error) {
 			return false, err
 		}
 		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), "copy-") {
+			if strings.HasPrefix(entry.Name(), "copy-") || strings.HasPrefix(entry.Name(), "command-") {
 				return true, nil
 			}
 		}

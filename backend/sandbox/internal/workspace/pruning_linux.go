@@ -26,7 +26,7 @@ func (s *Service) PruneCommandEvidence(ctx context.Context, request *rpc.QueryTa
 }
 
 func (s *Service) pruneExecutionEvidence(ctx context.Context, request *rpc.QueryTaskRequest, command bool) (*rpc.TestEvidencePruningReceipt, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}

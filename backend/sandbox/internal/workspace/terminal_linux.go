@@ -28,7 +28,7 @@ func (s *Service) quiesceTerminals(ctx context.Context, workspace string) error 
 }
 
 func (s *Service) terminalAuthority(ctx context.Context, open *rpc.TerminalOpen) (execution.TaskIdentity, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, open.GetIdentity().GetWorkspaceInstanceId())
 	if err != nil {
 		return execution.TaskIdentity{}, err
 	}
@@ -66,7 +66,7 @@ func (s *Service) terminalAuthority(ctx context.Context, open *rpc.TerminalOpen)
 // SyncTerminal records explicit commit intent while the original gate is open,
 // then orders process termination. The normal command finalizer owns publication.
 func (s *Service) SyncTerminal(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.CommandSnapshot, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (s *Service) SyncTerminal(ctx context.Context, request *rpc.QueryTaskReques
 // All I/O is bounded and EOF/cancellation orders a durable stop. The ordinary
 // command finalizer captures files only after all container processes are dead.
 func (s *Service) AttachTerminal(stream grpc.BidiStreamingServer[rpc.TerminalClientFrame, rpc.TerminalServerFrame]) (resultErr error) {
-	release, err := s.enter(stream.Context())
+	release, err := s.enter(stream.Context(), "")
 	if err != nil {
 		return err
 	}

@@ -50,7 +50,9 @@ type Service struct {
 	key                 string
 	publications        []Publication
 	loadedPackageSHA256 []string // sorted unique base publication digests
-	gate                chan struct{}
+	archive             snapshotArchive
+	syncHydrateRoot     func(int) error
+	locks               workspaceLocks
 	watches             chan struct{}
 	executor            *execution.Runner
 	worker              context.Context
@@ -88,15 +90,17 @@ func NewService(root string, publications []Publication, key string, runtime *Ex
 		return nil, err
 	}
 	storageID, err := storageIdentity(fd)
+	if err == nil {
+		err = cleanupHydrateStages(fd)
+	}
 	syscall.Close(fd)
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{root: root, storageID: storageID, key: key, gate: make(chan struct{}, 1), watches: make(chan struct{}, 16), now: time.Now}
+	s := &Service{root: root, storageID: storageID, key: key, watches: make(chan struct{}, 16), now: time.Now, syncHydrateRoot: syscall.Fsync}
 	if runtime != nil {
 		s.executor, s.worker = runtime.Runner, runtime.Worker
 	}
-	s.gate <- struct{}{}
 	for _, publication := range publications {
 		if publication.Identity == nil || len(publication.InitialFiles) == 0 {
 			return nil, fmt.Errorf("publication requires identity and initial files")
@@ -136,7 +140,7 @@ func NewService(root string, publications []Publication, key string, runtime *Ex
 	return s, nil
 }
 
-func (s *Service) enter(ctx context.Context) (func(), error) {
+func (s *Service) enter(ctx context.Context, id string) (func(), error) {
 	keys := metadata.ValueFromIncomingContext(ctx, "x-codecraft-internal-key")
 	if len(keys) != 1 || subtle.ConstantTimeCompare([]byte(keys[0]), []byte(s.key)) != 1 {
 		return nil, status.Error(codes.Unauthenticated, "internal authentication required")
@@ -154,12 +158,10 @@ func (s *Service) enter(ctx context.Context) (func(), error) {
 	if len(storage) > 0 && (len(storage) != 1 || storage[0] != s.storageID) {
 		return nil, status.Error(codes.FailedPrecondition, "storage identity changed")
 	}
-	select {
-	case <-ctx.Done():
-		return nil, status.FromContextError(ctx.Err()).Err()
-	case <-s.gate:
-		return func() { s.gate <- struct{}{} }, nil
-	}
+	if id == "" {
+		return func() {}, nil
+	} // Node inventory/status do not access workspace files.
+	return s.locks.acquire(ctx, id)
 }
 
 func (s *Service) instance(id string, create bool) (int, error) {
@@ -203,7 +205,7 @@ func (s *Service) rawInstance(id string, create bool) (int, error) {
 
 // PrepareWorkspace publishes revision zero or replays an integrity-checked committed receipt.
 func (s *Service) PrepareWorkspace(ctx context.Context, request *rpc.PrepareWorkspaceRequest) (*rpc.WorkspaceSnapshot, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +237,7 @@ func (s *Service) PrepareWorkspace(ctx context.Context, request *rpc.PrepareWork
 		return nil, err
 	}
 	defer syscall.Close(fd)
-	previous, commit, err := latest(fd, request.WorkspaceInstanceId)
+	previous, _, err := latest(fd, request.WorkspaceInstanceId)
 	if err != nil && !errors.Is(err, errNoCommit) {
 		return nil, storageError(err)
 	}
@@ -249,7 +251,7 @@ func (s *Service) PrepareWorkspace(ctx context.Context, request *rpc.PrepareWork
 		if previous.Snapshot.OperationId != request.OperationId || !proto.Equal(previous.Snapshot.Problem, request.Problem) {
 			return nil, status.Error(codes.AlreadyExists, "workspace instance cannot be reused")
 		}
-		if err = verifyPreparedTree(ctx, fd, previous, commit); err != nil {
+		if err = verifyPreparedTree(ctx, fd, previous); err != nil {
 			return nil, storageError(err)
 		}
 		return previous.Snapshot, nil
@@ -277,7 +279,7 @@ func (s *Service) PrepareWorkspace(ctx context.Context, request *rpc.PrepareWork
 
 // CancelPreparation persists a replay-safe tombstone and confirms physical cleanup before success.
 func (s *Service) CancelPreparation(ctx context.Context, request *rpc.CancelPreparationRequest) (*rpc.WorkspaceSnapshot, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +369,7 @@ func cleanupPreparation(ctx context.Context, parent int, keep string, removeComm
 				return err
 			}
 			name := entry.Name()
-			if strings.HasPrefix(name, "stage-") || (removeCommits && strings.HasPrefix(name, "commit-") && name != keep) {
+			if (removeCommits && name == "blobs") || strings.HasPrefix(name, "stage-") || (removeCommits && strings.HasPrefix(name, "commit-") && name != keep) {
 				if err = owned.RemoveAll(name); err != nil {
 					return err
 				}
@@ -382,7 +384,7 @@ func cleanupPreparation(ctx context.Context, parent int, keep string, removeComm
 
 // QueryWorkspace confirms only committed, intact trees or durable cancellation tombstones.
 func (s *Service) QueryWorkspace(ctx context.Context, request *rpc.QueryWorkspaceRequest) (*rpc.WorkspaceSnapshot, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +394,7 @@ func (s *Service) QueryWorkspace(ctx context.Context, request *rpc.QueryWorkspac
 		return nil, err
 	}
 	defer syscall.Close(fd)
-	r, commit, err := latest(fd, request.WorkspaceInstanceId)
+	r, _, err := latest(fd, request.WorkspaceInstanceId)
 	if errors.Is(err, errNoCommit) {
 		return nil, status.Error(codes.NotFound, "no committed workspace")
 	}
@@ -402,7 +404,7 @@ func (s *Service) QueryWorkspace(ctx context.Context, request *rpc.QueryWorkspac
 	if r.Snapshot.WorkspaceInstanceId != request.WorkspaceInstanceId {
 		return nil, status.Error(codes.DataLoss, "workspace identity mismatch")
 	}
-	if err = verifyPreparedTree(ctx, fd, r, commit); err != nil {
+	if err = verifyPreparedTree(ctx, fd, r); err != nil {
 		return nil, storageError(err)
 	}
 	return r.Snapshot, nil
@@ -410,7 +412,7 @@ func (s *Service) QueryWorkspace(ctx context.Context, request *rpc.QueryWorkspac
 
 // ReadWorkspaceFile reads a safe committed file only at the requested revision and verifies its hash.
 func (s *Service) ReadWorkspaceFile(ctx context.Context, request *rpc.ReadWorkspaceFileRequest) (*rpc.ReadWorkspaceFileResponse, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +425,7 @@ func (s *Service) ReadWorkspaceFile(ctx context.Context, request *rpc.ReadWorksp
 		return nil, err
 	}
 	defer syscall.Close(fd)
-	r, commit, err := latest(fd, request.WorkspaceInstanceId)
+	r, _, err := latest(fd, request.WorkspaceInstanceId)
 	if err != nil {
 		return nil, storageError(err)
 	}
@@ -440,7 +442,7 @@ func (s *Service) ReadWorkspaceFile(ctx context.Context, request *rpc.ReadWorksp
 	if !exists {
 		return nil, status.Error(codes.NotFound, "file not found")
 	}
-	content, err := readPath(fd, commit+"/tree/"+request.Path)
+	content, err := readPath(fd, "blobs/"+expected)
 	if err != nil {
 		return nil, storageError(err)
 	}
@@ -448,7 +450,7 @@ func (s *Service) ReadWorkspaceFile(ctx context.Context, request *rpc.ReadWorksp
 		return nil, status.Error(codes.DataLoss, "file integrity check failed")
 	}
 	return &rpc.ReadWorkspaceFileResponse{WorkspaceInstanceId: request.WorkspaceInstanceId,
-		Revision: r.Snapshot.Revision, Path: request.Path, Content: string(content)}, nil
+		Revision: r.Snapshot.Revision, Path: request.Path, Content: string(content), ContentSha256: expected}, nil
 }
 
 // Guidance is supplied by controlled publication, never by workspace mutation.
@@ -526,12 +528,12 @@ func readLimitedPath(parent int, path string, limit int64) ([]byte, error) {
 	}
 	return data, err
 }
-func verifyPreparedTree(ctx context.Context, parent int, r *record, commit string) error {
+func verifyPreparedTree(ctx context.Context, parent int, r *record) error {
 	for _, path := range r.Snapshot.Paths {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		content, err := readPath(parent, commit+"/tree/"+path)
+		content, err := readPath(parent, "blobs/"+r.Hashes[path])
 		if err != nil {
 			return fmt.Errorf("committed file unavailable: %w", err)
 		}
@@ -612,6 +614,7 @@ func readCommit(parent int, expectedID, name string) (*record, string, error) {
 			return nil, "", fmt.Errorf("invalid mutation receipt")
 		}
 	}
+	r.Snapshot.ContentSha256 = r.Hashes
 	return &r, name, nil
 }
 func publish(ctx context.Context, parent int, sequence uint64, r *record, files map[string]string, beforePublish func(context.Context), now func() time.Time, authorityUntil time.Time) (result error) {
@@ -632,11 +635,11 @@ func publish(ctx context.Context, parent int, sequence uint64, r *record, files 
 		return err
 	}
 	defer syscall.Close(stageFD)
-	for path, content := range files {
-		if err := writePath(stageFD, "tree/"+path, []byte(content)); err != nil {
-			return err
-		}
+	if err = storeBlobs(ctx, parent, stageFD, r.Hashes, files); err != nil {
+		return err
 	}
+	r.Snapshot.ContentSha256 = nil // Hashes are stored once and projected on read.
+	defer func() { r.Snapshot.ContentSha256 = r.Hashes }()
 	data, err := json.Marshal(r)
 	if err != nil {
 		return err

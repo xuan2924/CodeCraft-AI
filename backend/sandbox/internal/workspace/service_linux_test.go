@@ -2,6 +2,7 @@ package workspace_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -90,7 +91,7 @@ func TestRecoveryNeverConfirmsDamagedCommittedTree(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			path := filepath.Join(root, instance, "commit-00000000000000000000", "tree", "src", "main", "java", "Main.java")
+			path := filepath.Join(root, instance, "blobs", fixtureBlobHash())
 			if damage == "missing-manifest" {
 				path = filepath.Join(root, instance, "commit-00000000000000000000", "manifest.json")
 			}
@@ -179,7 +180,7 @@ func TestFailedCleanupIsRetryableAfterServiceRecreation(t *testing.T) {
 		close()
 		t.Fatal(err)
 	}
-	tree := filepath.Join(root, instance, "commit-00000000000000000000", "tree")
+	tree := filepath.Join(root, instance, "blobs")
 	if err := os.Chmod(tree, 0); err != nil {
 		close()
 		t.Fatal(err)
@@ -271,7 +272,7 @@ func TestReadRejectsLinksAndSpecialFiles(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			path := filepath.Join(root, instance, "commit-00000000000000000000", "tree", "src", "main", "java", "Main.java")
+			path := filepath.Join(root, instance, "blobs", fixtureBlobHash())
 			outside := filepath.Join(t.TempDir(), "outside.java")
 			if err := os.WriteFile(outside, []byte("class Main {}\n"), 0600); err != nil {
 				t.Fatal(err)
@@ -451,4 +452,8 @@ func TestPrepareAndReadSurviveServiceRecreation(t *testing.T) {
 	if err != nil || file.GetContent() != "class Main {}\n" {
 		t.Fatalf("committed file did not survive recreation: %v", err)
 	}
+}
+
+func fixtureBlobHash() string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(publication().InitialFiles[sourcePath])))
 }

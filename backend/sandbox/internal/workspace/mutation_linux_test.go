@@ -321,7 +321,7 @@ func TestMutationRejectsDamagedOrLinkedSource(t *testing.T) {
 			client, close := connect(t, root)
 			defer close()
 			request := update(writable(t, client))
-			path := filepath.Join(root, instance, "commit-00000000000000000000", "tree", sourcePath)
+			path := filepath.Join(root, instance, "blobs", fixtureBlobHash())
 			outside := filepath.Join(t.TempDir(), "outside.java")
 			if err := os.WriteFile(outside, []byte(publication().InitialFiles[sourcePath]), 0600); err != nil {
 				t.Fatal(err)

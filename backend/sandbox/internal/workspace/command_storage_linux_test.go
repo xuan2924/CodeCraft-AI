@@ -61,7 +61,7 @@ func newCommandFixtureMode(t *testing.T, terminal bool) commandFixture {
 	if terminal {
 		input.Command.Text = execution.TerminalCommand
 	}
-	release, err := service.enter(ctx)
+	release, err := service.enter(ctx, input.WorkspaceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,6 +282,10 @@ func TestCommandCannotPublishWhileRunningOrOverwriteNewerSave(t *testing.T) {
 	if record := fixture.state(t); record.Synchronization != "CONFLICT" || record.Mutation != nil {
 		t.Fatalf("conflict hidden: %+v", record)
 	}
+	// Retiring the baseline commit must not retire blobs pinned by the command draft.
+	if _, err = fixture.service.CollectWorkspace(fixture.ctx, &rpc.CollectWorkspaceRequest{WorkspaceInstanceId: fixture.input.WorkspaceID, ExpectedRevision: saved.Revision}); err != nil {
+		t.Fatal(err)
+	}
 	file, err := fixture.service.ReadWorkspaceFile(fixture.ctx, &rpc.ReadWorkspaceFileRequest{WorkspaceInstanceId: fixture.input.WorkspaceID, Path: commandSource, ExpectedRevision: saved.Revision})
 	if err != nil || file.Content != "newer manual save" {
 		t.Fatalf("command overwrote a later save: %v %+v", err, file)
@@ -296,7 +300,7 @@ func TestCommandCannotPublishWhileRunningOrOverwriteNewerSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer syscall.Close(fd)
-	changes, err := commandChanges(fd, record)
+	changes, err := commandChanges(parent, fd, record)
 	if err != nil || len(changes.Changes) != 1 || changes.Changes[0].PreviousContent != "class Main {}\n" || changes.Changes[0].Change.Content != "command candidate" {
 		t.Fatalf("conflicting candidate evidence not retained: %v %+v", err, changes)
 	}
@@ -325,5 +329,29 @@ func TestCommandCannotPublishAfterGateClosesOrHideProtectedChanges(t *testing.T)
 				t.Fatalf("unauthorized change silently accepted: %+v", record)
 			}
 		})
+	}
+}
+
+func TestRegularCommandRetainsMavenCacheInsideCombinedBudget(t *testing.T) {
+	f := newCommandFixture(t)
+	cached := filepath.Join(f.service.root, f.input.WorkspaceID, "dev-cache", "maven", "artifact")
+	if err := os.WriteFile(cached, []byte("cached"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	next := f.input
+	next.ExecutionID = "30000000-0000-0000-0000-000000000005"
+	next.TaskID = next.ExecutionID
+	if err := f.service.prepareCommandLocked(f.ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(cached); err != nil || string(data) != "cached" {
+		t.Fatalf("lost shared cache: %q %v", data, err)
+	}
+	next.Limits.WorkMiB = 1
+	if err := os.Truncate(cached, 1024*1024); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.commandBudget(f.ctx, next); !errors.Is(err, execution.ErrCommandOutputLimit) {
+		t.Fatalf("tree plus Maven cache exceeded budget: %v", err)
 	}
 }

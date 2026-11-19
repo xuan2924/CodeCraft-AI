@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"sort"
@@ -20,7 +21,7 @@ import (
 // creation. The expected current revision fences Java's reference snapshot:
 // future admissions can reference the current version, never an unpinned old one.
 func (s *Service) CollectWorkspace(ctx context.Context, request *rpc.CollectWorkspaceRequest) (*rpc.WorkspaceCollectionReceipt, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +41,7 @@ func (s *Service) CollectWorkspace(ctx context.Context, request *rpc.CollectWork
 	if current.Snapshot.Revision != request.ExpectedRevision {
 		return nil, status.Error(codes.Aborted, "reference snapshot is stale")
 	}
-	if err = verifyPreparedTree(ctx, fd, current, latestName); err != nil {
+	if err = verifyPreparedTree(ctx, fd, current); err != nil {
 		return nil, storageError(err)
 	}
 	retain := map[uint64]string{current.Snapshot.Revision: latestName}
@@ -57,19 +58,44 @@ func (s *Service) CollectWorkspace(ctx context.Context, request *rpc.CollectWork
 		return nil, storageError(err)
 	}
 	defer root.Close()
-	directory, err := root.Open(".")
+	dirFile, err := root.Open(".")
 	if err != nil {
 		return nil, storageError(err)
 	}
-	entries, err := directory.ReadDir(-1)
-	directory.Close()
+	entries, err := dirFile.ReadDir(-1)
+	dirFile.Close()
 	if err != nil {
 		return nil, storageError(err)
 	}
+	live := map[string]bool{}
 	commits := []string{}
 	garbage := []string{}
 	for _, entry := range entries {
 		name := entry.Name()
+		if exec, ok := strings.CutPrefix(name, "command-"); ok {
+			if !uuid.MatchString(exec) {
+				return nil, status.Error(codes.DataLoss, "invalid command identity")
+			}
+			marker, err := readPath(fd, name+"/released")
+			if err == nil && string(marker) == exec {
+				continue
+			}
+			if !errors.Is(err, syscall.ENOENT) {
+				return nil, status.Error(codes.DataLoss, "invalid command release marker")
+			}
+			r, command, err := openCommand(fd, request.WorkspaceInstanceId, exec)
+			if err != nil {
+				return nil, storageError(err)
+			}
+			syscall.Close(command)
+			for _, sha := range r.BaseHashes {
+				if !digest.MatchString(sha) {
+					return nil, status.Error(codes.DataLoss, "invalid command blob reference")
+				}
+				live[sha] = true
+			}
+			continue
+		}
 		if strings.HasPrefix(name, "gc-commit-") || strings.HasPrefix(name, "stage-") {
 			garbage = append(garbage, name)
 			continue
@@ -98,6 +124,16 @@ func (s *Service) CollectWorkspace(ctx context.Context, request *rpc.CollectWork
 			return nil, status.Error(codes.DataLoss, "referenced version missing")
 		}
 		pinned[name] = true
+		r, _, err := readCommit(fd, request.WorkspaceInstanceId, name)
+		if err != nil {
+			return nil, storageError(err)
+		}
+		if err = verifyPreparedTree(ctx, fd, r); err != nil {
+			return nil, storageError(err)
+		}
+		for _, h := range r.Hashes {
+			live[h] = true
+		}
 	}
 	// Validate every reference before deleting anything. A rename durably records
 	// the GC decision before recursive removal, so a crash cannot leave a partially
@@ -133,6 +169,44 @@ func (s *Service) CollectWorkspace(ctx context.Context, request *rpc.CollectWork
 			return nil, storageError(err)
 		}
 		receipt.ReclaimedBytes += size
+	}
+	blobs, err := directory(fd, "blobs", false)
+	if err != nil {
+		return nil, storageError(err)
+	}
+	bf := os.NewFile(uintptr(blobs), "workspace blobs")
+	defer bf.Close()
+	for {
+		entries, err := bf.ReadDir(128)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, storageError(err)
+		}
+		for _, entry := range entries {
+			if err = ctx.Err(); err != nil {
+				return nil, storageError(err)
+			}
+			name := entry.Name()
+			if !digest.MatchString(name) {
+				return nil, status.Error(codes.DataLoss, "invalid blob name")
+			}
+			if live[name] {
+				continue
+			}
+			data, err := readPath(blobs, name)
+			if err != nil {
+				return nil, storageError(err)
+			}
+			if err = syscall.Unlinkat(blobs, name); err != nil {
+				return nil, storageError(err)
+			}
+			receipt.ReclaimedBytes += uint64(len(data))
+		}
+	}
+	if err = bf.Sync(); err != nil {
+		return nil, storageError(err)
 	}
 	if err = syscall.Fsync(fd); err != nil {
 		return nil, storageError(err)

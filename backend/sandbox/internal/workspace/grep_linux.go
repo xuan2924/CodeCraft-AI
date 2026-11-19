@@ -16,7 +16,7 @@ import (
 
 // GrepWorkspace scans one committed tree, never test copies or unpublished files.
 func (s *Service) GrepWorkspace(ctx context.Context, request *rpc.GrepWorkspaceRequest) (*rpc.GrepWorkspaceResponse, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -27,11 +27,6 @@ func (s *Service) GrepWorkspace(ctx context.Context, request *rpc.GrepWorkspaceR
 	}
 	var expression *regexp.Regexp
 	if request.IsRegex {
-		// Preserve the public restricted subset; Go's RE2 also prevents backtracking.
-		quantifiers := strings.Count(pattern, "*") + strings.Count(pattern, "+") + strings.Count(pattern, "?")
-		if strings.ContainsAny(pattern, "(){}|\\") || quantifiers > 1 || (quantifiers > 0 && !strings.HasPrefix(pattern, "^")) {
-			return nil, status.Error(codes.InvalidArgument, "invalid regex")
-		}
 		expression, err = regexp.Compile(pattern)
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid regex")
@@ -42,7 +37,7 @@ func (s *Service) GrepWorkspace(ctx context.Context, request *rpc.GrepWorkspaceR
 		return nil, err
 	}
 	defer syscall.Close(fd)
-	r, commit, err := latest(fd, request.WorkspaceInstanceId)
+	r, _, err := latest(fd, request.WorkspaceInstanceId)
 	if err != nil {
 		return nil, storageError(err)
 	}
@@ -55,7 +50,7 @@ func (s *Service) GrepWorkspace(ctx context.Context, request *rpc.GrepWorkspaceR
 	if r.Snapshot.Revision != request.ExpectedRevision {
 		return nil, status.Error(codes.Aborted, "revision conflict")
 	}
-	if err = verifyPreparedTree(ctx, fd, r, commit); err != nil {
+	if err = verifyPreparedTree(ctx, fd, r); err != nil {
 		return nil, storageError(err)
 	}
 	result := &rpc.GrepWorkspaceResponse{WorkspaceInstanceId: request.WorkspaceInstanceId, Revision: r.Snapshot.Revision}
@@ -72,7 +67,7 @@ scan:
 		if err = ctx.Err(); err != nil {
 			return nil, storageError(err)
 		}
-		content, readErr := readPath(fd, commit+"/tree/"+path)
+		content, readErr := readPath(fd, "blobs/"+r.Hashes[path])
 		if readErr != nil {
 			return nil, storageError(readErr)
 		}

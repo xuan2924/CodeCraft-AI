@@ -142,7 +142,7 @@ func TestWorkspaceHistoryCorruptionNeverBecomesRestoreContent(t *testing.T) {
 	defer close()
 	epoch := writable(t, client)
 	historyChange(t, client, epoch, 0, &rpc.FileChange{Path: sourcePath, Kind: "UPDATE", Content: "class Main { int x; }\n"})
-	path := filepath.Join(root, instance, "commit-00000000000000000000", "tree", sourcePath)
+	path := filepath.Join(root, instance, "blobs", fixtureBlobHash())
 	if err := os.WriteFile(path, []byte("corrupt"), 0600); err != nil {
 		t.Fatal(err)
 	}

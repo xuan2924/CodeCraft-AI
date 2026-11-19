@@ -23,7 +23,7 @@ const maxWorkspaceBytes = 10 * 1024 * 1024
 // ApplyBatch publishes the entire tree and its receipt together. The service's
 // exclusive storage ownership and coordinator also cover CloseGate/OpenGate.
 func (s *Service) ApplyBatch(ctx context.Context, request *rpc.ApplyBatchRequest) (*rpc.MutationReceipt, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func (s *Service) applyBatchLocked(ctx context.Context, request *rpc.ApplyBatchR
 		if receipt.Fingerprint != fingerprint {
 			return nil, status.Error(codes.AlreadyExists, "request payload changed")
 		}
-		if err = verifyPreparedTree(ctx, fd, r, commit); err != nil {
+		if err = verifyPreparedTree(ctx, fd, r); err != nil {
 			return nil, storageError(err)
 		}
 		return receipt, nil
@@ -85,7 +85,7 @@ func (s *Service) applyBatchLocked(ctx context.Context, request *rpc.ApplyBatchR
 		if err = ctx.Err(); err != nil {
 			return nil, storageError(err)
 		}
-		content, readErr := readPath(fd, commit+"/tree/"+path)
+		content, readErr := readPath(fd, "blobs/"+r.Hashes[path])
 		if readErr != nil {
 			return nil, storageError(readErr)
 		}
@@ -141,6 +141,14 @@ func (s *Service) applyBatchLocked(ctx context.Context, request *rpc.ApplyBatchR
 	}
 	receipt := &rpc.MutationReceipt{WorkspaceInstanceId: request.WorkspaceInstanceId, RequestId: request.RequestId,
 		OperationId: request.OperationId, Fingerprint: fingerprint, Revision: r.Snapshot.Revision, Changed: changed}
+	for _, c := range request.Changes {
+		if c.Kind != "DELETE" {
+			if receipt.ContentSha256 == nil {
+				receipt.ContentSha256 = map[string]string{}
+			}
+			receipt.ContentSha256[c.Path] = sum([]byte(c.Content))
+		}
+	}
 	if r.Mutations == nil {
 		r.Mutations = map[string]*rpc.MutationReceipt{}
 	}
@@ -161,7 +169,7 @@ func (s *Service) applyBatchLocked(ctx context.Context, request *rpc.ApplyBatchR
 // QueryMutation distinguishes an absent committed receipt from unavailable or
 // corrupt authority. Absence alone does not prove a delayed Apply cannot commit.
 func (s *Service) QueryMutation(ctx context.Context, request *rpc.QueryMutationRequest) (*rpc.MutationReceipt, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +182,7 @@ func (s *Service) QueryMutation(ctx context.Context, request *rpc.QueryMutationR
 		return nil, err
 	}
 	defer syscall.Close(fd)
-	r, commit, err := latest(fd, request.WorkspaceInstanceId)
+	r, _, err := latest(fd, request.WorkspaceInstanceId)
 	if errors.Is(err, errNoCommit) {
 		return nil, status.Error(codes.NotFound, "no committed mutation")
 	}
@@ -184,7 +192,7 @@ func (s *Service) QueryMutation(ctx context.Context, request *rpc.QueryMutationR
 	if r.Snapshot.Cancelled {
 		return nil, status.Error(codes.FailedPrecondition, "workspace cancelled")
 	}
-	if err = verifyPreparedTree(ctx, fd, r, commit); err != nil {
+	if err = verifyPreparedTree(ctx, fd, r); err != nil {
 		return nil, storageError(err)
 	}
 	receipt := r.Mutations[request.RequestId]
@@ -208,7 +216,7 @@ func mutationFingerprint(request *rpc.ApplyBatchRequest) (string, error) {
 			return "", status.Error(codes.InvalidArgument, "invalid or duplicate path")
 		}
 		seen[change.Path] = true
-		if isGuidancePath(change.Path) || !(strings.HasPrefix(change.Path, "src/main/java/") || strings.HasPrefix(change.Path, "src/test/java/")) {
+		if !editablePath(change.Path) {
 			return "", status.Error(codes.PermissionDenied, "path is not editable")
 		}
 		if change.Kind != "CREATE" && change.Kind != "UPDATE" && change.Kind != "DELETE" {
@@ -251,4 +259,8 @@ func validateContentLimits(files map[string]string) error {
 		}
 	}
 	return nil
+}
+
+func editablePath(path string) bool {
+	return !isGuidancePath(path) && (strings.HasPrefix(path, "src/main/java/") || strings.HasPrefix(path, "src/test/java/"))
 }

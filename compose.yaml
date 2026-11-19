@@ -21,6 +21,8 @@ services:
     environment:
       SERVER_ADDRESS: "0.0.0.0"
       JAVA_PORT: "8080"
+      EXERCISE_MAX_UNFINISHED: ${EXERCISE_MAX_UNFINISHED:-1}
+      HOST_LLM_PROXY_TOKEN_TTL: ${HOST_LLM_PROXY_TOKEN_TTL:-60m}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
@@ -71,9 +73,15 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     environment: &sandbox-env
+      SANDBOX_ARCHIVE_ENDPOINT: ${SANDBOX_ARCHIVE_ENDPOINT:-}
+      SANDBOX_ARCHIVE_BUCKET: ${SANDBOX_ARCHIVE_BUCKET:-}
+      SANDBOX_ARCHIVE_REGION: ${SANDBOX_ARCHIVE_REGION:-}
+      SANDBOX_ARCHIVE_ACCESS_KEY: ${SANDBOX_ARCHIVE_ACCESS_KEY:-}
+      SANDBOX_ARCHIVE_SECRET_KEY: ${SANDBOX_ARCHIVE_SECRET_KEY:-}
       SANDBOX_PORT: "9090"
       SANDBOX_RPC_KEY: ${SANDBOX_RPC_KEY:-}
       SANDBOX_EXECUTION_VOLUME: "${COMPOSE_PROJECT_NAME}_sandbox-data"
+      SANDBOX_PTY_IDLE_TIMEOUT: ${SANDBOX_PTY_IDLE_TIMEOUT:-30m}
       SANDBOX_EXECUTION_CONCURRENCY: ${SANDBOX_EXECUTION_CONCURRENCY:-4}
       SANDBOX_COMMAND_NETWORK: "${COMPOSE_PROJECT_NAME}_command-egress"
       SANDBOX_RPC_BIND: "172.29.0.2"
@@ -120,6 +128,25 @@ services:
         read_only: true
         bind:
           create_host_path: false
+  minio:
+    profiles: [s3, minio]
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: [server, /data]
+    environment:
+      MINIO_ROOT_USER: ${SANDBOX_ARCHIVE_ACCESS_KEY:-}
+      MINIO_ROOT_PASSWORD: ${SANDBOX_ARCHIVE_SECRET_KEY:-}
+    entrypoint: ["sh", "-ec", 'test -n "$$MINIO_ROOT_USER"; test -n "$$MINIO_ROOT_PASSWORD"; exec minio "$$@"', "--"]
+    volumes:
+      - archive-data:/data
+  archive-init:
+    profiles: [s3, minio]
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on: [minio]
+    environment:
+      ARCHIVE_KEY: ${SANDBOX_ARCHIVE_ACCESS_KEY:-}
+      ARCHIVE_SECRET: ${SANDBOX_ARCHIVE_SECRET_KEY:-}
+      ARCHIVE_BUCKET: ${SANDBOX_ARCHIVE_BUCKET:-}
+    entrypoint: ["sh", "-ec", 'test -n "$$ARCHIVE_BUCKET"; for n in $$(seq 1 30); do mc alias set archive http://minio:9000 "$$ARCHIVE_KEY" "$$ARCHIVE_SECRET" >/dev/null && exec mc mb --ignore-existing "archive/$$ARCHIVE_BUCKET"; sleep 1; done; exit 1']
   postgres:
     image: postgres@sha256:748a18a54d3842d43bc156f0840d78029b8d349e0feca98c12b9c4ce3404a6b3
     environment:
@@ -181,6 +208,7 @@ networks:
       config:
         - subnet: 172.31.0.0/24
 volumes:
+  archive-data:
   sandbox-data:
   sandbox-secondary-data:
   rabbitmq-data:

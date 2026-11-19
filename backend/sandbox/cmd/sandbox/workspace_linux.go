@@ -65,6 +65,15 @@ func registerWorkspace(server *grpc.Server, key, volume string) (func() error, e
 			return close, errors.Join(err, docker.Close())
 		}
 		close = func() error { cancel(); runner.Wait(); return errors.Join(runner.Close(), docker.Close()) }
+		if value := os.Getenv("SANDBOX_PTY_IDLE_TIMEOUT"); value != "" {
+			timeout, parseErr := time.ParseDuration(value)
+			if parseErr != nil {
+				return close, fmt.Errorf("invalid PTY idle timeout: %w", parseErr)
+			}
+			if err := runner.ConfigureTerminalIdleTimeout(timeout); err != nil {
+				return close, err
+			}
+		}
 		concurrency := 4
 		if value := os.Getenv("SANDBOX_EXECUTION_CONCURRENCY"); value != "" {
 			concurrency, err = strconv.Atoi(value)
@@ -139,6 +148,9 @@ func registerWorkspace(server *grpc.Server, key, volume string) (func() error, e
 	service, err := workspace.NewService("/var/lib/codecraft/workspaces", publications, key, runtime)
 	if err != nil {
 		return close, fmt.Errorf("initialize workspace storage: %w", err)
+	}
+	if err = service.ConfigureFrozenArchive(workspace.S3Config{Endpoint: os.Getenv("SANDBOX_ARCHIVE_ENDPOINT"), Bucket: os.Getenv("SANDBOX_ARCHIVE_BUCKET"), Region: os.Getenv("SANDBOX_ARCHIVE_REGION"), AccessKey: os.Getenv("SANDBOX_ARCHIVE_ACCESS_KEY"), SecretKey: os.Getenv("SANDBOX_ARCHIVE_SECRET_KEY")}); err != nil {
+		return close, err
 	}
 	rpc.RegisterWorkspaceStorageServer(server, service)
 	return close, nil

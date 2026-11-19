@@ -14,7 +14,7 @@ import (
 // Freeze fixes the verified tree revision after a durable close. Its gate receipt
 // is published under the same coordinator as mutations; it never reopens a gate.
 func (s *Service) Freeze(ctx context.Context, request *rpc.CloseGateRequest) (*rpc.GateResponse, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -52,17 +52,24 @@ func (s *Service) Freeze(ctx context.Context, request *rpc.CloseGateRequest) (*r
 	if current.State != "CLOSED" || current.Epoch != request.ExpectedEpoch || current.Epoch == ^uint64(0) {
 		return nil, status.Error(codes.FailedPrecondition, "closed gate epoch required")
 	}
-	record, commit, err := latest(fd, request.WorkspaceInstanceId)
+	record, _, err := latest(fd, request.WorkspaceInstanceId)
 	if err != nil {
 		return nil, storageError(err)
 	}
 	if record.Snapshot.Cancelled || !record.Snapshot.Prepared {
 		return nil, status.Error(codes.FailedPrecondition, "workspace unavailable")
 	}
-	if err := verifyPreparedTree(ctx, fd, record, commit); err != nil {
+	if err := verifyPreparedTree(ctx, fd, record); err != nil {
 		return nil, storageError(err)
 	}
 	receipt := &rpc.GateResponse{WorkspaceInstanceId: request.WorkspaceInstanceId, TransitionId: request.TransitionId, Epoch: current.Epoch + 1, State: "FROZEN", FrozenRevision: record.Snapshot.Revision}
+	if s.archive != nil {
+		sha, err := s.archive.save(ctx, fd, record, append(gates, receipt))
+		if err != nil {
+			return nil, storageError(err)
+		}
+		receipt.ArchiveSha256 = sha
+	}
 	if err := publishGate(ctx, fd, receipt); err != nil {
 		return nil, storageError(err)
 	}
@@ -71,7 +78,7 @@ func (s *Service) Freeze(ctx context.Context, request *rpc.CloseGateRequest) (*r
 
 // QueryFreeze confirms both the immutable receipt and its still-readable tree.
 func (s *Service) QueryFreeze(ctx context.Context, request *rpc.QueryWorkspaceRequest) (*rpc.GateResponse, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +106,7 @@ func (s *Service) QueryFreeze(ctx context.Context, request *rpc.QueryWorkspaceRe
 // It needs no page credential or expired answering deadline; the caller is the
 // authenticated Java lifecycle owner. Unknown execution still remains isolated.
 func (s *Service) StopSystemTask(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.StopTaskResponse, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -183,12 +190,12 @@ func copyGateAuthorized(gates []*rpc.GateResponse, epoch, revision uint64, notAf
 }
 
 func verifyFrozen(ctx context.Context, fd int, receipt *rpc.GateResponse) error {
-	record, commit, err := latest(fd, receipt.WorkspaceInstanceId)
+	record, _, err := latest(fd, receipt.WorkspaceInstanceId)
 	if err != nil {
 		return err
 	}
 	if !record.Snapshot.Prepared || record.Snapshot.Cancelled || record.Snapshot.Revision != receipt.FrozenRevision {
 		return status.Error(codes.DataLoss, "frozen tree identity changed")
 	}
-	return verifyPreparedTree(ctx, fd, record, commit)
+	return verifyPreparedTree(ctx, fd, record)
 }

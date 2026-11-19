@@ -42,7 +42,7 @@ func TestFreezeRejectsUnauthenticatedAndDamagedEvidence(t *testing.T) {
 	if _, err := client.Freeze(authorized(t), changed); status.Code(err) != codes.AlreadyExists {
 		t.Fatalf("changed freeze payload: %v", err)
 	}
-	path := filepath.Join(root, instance, "commit-00000000000000000000", "tree", sourcePath)
+	path := filepath.Join(root, instance, "blobs", fixtureBlobHash())
 	if err := os.WriteFile(path, []byte("corrupt"), 0600); err != nil {
 		t.Fatal(err)
 	}

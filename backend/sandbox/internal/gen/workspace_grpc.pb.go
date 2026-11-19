@@ -35,6 +35,7 @@ const (
 	WorkspaceStorage_QueryGate_FullMethodName               = "/codecraft.workspace.v1.WorkspaceStorage/QueryGate"
 	WorkspaceStorage_OpenGate_FullMethodName                = "/codecraft.workspace.v1.WorkspaceStorage/OpenGate"
 	WorkspaceStorage_Freeze_FullMethodName                  = "/codecraft.workspace.v1.WorkspaceStorage/Freeze"
+	WorkspaceStorage_HydrateFrozen_FullMethodName           = "/codecraft.workspace.v1.WorkspaceStorage/HydrateFrozen"
 	WorkspaceStorage_QueryFreeze_FullMethodName             = "/codecraft.workspace.v1.WorkspaceStorage/QueryFreeze"
 	WorkspaceStorage_ApplyBatch_FullMethodName              = "/codecraft.workspace.v1.WorkspaceStorage/ApplyBatch"
 	WorkspaceStorage_QueryMutation_FullMethodName           = "/codecraft.workspace.v1.WorkspaceStorage/QueryMutation"
@@ -83,6 +84,7 @@ type WorkspaceStorageClient interface {
 	QueryGate(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*GateResponse, error)
 	OpenGate(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error)
 	Freeze(ctx context.Context, in *CloseGateRequest, opts ...grpc.CallOption) (*GateResponse, error)
+	HydrateFrozen(ctx context.Context, in *HydrateFrozenRequest, opts ...grpc.CallOption) (*GateResponse, error)
 	QueryFreeze(ctx context.Context, in *QueryWorkspaceRequest, opts ...grpc.CallOption) (*GateResponse, error)
 	ApplyBatch(ctx context.Context, in *ApplyBatchRequest, opts ...grpc.CallOption) (*MutationReceipt, error)
 	QueryMutation(ctx context.Context, in *QueryMutationRequest, opts ...grpc.CallOption) (*MutationReceipt, error)
@@ -271,6 +273,16 @@ func (c *workspaceStorageClient) Freeze(ctx context.Context, in *CloseGateReques
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GateResponse)
 	err := c.cc.Invoke(ctx, WorkspaceStorage_Freeze_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workspaceStorageClient) HydrateFrozen(ctx context.Context, in *HydrateFrozenRequest, opts ...grpc.CallOption) (*GateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GateResponse)
+	err := c.cc.Invoke(ctx, WorkspaceStorage_HydrateFrozen_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -506,6 +518,7 @@ type WorkspaceStorageServer interface {
 	QueryGate(context.Context, *QueryWorkspaceRequest) (*GateResponse, error)
 	OpenGate(context.Context, *CloseGateRequest) (*GateResponse, error)
 	Freeze(context.Context, *CloseGateRequest) (*GateResponse, error)
+	HydrateFrozen(context.Context, *HydrateFrozenRequest) (*GateResponse, error)
 	QueryFreeze(context.Context, *QueryWorkspaceRequest) (*GateResponse, error)
 	ApplyBatch(context.Context, *ApplyBatchRequest) (*MutationReceipt, error)
 	QueryMutation(context.Context, *QueryMutationRequest) (*MutationReceipt, error)
@@ -587,6 +600,9 @@ func (UnimplementedWorkspaceStorageServer) OpenGate(context.Context, *CloseGateR
 }
 func (UnimplementedWorkspaceStorageServer) Freeze(context.Context, *CloseGateRequest) (*GateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Freeze not implemented")
+}
+func (UnimplementedWorkspaceStorageServer) HydrateFrozen(context.Context, *HydrateFrozenRequest) (*GateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method HydrateFrozen not implemented")
 }
 func (UnimplementedWorkspaceStorageServer) QueryFreeze(context.Context, *QueryWorkspaceRequest) (*GateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryFreeze not implemented")
@@ -950,6 +966,24 @@ func _WorkspaceStorage_Freeze_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WorkspaceStorageServer).Freeze(ctx, req.(*CloseGateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkspaceStorage_HydrateFrozen_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HydrateFrozenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceStorageServer).HydrateFrozen(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkspaceStorage_HydrateFrozen_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceStorageServer).HydrateFrozen(ctx, req.(*HydrateFrozenRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1348,6 +1382,10 @@ var WorkspaceStorage_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Freeze",
 			Handler:    _WorkspaceStorage_Freeze_Handler,
+		},
+		{
+			MethodName: "HydrateFrozen",
+			Handler:    _WorkspaceStorage_HydrateFrozen_Handler,
 		},
 		{
 			MethodName: "QueryFreeze",

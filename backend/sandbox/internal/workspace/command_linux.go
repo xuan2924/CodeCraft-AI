@@ -18,7 +18,7 @@ import (
 // StartCommand shares the executor's durable admission, cancellation tombstones
 // and global slot. Its independent mutable copy is never authority-test input.
 func (s *Service) StartCommand(ctx context.Context, request *rpc.StartCommandRequest) (*rpc.CommandSnapshot, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func (s *Service) queryCommandLocked(ctx context.Context, request *rpc.QueryTask
 // QueryCommand reads an exact owned execution and its synchronization receipt;
 // it never starts, stops, or publishes files. A missing registered copy is data loss.
 func (s *Service) QueryCommand(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.CommandSnapshot, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func (s *Service) QueryCommand(ctx context.Context, request *rpc.QueryTaskReques
 // SynchronizeCommand reconciles only a proven-quiescent command using its
 // original gate, deadline, and baseline. Repeats reuse the durable mutation receipt.
 func (s *Service) SynchronizeCommand(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.CommandSnapshot, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,7 @@ func (s *Service) SynchronizeCommand(ctx context.Context, request *rpc.QueryTask
 // ReadCommandChanges reads the retained baseline/final text diff without writing.
 // Active processes and candidates without a valid captured file tree are unavailable.
 func (s *Service) ReadCommandChanges(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.CommandChanges, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -213,12 +213,12 @@ func (s *Service) ReadCommandChanges(ctx context.Context, request *rpc.QueryTask
 		return nil, storageError(err)
 	}
 	defer syscall.Close(fd)
-	return commandChanges(fd, record)
+	return commandChanges(parent, fd, record)
 }
 
 func (s *Service) completeCommand(ctx context.Context, result execution.Result) error {
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("x-codecraft-internal-key", s.key))
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, result.Input.WorkspaceID)
 	if err != nil {
 		return err
 	}

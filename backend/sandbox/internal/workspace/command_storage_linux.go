@@ -38,28 +38,10 @@ func (s *Service) prepareCommandLocked(ctx context.Context, input execution.Inpu
 		return err
 	}
 	defer syscall.Close(fd)
-	if input.Command.Terminal {
-		cache, err := directory(fd, "dev-cache", true)
-		if err != nil {
-			return err
-		}
-		for _, name := range []string{"home", "maven", "npm", "go-build", "go-mod"} {
-			child, createErr := directory(cache, name, true)
-			if createErr != nil {
-				syscall.Close(cache)
-				return createErr
-			}
-			syscall.Close(child)
-		}
-		syncErr := syscall.Fsync(cache)
-		syscall.Close(cache)
-		if syncErr != nil {
-			return syncErr
-		}
-		if err := syscall.Fsync(fd); err != nil {
-			return err
-		}
+	if err := prepareDevCache(fd); err != nil {
+		return err
 	}
+
 	existing, commandFD, err := openCommand(fd, input.WorkspaceID, input.ExecutionID)
 	if err == nil {
 		syscall.Close(commandFD)
@@ -71,7 +53,7 @@ func (s *Service) prepareCommandLocked(ctx context.Context, input execution.Inpu
 	if !errors.Is(err, syscall.ENOENT) {
 		return storageError(err)
 	}
-	current, commit, err := latest(fd, input.WorkspaceID)
+	current, _, err := latest(fd, input.WorkspaceID)
 	if err != nil {
 		return storageError(err)
 	}
@@ -93,25 +75,21 @@ func (s *Service) prepareCommandLocked(ctx context.Context, input execution.Inpu
 		return err
 	}
 	defer syscall.Close(staged)
-	for _, name := range []string{"base", "tree"} {
-		child, err := directory(staged, name, true)
-		if err != nil {
-			return err
-		}
-		syscall.Close(child)
+	tree, err := directory(staged, "tree", true)
+	if err != nil {
+		return err
 	}
+	syscall.Close(tree)
 	for path, hash := range current.Hashes {
 		if err = ctx.Err(); err != nil {
 			return err
 		}
-		content, err := readPath(fd, commit+"/tree/"+path)
+		content, err := readPath(fd, "blobs/"+hash)
 		if err != nil || sum(content) != hash {
 			return status.Error(codes.DataLoss, "command base integrity failure")
 		}
-		for _, prefix := range []string{"base/", "tree/"} {
-			if err = writePath(staged, prefix+path, content); err != nil {
-				return err
-			}
+		if err = writePath(staged, "tree/"+path, content); err != nil {
+			return err
 		}
 	}
 	if err = commandDirectory(staged, input.Command.Directory); err != nil {
@@ -258,7 +236,7 @@ func commandFiles(ctx context.Context, parent int) (map[string]string, error) {
 	return files, err
 }
 
-func commandChanges(parent int, record *commandRecord) (*rpc.CommandChanges, error) {
+func commandChanges(workspace, parent int, record *commandRecord) (*rpc.CommandChanges, error) {
 	if record.FinalHashes == nil {
 		return nil, status.Error(codes.FailedPrecondition, "command changes not confirmed")
 	}
@@ -281,9 +259,12 @@ func commandChanges(parent int, record *commandRecord) (*rpc.CommandChanges, err
 		if existed && exists && oldHash == newHash {
 			continue
 		}
+		if !validPath(path) || (existed && !digest.MatchString(oldHash)) || (exists && !digest.MatchString(newHash)) {
+			return nil, status.Error(codes.DataLoss, "invalid command file reference")
+		}
 		change := &rpc.WorkspaceFileDifference{Change: &rpc.FileChange{Path: path, Kind: "UPDATE"}}
 		if existed {
-			content, err := readPath(parent, "base/"+path)
+			content, err := readPath(workspace, "blobs/"+oldHash)
 			if err != nil || sum(content) != oldHash {
 				return nil, status.Error(codes.DataLoss, "command base integrity failure")
 			}
@@ -342,7 +323,7 @@ func (s *Service) synchronizeCommandLocked(ctx context.Context, result execution
 			return nil, err
 		}
 	}
-	changes, err := commandChanges(fd, record)
+	changes, err := commandChanges(parent, fd, record)
 	if err != nil {
 		return nil, err
 	}
@@ -375,4 +356,25 @@ func (s *Service) synchronizeCommandLocked(ctx context.Context, result execution
 		}
 	}
 	return record, saveCommand(fd, record)
+}
+
+func prepareDevCache(fd int) error {
+	cache, err := directory(fd, "dev-cache", true)
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"home", "maven", "npm", "go-build", "go-mod"} {
+		child, createErr := directory(cache, name, true)
+		if createErr != nil {
+			syscall.Close(cache)
+			return createErr
+		}
+		syscall.Close(child)
+	}
+	syncErr := syscall.Fsync(cache)
+	syscall.Close(cache)
+	if syncErr != nil {
+		return syncErr
+	}
+	return syscall.Fsync(fd)
 }

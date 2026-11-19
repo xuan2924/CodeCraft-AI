@@ -15,7 +15,7 @@ import (
 // DeleteWorkspace first persists an irreversible admission fence, then removes
 // payloads only when execution cleanup is confirmed. A failure never reopens it.
 func (s *Service) DeleteWorkspace(ctx context.Context, request *rpc.QueryWorkspaceRequest) (*rpc.WorkspaceDeletionReceipt, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}

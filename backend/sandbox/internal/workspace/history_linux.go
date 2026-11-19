@@ -28,7 +28,7 @@ func (s *Service) PreviewWorkspaceHistory(ctx context.Context, request *rpc.Work
 	if request.Mode == "ROLLBACK" && request.TargetRevision != request.BaseRevision && request.TargetRevision != request.ResultRevision || request.Mode != "ROLLBACK" && request.TargetRevision != 0 {
 		return nil, status.Error(codes.InvalidArgument, "invalid history target")
 	}
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func historyVersions(ctx context.Context, parent int, workspace string, revision
 			if err = ctx.Err(); err != nil {
 				return nil, storageError(err)
 			}
-			content, readErr := readPath(parent, name+"/tree/"+path)
+			content, readErr := readPath(parent, "blobs/"+record.Hashes[path])
 			if readErr != nil {
 				return nil, storageError(readErr)
 			}

@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -34,7 +36,7 @@ type storageMeter struct {
 // A durable scope union is essential: an older Java request may arrive after a
 // newly added instance/execution has already been measured and its credit settled.
 func (s *Service) MeasureExerciseStorage(ctx context.Context, request *rpc.MeasureExerciseStorageRequest) (*rpc.StorageMeasurement, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, "meter:"+request.GetExerciseId())
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +91,15 @@ func (s *Service) MeasureExerciseStorage(ctx context.Context, request *rpc.Measu
 	defer owned.Close()
 	if err = cleanupMeterStages(ctx, owned, "usage-stage-"+request.ExerciseId+"-"); err != nil {
 		return nil, storageError(err)
+	}
+	// Stable acquisition order across overlapping meter scopes. A measurement sees
+	// either side of a publication/GC, never a half-built directory.
+	for _, id := range slices.Sorted(maps.Keys(meter.Instances)) {
+		unlock, err := s.locks.acquire(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
 	}
 	var total uint64
 	for id := range meter.Instances {

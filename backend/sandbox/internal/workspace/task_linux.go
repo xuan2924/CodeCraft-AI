@@ -20,7 +20,7 @@ import (
 // StartTest orders copy publication and durable execution admission with writes
 // and CloseGate. Once registered, page takeover does not cancel the worker.
 func (s *Service) StartTest(ctx context.Context, request *rpc.StartTestRequest) (*rpc.TestTaskSnapshot, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func (s *Service) checkTaskGate(request *rpc.StartTestRequest) error {
 // QueryTask validates the complete identity, never launches work, and does not
 // infer safe retry from absence. Java must fence an unknown dispatch first.
 func (s *Service) QueryTask(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.TestTaskSnapshot, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (s *Service) QueryTask(ctx context.Context, request *rpc.QueryTaskRequest) 
 // StopTask shares the workspace gate coordinator with takeover and revocation.
 // Its RPC lifetime authorizes the intent only; the execution owner reclaims work.
 func (s *Service) StopTask(ctx context.Context, request *rpc.StopTaskRequest) (*rpc.StopTaskResponse, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetTask().GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +214,7 @@ func (s *Service) StopTask(ctx context.Context, request *rpc.StopTaskRequest) (*
 
 // ListExecutions pages identities without buffering report/log bodies.
 func (s *Service) ListExecutions(ctx context.Context, request *rpc.ExecutionInventoryRequest) (*rpc.ExecutionInventory, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, "")
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +246,7 @@ func (s *Service) ListExecutions(ctx context.Context, request *rpc.ExecutionInve
 
 // QueryStop recovers the original receipt even when its write authority expired.
 func (s *Service) QueryStop(ctx context.Context, request *rpc.QueryTaskRequest) (*rpc.StopTaskResponse, error) {
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, request.GetWorkspaceInstanceId())
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +381,7 @@ func (s *Service) releaseTestCopy(ctx context.Context, result execution.Result) 
 		return fmt.Errorf("cannot release active input")
 	}
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("x-codecraft-internal-key", s.key))
-	release, err := s.enter(ctx)
+	release, err := s.enter(ctx, result.Input.WorkspaceID)
 	if err != nil {
 		return err
 	}

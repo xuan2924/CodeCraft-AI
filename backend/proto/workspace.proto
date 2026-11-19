@@ -28,6 +28,7 @@ service WorkspaceStorage {
   rpc QueryGate(QueryWorkspaceRequest) returns (GateResponse);
   rpc OpenGate(CloseGateRequest) returns (GateResponse);
   rpc Freeze(CloseGateRequest) returns (GateResponse);
+  rpc HydrateFrozen(HydrateFrozenRequest) returns (GateResponse);
   rpc QueryFreeze(QueryWorkspaceRequest) returns (GateResponse);
   rpc ApplyBatch(ApplyBatchRequest) returns (MutationReceipt);
   rpc QueryMutation(QueryMutationRequest) returns (MutationReceipt);
@@ -111,6 +112,7 @@ message ReadWorkspaceFileResponse {
   uint64 revision = 2;
   string path = 3;
   string content = 4;
+  string content_sha256 = 5;
 }
 // Search only the verified published tree at an exact saved revision.
 message GrepWorkspaceRequest {
@@ -137,6 +139,12 @@ message CloseGateRequest {
   string transition_id = 2;
   uint64 expected_epoch = 3;
 }
+message HydrateFrozenRequest {
+  string workspace_instance_id = 1;
+  string freeze_operation_id = 2;
+  string archive_sha256 = 3;
+  string destination_storage_id = 4;
+}
 message GateResponse {
   string workspace_instance_id = 1;
   string transition_id = 2;
@@ -144,6 +152,7 @@ message GateResponse {
   string state = 4;
   // Only meaningful for FROZEN; transition_id identifies the freeze operation.
   uint64 frozen_revision = 5;
+  string archive_sha256 = 6;
 }
 // CREATE and DELETE together represent an atomic rename. Duplicate paths are rejected.
 message FileChange {
@@ -173,6 +182,7 @@ message MutationReceipt {
   string fingerprint = 4;
   uint64 revision = 5;
   bool changed = 6;
+  map<string,string> content_sha256 = 7;
 }
 message PrepareTestCopyRequest {
   string workspace_instance_id = 1;
@@ -399,4 +409,5 @@ message WorkspaceSnapshot {
   bool prepared = 5;
   bool cancelled = 6;
   repeated string paths = 7;
+  map<string,string> content_sha256 = 8;
 }
