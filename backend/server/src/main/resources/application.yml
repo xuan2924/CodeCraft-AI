@@ -55,6 +55,8 @@ mybatis:
     default-statement-timeout: 2
     local-cache-scope: STATEMENT
 workspace:
+  admission:
+    max-unfinished: ${EXERCISE_MAX_UNFINISHED:1}
   sandbox:
     nodes: ${SANDBOX_NODES:}
   sandbox-host: ${SANDBOX_HOST:127.0.0.1}
@@ -75,6 +77,8 @@ copilot:
     base-url: ${COPILOT_WEB_BASE_URL:https://api.tavily.com/}
     timeout: ${COPILOT_WEB_TIMEOUT:20s}
 model:
+  proxy:
+    token-ttl: ${HOST_LLM_PROXY_TOKEN_TTL:60m}
   credential-rotation:
     enabled: ${MODEL_CREDENTIAL_ROTATION_ENABLED:false}
   security:

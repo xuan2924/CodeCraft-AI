@@ -17,6 +17,7 @@ import ai.codecraft.modules.workspace.config.FinalizationProperties;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceTransitionEntity;
 import io.grpc.Status;
+import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
 import ai.codecraft.modules.workspace.model.dto.TestEvidenceResponse;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
@@ -42,6 +43,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class FinalizationStoreTest {
+    private final StorageMeasurement measurement = new StorageMeasurement("exercise", "A".repeat(26), 1, 0);
     private static final Instant START = Instant.parse("2026-01-01T00:00:00Z");
 
     @Test
@@ -50,13 +52,13 @@ class FinalizationStoreTest {
         TestTaskEntity unknown = fixture.task("unknown", "INTERRUPTED", false, 7);
         when(fixture.tasks.find("unknown")).thenReturn(unknown);
         fixture.clock.now = START.plusSeconds(600);
-        assertNull(fixture.service().advance("exercise"));
+        assertNull(fixture.service().advance("exercise", measurement));
         assertEquals("UNAVAILABLE", fixture.service().find("exercise").verification());
         assertEquals(START.plusSeconds(600), fixture.service().find("exercise").endedAt());
         assertEquals(false, fixture.tasks.find("unknown").quiescent());
         when(fixture.finals.reusable("exercise", "workspace", 7)).thenReturn(fixture.task("late", "PASSED", true, 7));
         fixture.clock.now = START.plusSeconds(601);
-        fixture.service().advance("exercise");
+        fixture.service().advance("exercise", measurement);
         assertEquals("UNAVAILABLE", fixture.service().find("exercise").verification());
     }
 
@@ -65,7 +67,7 @@ class FinalizationStoreTest {
         Fixture fixture = new Fixture(1, "confirmed");
         when(fixture.finals.reusable("exercise", "workspace", 7)).thenReturn(fixture.task("confirmed", "PASSED", true, 7));
         fixture.clock.now = START.plusSeconds(600);
-        fixture.service().advance("exercise");
+        fixture.service().advance("exercise", measurement);
         assertEquals("PASSED", fixture.service().find("exercise").verification());
         assertEquals("confirmed", fixture.service().find("exercise").resultTaskId());
     }
@@ -78,7 +80,7 @@ class FinalizationStoreTest {
         when(fixture.finals.outstanding("exercise")).thenReturn(List.of(old, current));
         assertEquals(List.of(old), fixture.service().cancellationTargets("exercise"));
         fixture.clock.now = START.plusSeconds(600);
-        fixture.service().advance("exercise");
+        fixture.service().advance("exercise", measurement);
         assertEquals(List.of(old, current), fixture.service().cancellationTargets("exercise"));
     }
 
@@ -87,10 +89,10 @@ class FinalizationStoreTest {
         Fixture fixture = new Fixture(0, null);
         when(fixture.finals.reusable("exercise", "workspace", 7)).thenReturn(fixture.task("old", "PASSED", true, 6));
         when(fixture.tasks.occupiedExercise("exercise")).thenReturn(1);
-        assertNull(fixture.service().advance("exercise"));
+        assertNull(fixture.service().advance("exercise", measurement));
         assertEquals("PENDING", fixture.service().find("exercise").verification());
         when(fixture.finals.reusable("exercise", "workspace", 7)).thenReturn(fixture.task("matching", "PASSED", true, 7));
-        fixture.service().advance("exercise");
+        fixture.service().advance("exercise", measurement);
         assertEquals("PASSED", fixture.service().find("exercise").verification());
         assertEquals("matching", fixture.service().find("exercise").resultTaskId());
         assertEquals(0, fixture.service().find("exercise").attempts());
@@ -100,20 +102,20 @@ class FinalizationStoreTest {
     void environmentFailureWaitsPersistedBackoffAndNeverRunsBesideUnknownTask() throws Exception {
         Fixture fixture = new Fixture(1, "first");
         when(fixture.tasks.find("first")).thenReturn(fixture.task("first", "ENVIRONMENT_ERROR", true, 7));
-        fixture.service().advance("exercise");
+        fixture.service().advance("exercise", measurement);
         assertEquals(START.plusSeconds(5), fixture.service().find("exercise").nextAttemptAt());
         fixture.clock.now = START.plusSeconds(4);
-        assertNull(fixture.service().advance("exercise"));
+        assertNull(fixture.service().advance("exercise", measurement));
         assertEquals(1, fixture.service().find("exercise").attempts());
         fixture.clock.now = START.plusSeconds(5);
         when(fixture.tasks.occupiedExercise("exercise")).thenReturn(1);
-        assertNull(fixture.service().advance("exercise"));
+        assertNull(fixture.service().advance("exercise", measurement));
         assertEquals(1, fixture.service().find("exercise").attempts());
         when(fixture.tasks.occupiedExercise("exercise")).thenReturn(0);
         when(fixture.tasks.occupied()).thenReturn(4);
-        assertNull(fixture.service().advance("exercise"));
+        assertNull(fixture.service().advance("exercise", measurement));
         when(fixture.tasks.occupied()).thenReturn(3);
-        TestTaskEntity second = fixture.service().advance("exercise");
+        TestTaskEntity second = fixture.service().advance("exercise", measurement);
         assertEquals(START.plusSeconds(600), second.notAfter());
         assertEquals(2, fixture.service().find("exercise").attempts());
         assertEquals(second.id(), fixture.service().find("exercise").currentTaskId());
@@ -155,7 +157,7 @@ class FinalizationStoreTest {
     void exhaustedAttemptsEndWithoutDeclaringAnUnknownExecutionQuiescent() throws Exception {
         Fixture fixture = new Fixture(3, "third");
         when(fixture.tasks.find("third")).thenReturn(fixture.task("third", "INTERRUPTED", false, 7));
-        fixture.service().advance("exercise");
+        fixture.service().advance("exercise", measurement);
         assertEquals("UNAVAILABLE", fixture.service().find("exercise").verification());
         assertEquals(false, fixture.tasks.find("third").quiescent());
     }
@@ -208,7 +210,7 @@ class FinalizationStoreTest {
         when(fixture.exercises.challengeEntered("exercise")).thenReturn(true);
         when(fixture.problems.challenge("problem")).thenReturn(new ProblemVersionEntity("problem", "cart-challenge", "1", "c".repeat(64), "sha256:" + "d".repeat(64), "linux/amd64", "{}"));
         when(fixture.finals.reusable("exercise", "workspace", 7)).thenReturn(fixture.task("base-pass", "PASSED", true, 7));
-        var allocated = fixture.service().advance("exercise");
+        var allocated = fixture.service().advance("exercise", measurement);
         assertEquals("challenge", allocated.target());
         assertEquals(7, allocated.revision());
         assertEquals("PENDING", fixture.value.verification());

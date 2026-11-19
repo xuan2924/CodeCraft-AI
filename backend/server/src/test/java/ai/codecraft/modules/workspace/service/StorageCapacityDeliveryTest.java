@@ -42,7 +42,7 @@ class StorageCapacityDeliveryTest {
         when(exercises.find("exercise")).thenReturn(new ExerciseEntity("exercise", "owner", "problem", "workspace", "prepare", "ACTIVE", 1L,
             "[]", 1, now, now, now.plusSeconds(2700), null, null, null));
         when(exercises.deleted("exercise")).thenAnswer(call -> deleted && completedRpc.get());
-        when(capacity.lock("exercise")).thenReturn(new StorageMeterEntity("exercise", "A".repeat(26), 1, 0, now));
+        when(capacity.lock("exercise")).thenReturn(new StorageMeterEntity("exercise", "A".repeat(26), 1, 250L * 1024 * 1024, now));
         when(gateway.measureStorage(any())).thenAnswer(call -> {
             completedRpc.set(true);
             return new StorageMeasurement("exercise", "A".repeat(26), 2, 1024);

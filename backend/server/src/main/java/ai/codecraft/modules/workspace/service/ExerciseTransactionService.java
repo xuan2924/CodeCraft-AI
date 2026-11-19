@@ -8,6 +8,7 @@ import ai.codecraft.modules.identity.model.exception.IdentityFailure;
 import ai.codecraft.modules.identity.model.exception.IdentityErrorCode;
 import ai.codecraft.modules.workspace.model.dto.PreparationAuthorizationDTO;
 import ai.codecraft.modules.workspace.config.RetentionProperties;
+import ai.codecraft.modules.workspace.config.ExerciseAdmissionProperties;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import ai.codecraft.modules.workspace.model.entity.WorkspaceOperationEntity;
@@ -31,7 +32,7 @@ public class ExerciseTransactionService {
     private final WorkspaceCoordinationStore coordination;
     private final RetentionProperties retention;
     private final StorageCapacityStore capacity;
-    private final ExerciseModelService models;
+    private final ExerciseAdmissionProperties admission;
     private final PlatformBindingService platform;
     private SandboxRoutingStore routing;
 
@@ -39,7 +40,7 @@ public class ExerciseTransactionService {
     public void setRouting(SandboxRoutingStore routing) { this.routing = routing; }
 
     public ExerciseTransactionService(ExerciseRepository repository, IdentityTransactionService identity,
-                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination, RetentionProperties retention, StorageCapacityStore capacity, ExerciseModelService models, PlatformBindingService platform) {
+                                      ProblemTransactionService problems, Clock clock, IdentitySecrets secrets, WorkspaceCoordinationStore coordination, RetentionProperties retention, StorageCapacityStore capacity, ExerciseAdmissionProperties admission, PlatformBindingService platform) {
         this.repository = repository;
         this.identity = identity;
         this.problems = problems;
@@ -48,7 +49,7 @@ public class ExerciseTransactionService {
         this.coordination = coordination;
         this.retention = retention;
         this.capacity = capacity;
-        this.models = models;
+        this.admission = admission;
         this.platform = platform;
     }
 
@@ -66,7 +67,8 @@ public class ExerciseTransactionService {
             if (repository.deleted(previous.exerciseId())) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
             return previous;
         }
-        if (repository.current(user) != null) throw new BusinessException(WorkspaceErrorCode.ACTIVE_EXERCISE_EXISTS);
+        // authorizeMutation holds this user's row lock until insertion commits.
+        if (repository.countUnfinished(user) >= admission.maxUnfinished()) throw new BusinessException(WorkspaceErrorCode.ACTIVE_EXERCISE_EXISTS);
         if (repository.retainedHistory(user) >= retention.historyLimit()) throw new BusinessException(WorkspaceErrorCode.HISTORY_LIMIT_REACHED);
         problems.requireAvailable(version);
         String exercise = UUID.randomUUID().toString();
@@ -95,7 +97,6 @@ public class ExerciseTransactionService {
         coordination.checkControl(id, IdentitySecrets.digest(credential));
         if (repository.receipt(user, "START", id, key) != null) return exercise;
         if (!exercise.state().equals("READY")) throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);
-        models.requireReady(session, id);
         Instant started = clock.instant();
         if (repository.start(id, started, started.plusSeconds(durationSeconds)) != 1) {
             throw new BusinessException(WorkspaceErrorCode.INVALID_STATE);

@@ -14,6 +14,7 @@ import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.workspace.config.RetentionProperties;
+import ai.codecraft.modules.workspace.config.ExerciseAdmissionProperties;
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
 import ai.codecraft.modules.workspace.model.dto.ExecutionCleanupDTO;
 import ai.codecraft.modules.workspace.model.dto.ExerciseHistoryResponse;
@@ -42,7 +43,7 @@ class DeletionStoreTest {
         when(identity.authorization("session")).thenReturn(new SessionAuthorizationDTO("owner", "USER", false, 1, now.plusSeconds(60)));
         when(exercises.find("exercise")).thenReturn(new ExerciseEntity("exercise", "owner", "problem", "workspace", "prepare", "ENDED", 7L, "[]", 1, now, now, now, null, null, null));
         when(exercises.deleted("exercise")).thenReturn(true);
-        ExerciseTransactionService service = new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), Clock.fixed(now, ZoneOffset.UTC), mock(IdentitySecrets.class), mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), mock(ExerciseModelService.class), mock(PlatformBindingService.class));
+        ExerciseTransactionService service = new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), Clock.fixed(now, ZoneOffset.UTC), mock(IdentitySecrets.class), mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), new ExerciseAdmissionProperties(1), mock(PlatformBindingService.class));
         assertThrows(BusinessException.class, () -> service.find("session", "exercise"));
     }
 
@@ -181,7 +182,7 @@ class DeletionStoreTest {
         when(identity.authorizeMutation("session")).thenReturn(new SessionAuthorizationDTO("owner", "USER", false, 1, clock.instant().plusSeconds(60)));
         when(exercises.retainedHistory("owner")).thenReturn(20);
         ExerciseTransactionService service = new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock,
-            mock(IdentitySecrets.class), mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), mock(ExerciseModelService.class), mock(PlatformBindingService.class));
+            mock(IdentitySecrets.class), mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), new ExerciseAdmissionProperties(1), mock(PlatformBindingService.class));
         assertThrows(BusinessException.class, () -> service.create("session", "version", "key"));
         verify(exercises, never()).insert(any());
     }

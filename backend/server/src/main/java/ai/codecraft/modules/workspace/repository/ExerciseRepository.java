@@ -45,8 +45,11 @@ public interface ExerciseRepository {
     @Select("<script>SELECT id::text,state,deadline_at FROM workspace_exercise WHERE id IN <foreach item='id' collection='ids' open='(' separator=',' close=')'>#{id}::uuid</foreach></script>")
     List<ai.codecraft.modules.workspace.model.dto.ExercisePhaseDTO> phases(@Param("ids") List<String> ids);
 
-    @Select("SELECT " + EXERCISE_COLUMNS + " FROM workspace_exercise WHERE user_id = #{user}::uuid AND state <> 'ENDED'")
+    @Select("SELECT " + EXERCISE_COLUMNS + " FROM workspace_exercise WHERE user_id = #{user}::uuid AND state <> 'ENDED' ORDER BY created_at DESC, id DESC LIMIT 1")
     ExerciseEntity current(String user);
+
+    @Select("SELECT count(*) FROM workspace_exercise WHERE user_id = #{user}::uuid AND state <> 'ENDED'")
+    int countUnfinished(String user);
 
     @Select("SELECT count(*) FROM workspace_exercise e WHERE user_id = #{user}::uuid AND state = 'ENDED' AND NOT EXISTS (SELECT 1 FROM workspace_deletion d WHERE d.exercise_id = e.id)")
     int retainedHistory(String user);

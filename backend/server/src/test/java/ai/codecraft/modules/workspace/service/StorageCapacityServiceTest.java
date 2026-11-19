@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 import ai.codecraft.common.exception.BusinessException;
@@ -30,6 +31,15 @@ class StorageCapacityServiceTest {
         }));
         verify(fixture.maintenance).collectForAdmission("exercise", Set.of());
         assertEquals(2, attempts.get());
+        verify(fixture.sandbox, times(2)).measureStorage(fixture.scope);
+    }
+
+    @Test
+    void heavyAdmissionAlwaysCalibratesEvenWithAHealthyCache() {
+        var fixture = new Fixture();
+        when(fixture.store.cachedMeasurement("session", "exercise")).thenReturn(new StorageMeasurement("exercise", "A".repeat(26), 1, 0, true));
+        assertEquals(false, fixture.service.admitHeavy("session", "exercise", StorageMeasurement::cached));
+        verify(fixture.sandbox).measureStorage(fixture.scope);
     }
 
     @Test

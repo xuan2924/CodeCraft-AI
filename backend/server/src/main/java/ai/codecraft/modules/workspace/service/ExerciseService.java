@@ -103,7 +103,7 @@ public class ExerciseService {
 
     public WorkspaceOperationResponse retry(String session, String id, String key) {
         var previous = store.existingRetry(session, id, key);
-        return describe(previous != null ? previous : capacity.admit(session, id, measured -> store.retry(session, id, key, measured)));
+        return describe(previous != null ? previous : capacity.admitHeavy(session, id, measured -> store.retry(session, id, key, measured)));
     }
 
     public WorkspaceOperationResponse abandon(String session, String id, String key) {
@@ -137,7 +137,7 @@ public class ExerciseService {
                 || !result.getPath().equals(path) || result.getRevision() != exercise.revision()) {
                 throw new BusinessException(WorkspaceErrorCode.WORKSPACE_UNAVAILABLE);
             }
-            return new WorkspaceFileResponse(result.getWorkspaceInstanceId(), Long.toString(result.getRevision()), path, result.getContent());
+            return new WorkspaceFileResponse(result.getWorkspaceInstanceId(), Long.toString(result.getRevision()), path, result.getContent(), result.getContentSha256());
         } catch (StatusRuntimeException error) {
             WorkspaceErrorCode code = switch (error.getStatus().getCode()) {
                 case NOT_FOUND -> WorkspaceErrorCode.RESOURCE_NOT_FOUND;

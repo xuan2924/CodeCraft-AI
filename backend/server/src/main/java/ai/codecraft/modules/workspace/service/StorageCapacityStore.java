@@ -56,21 +56,25 @@ public class StorageCapacityStore {
             throw new IllegalStateException("Invalid capacity intent ownership");
         }
         if (exercises.deleted(exercise.id())) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
-        var meter = observe(capacity.lock(exercise.id()), measurement);
+        var locked = capacity.lock(exercise.id());
+        if (measurement != null && measurement.cached()) {
+            // Recompute under the spending lock: another admission or reconciliation may have won the race.
+            if (!usable(locked) || !locked.exerciseId().equals(measurement.exerciseId()) || !locked.meterEpoch().equals(measurement.meterEpoch())) unavailable();
+            if (atHighWatermark(usage(locked), growthBytes)) throw new CalibrationRequired();
+            reserve(operation, growthBytes);
+            return;
+        }
+        var meter = observe(locked, measurement);
         spend(operation, meter, growthBytes);
     }
 
-    /** Cached usage plus unreleased credits is conservative. A denied final
-     * allocation is remeasured by the coordinator outside this transaction.
-     */
     @Transactional(propagation = Propagation.MANDATORY)
-    public void admitFinal(WorkspaceOperationEntity operation) {
+    public void admitFinal(WorkspaceOperationEntity operation, StorageMeasurement measurement) {
         var exercise = exercises.find(operation.exerciseId());
         if (!operation.kind().equals("FINAL_TEST") || exercise == null || !exercise.userId().equals(operation.userId())) {
             throw new IllegalStateException("Invalid final capacity intent");
         }
-        var meter = capacity.lock(operation.exerciseId());
-        if (meter == null || meter.meterEpoch() == null || meter.sequence() < 1) unavailable();
+        var meter = observe(capacity.lock(operation.exerciseId()), measurement);
         spend(operation, meter, FINAL_TEST_GROWTH);
     }
 
@@ -103,13 +107,52 @@ public class StorageCapacityStore {
         }
     }
 
+    static final class CalibrationRequired extends RuntimeException {}
+
+    private boolean usable(StorageMeterEntity meter) {
+        return meter != null && meter.sequence() > 0 && meter.bytes() >= 0 && meter.meterEpoch() != null && meter.meterEpoch().matches("[A-Z2-7]{26}");
+    }
+
+    private StorageBudgetResponse usage(StorageMeterEntity meter) {
+        String id = meter.exerciseId();
+        return new StorageBudgetResponse(limits.maxBytes(), limits.recoveryBytes(), meter.bytes(), databaseBytes(id), capacity.reservedBytes(id), meter.checkedAt());
+    }
+
+    private boolean atHighWatermark(StorageBudgetResponse usage, long growth) {
+        long ordinary = limits.maxBytes() - limits.recoveryBytes();
+        long watermark = ordinary - ordinary / 5; // ceil(80%), without multiplication overflow
+        try {
+            return Math.addExact(Math.addExact(usage.goBytes(), usage.databaseBytes()), Math.addExact(usage.reservedBytes(), growth)) >= watermark;
+        } catch (ArithmeticException overflow) { return true; }
+    }
+
+    @Transactional
+    public StorageMeasurement cachedMeasurement(String session, String id) {
+        authorizedExercise(session, id);
+        var meter = capacity.lock(id);
+        return usable(meter) ? new StorageMeasurement(id, meter.meterEpoch(), meter.sequence(), meter.bytes(), true) : null;
+    }
+
+    @Transactional
+    public StorageBudgetResponse cachedUsage(String session, String id) {
+        authorizedExercise(session, id);
+        var meter = capacity.lock(id);
+        if (!usable(meter)) return null;
+        var budget = usage(meter);
+        return atHighWatermark(budget, 0) ? null : budget;
+    }
+
     @Transactional
     public StorageReconciliationPlan plan(String session, String id) {
+        return planLocked(authorizedExercise(session, id));
+    }
+
+    private ExerciseEntity authorizedExercise(String session, String id) {
         String user = identity.authorizePrivateDelivery(session).userId();
         var exercise = exercises.find(id);
         if (exercise == null || !exercise.userId().equals(user)) throw new BusinessException(WorkspaceErrorCode.RESOURCE_NOT_FOUND);
         if (exercises.deleted(id)) throw new BusinessException(WorkspaceErrorCode.EXERCISE_DELETED);
-        return planLocked(exercise);
+        return exercise;
     }
 
     @Transactional
@@ -157,7 +200,7 @@ public class StorageCapacityStore {
         var converged = new HashSet<>(capacity.settledOperations(id));
         var releasable = plan.completedOperations().stream().filter(converged::contains).distinct().toList();
         for (int offset = 0; offset < releasable.size(); offset += 1000) capacity.release(releasable.subList(offset, Math.min(offset + 1000, releasable.size())));
-        return new StorageBudgetResponse(limits.maxBytes(), limits.recoveryBytes(), meter.bytes(), databaseBytes(id), capacity.reservedBytes(id), meter.checkedAt());
+        return usage(meter);
     }
 
     @Transactional(readOnly = true)
@@ -166,7 +209,7 @@ public class StorageCapacityStore {
     public void attempted(String id) { capacity.attempted(id, clock.instant()); }
 
     private StorageMeterEntity observe(StorageMeterEntity meter, StorageMeasurement measurement) {
-        if (meter == null || measurement == null || !meter.exerciseId().equals(measurement.exerciseId()) || measurement.sequence() < 1 || measurement.bytes() < 0) unavailable();
+        if (meter == null || measurement == null || measurement.cached() || !meter.exerciseId().equals(measurement.exerciseId()) || measurement.sequence() < 1 || measurement.bytes() < 0) unavailable();
         if (measurement.meterEpoch() == null || !measurement.meterEpoch().matches("[A-Z2-7]{26}")) unavailable();
         if (meter.meterEpoch() != null && !meter.meterEpoch().equals(measurement.meterEpoch())) unavailable();
         if (measurement.sequence() < meter.sequence()) return meter;
@@ -179,9 +222,13 @@ public class StorageCapacityStore {
     }
 
     private void spend(WorkspaceOperationEntity operation, StorageMeterEntity meter, long growth) {
-        if (growth < 4096) throw new IllegalArgumentException("Storage growth must cover admission metadata");
         long ceiling = limits.maxBytes() - (operation.kind().equals("FINAL_TEST") ? PROTECTED_RECOVERY : limits.recoveryBytes());
         checkGrowth(operation.exerciseId(), meter, growth, ceiling);
+        reserve(operation, growth);
+    }
+
+    private void reserve(WorkspaceOperationEntity operation, long growth) {
+        if (growth < 4096) throw new IllegalArgumentException("Storage growth must cover admission metadata");
         capacity.reserve(operation.id(), operation.exerciseId(), growth, clock.instant());
     }
 

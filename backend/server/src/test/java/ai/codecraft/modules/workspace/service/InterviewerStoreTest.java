@@ -38,10 +38,9 @@ class InterviewerStoreTest {
     private final IdentityTransactionService identity = mock(IdentityTransactionService.class);
     private final WorkspaceCoordinationStore coordination = mock(WorkspaceCoordinationStore.class);
     private final PlatformBindingService platform = mock(PlatformBindingService.class);
-    private final ExerciseModelService models = mock(ExerciseModelService.class);
     private final StorageCapacityStore capacity = mock(StorageCapacityStore.class);
     private final IdentitySecrets secrets = mock(IdentitySecrets.class);
-    private final InterviewerStore store = new InterviewerStore(tasks, exercises, identity, coordination, platform, models, capacity, secrets, Clock.fixed(now, ZoneOffset.UTC), wakeups, streams);
+    private final InterviewerStore store = new InterviewerStore(tasks, exercises, identity, coordination, platform, capacity, secrets, Clock.fixed(now, ZoneOffset.UTC), wakeups, streams);
 
     private void authorize(String state) {
         var auth = new SessionAuthorizationDTO("owner", "USER", false, 1, now.plusSeconds(3600));
@@ -59,7 +58,7 @@ class InterviewerStoreTest {
         authorize("READY");
         when(platform.version(anyString(), any())).thenThrow(new BusinessException(ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode.WORKSPACE_UNAVAILABLE));
         assertThatThrownBy(() -> store.accept("session", "exercise", "key", "control", "Question", null)).isInstanceOf(BusinessException.class);
-        verify(models).requireReady("session", "exercise");
+        verify(platform).version("exercise", ai.codecraft.modules.platformagent.model.PlatformRole.INTERVIEWER);
         verify(exercises, never()).start(anyString(), any(), any());
         verify(tasks, never()).insert(any());
     }

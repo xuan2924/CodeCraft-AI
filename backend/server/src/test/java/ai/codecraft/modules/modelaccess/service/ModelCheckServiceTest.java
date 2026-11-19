@@ -92,13 +92,13 @@ class ModelCheckServiceTest {
     }
 
     @Test
-    void readoutPreservesOriginalCompletionAndExpiresSuccessAtExactlyThirtyMinutes() {
+    void readoutPreservesOriginalCompletionAndDoesNotExpireMatchingRevisions() {
         when(checks.find("check")).thenReturn(new ModelCheckEntity("check", "owner", "connection", "model", 2, 2, "SUCCEEDED", NOW));
         when(checks.results("check")).thenReturn(List.of(new ModelCheckResultEntity("original", 1, "SUCCEEDED", NOW.minusSeconds(1800), null, true)));
         var response = service.status("session", "check");
         assertEquals(NOW.minusSeconds(1800), response.basic().completedAt());
-        assertEquals(NOW, response.basic().validUntil());
-        assertFalse(response.basic().valid());
+        assertNull(response.basic().validUntil());
+        assertTrue(response.basic().valid());
         assertFalse(response.tool().valid());
     }
 

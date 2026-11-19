@@ -24,9 +24,19 @@ public interface StorageCapacityRepository {
     void reserve(String operation, String exercise, long growth, Instant now);
     @Select("SELECT coalesce(sum(growth_bytes), 0)::bigint FROM workspace_storage_reservation WHERE exercise_id = #{id}::uuid")
     long reservedBytes(String id);
-    @Select("SELECT b.exercise_id::text FROM workspace_storage_budget b WHERE EXISTS (SELECT 1 FROM workspace_storage_reservation r WHERE r.exercise_id = b.exercise_id) ORDER BY b.last_attempt_at, b.exercise_id LIMIT 16")
+    String RESERVATION_SCOPE = " FROM workspace_storage_reservation r LEFT JOIN workspace_operation o ON o.id = r.operation_id "
+        + "LEFT JOIN workspace_test_task t ON t.id = o.id ";
+    String DELETED = "EXISTS (SELECT 1 FROM workspace_deletion d WHERE d.exercise_id = r.exercise_id AND d.state = 'SUCCEEDED')";
+    String SETTLED = "(o.state IN ('SUCCEEDED', 'REJECTED') AND (o.kind NOT IN ('START_TEST', 'FINAL_TEST') OR "
+        + "(t.quiescent AND t.snapshot->>'cleanup' = 'SUCCEEDED' AND t.snapshot->>'copyCleanup' IN ('SUCCEEDED', 'NOT_CREATED'))))";
+
+    // Active light credits roll forward until the next calibration; open heavy work is not releasable yet.
+    @Select("SELECT b.exercise_id::text FROM workspace_storage_budget b JOIN workspace_exercise e ON e.id = b.exercise_id "
+        + "WHERE EXISTS (SELECT 1" + RESERVATION_SCOPE + "WHERE r.exercise_id = b.exercise_id AND (" + DELETED + " OR (" + SETTLED
+        + " AND (e.state = 'ENDED' OR o.kind IN ('PREPARE','PREPARATION_RETRY','START_TEST','FINAL_TEST','START_COMMAND'))))) "
+        + "ORDER BY b.last_attempt_at, b.exercise_id LIMIT 16")
     List<String> pendingExercises();
-    @Select("SELECT r.operation_id::text FROM workspace_storage_reservation r LEFT JOIN workspace_operation o ON o.id = r.operation_id LEFT JOIN workspace_test_task t ON t.id = o.id WHERE r.exercise_id = #{id}::uuid AND (EXISTS (SELECT 1 FROM workspace_deletion d WHERE d.exercise_id = r.exercise_id AND d.state = 'SUCCEEDED') OR (o.state IN ('SUCCEEDED', 'REJECTED') AND (o.kind NOT IN ('START_TEST', 'FINAL_TEST') OR (t.quiescent AND t.snapshot->>'cleanup' = 'SUCCEEDED' AND t.snapshot->>'copyCleanup' IN ('SUCCEEDED', 'NOT_CREATED')))))")
+    @Select("SELECT r.operation_id::text" + RESERVATION_SCOPE + "WHERE r.exercise_id = #{id}::uuid AND (" + DELETED + " OR " + SETTLED + ")")
     List<String> settledOperations(String id);
     @Delete("<script>DELETE FROM workspace_storage_reservation WHERE operation_id IN <foreach item='id' collection='ids' open='(' separator=',' close=')'>#{id}::uuid</foreach></script>")
     int release(@org.apache.ibatis.annotations.Param("ids") List<String> ids);

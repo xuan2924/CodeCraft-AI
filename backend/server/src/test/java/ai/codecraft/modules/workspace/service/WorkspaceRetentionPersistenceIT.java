@@ -21,6 +21,7 @@ import ai.codecraft.modules.identity.service.IdentityRevocationBarrier;
 import ai.codecraft.modules.identity.repository.IdentityRepository;
 import ai.codecraft.modules.identity.repository.RevocationIntentRepository;
 import ai.codecraft.modules.workspace.config.RetentionProperties;
+import ai.codecraft.modules.workspace.config.ExerciseAdmissionProperties;
 import ai.codecraft.modules.workspace.config.FinalizationProperties;
 import ai.codecraft.modules.workspace.model.dto.TestEvidenceResponse;
 import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
@@ -195,7 +196,7 @@ class WorkspaceRetentionPersistenceIT {
         var finals = transactional(new FinalizationStore(new ai.codecraft.modules.workspace.config.ExecutionProperties(4), sql.getMapper(FinalizationRepository.class), exercises, sql.getMapper(WorkspaceWriteRepository.class),
             sql.getMapper(TestTaskRepository.class), sql.getMapper(TaskStreamRepository.class), problems, identity, mock(IdentitySecrets.class), clock,
             new FinalizationProperties(3, 600, 5, 30), new FinalVerificationPolicy(clock), json, mock(StorageCapacityStore.class)), FinalizationStore.class);
-        assertThat(finals.advance(exercise)).isNull();
+        assertThat(finals.advance(exercise, null)).isNull();
         assertThat(finals.find(exercise).resultTaskId()).isEqualTo(passed);
         var history = tasks.recent("session", exercise);
         assertThat(history.tasks()).hasSize(21);
@@ -335,6 +336,44 @@ class WorkspaceRetentionPersistenceIT {
     }
 
     @Test
+    void configuredSecondSlotStillSerializesConcurrentCreationAtTheLimit() throws Exception {
+        var creates = creationStore(2);
+        creates.create("session", problemId, "seed");
+        var results = race(() -> creates.create("session", problemId, "first"), () -> creates.create("session", problemId, "second"));
+        assertThat(results.stream().filter(WorkspaceOperationEntity.class::isInstance).count()).isEqualTo(1);
+        assertThat(results).contains("ACTIVE_EXERCISE_EXISTS");
+        assertThat(exercises.countUnfinished(owner)).isEqualTo(2);
+        assertThat(exercises.current(owner)).isNotNull();
+    }
+
+    @Test
+    void concurrentLightWritesCrossingWatermarkCalibrateOnceWithoutReleasingOpenCredit() throws Exception {
+        jdbc.update("UPDATE workspace_exercise SET state='ACTIVE', ended_at=NULL, retain_until=NULL, started_at=?, deadline_at=? WHERE id=?::uuid",
+            java.sql.Timestamp.from(clock.now), java.sql.Timestamp.from(clock.now.plusSeconds(3600)), exercise);
+        String credential = "A".repeat(43);
+        jdbc.update("UPDATE workspace_control SET gate_state='OPEN', credential_hash=? WHERE exercise_id=?::uuid", IdentitySecrets.digest(credential), exercise);
+        var first = new StorageMeasurement(exercise, "A".repeat(26), 1, 180 * StorageCapacityStore.MIB);
+        capacityStore.reconcile(capacityStore.plan(exercise), first);
+        var gateway = mock(SandboxWorkspaceGateway.class);
+        var service = new StorageCapacityService(capacityStore, gateway, mock(WorkspaceMaintenanceCoordinator.class));
+        var writes = transactional(new WorkspaceWriteTransactionService(identity, fingerprints(), exercises, sql.getMapper(WorkspaceWriteRepository.class), clock, capacityStore), WorkspaceWriteTransactionService.class);
+        String payload = "{}";
+        assertThat(service.usage("session", exercise).goBytes()).isEqualTo(first.bytes());
+        org.mockito.Mockito.verifyNoInteractions(gateway);
+        when(gateway.measureStorage(any())).thenReturn(new StorageMeasurement(exercise, first.meterEpoch(), 2, 1));
+        var results = race(() -> service.admit("session", exercise, m -> writes.batch("session", exercise, "one", credential, payload, 30, m)),
+            () -> service.admit("session", exercise, m -> writes.batch("session", exercise, "two", credential, payload, 30, m)));
+        assertThat(results).allMatch(WorkspaceOperationEntity.class::isInstance);
+        var after = service.usage("session", exercise);
+        assertThat(after.goBytes()).isEqualTo(1);
+        assertThat(after.reservedBytes()).isEqualTo(2 * (StorageCapacityStore.MUTATION_OVERHEAD + payload.length()));
+        for (Object result : results) exercises.operationState(((WorkspaceOperationEntity) result).id(), "SUCCEEDED");
+        assertThat(capacityStore.pendingExercises()).doesNotContain(exercise);
+        assertThat(service.usage("session", exercise).reservedBytes()).isEqualTo(after.reservedBytes());
+        org.mockito.Mockito.verify(gateway).measureStorage(any());
+    }
+
+    @Test
     void concurrentSpaceReservationsAndBusinessIntentRollbackAreAtomic() throws Exception {
         jdbc.update("UPDATE workspace_exercise SET state='ACTIVE', ended_at=NULL, retain_until=NULL, started_at=?, deadline_at=? WHERE id=?::uuid",
             java.sql.Timestamp.from(clock.now), java.sql.Timestamp.from(clock.now.plusSeconds(3600)), exercise);
@@ -361,9 +400,11 @@ class WorkspaceRetentionPersistenceIT {
         assertThat(writes.existingBatch("session", exercise, "rollback", payload)).isNull();
     }
 
-    private ExerciseTransactionService creationStore() {
+    private ExerciseTransactionService creationStore() { return creationStore(1); }
+
+    private ExerciseTransactionService creationStore(int limit) {
         return transactional(new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock, fingerprints(),
-            mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, mock(ExerciseModelService.class), mock(PlatformBindingService.class)), ExerciseTransactionService.class);
+            mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, new ExerciseAdmissionProperties(limit), mock(PlatformBindingService.class)), ExerciseTransactionService.class);
     }
     private IdentitySecrets fingerprints() {
         var secrets = mock(IdentitySecrets.class);

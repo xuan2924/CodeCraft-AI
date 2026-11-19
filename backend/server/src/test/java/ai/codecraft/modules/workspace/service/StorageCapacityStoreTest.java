@@ -46,7 +46,7 @@ class StorageCapacityStoreTest {
             fixture.operation("second", "FILE_BATCH"), fixture.measurement(20, baseline), 16 * MIB));
         assertEquals("STORAGE_BUDGET_EXCEEDED", denied.code());
         assertEquals(24 * MIB, fixture.reservations.values().stream().mapToLong(Long::longValue).sum());
-        fixture.service.admitFinal(fixture.operation("final", "FINAL_TEST"));
+        fixture.service.admitFinal(fixture.operation("final", "FINAL_TEST"), fixture.measurement(20, baseline));
         assertEquals(2, fixture.reservations.size());
     }
 
@@ -60,6 +60,22 @@ class StorageCapacityStoreTest {
         var changedEpoch = new StorageMeasurement("exercise", "B".repeat(26), 21, 0);
         assertEquals("STORAGE_METER_UNAVAILABLE", assertThrows(BusinessException.class, () -> fixture.service.reconcile(plan, changedEpoch)).code());
         assertEquals(24 * MIB, fixture.reservations.get("pending"));
+    }
+
+    @Test
+    void cachedAdmissionUsesTheCurrentLockedMeterAndCannotSettleAnEarlierPlan() {
+        var fixture = new Fixture();
+        var cached = new StorageMeasurement("exercise", EPOCH, 20, 0, true);
+        // A physical observation arrives between cache lookup and the admission transaction.
+        fixture.meter = new StorageMeterEntity("exercise", EPOCH, 21, 188 * MIB, NOW);
+        assertThrows(StorageCapacityStore.CalibrationRequired.class, () -> fixture.service.admit(
+            fixture.operation("new", "FILE_BATCH"), cached, MIB));
+        assertEquals(Map.of(), fixture.reservations);
+        fixture.reservations.put("old", MIB);
+        var plan = new StorageReconciliationPlan(new StorageScope("exercise", List.of(), List.of()), List.of("old"));
+        when(fixture.capacity.settledOperations("exercise")).thenReturn(List.of("old"));
+        assertEquals("STORAGE_METER_UNAVAILABLE", assertThrows(BusinessException.class, () -> fixture.service.reconcile(plan, cached)).code());
+        assertEquals(Map.of("old", MIB), fixture.reservations);
     }
 
     @Test
@@ -79,7 +95,7 @@ class StorageCapacityStoreTest {
     void fullOrdinaryUsageStillAdmitsThreeFinalAttemptsAndProtectsMeasurementAndRescueMetadata() {
         var fixture = new Fixture();
         fixture.meter = new StorageMeterEntity("exercise", EPOCH, 20, fixture.limits.maxBytes() - fixture.limits.recoveryBytes() - 16 * MIB, NOW);
-        for (int attempt = 0; attempt < 3; attempt++) fixture.service.admitFinal(fixture.operation("final-" + attempt, "FINAL_TEST"));
+        for (int attempt = 0; attempt < 3; attempt++) fixture.service.admitFinal(fixture.operation("final-" + attempt, "FINAL_TEST"), fixture.measurement(20, fixture.meter.bytes()));
         long committedAndReserved = fixture.meter.bytes() + 16 * MIB + fixture.reservations.values().stream().mapToLong(Long::longValue).sum();
         org.junit.jupiter.api.Assertions.assertTrue(committedAndReserved + 72 * MIB <= fixture.limits.maxBytes());
     }

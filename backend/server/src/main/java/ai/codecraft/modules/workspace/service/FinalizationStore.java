@@ -5,6 +5,7 @@ import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.workspace.config.FinalizationProperties;
 import ai.codecraft.modules.workspace.config.ExecutionProperties;
+import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
 import ai.codecraft.modules.workspace.model.dto.TestTaskResponse;
 import ai.codecraft.modules.workspace.model.entity.ExerciseEntity;
 import ai.codecraft.modules.workspace.model.entity.FinalizationEntity;
@@ -165,7 +166,7 @@ public class FinalizationStore {
 
     /** Returns a newly allocated task, or null while waiting/after conclusion. */
     @Transactional
-    public TestTaskEntity advance(String exerciseId) {
+    public TestTaskEntity advance(String exerciseId, StorageMeasurement measurement) {
         writes.lock(exerciseId);
         FinalizationEntity value = finals.find(exerciseId);
         ExerciseEntity exercise = exercises.find(exerciseId);
@@ -189,13 +190,14 @@ public class FinalizationStore {
         tasks.lockAdmission();
         if (routing != null) routing.admitExecution(exerciseId);
         if (tasks.occupiedExercise(exerciseId) != 0 || tasks.occupied() >= executionLimits.concurrency()) return null;
+        if (measurement == null) throw new StorageCapacityStore.CalibrationRequired();
         String id = UUID.randomUUID().toString();
         if (finals.allocate(exerciseId, id) != 1) return null;
         TestTaskEntity task = new TestTaskEntity(id, UUID.randomUUID().toString(), exerciseId, exercise.workspaceInstanceId(), value.finalRevision(),
             value.frozenEpoch(), value.deadlineAt(), exercises.challengeEntered(exerciseId) ? "challenge" : "base", "ACCEPTED", false, false, null, null, 0);
         var operation = new WorkspaceOperationEntity(id, exercise.userId(), exerciseId, exercise.workspaceInstanceId(),
             "FINAL_TEST", value.id(), id, secrets.fingerprint(value.id() + "\n" + id), "PENDING", clock.instant());
-        capacity.admitFinal(operation);
+        capacity.admitFinal(operation, measurement);
         capacity.registerExecution(task);
         exercises.insertOperation(operation);
         tasks.insert(task);

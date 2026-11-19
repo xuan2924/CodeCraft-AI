@@ -12,6 +12,7 @@ import ai.codecraft.modules.identity.service.IdentitySecrets;
 import ai.codecraft.modules.identity.service.IdentityTransactionService;
 import ai.codecraft.modules.modelaccess.controller.LlmProxyController;
 import ai.codecraft.modules.modelaccess.security.ProxyTokens;
+import ai.codecraft.modules.modelaccess.config.ProxyGrantProperties;
 import ai.codecraft.modules.workspace.config.WorkspaceProperties;
 import ai.codecraft.modules.workspace.service.TerminalModelAccessService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -61,7 +62,7 @@ class ProxySecurityTest {
     @Configuration @EnableWebMvc @EnableWebSecurity
     @Import({IdentitySecurity.class, LlmProxyController.class})
     static class Fixture {
-        @Bean ProxyTokens tokens(TerminalModelAccessService authority) { return new ProxyTokens(Clock.systemUTC(), authority); }
+        @Bean ProxyTokens tokens(TerminalModelAccessService authority) { return new ProxyTokens(Clock.systemUTC(), authority, new ProxyGrantProperties(java.time.Duration.ofHours(1))); }
         @Bean TerminalModelAccessService authority() { return mock(TerminalModelAccessService.class); }
         @Bean LlmProxyService proxy() { return mock(LlmProxyService.class); }
         @Bean IdentityTransactionService identity() { return mock(IdentityTransactionService.class); }

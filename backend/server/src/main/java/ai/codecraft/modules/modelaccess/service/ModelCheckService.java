@@ -55,7 +55,7 @@ public class ModelCheckService {
             || connection.configurationVersion() != reference.connectionConfigurationVersion()) {
             throw new BusinessException(ModelAccessErrorCode.MODEL_VERSION_CONFLICT);
         }
-        var since = clock.instant().minus(ModelCheckProperties.SUCCESS_VALIDITY);
+        var since = Instant.EPOCH;
         if (checks.reusable(grant.userId(), reference, 1, since) == null
             || checks.reusable(grant.userId(), reference, 3, since) == null) {
             throw new BusinessException(ModelAccessErrorCode.MODEL_CHECK_REQUIRED);
@@ -102,11 +102,10 @@ public class ModelCheckService {
         boolean active = "QUEUED".equals(check.status()) || "RUNNING".equals(check.status());
         var summary = new ModelCheckResponse(check.id(), check.modelConfigurationId(), Long.toString(check.connectionConfigurationVersion()),
             Long.toString(check.modelConfigurationVersion()), check.status(), check.startedAt());
-        var now = clock.instant();
-        return new ModelCheckStatusResponse(summary, reason, current, item(results, false, active, current, reason, now), item(results, true, active, current, reason, now));
+        return new ModelCheckStatusResponse(summary, reason, current, item(results, false, active, current, reason), item(results, true, active, current, reason));
     }
 
-    private ModelCheckItemResponse item(List<ModelCheckResultEntity> results, boolean tool, boolean active, boolean current, String reason, Instant now) {
+    private ModelCheckItemResponse item(List<ModelCheckResultEntity> results, boolean tool, boolean active, boolean current, String reason) {
         var result = results.stream().filter(value -> tool ? value.ordinal() >= 2 : value.ordinal() == 1)
             .max(Comparator.comparingInt(ModelCheckResultEntity::ordinal)).orElse(null);
         if (result == null) return new ModelCheckItemResponse(active ? "PENDING" : "NOT_RUN", null, null, false, false, reason);
@@ -114,8 +113,7 @@ public class ModelCheckService {
         if ("DISPATCHED".equals(status)) status = "RUNNING";
         if (tool && result.ordinal() == 2 && "SUCCEEDED".equals(status)) status = active ? "RUNNING" : "INCOMPLETE";
         boolean success = "SUCCEEDED".equals(status);
-        var until = success && result.completedAt() != null ? result.completedAt().plus(ModelCheckProperties.SUCCESS_VALIDITY) : null;
-        return new ModelCheckItemResponse(status, result.completedAt(), until, result.reused(), current && success && until != null && now.isBefore(until), success ? null : result.errorCode() == null ? reason : result.errorCode());
+        return new ModelCheckItemResponse(status, result.completedAt(), null, result.reused(), current && success && result.completedAt() != null, success ? null : result.errorCode() == null ? reason : result.errorCode());
     }
 
     @Transactional
@@ -136,7 +134,7 @@ public class ModelCheckService {
         if (checks.startsSince(owner, clock.instant().minus(properties.startWindow())) >= properties.startsPerWindow()) throw new BusinessException(ModelAccessErrorCode.MODEL_CHECK_RATE_LIMITED);
         var now = clock.instant();
         var reference = new ModelInvocationReferenceDTO(connection.id(), model.id(), connection.configurationVersion(), model.configurationVersion());
-        var since = now.minus(ModelCheckProperties.SUCCESS_VALIDITY);
+        var since = now.minus(ModelCheckProperties.PROBE_REUSE_WINDOW);
         String basic = checks.reusable(owner, reference, 1, since);
         String tool = checks.reusable(owner, reference, 3, since);
         String status = basic != null && tool != null ? "SUCCEEDED" : "QUEUED";

@@ -82,7 +82,9 @@ public class ExerciseModelService {
         }
         var reference = selections.find(id);
         if (reference == null) throw new BusinessException(ModelAccessErrorCode.MODEL_SELECTION_REQUIRED);
-        return invocations.resolve(session, reference);
+        var invocation = invocations.resolve(session, reference);
+        checks.requireValid(session, reference);
+        return invocation;
     }
 
     @Transactional

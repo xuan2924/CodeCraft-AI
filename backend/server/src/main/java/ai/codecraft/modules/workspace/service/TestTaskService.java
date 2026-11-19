@@ -23,7 +23,7 @@ public class TestTaskService {
         if (task == null) {
             String transition = writes.ensureOpen(session, exercise, credential);
             if (transition != null) fences.tryDrive(transition);
-            task = capacity.admit(session, exercise, measured -> store.accept(session, exercise, key, credential, input, measured));
+            task = capacity.admitHeavy(session, exercise, measured -> store.accept(session, exercise, key, credential, input, measured));
         }
         // Dispatch belongs to the durable worker, never to this request lifetime.
         return store.query(session, exercise, task.id());

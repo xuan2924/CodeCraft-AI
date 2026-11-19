@@ -34,24 +34,24 @@ class CommandTaskServiceTest {
         when(store.previous("session", "exercise", "key", input)).thenReturn(task);
         when(store.read("session", "exercise", "task")).thenReturn(task);
         service.start("session", "exercise", "key", "stale", input);
-        verify(capacity, never()).admit(any(), any(), any());
+        verify(capacity, never()).admitHeavy(any(), any(), any());
         verify(writes, never()).ensureOpen(any(), any(), any());
         verify(coordinator, never()).pruneForAdmission(any());
     }
 
     @Test void confirmedCapacityRejectionAllowsOneBoundedCleanupAndSameIntentReadmission() {
-        when(capacity.<CommandTaskEntity>admit(eq("session"), eq("exercise"), any()))
+        when(capacity.<CommandTaskEntity>admitHeavy(eq("session"), eq("exercise"), any()))
             .thenThrow(new BusinessException(WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED)).thenReturn(task());
         when(coordinator.pruneForAdmission("exercise")).thenReturn(true);
         when(store.read("session", "exercise", "task")).thenReturn(task());
         service.start("session", "exercise", "key", "control", input);
         verify(coordinator).pruneForAdmission("exercise");
-        verify(capacity, times(2)).admit(eq("session"), eq("exercise"), any());
+        verify(capacity, times(2)).admitHeavy(eq("session"), eq("exercise"), any());
         verify(sandbox, never()).startCommand(any());
     }
 
     @Test void uncertainInfrastructureFailureDoesNotTriggerHistoryEviction() {
-        when(capacity.admit(eq("session"), eq("exercise"), any())).thenThrow(new BusinessException(WorkspaceErrorCode.STORAGE_METER_UNAVAILABLE));
+        when(capacity.admitHeavy(eq("session"), eq("exercise"), any())).thenThrow(new BusinessException(WorkspaceErrorCode.STORAGE_METER_UNAVAILABLE));
         assertThatThrownBy(() -> service.start("session", "exercise", "key", "control", input)).isInstanceOf(BusinessException.class);
         verify(coordinator, never()).pruneForAdmission(any());
     }

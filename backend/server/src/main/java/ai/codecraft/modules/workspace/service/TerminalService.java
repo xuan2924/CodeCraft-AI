@@ -23,7 +23,7 @@ public class TerminalService {
         if(revision==null||!revision.matches("0|[1-9][0-9]{0,17}"))throw new BusinessException(WorkspaceErrorCode.INVALID_REQUEST);
         String transition=writes.ensureOpen(session,exercise,credential);
         if(transition!=null)fences.tryDrive(transition);
-        return capacity.admit(session,exercise,measurement->store.issue(session,exercise,credential,key,revision,measurement));
+        return capacity.admitHeavy(session,exercise,measurement->store.issue(session,exercise,credential,key,revision,measurement));
     }
     public java.util.List<ai.codecraft.modules.workspace.model.dto.TerminalAuditResponse> history(String session,String exercise) { return store.history(session,exercise); }
 

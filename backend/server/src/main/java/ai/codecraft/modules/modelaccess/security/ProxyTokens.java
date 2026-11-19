@@ -1,5 +1,6 @@
 package ai.codecraft.modules.modelaccess.security;
 
+import ai.codecraft.modules.modelaccess.config.ProxyGrantProperties;
 import ai.codecraft.modules.workspace.service.TerminalModelAccessService;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -17,12 +18,14 @@ public class ProxyTokens {
     private final byte[] key = new byte[32];
     private final Clock clock;
     private final TerminalModelAccessService authority;
-    public ProxyTokens(Clock clock, TerminalModelAccessService authority) {
+    private final ProxyGrantProperties properties;
+    public ProxyTokens(Clock clock, TerminalModelAccessService authority, ProxyGrantProperties properties) {
+        this.properties = properties;
         this.clock = clock; this.authority = authority; new SecureRandom().nextBytes(key);
     }
     public String issue(String task, String exercise, long epoch) {
         var grant = authority.authorize(task, exercise, epoch);
-        String payload = grant.task() + ":" + grant.exercise() + ":" + grant.user() + ":" + epoch + ":" + clock.instant().plusSeconds(900).getEpochSecond();
+        String payload = grant.task() + ":" + grant.exercise() + ":" + grant.user() + ":" + epoch + ":" + clock.instant().plus(properties.tokenTtl()).getEpochSecond();
         String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes(StandardCharsets.UTF_8));
         return encoded + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(sign(encoded));
     }

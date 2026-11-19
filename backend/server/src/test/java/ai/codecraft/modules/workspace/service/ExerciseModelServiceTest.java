@@ -63,6 +63,15 @@ class ExerciseModelServiceTest {
     }
 
     @Test
+    void copilotRejectsSelectedButUncheckedVersion() {
+        authorize("ACTIVE");
+        when(selections.find("exercise")).thenReturn(reference);
+        doThrow(new BusinessException(ModelAccessErrorCode.MODEL_CHECK_REQUIRED)).when(checks).requireValid("session", reference);
+        assertThatThrownBy(() -> service.resolveForCall("session", "exercise")).isInstanceOfSatisfying(BusinessException.class,
+            error -> org.assertj.core.api.Assertions.assertThat(error.code()).isEqualTo("MODEL_CHECK_REQUIRED"));
+    }
+
+    @Test
     void editedOrDeletedSelectionIsNotSilentlyUpdatedOrReplaced() {
         authorize("ACTIVE");
         when(selections.find("exercise")).thenReturn(reference);

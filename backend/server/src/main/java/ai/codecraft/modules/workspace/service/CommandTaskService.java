@@ -35,10 +35,10 @@ public class CommandTaskService {
         if (task == null) {
             String transition = writes.ensureOpen(session, exercise, credential);
             if (transition != null) fences.tryDrive(transition);
-            try { task = capacity.admit(session, exercise, measurement -> store.accept(session, exercise, key, credential, input, measurement)); }
+            try { task = capacity.admitHeavy(session, exercise, measurement -> store.accept(session, exercise, key, credential, input, measurement)); }
             catch (BusinessException rejection) {
                 if (rejection.errorCode() != WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED || !coordinator.pruneForAdmission(exercise)) throw rejection;
-                task = capacity.admit(session, exercise, measurement -> store.accept(session, exercise, key, credential, input, measurement));
+                task = capacity.admitHeavy(session, exercise, measurement -> store.accept(session, exercise, key, credential, input, measurement));
             }
         }
         return query(session, exercise, task.id());

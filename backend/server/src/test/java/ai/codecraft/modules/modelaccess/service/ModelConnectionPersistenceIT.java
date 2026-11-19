@@ -25,6 +25,7 @@ import ai.codecraft.modules.workspace.service.ExerciseTransactionService;
 import ai.codecraft.modules.workspace.service.ProblemTransactionService;
 import ai.codecraft.modules.workspace.service.StorageCapacityStore;
 import ai.codecraft.modules.workspace.config.RetentionProperties;
+import ai.codecraft.modules.workspace.config.ExerciseAdmissionProperties;
 import ai.codecraft.modules.workspace.service.WorkspaceCoordinationStore;
 import ai.codecraft.modules.identity.model.dto.SessionAuthorizationDTO;
 import ai.codecraft.modules.identity.repository.IdentityRepository;
@@ -174,7 +175,7 @@ class ModelConnectionPersistenceIT {
         exerciseModels = transactional(new ExerciseModelService(sql.getMapper(ExerciseModelRepository.class), sql.getMapper(ExerciseRepository.class), identity,
             mock(WorkspaceCoordinationStore.class), invocations, checks, clock, secrets), ExerciseModelService.class);
         exerciseLifecycle = transactional(new ExerciseTransactionService(sql.getMapper(ExerciseRepository.class), identity, mock(ProblemTransactionService.class), clock, secrets,
-            mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), exerciseModels, mock(PlatformBindingService.class)), ExerciseTransactionService.class);
+            mock(WorkspaceCoordinationStore.class), new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), mock(StorageCapacityStore.class), new ExerciseAdmissionProperties(1), mock(PlatformBindingService.class)), ExerciseTransactionService.class);
         dispatches = transactional(new ModelCheckExecutionStore(sql.getMapper(ModelCheckRepository.class), identity, invocations,
             new ModelCallProperties(Duration.ofSeconds(120), Duration.ofSeconds(10), 8, 8388608, 65536, 262144),
             new ModelCheckProperties(Duration.ofMinutes(5), 3, 65536), clock,
@@ -211,7 +212,7 @@ class ModelConnectionPersistenceIT {
     }
 
     @Test
-    void exerciseSelectionRequiresChecksOnlyAtStartAndDoesNotFollowEditsOrReplayOldSelection() {
+    void exerciseStartsWithoutSelectionAndCopilotRequiresAnExplicitCurrentModel() {
         var connection = service.create("session", "connection", input);
         var model = models.create("session", connection.id(), "model", model("Fixture", "fixture", null));
         var second = models.create("session", connection.id(), "second", model("Second", "second", null));
@@ -222,10 +223,11 @@ class ModelConnectionPersistenceIT {
         sql.getMapper(ExerciseRepository.class).prepared(exercise, prepared.workspaceInstanceId(), prepared.preparationOperationId(), 1, "[]");
         var firstReference = new ModelInvocationReferenceDTO(connection.id(), model.id(), 1, 1);
         var secondReference = new ModelInvocationReferenceDTO(connection.id(), second.id(), 1, 1);
-        assertThatThrownBy(() -> exerciseModels.requireReady("session", exercise)).isInstanceOf(BusinessException.class);
+        assertThat(exerciseLifecycle.start("session", exercise, "start", 600, "fixture-control").state()).isEqualTo("ACTIVE");
+        assertThatThrownBy(() -> exerciseModels.resolveForCall("session", exercise)).isInstanceOf(BusinessException.class);
         exerciseModels.select("session", exercise, "fixture-control", "first", firstReference);
-        assertThatThrownBy(() -> exerciseLifecycle.start("session", exercise, "start", 600, "fixture-control")).isInstanceOf(BusinessException.class);
-        assertThat(exerciseLifecycle.find("session", exercise).state()).isEqualTo("READY");
+        assertThatThrownBy(() -> exerciseModels.resolveForCall("session", exercise)).isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.code()).isEqualTo("MODEL_CHECK_REQUIRED"));
         assertThatThrownBy(() -> exerciseModels.requireReady("session", exercise)).isInstanceOf(BusinessException.class);
         var check = checks.start("session", model.id(), "check", true);
         String worker = UUID.randomUUID().toString();
@@ -234,6 +236,7 @@ class ModelConnectionPersistenceIT {
             assertThat(dispatches.complete(request.requestId(), worker, 100, null)).isTrue();
         }
         exerciseModels.requireReady("session", exercise);
+        assertThat(exerciseModels.resolveForCall("session", exercise)).isNotNull();
         assertThat(exerciseLifecycle.start("session", exercise, "start", 600, "fixture-control").state()).isEqualTo("ACTIVE");
         exerciseModels.select("session", exercise, "fixture-control", "second", secondReference);
         exerciseModels.select("session", exercise, "fixture-control", "first", firstReference);
@@ -433,8 +436,8 @@ class ModelConnectionPersistenceIT {
         assertThat(details.basic().reused()).isTrue(); assertThat(details.tool().reused()).isTrue();
         assertThat(details.basic().valid()).isTrue(); assertThat(details.tool().valid()).isTrue();
         assertThat(details.basic().completedAt()).isEqualTo(NOW);
-        assertThat(details.basic().validUntil()).isEqualTo(NOW.plusSeconds(1800));
-        assertThat(checksAfterValidity.status("session", reused.id()).basic().valid()).isFalse();
+        assertThat(details.basic().validUntil()).isNull();
+        assertThat(checksAfterValidity.status("session", reused.id()).basic().valid()).isTrue();
         assertThat(sql.getMapper(ModelCheckRepository.class).reuse(reused.id()).basicRequestId()).isEqualTo(basic);
         assertThat(sql.getMapper(ModelCheckRepository.class).reuse(reused.id()).toolRequestId()).isEqualTo(tool);
         assertThat(dispatches.begin(reused.id(), 1, UUID.randomUUID().toString())).isNull();

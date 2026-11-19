@@ -1,8 +1,6 @@
 package ai.codecraft.modules.workspace.service;
 
 import ai.codecraft.modules.workspace.gateway.SandboxWorkspaceGateway;
-import ai.codecraft.common.exception.BusinessException;
-import ai.codecraft.modules.workspace.model.exception.WorkspaceErrorCode;
 import ai.codecraft.modules.workspace.model.entity.FinalizationEntity;
 import ai.codecraft.modules.workspace.model.entity.TestTaskEntity;
 import org.slf4j.Logger;
@@ -58,11 +56,9 @@ public class FinalizationCoordinator {
             store.frozen(exerciseId, sandbox.freeze(exercise.workspaceInstanceId(), value.id(), control.gateEpoch()));
         }
         TestTaskEntity allocated;
-        try { allocated = store.advance(exerciseId); }
-        catch (BusinessException denied) {
-            if (denied.errorCode() != WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED && denied.errorCode() != WorkspaceErrorCode.STORAGE_METER_UNAVAILABLE) throw denied;
-            capacity.reconcile(exerciseId);
-            allocated = store.advance(exerciseId);
+        try { allocated = store.advance(exerciseId, null); }
+        catch (StorageCapacityStore.CalibrationRequired retry) {
+            allocated = store.advance(exerciseId, capacity.reconcile(exerciseId));
         }
         value = store.find(exerciseId);
         boolean cancelled = cancelOutstanding(value);

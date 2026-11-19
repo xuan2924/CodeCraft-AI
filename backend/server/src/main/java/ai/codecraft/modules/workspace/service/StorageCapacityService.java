@@ -29,7 +29,20 @@ public class StorageCapacityService {
 
     /** Protects the selected history item during this request's own capacity retry. */
     public <T> T admit(String session, String exercise, Set<String> protectedHistory, Function<StorageMeasurement, T> acceptance) {
+        return admit(session, exercise, protectedHistory, acceptance, false);
+    }
+
+    public <T> T admitHeavy(String session, String exercise, Function<StorageMeasurement, T> acceptance) {
+        return admit(session, exercise, Set.of(), acceptance, true);
+    }
+
+    private <T> T admit(String session, String exercise, Set<String> protectedHistory, Function<StorageMeasurement, T> acceptance, boolean heavy) {
         var protectedIds = Set.copyOf(protectedHistory);
+        var cached = heavy ? null : store.cachedMeasurement(session, exercise);
+        if (cached != null) {
+            try { return acceptance.apply(cached); }
+            catch (StorageCapacityStore.CalibrationRequired retry) { /* admission transaction rolled back */ }
+        }
         try { return acceptance.apply(measure(session, exercise)); }
         catch (BusinessException failure) {
             if (failure.errorCode() != WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED) throw failure;
@@ -40,12 +53,14 @@ public class StorageCapacityService {
 
     public StorageMeasurement measure(String session, String exercise) { return observe(store.plan(session, exercise)).measurement(); }
     public StorageBudgetResponse usage(String session, String exercise) {
+        var cached = store.cachedUsage(session, exercise);
+        if (cached != null) return cached;
         var plan = store.plan(session, exercise);
         return store.deliver(session, plan, capture(plan));
     }
-    public void reconcile(String exercise) {
+    public StorageMeasurement reconcile(String exercise) {
         var plan = store.plan(exercise);
-        if (plan != null) observe(plan);
+        return plan == null ? null : observe(plan).measurement();
     }
 
     private StorageObservationDTO observe(StorageReconciliationPlan plan) {

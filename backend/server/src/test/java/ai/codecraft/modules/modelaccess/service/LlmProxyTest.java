@@ -21,6 +21,7 @@ import ai.codecraft.modules.modelaccess.model.dto.ModelInvocationDTO;
 import ai.codecraft.modules.modelaccess.model.dto.ModelUsageReceiptDTO;
 import ai.codecraft.modules.modelaccess.repository.ProxyAuditRepository;
 import ai.codecraft.modules.modelaccess.security.ProxyTokens;
+import ai.codecraft.modules.modelaccess.config.ProxyGrantProperties;
 import ai.codecraft.modules.workspace.service.TerminalModelAccessService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
@@ -68,7 +69,7 @@ class LlmProxyTest {
         upstream.start();
         var grant = new TerminalModelAccessService.Authority(ID, ID, ID, 7);
         when(authority.authorize(ID, ID, 7)).thenAnswer(call -> { if (revoked.get()) throw new IllegalStateException("revoked"); return grant; });
-        tokens = new ProxyTokens(clock, authority); token = tokens.issue(ID, ID, 7);
+        tokens = new ProxyTokens(clock, authority, new ProxyGrantProperties(java.time.Duration.ofHours(1))); token = tokens.issue(ID, ID, 7);
         var model = mock(ModelConfigurationResponse.class);
         when(model.maxOutputTokens()).thenReturn(4096); when(model.modelId()).thenReturn("selected-model");
         when(connection.protocol()).thenReturn(ModelProtocol.OPENAI_CHAT);
@@ -168,10 +169,20 @@ class LlmProxyTest {
             assertThat(call(path(ModelProtocol.OPENAI_CHAT), "{}").getStatus()).isEqualTo(403);
         } finally { release.countDown(); }
     }
+    @Test void proxyGrantExpiresExactlyAtConfiguredDeadline() {
+        Clock adjustable = mock(Clock.class);
+        var issued = clock.instant();
+        when(adjustable.instant()).thenReturn(issued, issued.plusSeconds(2699), issued.plusSeconds(2700));
+        var grants = new ProxyTokens(adjustable, authority, new ProxyGrantProperties(java.time.Duration.ofMinutes(45)));
+        var grant = grants.issue(ID, ID, 7);
+        assertThat(grants.verify(grant).task()).isEqualTo(ID);
+        assertThatThrownBy(() -> grants.verify(grant)).isInstanceOf(IllegalStateException.class);
+    }
+
     @Test void tamperExpiryRateAndProtocolFailClosed() throws Exception {
         assertThatThrownBy(() -> tokens.verify(token + "x")).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> tokens.verify(null)).isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> new ProxyTokens(clock, authority).verify(token)).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new ProxyTokens(clock, authority, new ProxyGrantProperties(java.time.Duration.ofHours(1))).verify(token)).isInstanceOf(IllegalStateException.class);
         assertThat(call(path(ModelProtocol.ANTHROPIC), "{}").getStatus()).isEqualTo(400);
         when(limiter.admit(any())).thenReturn(false);
         assertThat(call(path(ModelProtocol.OPENAI_CHAT), "{}").getStatus()).isEqualTo(429);
