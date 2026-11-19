@@ -31,9 +31,12 @@ const commandScope = () => allowed.value ? owner.value : '';
 
 const artifactText = ref('');
 const validation = ref<api.ProblemValidation | null>(null);
+const validatedPayload = ref('');
 const validationError = ref('');
 const validating = ref(false);
 const notice = ref('');
+const currentValidation = computed(() => validation.value && validatedPayload.value === artifactText.value ? validation.value : null);
+const validationStale = computed(() => !!validation.value && validatedPayload.value !== artifactText.value);
 
 const metrics = useQuery({
   queryKey: ['admin-copilot-metrics', owner],
@@ -69,6 +72,7 @@ watch([owner, allowed, () => account.data.value?.role, account.isFetchedAfterMou
     clearPrivateQueries(previous);
     artifactText.value = '';
     validation.value = null;
+    validatedPayload.value = '';
     validationError.value = '';
     notice.value = '';
   }
@@ -104,13 +108,19 @@ const busy = computed(() => validating.value
 
 async function runValidate() {
   if (!allowed.value || validating.value || !artifactText.value.trim()) return;
+  const payload = artifactText.value;
   validating.value = true;
   validationError.value = '';
   validation.value = null;
+  validatedPayload.value = '';
   notice.value = '';
   const controller = new globalThis.AbortController();
   try {
-    validation.value = await api.validateProblem(owner.value, artifactText.value, controller.signal);
+    const result = await api.validateProblem(owner.value, payload, controller.signal);
+    if (artifactText.value === payload) {
+      validation.value = result;
+      validatedPayload.value = payload;
+    }
   } catch (error) {
     if (error instanceof ApiError && [401, 403].includes(error.status)) refreshIdentity();
     else validationError.value = api.problemErrorMessage(error);
@@ -423,29 +433,39 @@ const activeError = computed(() => validationError.value || publishCommand.error
               {{ publishCommand.pending.value ? '发布中…' : '幂等发布到目录' }}
             </Button>
           </div>
+          <p
+            v-if="validationStale"
+            class="inline-status"
+            role="status"
+          >
+            输入内容已修改，上次校验结果已失效，请重新校验。
+          </p>
           <div
-            v-if="validation"
+            v-if="currentValidation"
             class="validation-box"
             role="status"
           >
             <p class="validation-title">
-              {{ validation.valid ? '契约校验通过' : '契约校验未通过' }} ·
-              {{ validation.problemId ?? '-' }} v{{ validation.version ?? '-' }} ·
-              {{ languageLabel(validation.language) }} ·
-              {{ validation.executionSupported ? '支持沙箱执行' : '仅静态契约（不可执行）' }}
+              {{ currentValidation.valid ? '契约校验通过' : '契约校验未通过' }} ·
+              {{ currentValidation.problemId ?? '-' }} v{{ currentValidation.version ?? '-' }} ·
+              {{ languageLabel(currentValidation.language) }} ·
+              {{ currentValidation.executionSupported ? '支持沙箱执行' : '仅静态契约（不可执行）' }}
             </p>
             <ul
-              v-if="validation.errors.length"
+              v-if="currentValidation.errors.length"
               class="validation-errors"
             >
               <li
-                v-for="(err, idx) in validation.errors"
+                v-for="(err, idx) in currentValidation.errors"
                 :key="idx"
               >
                 {{ err }}
               </li>
             </ul>
           </div>
+          <p class="metrics-footnote">
+            发布仅将版本登记到 Java 题库目录；候选人要实际执行该版本，运行中的 Go 沙箱节点也需加载同一 SHA-256 的 publication 清单。
+          </p>
         </div>
       </section>
     </div>

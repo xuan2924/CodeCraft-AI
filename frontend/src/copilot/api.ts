@@ -4,8 +4,28 @@ import type { ReferenceSelection } from './referenceApi';
 const states = ['QUEUED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'WAITING_WRITE', 'WAITING_TEST', 'WAITING_COMMAND', 'WAITING_CHILD', 'STOPPING', 'STOPPED', 'SUCCEEDED', 'FAILED', 'INTERRUPTED'] as const;
 export interface Task { conversationId?: string; id: string; exerciseId: string; state: typeof states[number]; reason: string | null; stopRequested: boolean; createdAt: string; completedAt: string | null }
 export interface Snapshot { task: Task; lastSequence: string; textHistory: boolean; partial: { turnId: string | null; sequence: string; text: string; truncated: boolean; thinking?: string; thinkingTruncated?: boolean } }
-export interface PreviewEvent { taskId: string; turnId: string; previewEpoch: string; previewSequence: string; text: string; thinking: string; truncated: boolean; thinkingTruncated: boolean }
-export interface DisplayPreview { text: string; thinking: string; truncated: boolean; thinkingTruncated: boolean }
+export interface PreviewEvent {
+  taskId: string;
+  turnId: string;
+  previewEpoch: string;
+  previewSequence: string;
+  text: string;
+  thinking: string;
+  textDelta?: string;
+  thinkingDelta?: string;
+  truncated: boolean;
+  thinkingTruncated: boolean;
+  toolName?: string;
+  toolArgBytes?: number;
+}
+export interface DisplayPreview {
+  text: string;
+  thinking: string;
+  truncated: boolean;
+  thinkingTruncated: boolean;
+  toolName?: string;
+  toolArgBytes?: number;
+}
 export interface Message { sequence: string; id: string; taskId: string; kind: 'USER' | 'ASSISTANT' | 'TOOL'; text: string; thinking?: string }
 export interface Messages { messages: Message[]; nextCursor: string | null }
 function invalid(): never { throw new ApiError(502, 'INVALID_RESPONSE'); }
@@ -291,17 +311,35 @@ export function parsePreview(value: unknown, taskId: string): PreviewEvent {
   const previewEpoch = uuid(value.previewEpoch);
   const previewSequence = sequence(value.previewSequence);
   if (BigInt(previewSequence) < 1n) return invalid();
-  if (typeof value.text !== 'string' || value.text.length > 8192 || typeof value.truncated !== 'boolean'
+  const textVal = value.text === undefined ? '' : value.text;
+  const textDeltaVal = value.textDelta === undefined ? undefined : value.textDelta;
+  const thinkingDeltaVal = value.thinkingDelta === undefined ? undefined : value.thinkingDelta;
+  if (typeof textVal !== 'string' || textVal.length > 262144
+    || (textDeltaVal !== undefined && (typeof textDeltaVal !== 'string' || textDeltaVal.length > 65536))
+    || (thinkingDeltaVal !== undefined && (typeof thinkingDeltaVal !== 'string' || thinkingDeltaVal.length > 65536))
+    || (value.truncated !== undefined && typeof value.truncated !== 'boolean')
     || (value.thinkingTruncated !== undefined && typeof value.thinkingTruncated !== 'boolean')) return invalid();
+  const toolName = typeof value.toolName === 'string' && value.toolName.length > 0 && value.toolName.length <= 64 ? value.toolName
+    : object(value.toolActivity) && typeof value.toolActivity.name === 'string' && value.toolActivity.name.length > 0 && value.toolActivity.name.length <= 64 ? value.toolActivity.name
+      : undefined;
+  const rawArgBytes = typeof value.toolArgumentBytes === 'number' ? value.toolArgumentBytes
+    : typeof value.toolArgBytes === 'number' ? value.toolArgBytes
+      : object(value.toolActivity) && typeof value.toolActivity.argBytes === 'number' ? value.toolActivity.argBytes
+        : undefined;
+  const toolArgBytes = rawArgBytes !== undefined && Number.isSafeInteger(rawArgBytes) && rawArgBytes >= 0 ? rawArgBytes : undefined;
   return {
     taskId,
     turnId,
     previewEpoch,
     previewSequence,
-    text: value.text,
-    thinking: thinkingText(value.thinking, 8192),
-    truncated: value.truncated,
+    text: textVal,
+    thinking: thinkingText(value.thinking, 262144),
+    ...(textDeltaVal !== undefined ? { textDelta: textDeltaVal } : {}),
+    ...(thinkingDeltaVal !== undefined ? { thinkingDelta: thinkingDeltaVal } : {}),
+    truncated: value.truncated ?? false,
     thinkingTruncated: value.thinkingTruncated ?? false,
+    ...(toolName ? { toolName } : {}),
+    ...(toolArgBytes !== undefined ? { toolArgBytes } : {}),
   };
 }
 export function nextTransientPreview(
@@ -311,22 +349,43 @@ export function nextTransientPreview(
   activeRunning: boolean,
 ): PreviewEvent | null {
   if (!activeRunning || !activeTaskId || incoming.taskId !== activeTaskId) return current;
-  if (!current || current.taskId !== incoming.taskId || current.turnId !== incoming.turnId || current.previewEpoch !== incoming.previewEpoch) {
-    return incoming;
+  const sameStream = !!current && current.taskId === incoming.taskId && current.turnId === incoming.turnId && current.previewEpoch === incoming.previewEpoch;
+  if (!sameStream) {
+    if (incoming.textDelta === undefined && incoming.thinkingDelta === undefined) return incoming;
+    return {
+      ...incoming,
+      text: incoming.text || incoming.textDelta || '',
+      thinking: incoming.thinking || incoming.thinkingDelta || '',
+    };
   }
-  return BigInt(incoming.previewSequence) > BigInt(current.previewSequence) ? incoming : current;
+  if (BigInt(incoming.previewSequence) <= BigInt(current.previewSequence)) return current;
+  const nextText = incoming.textDelta !== undefined
+    ? `${current.text}${incoming.textDelta}`.slice(-262144)
+    : incoming.text || current.text;
+  const nextThinking = incoming.thinkingDelta !== undefined
+    ? `${current.thinking}${incoming.thinkingDelta}`.slice(-262144)
+    : incoming.thinking || current.thinking;
+  return {
+    ...incoming,
+    text: nextText,
+    thinking: nextThinking,
+    toolName: incoming.toolName,
+    toolArgBytes: incoming.toolArgBytes,
+  };
 }
 export function resolveDisplayPreview(
   transient: PreviewEvent | null,
   snapshotData: Snapshot | null | undefined,
   activeRunning: boolean,
 ): DisplayPreview | null {
-  if (activeRunning && transient && transient.taskId === snapshotData?.task.id && (transient.text || transient.thinking)) {
+  if (activeRunning && transient && transient.taskId === snapshotData?.task.id && (transient.text || transient.thinking || transient.toolName)) {
     return {
       text: transient.text,
       thinking: transient.thinking,
       truncated: transient.truncated,
       thinkingTruncated: transient.thinkingTruncated,
+      ...(transient.toolName ? { toolName: transient.toolName } : {}),
+      ...(transient.toolArgBytes !== undefined ? { toolArgBytes: transient.toolArgBytes } : {}),
     };
   }
   if (snapshotData?.partial.text || snapshotData?.partial.thinking) {

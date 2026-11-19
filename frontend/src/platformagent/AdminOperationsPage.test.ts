@@ -140,3 +140,37 @@ it('displays sanitized copilot metrics, problem execution support, and validates
   page.unmount();
   client.clear();
 });
+
+it('invalidates previous validation result as soon as artifact text is edited', async () => {
+  vi.mocked(telemetryApi.adminCopilotMetrics).mockResolvedValue({
+    taskCount: 0, rounds: 0, tools: 0, modelElapsedMs: 0, toolElapsedMs: 0,
+    readWindows: 0, readSlotsUsed: 0, exploreChildren: 0, microCompactedRounds: 0,
+    microSavedBytes: 0, recoveredRevisionConflicts: 0, steerInterruptions: 0,
+    chatInputTokens: null, chatOutputTokens: null, chatCacheReadTokens: null, chatCacheWriteTokens: null,
+    readWindowUtilization: null,
+  });
+  vi.mocked(opsApi.listProblems).mockResolvedValue([]);
+  vi.mocked(opsApi.validateProblem).mockResolvedValue({
+    valid: true,
+    problemId: 'order-settlement-engine',
+    version: '1.0.0',
+    language: 'JAVA_MAVEN',
+    executionSupported: true,
+    packageSha256: 'a'.repeat(64),
+    hasChallenge: true,
+    errors: [],
+  });
+
+  const { page, client } = await render('ADMIN');
+  await page.get('#problem-artifact-input').setValue('{"schemaVersion":1,"valid":true}');
+  await page.findAll('button').find(b => b.text() === '仅校验契约')!.trigger('click');
+  await flushPromises();
+  expect(page.text()).toContain('契约校验通过');
+
+  await page.get('#problem-artifact-input').setValue('{"schemaVersion":1,"valid":false}');
+  await flushPromises();
+  expect(page.text()).not.toContain('契约校验通过');
+  expect(page.text()).toContain('上次校验结果已失效');
+  page.unmount();
+  client.clear();
+});

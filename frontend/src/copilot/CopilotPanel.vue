@@ -20,6 +20,7 @@ import Tooltip from '../components/ui/Tooltip.vue';
 import { ApiError } from '../api/request';
 import { useCommand } from '../api/useCommand';
 import * as api from './api';
+import { clearOwnerComposerDrafts, draftKey, loadComposerDraft, saveComposerDraft } from './composerDrafts';
 import { commandPolicy, errorMessage } from './errors';
 import { grantCopilotFeeConsent, hasCopilotFeeConsent } from './feeConsent';
 import CopilotProposals from './CopilotProposals.vue';
@@ -71,9 +72,11 @@ const emit = defineEmits<{
 
 const client = useQueryClient();
 const scope = computed(() => `${props.owner}/${props.exerciseId}/${props.conversationId ?? props.exerciseId}/${props.credential}`);
-const text = ref('');
-const selectedSkills = ref<string[]>([]);
-const references = ref<ReferencePage[]>([]);
+const currentDraftKey = computed(() => draftKey(props.owner, props.exerciseId, props.conversationId));
+const initialDraft = loadComposerDraft(currentDraftKey.value);
+const text = ref(initialDraft.text);
+const selectedSkills = ref<string[]>(initialDraft.selectedSkills);
+const references = ref<ReferencePage[]>(initialDraft.references);
 const childContextBusy = ref(false);
 const saving = ref(false);
 const saveError = ref('');
@@ -106,7 +109,7 @@ const latest = useQuery({
   queryFn: ({ signal }) => api.latest(props.owner, props.exerciseId, signal, props.conversationId),
   retry: false,
   gcTime: 0,
-  refetchInterval: 2000,
+  refetchInterval: query => (api.active(query.state.data?.task) && !connected.value ? 2000 : false),
 });
 const history = useQuery({
   queryKey: historyKey,
@@ -120,7 +123,7 @@ const contextQuery = useQuery({
   enabled: computed(() => !props.delegated && !!props.owner && !!props.exerciseId),
   retry: false,
   gcTime: 0,
-  refetchInterval: 2000,
+  refetchInterval: query => (query.state.data?.requests.some(item => item.state === 'WAITING' || item.state === 'RUNNING') ? 2000 : false),
 });
 
 const contextBusy = computed(() => {
@@ -141,18 +144,35 @@ watch(() => latest.data.value?.lastSequence, () => {
   transientPreview.value = null;
   void client.invalidateQueries({ queryKey: ['copilot', props.owner, props.exerciseId, 'messages'] });
 });
-watch(scope, () => {
-  text.value = '';
-  selectedSkills.value = [];
-  references.value = [];
-  saveError.value = '';
-  handoffNotice.value = '';
-  saving.value = false;
+watch([text, selectedSkills, references], () => {
+  if (props.delegated) return;
+  saveComposerDraft(currentDraftKey.value, {
+    text: text.value,
+    selectedSkills: selectedSkills.value,
+    references: references.value,
+  });
+}, { deep: true });
+
+watch(currentDraftKey, (nextKey, prevKey) => {
+  const prevOwner = prevKey?.split('/')[0];
+  if (prevOwner && prevOwner !== props.owner) {
+    clearOwnerComposerDrafts(prevOwner);
+  }
+  const restored = props.delegated ? { text: '', selectedSkills: [], references: [] } : loadComposerDraft(nextKey);
+  text.value = restored.text;
+  selectedSkills.value = restored.selectedSkills;
+  references.value = restored.references;
   transientPreview.value = null;
   slashOpen.value = false;
   atOpen.value = false;
   moreOpen.value = false;
   feeConsentOpen.value = false;
+}, { flush: 'sync' });
+
+watch(scope, () => {
+  saveError.value = '';
+  handoffNotice.value = '';
+  saving.value = false;
   pendingAction.value = null;
 }, { flush: 'sync' });
 
@@ -245,8 +265,9 @@ async function executeSend() {
 async function handlePrimarySubmit() {
   if (running.value) {
     if (!canSteerRunning.value || !steerRef.value) return;
-    const sent = await steerRef.value.sendDirect(text.value);
-    if (sent) text.value = '';
+    const submitted = text.value;
+    const sent = await steerRef.value.sendDirect(submitted);
+    if (sent && text.value === submitted) text.value = '';
     return;
   }
   if (!canSendIdle.value) return;
@@ -256,6 +277,19 @@ async function handlePrimarySubmit() {
     return;
   }
   await executeSend();
+}
+
+function onComposerKeydown(event: globalThis.KeyboardEvent) {
+  if (event.key === 'Escape') {
+    slashOpen.value = false;
+    atOpen.value = false;
+    return;
+  }
+  if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    if (event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    void handlePrimarySubmit();
+  }
 }
 
 function handleFollowupQueue() {
@@ -694,7 +728,15 @@ const showTaskBanner = computed(() =>
           aria-label="未确认回复预览"
         >
           <span class="preview-badge">生成中（未确认）</span>
+          <p
+            v-if="preview.toolName"
+            class="preview-tool-progress font-mono-num"
+            role="status"
+          >
+            正在准备工具 <code>{{ preview.toolName === 'unknown' ? '待识别工具' : preview.toolName }}</code>{{ preview.toolArgBytes ? `（${preview.toolArgBytes} B）` : '' }}…
+          </p>
           <CopilotMessageBody
+            v-if="preview.text || preview.thinking"
             :text="preview.text"
             :thinking="preview.thinking"
           />
@@ -702,7 +744,7 @@ const showTaskBanner = computed(() =>
             v-if="preview.truncated || preview.thinkingTruncated"
             class="preview-trunc-note"
           >
-            预览已截断
+            预览已截断（滚动显示最新输出）
           </p>
         </aside>
 
@@ -965,8 +1007,7 @@ const showTaskBanner = computed(() =>
             :placeholder="running ? '输入方向调整或排队消息，Enter 发送…' : '输入指令或问题，输 / 选 Skill，输 @ 引用文件…'"
             :disabled="saving || start.pending.value || start.uncertain.value"
             @input="onTextInput"
-            @keydown.escape="slashOpen = false; atOpen = false"
-            @keydown.enter.exact.prevent="handlePrimarySubmit"
+            @keydown="onComposerKeydown"
           />
 
           <div class="composer-toolbar">

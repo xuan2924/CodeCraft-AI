@@ -40,3 +40,29 @@ it('does not invent thinking and reports clipboard failure without losing code',
   expect(wrapper.get('code').text()).toBe('echo ok');
   wrapper.unmount();
 });
+
+it('renders Markdown headings, emphasis, inline code, tables and safe links while blocking javascript URLs', () => {
+  const wrapper = mount(CopilotMessageBody, {
+    props: {
+      text: [
+        '## 诊断结果',
+        '',
+        '请检查 **SettlementEngine** 中的 `roundHalfUp`，参考 [规范](https://example.com/spec) 和 [危险链接](javascript:alert(1))。',
+        '',
+        '| 项 | 状态 |',
+        '| --- | --- |',
+        '| 精度 | 通过 |',
+      ].join('\n'),
+    },
+  });
+  expect(wrapper.get('h2').text()).toBe('诊断结果');
+  expect(wrapper.get('strong').text()).toBe('SettlementEngine');
+  expect(wrapper.get('code.inline-code').text()).toBe('roundHalfUp');
+  const links = wrapper.findAll('a');
+  expect(links).toHaveLength(1);
+  expect(links[0]!.attributes('href')).toBe('https://example.com/spec');
+  expect(links[0]!.attributes('rel')).toContain('noopener');
+  expect(wrapper.text()).toContain('危险链接');
+  expect(wrapper.get('table').text()).toContain('精度');
+  wrapper.unmount();
+});

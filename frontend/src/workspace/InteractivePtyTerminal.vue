@@ -16,12 +16,14 @@ const props = defineProps<{
   exercise: Exercise;
   credential: string;
   disabled: boolean;
+  prepare?: () => Promise<string | null>;
 }>();
 
 const emit = defineEmits<{
   locked: [value: boolean];
   changed: [];
   unauthorized: [];
+  'inspect-command': [commandId: string];
 }>();
 
 type ConnectionPhase = 'IDLE' | 'CONNECTING' | 'CONNECTED' | 'SYNCING' | 'CLOSED' | 'ERROR';
@@ -30,6 +32,7 @@ const host = ref<globalThis.HTMLDivElement>();
 const ruler = ref<globalThis.HTMLSpanElement>();
 const phase = ref<ConnectionPhase>('IDLE');
 const activeCommandId = ref<string | null>(null);
+const lastConflictCommandId = ref<string | null>(null);
 const cols = ref(80);
 const rows = ref(24);
 const banner = ref('');
@@ -104,6 +107,7 @@ function resetScope(nextPhase: ConnectionPhase = 'IDLE') {
   controller = new globalThis.AbortController();
   detachSocket();
   activeCommandId.value = null;
+  lastConflictCommandId.value = null;
   phase.value = nextPhase;
   banner.value = '';
   notice.value = '';
@@ -199,10 +203,12 @@ function handleServerEvent(frame: terminalApi.TerminalServerEvent, token: number
   const reasonText = frame.reason ? `（${reasonLabels[frame.reason] ?? frame.reason}）` : '';
   notice.value = `${stateLabels[frame.state] ?? frame.state} · ${exitText} · ${syncText}${reasonText}`;
   if (frame.synchronization === 'SYNCED') {
+    lastConflictCommandId.value = null;
     notice.value = `已将受控容器内修改同步为工作区版本 r${frame.revision}，可点击「启动终端」基于新版本重建会话（保留 Maven/npm 缓存）。`;
     emit('changed');
   } else if (frame.synchronization === 'CONFLICT') {
-    banner.value = '容器内存在未同步修改，已按草稿安全保留（可在「单次命令」查看 diffs）。';
+    lastConflictCommandId.value = activeCommandId.value;
+    banner.value = '容器内存在未同步修改，已按草稿安全保留。';
   }
   phase.value = 'CLOSED';
   activeCommandId.value = null;
@@ -223,12 +229,20 @@ async function startTerminal() {
   phase.value = 'CONNECTING';
   banner.value = '';
   notice.value = '';
+  lastConflictCommandId.value = null;
   lastExitSummary = null;
   try {
+    const launchRevision = props.prepare ? await props.prepare() : props.exercise.revision;
+    if (disposed || token !== scopeGeneration) return;
+    if (launchRevision === null) {
+      phase.value = 'IDLE';
+      banner.value = '草稿保存未完成，已取消启动交互终端。';
+      return;
+    }
     const issued = await terminalApi.issueSession(
       props.owner,
       props.exercise.exerciseId,
-      props.exercise.revision,
+      launchRevision,
       globalThis.crypto.randomUUID(),
       props.credential,
       controller.signal,
@@ -302,6 +316,7 @@ async function refreshAfterDisconnect(commandId: string, token: number) {
       notice.value = `已将改动同步为版本 r${task.synchronizedRevision}。`;
       emit('changed');
     } else if (task.synchronization === 'CONFLICT') {
+      lastConflictCommandId.value = commandId;
       banner.value = '容器内存在未同步修改，已作为草稿安全保留，未自动覆盖工作区。';
     }
   } catch {
@@ -476,13 +491,23 @@ onScopeDispose(() => {
       </div>
     </div>
 
-    <p
+    <div
       v-if="banner"
       role="alert"
       class="pty-banner pty-banner-error"
     >
-      {{ banner }}
-    </p>
+      <span>{{ banner }}</span>
+      <Button
+        v-if="lastConflictCommandId"
+        type="button"
+        size="small"
+        variant="ghost"
+        data-testid="pty-inspect-diff-btn"
+        @click="emit('inspect-command', lastConflictCommandId)"
+      >
+        查看本次改动 Diff
+      </Button>
+    </div>
     <p
       v-else-if="notice"
       role="status"

@@ -99,11 +99,16 @@ watch(() => exercise.value?.state, (state, previous) => {
 watch(expired, (value) => { if (value) { endPrompt.value = false; void active.refetch(); } });
 const logoutBusy = ref(false);
 const testView = ref<{ start: (revision: string) => void; inspect: (taskId: string) => void }>();
+const commandsView = ref<{ inspect: (commandId: string) => void }>();
 const testBusy = ref(true);
 const singleCommandBusy = ref(true);
 const ptyBusy = ref(false);
 const commandBusy = computed(() => singleCommandBusy.value || ptyBusy.value);
 const terminalMode = ref<'command' | 'pty'>('command');
+function inspectCommand(commandId: string) {
+  terminalMode.value = 'command';
+  commandsView.value?.inspect(commandId);
+}
 const historyBusy = ref(false);
 const editorWriteBusy = ref(false);
 const editorGeneration = ref(0);
@@ -877,11 +882,18 @@ const assistantTabItems = computed(() => {
                   重试文件读取
                 </Button>
               </div>
+              <p
+                v-if="ptyBusy"
+                role="status"
+                class="ws-banner"
+              >
+                交互终端正在占用工作区：编辑器保存与 AI 写入已暂时锁定，请在终端点击「同步到工作区」或「断开」后再继续。
+              </p>
               <WorkspaceEditor
                 v-if="hasEditor"
                 :key="owner + exercise.workspaceInstanceId + editorGeneration"
                 ref="editorView"
-                :locked="logoutBusy || ending || historyBusy || pending || !!unresolved"
+                :locked="logoutBusy || ending || historyBusy || ptyBusy || pending || !!unresolved"
                 :answering-closed="answeringClosed"
                 :test-busy="challengeBlocked || testBusy || commandBusy || historyBusy || !problem?.executionAvailable || problem?.executionSupported === false"
                 :test-target="testTarget"
@@ -977,6 +989,7 @@ const assistantTabItems = computed(() => {
                 <WorkspaceCommands
                   v-show="terminalMode === 'command'"
                   :key="`cmd-${owner}-${exercise.workspaceInstanceId}`"
+                  ref="commandsView"
                   :owner="owner"
                   :exercise="exercise"
                   :credential="credential"
@@ -993,8 +1006,10 @@ const assistantTabItems = computed(() => {
                   :exercise="exercise"
                   :credential="credential"
                   :disabled="!editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || testBusy || historyBusy || singleCommandBusy"
+                  :prepare="prepareCommand"
                   @locked="ptyBusy = $event"
                   @changed="refreshWorkspace"
+                  @inspect-command="inspectCommand"
                   @unauthorized="credential = ''; account.refetch()"
                 />
               </div>
@@ -1087,7 +1102,7 @@ const assistantTabItems = computed(() => {
                       :owner="owner"
                       :exercise-id="exercise.exerciseId"
                       :credential="credential"
-                      :disabled="challengeBlocked || !editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy"
+                      :disabled="challengeBlocked || !editorView || !writable || answeringClosed || pending || !!unresolved || ending || endPrompt || logoutBusy || historyBusy || ptyBusy"
                       :paths="exercise.paths"
                       :prepare="prepareCopilot"
                       :subview="assistantTab === 'btw' ? 'btw' : 'chat'"

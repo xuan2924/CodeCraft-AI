@@ -361,5 +361,45 @@ it('reconciles authoritative command state after abnormal WebSocket close withou
   ws2.triggerClose(false, 1006);
   await vi.waitFor(() => expect(wrapper.text()).toContain('容器内存在未同步修改，已作为草稿安全保留'));
   expect(wrapper.emitted('changed')).toHaveLength(1);
+  await wrapper.get('[data-testid="pty-inspect-diff-btn"]').trigger('click');
+  expect(wrapper.emitted('inspect-command')).toEqual([[commandId]]);
+  wrapper.unmount();
+});
+
+it('runs prepare callback before launching PTY and aborts if draft saving fails', async () => {
+  const issuedBodies: string[] = [];
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (url, init) => {
+    const path = String(url);
+    if (path.endsWith('/csrf')) return okJson({ token: 'csrf-token' });
+    if (path.endsWith('/terminal/sessions')) return okJson([]);
+    if (path.endsWith('/terminal/session')) {
+      issuedBodies.push(String(init?.body ?? ''));
+      return okJson({
+        commandId,
+        ticket: 'prep-ticket',
+        webSocketPath: `/api/exercises/${exerciseId}/terminal/ws`,
+        protocol: 'codecraft.terminal.v1',
+        gateEpoch: '5',
+        expiresAt: '2026-11-18T12:01:00Z',
+      });
+    }
+    return okJson({});
+  }));
+
+  const prepare = vi.fn<() => Promise<string | null>>()
+    .mockResolvedValueOnce(null)
+    .mockResolvedValueOnce('9');
+  const wrapper = mount(InteractivePtyTerminal, {
+    props: { owner: 'user-1', exercise: sampleExercise('7'), credential: 'cred-abc', disabled: false, prepare },
+  });
+  await vi.waitFor(() => expect(mockTerminals).toHaveLength(1));
+
+  await wrapper.get('[data-testid="pty-start-btn"]').trigger('click');
+  await vi.waitFor(() => expect(wrapper.text()).toContain('草稿保存未完成'));
+  expect(FakeWebSocket.instances).toHaveLength(0);
+
+  await wrapper.get('[data-testid="pty-start-btn"]').trigger('click');
+  await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+  expect(JSON.parse(issuedBodies[0]!)).toEqual({ expectedRevision: '9' });
   wrapper.unmount();
 });

@@ -23,7 +23,7 @@ const now = ref(Date.now());
 const tick = globalThis.setInterval(() => { now.value = Date.now(); }, 1000);
 onScopeDispose(() => globalThis.clearInterval(tick));
 const active = computed(() => !!result.data.value && ['QUEUED', 'RUNNING'].includes(result.data.value.check.status));
-function valid(item: api.CheckItem) { return item.valid && !!item.validUntil && Date.parse(item.validUntil) > now.value; }
+function valid(item: api.CheckItem) { return item.valid && (!item.validUntil || Date.parse(item.validUntil) > now.value); }
 const bothValid = computed(() => !!result.data.value && valid(result.data.value.basic) && valid(result.data.value.tool));
 function label(item: api.CheckItem) {
   if (valid(item)) return '通过，可复用';
@@ -110,7 +110,7 @@ function start() {
       重新读取结果
     </Button>
     <p class="help">
-      最多 3 次真实模型请求，可能收费；失败不自动重试。关闭页面或取消等待不代表供应商未收费。通过结果自原完成时间起 30 分钟内可复用；终态检查记录保留至少 30 天。
+      最多 3 次真实模型请求，可能收费；失败不自动重试。关闭页面或取消等待不代表供应商未收费。当前配置版本通过检查后持续可复用（配置变更后需重新验证）；终态检查记录保留至少 30 天。
     </p>
     <label :for="`fee-${model.id}`"><input
       :id="`fee-${model.id}`"

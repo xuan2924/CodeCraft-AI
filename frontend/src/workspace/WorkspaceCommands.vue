@@ -117,6 +117,12 @@ function requestStop() {
   const { owner, exercise } = props;
   void stop.submit((key, signal) => api.stop(owner, exercise.exerciseId, exercise.workspaceInstanceId, task.id, key, props.credential, signal));
 }
+function inspect(commandId: string) {
+  selected.value = commandId;
+  cursor.value = null;
+  void head.refetch();
+}
+defineExpose({ inspect });
 </script>
 
 <template>

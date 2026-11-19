@@ -8,6 +8,7 @@ import { ApiError } from '../api/request';
 import * as api from './api';
 import * as delegationApi from './delegationApi';
 import CopilotProposals from './CopilotProposals.vue';
+import { clearAllComposerDrafts } from './composerDrafts';
 import { clearCopilotFeeConsent } from './feeConsent';
 
 vi.mock('./delegationApi', () => ({ list: vi.fn() }));
@@ -36,7 +37,7 @@ async function sendPrompt(wrapper: ReturnType<typeof mount>, content = 'Inspect 
   }
 }
 beforeEach(() => {
-  vi.resetAllMocks(); vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] }); clearCopilotFeeConsent();
+  vi.resetAllMocks(); vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] }); clearCopilotFeeConsent(); clearAllComposerDrafts();
   vi.mocked(api.latest).mockResolvedValue(null);
   vi.mocked(delegationApi.list).mockResolvedValue([]);
   vi.mocked(api.proposals).mockResolvedValue({ items: [], nextCursor: null });
@@ -49,7 +50,7 @@ beforeEach(() => {
   vi.mocked(api.stop).mockResolvedValue({ ...task, state: 'STOPPING', stopRequested: true });
   vi.mocked(api.watchTask).mockReturnValue(vi.fn());
 });
-afterEach(() => { wrappers.splice(0).forEach((wrapper) => wrapper.unmount()); clients.splice(0).forEach((client) => client.clear()); document.body.innerHTML = ''; clearCopilotFeeConsent(); vi.useRealTimers(); });
+afterEach(() => { wrappers.splice(0).forEach((wrapper) => wrapper.unmount()); clients.splice(0).forEach((client) => client.clear()); document.body.innerHTML = ''; clearCopilotFeeConsent(); clearAllComposerDrafts(); vi.useRealTimers(); });
 
 it('renders the real child through the ordinary task UI without recursive delegation or a second composer', async () => {
   const childId = '10000000-0000-0000-0000-000000000003'; const conversation = '10000000-0000-0000-0000-000000000004';
@@ -243,4 +244,71 @@ it('resubscribes after 2s disconnect timer and cancels pending reconnect on clea
   stop();
   await vi.advanceTimersByTimeAsync(2000);
   expect(watch).toHaveBeenCalledTimes(2);
+});
+
+it('preserves unsent composer draft across credential changes and conversation switches, isolates owners, and guards IME enter', async () => {
+  const wrapper = panel();
+  await flushPromises();
+  const textarea = wrapper.get<HTMLTextAreaElement>('.composer-textarea');
+  await textarea.setValue('Draft before takeover');
+
+  await wrapper.setProps({ credential: 'new-control-credential' });
+  await flushPromises();
+  expect(textarea.element.value).toBe('Draft before takeover');
+
+  // IME composing Enter must not submit
+  await textarea.trigger('keydown', { key: 'Enter', isComposing: true });
+  await flushPromises();
+  expect(api.start).not.toHaveBeenCalled();
+
+  const conv2 = '10000000-0000-0000-0000-000000000099';
+  await wrapper.setProps({ conversationId: conv2 });
+  await flushPromises();
+  expect(textarea.element.value).toBe('');
+  await textarea.setValue('Second conversation draft');
+
+  await wrapper.setProps({ conversationId: undefined });
+  await flushPromises();
+  expect(textarea.element.value).toBe('Draft before takeover');
+
+  await wrapper.setProps({ owner: 'different-owner' });
+  await flushPromises();
+  expect(textarea.element.value).toBe('');
+});
+
+it('keeps newly typed text when an in-flight steer resolves and accumulates incremental preview deltas with tool progress', async () => {
+  const epoch = '10000000-0000-0000-0000-0000000000c1';
+  const turnId = '10000000-0000-0000-0000-0000000000c2';
+  vi.mocked(api.latest).mockResolvedValue({
+    task,
+    lastSequence: '1',
+    textHistory: false,
+    partial: { turnId: null, sequence: '0', text: '', truncated: false },
+  });
+  let resolveSteer: (value: api.Steer) => void = () => {};
+  vi.mocked(api.sendSteer).mockImplementationOnce(() => new Promise<api.Steer>((resolve) => { resolveSteer = resolve; }));
+
+  const wrapper = panel();
+  await flushPromises();
+  const textarea = wrapper.get<HTMLTextAreaElement>('.composer-textarea');
+  await textarea.setValue('First steer');
+  await textarea.trigger('keydown', { key: 'Enter', isComposing: false });
+  await flushPromises();
+
+  // User continues typing while steer request is still in flight
+  await textarea.setValue('New text typed while waiting');
+  resolveSteer({
+    id: task.id, sequence: '1', taskId: task.id, exerciseId: exercise, actorId: 'owner',
+    text: 'First steer', state: 'RECEIVED', turnId: null, reason: null, createdAt: task.createdAt, completedAt: null,
+  });
+  await flushPromises();
+  expect(textarea.element.value).toBe('New text typed while waiting');
+
+  const onPreview = vi.mocked(api.watchTask).mock.calls[0]![5]!;
+  onPreview(api.parsePreview({ taskId: task.id, turnId, previewEpoch: epoch, previewSequence: '1', text: 'Rolling tail A', thinking: '', truncated: true, thinkingTruncated: false, toolName: '', toolArgumentBytes: 0 }, task.id));
+  onPreview(api.parsePreview({ taskId: task.id, turnId, previewEpoch: epoch, previewSequence: '2', text: 'Rolling tail B', thinking: '', truncated: true, thinkingTruncated: false, toolName: 'edit', toolArgumentBytes: 2048 }, task.id));
+  await flushPromises();
+  const previewText = wrapper.get('[aria-label="未确认回复预览"]').text();
+  expect(previewText).toContain('Rolling tail B');
+  expect(previewText).toContain('正在准备工具 edit（2048 B）');
 });

@@ -79,3 +79,10 @@ it.each([
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ check, reason: null, currentConfiguration: true, basic, tool: item })));
   await expect(api.getCheck(checkId, signal())).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
 });
+it('accepts non-expiring valid model checks when validUntil is null', async () => {
+  const nonExpiring = { ...item, validUntil: null };
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ check, reason: null, currentConfiguration: true, basic: nonExpiring, tool: nonExpiring })));
+  const parsed = await api.getCheck(checkId, signal());
+  expect(parsed.basic.valid).toBe(true);
+  expect(parsed.basic.validUntil).toBeNull();
+});

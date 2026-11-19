@@ -44,7 +44,7 @@ function finalization(value: unknown): Finalization | null {
     attempts: value.attempts, maxAttempts: value.maxAttempts, deadlineAt: value.deadlineAt === null ? null : String(value.deadlineAt),
     endedAt: value.endedAt === null ? null : String(value.endedAt), status: String(value.status) };
 }
-export interface WorkspaceFile { workspaceInstanceId: string; revision: string; path: string; content: string }
+export interface WorkspaceFile { workspaceInstanceId: string; revision: string; path: string; content: string; contentSha256?: string }
 function strings(value: unknown): value is string[] { return Array.isArray(value) && value.every((entry) => typeof entry === 'string'); }
 function invalid(): never { throw new ApiError(502, 'INVALID_RESPONSE'); }
 function parseProblem(value: unknown): Problem {
@@ -106,8 +106,10 @@ export async function current(signal: AbortSignal, selectedExercise?: string, ow
 export async function file(exercise: Exercise, path: string, signal: AbortSignal): Promise<WorkspaceFile> {
   const value = await request(`/api/exercises/${encodeURIComponent(exercise.exerciseId)}/files?path=${encodeURIComponent(path)}`, signal);
   if (!object(value) || value.workspaceInstanceId !== exercise.workspaceInstanceId || value.path !== path
-    || value.revision !== exercise.revision || typeof value.content !== 'string') return invalid();
-  return { workspaceInstanceId: exercise.workspaceInstanceId, revision: String(value.revision), path, content: value.content };
+    || value.revision !== exercise.revision || typeof value.content !== 'string'
+    || (value.contentSha256 !== undefined && value.contentSha256 !== null && typeof value.contentSha256 !== 'string')) return invalid();
+  const contentSha256 = typeof value.contentSha256 === 'string' && value.contentSha256 ? value.contentSha256 : undefined;
+  return { workspaceInstanceId: exercise.workspaceInstanceId, revision: String(value.revision), path, content: value.content, ...(contentSha256 ? { contentSha256 } : {}) };
 }
 export interface Action { path: string; body: Record<string, string>; key: string }
 export async function act(action: Action, signal: AbortSignal, credential?: string, owner?: string): Promise<{ exerciseId: string; state: string }> {
@@ -146,8 +148,8 @@ export function message(error: unknown): string {
     if (error.code === 'PLATFORM_CONFIGURATION_UNAVAILABLE' || error.code === 'PLATFORM_CHECK_REQUIRED') return '平台面试官/评测者尚未配置或验证，请联系管理员完成发布后创建演练。';
     if (error.code === 'FAVORITE_LIMIT_REACHED') return '收藏已达到 1000 道题目的上限，请先取消部分收藏。';
     if (error.code === 'MODEL_SELECTION_REQUIRED') return '请先显式选择本次演练使用的模型。';
-    if (error.code === 'MODEL_CHECK_REQUIRED') return '所选版本的基础连接与工具闭环检查尚未通过或已过期，请确认费用后重新检查；尚未开始计时。';
-    if (error.code === 'MODEL_VERSION_CONFLICT') return '所选配置已更新，请显式应用更新版本并在开始计时前完成检查。';
+    if (error.code === 'MODEL_CHECK_REQUIRED') return '所选版本的基础连接与工具闭环检查尚未通过，请先在模型设置中完成一次验证后再调用 Copilot。';
+    if (error.code === 'MODEL_VERSION_CONFLICT') return '所选配置已更新，请显式应用更新版本后再继续调用 Copilot。';
     if (error.code === 'MODEL_CONNECTION_NOT_FOUND' || error.code === 'MODEL_CONFIGURATION_NOT_FOUND') return '所选配置已删除，请重新选择。';
     if (error.code === 'REVISION_CONFLICT') return '工作区版本已变化。草稿已保留，请比较服务端内容后再保存。';
     if (error.code === 'STALE_CONTROL' || error.code === 'CONTROL_HELD') return '当前页面没有操作权，请显式接管；草稿不会自动清除。';

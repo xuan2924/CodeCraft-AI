@@ -1,25 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, defineComponent, h, onBeforeUnmount, ref, watch, type PropType, type VNodeChild } from 'vue';
 import { marked, type Token, type Tokens } from 'marked';
 
 const props = defineProps<{ text: string; thinking?: string }>();
-interface DisplayBlock { code: boolean; text: string; language: string }
-function displayBlocks(tokens: Token[]): DisplayBlock[] {
-  return tokens.flatMap((token): DisplayBlock[] => {
-    // The lexer has no custom extensions; these tags identify built-in block tokens.
-    if (token.type === 'blockquote') return displayBlocks((token as Tokens.Blockquote).tokens);
-    if (token.type === 'list') {
-      const list = token as Tokens.List;
-      return list.items.flatMap((item, index) => [
-        { code: false, text: list.ordered ? `${Number(list.start) + index}. ` : '• ', language: '' },
-        ...displayBlocks(item.tokens),
-      ]);
-    }
-    return [token.type === 'code' ? { code: true, text: token.text, language: token.lang ?? '' }
-      : { code: false, text: token.raw, language: '' }];
-  });
-}
-const blocks = computed(() => displayBlocks(marked.lexer(props.text)));
+const tokens = computed(() => marked.lexer(props.text));
 const copyStatus = ref('');
 const copying = ref(false);
 let generation = 0;
@@ -36,6 +20,130 @@ async function copy(text: string) {
     if (current === generation) copyStatus.value = '复制失败，请选中代码手动复制。';
   } finally { if (current === generation) copying.value = false; }
 }
+
+function safeHref(href: string | null | undefined): string | null {
+  if (!href) return null;
+  try {
+    const parsed = new globalThis.URL(href);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderInline(items: Token[] | undefined): VNodeChild[] {
+  if (!items || !items.length) return [];
+  return items.map((token, idx): VNodeChild => {
+    switch (token.type) {
+      case 'strong':
+        return h('strong', { key: idx }, renderInline((token as Tokens.Strong).tokens));
+      case 'em':
+        return h('em', { key: idx }, renderInline((token as Tokens.Em).tokens));
+      case 'del':
+        return h('del', { key: idx }, renderInline((token as Tokens.Del).tokens));
+      case 'codespan':
+        return h('code', { key: idx, class: 'inline-code' }, (token as Tokens.Codespan).text);
+      case 'br':
+        return h('br', { key: idx });
+      case 'escape':
+        return (token as Tokens.Escape).text;
+      case 'link': {
+        const link = token as Tokens.Link;
+        const url = safeHref(link.href);
+        const label = link.tokens?.length ? renderInline(link.tokens) : link.text;
+        return url
+          ? h('a', { key: idx, href: url, target: '_blank', rel: 'noopener noreferrer', class: 'md-link' }, label)
+          : h('span', { key: idx }, label);
+      }
+      case 'text': {
+        const textToken = token as Tokens.Text;
+        return textToken.tokens?.length ? h('span', { key: idx }, renderInline(textToken.tokens)) : textToken.text;
+      }
+      case 'html':
+      default:
+        return token.raw;
+    }
+  });
+}
+
+function renderCodeBlock(token: Tokens.Code, key: number): VNodeChild {
+  return h('div', { key, class: 'code-block', 'aria-label': '代码块' }, [
+    h('header', [
+      h('span', token.lang || '代码'),
+      h('button', {
+        type: 'button',
+        disabled: copying.value,
+        onClick: () => void copy(token.text),
+      }, '复制代码'),
+    ]),
+    h('pre', [h('code', token.text)]),
+  ]);
+}
+
+function renderBlocks(items: Token[]): VNodeChild[] {
+  return items.flatMap((token, idx): VNodeChild[] => {
+    switch (token.type) {
+      case 'space':
+        return [];
+      case 'code':
+        return [renderCodeBlock(token as Tokens.Code, idx)];
+      case 'heading': {
+        const heading = token as Tokens.Heading;
+        const depth = Math.min(6, Math.max(1, heading.depth));
+        return [h(`h${depth}`, { key: idx, class: `md-h md-h${depth}` }, renderInline(heading.tokens))];
+      }
+      case 'paragraph':
+        return [h('p', { key: idx, class: 'md-p' }, renderInline((token as Tokens.Paragraph).tokens))];
+      case 'blockquote':
+        return [h('blockquote', { key: idx, class: 'md-quote' }, renderBlocks((token as Tokens.Blockquote).tokens))];
+      case 'list': {
+        const list = token as Tokens.List;
+        const tag = list.ordered ? 'ol' : 'ul';
+        const attrs: Record<string, unknown> = { key: idx, class: 'md-list' };
+        if (list.ordered && list.start !== '' && Number(list.start) !== 1) attrs.start = Number(list.start);
+        return [h(tag, attrs, list.items.map((item, itemIdx) =>
+          h('li', { key: itemIdx }, renderBlocks(item.tokens)),
+        ))];
+      }
+      case 'table': {
+        const table = token as Tokens.Table;
+        return [h('div', { key: idx, class: 'md-table-wrap' }, [
+          h('table', { class: 'md-table' }, [
+            h('thead', [
+              h('tr', table.header.map((cell, cellIdx) =>
+                h('th', { key: cellIdx, style: table.align[cellIdx] ? { textAlign: table.align[cellIdx] } : undefined }, renderInline(cell.tokens)),
+              )),
+            ]),
+            h('tbody', table.rows.map((row, rowIdx) =>
+              h('tr', { key: rowIdx }, row.map((cell, cellIdx) =>
+                h('td', { key: cellIdx, style: table.align[cellIdx] ? { textAlign: table.align[cellIdx] } : undefined }, renderInline(cell.tokens)),
+              )),
+            )),
+          ]),
+        ])];
+      }
+      case 'hr':
+        return [h('hr', { key: idx, class: 'md-hr' })];
+      case 'text': {
+        const textToken = token as Tokens.Text;
+        return [h('p', { key: idx, class: 'md-p' }, textToken.tokens?.length ? renderInline(textToken.tokens) : textToken.text)];
+      }
+      case 'html':
+      default:
+        return [h('pre', { key: idx, class: 'prose' }, token.raw)];
+    }
+  });
+}
+
+const MarkdownContent = defineComponent({
+  name: 'MarkdownContent',
+  props: {
+    items: { type: Array as PropType<Token[]>, required: true },
+  },
+  setup(componentProps) {
+    return () => h('div', { class: 'md-root' }, renderBlocks(componentProps.items));
+  },
+});
 </script>
 
 <template>
@@ -44,32 +152,7 @@ async function copy(text: string) {
       <summary>思考</summary>
       <pre class="thinking">{{ thinking }}</pre>
     </details>
-    <template
-      v-for="(block, index) in blocks"
-      :key="index"
-    >
-      <div
-        v-if="block.code"
-        class="code-block"
-        aria-label="代码块"
-      >
-        <header>
-          <span>{{ block.language || '代码' }}</span>
-          <button
-            type="button"
-            :disabled="copying"
-            @click="copy(block.text)"
-          >
-            复制代码
-          </button>
-        </header>
-        <pre><code>{{ block.text }}</code></pre>
-      </div>
-      <pre
-        v-else
-        class="prose"
-      >{{ block.text }}</pre>
-    </template>
+    <MarkdownContent :items="tokens" />
     <p
       v-if="copyStatus"
       role="status"
@@ -93,14 +176,44 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   font-size: 12px;
   color: var(--oc-fg-muted);
 }
-.code-block {
-  margin: 8px 0;
+.md-root { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.md-root :deep(.md-p) { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.md-root :deep(.md-h) { margin: 4px 0 2px; font-weight: 600; line-height: 1.35; }
+.md-root :deep(.md-h1) { font-size: 15.5px; }
+.md-root :deep(.md-h2) { font-size: 14.5px; }
+.md-root :deep(.md-h3),
+.md-root :deep(.md-h4),
+.md-root :deep(.md-h5),
+.md-root :deep(.md-h6) { font-size: 13.5px; }
+.md-root :deep(.inline-code) {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--oc-bg-subtle);
+  border: 1px solid var(--oc-border);
+  font-size: 12px;
+}
+.md-root :deep(.md-link) { color: var(--oc-accent); text-decoration: underline; overflow-wrap: anywhere; }
+.md-root :deep(.md-quote) {
+  margin: 4px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--oc-border-strong);
+  color: var(--oc-fg-muted);
+}
+.md-root :deep(.md-list) { margin: 2px 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.md-root :deep(.md-hr) { border: 0; border-top: 1px solid var(--oc-border); margin: 6px 0; }
+.md-root :deep(.md-table-wrap) { overflow-x: auto; max-width: 100%; }
+.md-root :deep(.md-table) { border-collapse: collapse; width: 100%; font-size: 12px; }
+.md-root :deep(.md-table th),
+.md-root :deep(.md-table td) { border: 1px solid var(--oc-border); padding: 4px 8px; text-align: left; }
+.md-root :deep(.md-table th) { background: var(--oc-bg-subtle); font-weight: 600; }
+.md-root :deep(.code-block) {
+  margin: 4px 0;
   border: 1px solid var(--oc-border-strong);
   border-radius: 8px;
   background: var(--oc-bg-input);
   overflow: hidden;
 }
-.code-block header {
+.md-root :deep(.code-block header) {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -111,7 +224,7 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   font-size: 11.5px;
   color: var(--oc-fg-muted);
 }
-.code-block header button {
+.md-root :deep(.code-block header button) {
   padding: 3px 9px;
   border-radius: 6px;
   border: 1px solid var(--oc-border-strong);
@@ -120,8 +233,8 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   font-size: 11.5px;
   cursor: pointer;
 }
-.code-block header button:hover {
+.md-root :deep(.code-block header button:hover) {
   background: var(--oc-surface-hover);
 }
-.code-block pre { padding: 10px 12px; overflow-x: auto; white-space: pre; font-size: 12.5px; }
+.md-root :deep(.code-block pre) { padding: 10px 12px; overflow-x: auto; white-space: pre; font-size: 12.5px; }
 </style>

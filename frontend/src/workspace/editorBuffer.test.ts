@@ -32,3 +32,23 @@ it('updates clean buffers and keeps larger revisions precise', () => {
 it('does not mistake a different file for the same buffer', () => {
   expect(() => observe(buffer(file), { ...file, path: 'other' })).toThrow('File identity mismatch');
 });
+it('advances revision silently without false conflict when server content matches baseline', () => {
+  const value = buffer({ ...file, contentSha256: 'sha-base' });
+  value.content = 'local edits';
+  observe(value, { ...file, revision: '2', content: 'base', contentSha256: 'sha-base' });
+  expect(dirty(value)).toBe(true);
+  expect(value.content).toBe('local edits');
+  expect(value.baseContent).toBe('base');
+  expect(value.revision).toBe('2');
+  expect(value.remote).toBeNull();
+});
+it('clears stale conflict if a later revision restores server content to the baseline', () => {
+  const value = buffer(file);
+  value.content = 'local edits';
+  observe(value, { ...file, revision: '1', content: 'server change' });
+  expect(value.remote?.revision).toBe('1');
+  observe(value, { ...file, revision: '2', content: 'base' });
+  expect(value.revision).toBe('2');
+  expect(value.remote).toBeNull();
+  expect(value.content).toBe('local edits');
+});

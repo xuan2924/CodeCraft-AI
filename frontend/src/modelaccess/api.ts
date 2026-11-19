@@ -77,7 +77,7 @@ function checkItem(value: unknown): CheckItem {
   const item = record(value);
   const result: CheckItem = { status: choice(item.status, itemStates), completedAt: nullable(item.completedAt, date), validUntil: nullable(item.validUntil, date),
     reused: bool(item.reused), valid: bool(item.valid), errorCode: nullable(item.errorCode, (value) => text(value, 128)) };
-  if (result.valid && (result.status !== 'SUCCEEDED' || !result.completedAt || !result.validUntil || result.errorCode !== null)) return invalid();
+  if (result.valid && (result.status !== 'SUCCEEDED' || !result.completedAt || result.errorCode !== null)) return invalid();
   return result;
 }
 function checkStatus(value: unknown): CheckStatus {
