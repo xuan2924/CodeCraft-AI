@@ -45,6 +45,7 @@ type Runner struct {
 	mu                  sync.Mutex
 	terminalMu          sync.Mutex
 	terminals           map[string]*Terminal
+	terminalIdleTimeout time.Duration
 	terminalEnvironment func(context.Context, Input) ([]string, error)
 	stateMu             sync.Mutex                         // Orders durable intent and result publication.
 	pendingTerminals    map[string]map[string]TaskIdentity // workspace -> unresolved terminals; protected by stateMu
@@ -79,7 +80,7 @@ func New(ctx context.Context, docker *client.Client, root, volume, owner string)
 		lock.Close()
 		return nil, fmt.Errorf("execution registry already owned: %w", err)
 	}
-	r := &Runner{docker: docker, root: root, volume: volume, owner: owner, lock: lock, tasks: map[string]string{}, active: map[string]Input{}, concurrency: 4, epoch: rand.Text(), now: time.Now}
+	r := &Runner{docker: docker, root: root, volume: volume, owner: owner, lock: lock, tasks: map[string]string{}, active: map[string]Input{}, concurrency: 4, epoch: rand.Text(), terminalIdleTimeout: defaultTerminalIdleTimeout, now: time.Now}
 	// Each process durably fences all previous dispatch generations before it
 	// inspects/repairs evidence or permits RPC admission.
 	if err = r.writeRegistry(".epoch", []byte(r.epoch)); err != nil {

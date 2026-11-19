@@ -28,13 +28,13 @@ func TestCommandContainerUsesNetworkAndOnlyItsMutableCopy(t *testing.T) {
 	if config.NetworkDisabled || string(host.NetworkMode) != "isolated-"+input.ExecutionID || !host.ReadonlyRootfs || config.User != "10001:10001" {
 		t.Fatalf("unexpected command isolation: config=%+v host=%+v", config, host)
 	}
-	if len(host.Mounts) != 1 || host.Mounts[0].Target != "/project" || host.Mounts[0].ReadOnly || host.Mounts[0].VolumeOptions.Subpath != "instances/"+input.Subpath {
+	if len(host.Mounts) != 2 || host.Mounts[0].Target != "/project" || host.Mounts[0].ReadOnly || host.Mounts[0].VolumeOptions.Subpath != "instances/"+input.Subpath {
 		t.Fatalf("command must mount only its independent copy: %+v", host.Mounts)
 	}
 	if !strings.Contains(strings.Join(config.Env, "\n"), "CODECRAFT_COMMAND="+input.Command.Text) || config.Entrypoint[0] != "/bin/bash" {
 		t.Fatal("command must be passed unchanged to container Bash")
 	}
-	if !strings.Contains(host.Tmpfs["/cache"], "size=64m") || host.Tmpfs["/project/target"] != "" || host.Tmpfs["/project/node_modules"] != "" {
+	if host.Tmpfs["/cache"] != "" || host.Mounts[1].Target != "/cache" || host.Mounts[1].VolumeOptions.Subpath != "instances/"+input.WorkspaceID+"/dev-cache" || host.Tmpfs["/project/target"] != "" || host.Tmpfs["/project/node_modules"] != "" {
 		t.Fatal("dependency cache must be bounded; build directories must remain removable")
 	}
 }

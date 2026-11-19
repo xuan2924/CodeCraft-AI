@@ -22,12 +22,10 @@ import (
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-const command = `cp -R /input/src /work/src || exit 90
-mvn -o -B -ntp -f /opt/contract/pom.xml -Dmaven.repo.local=/opt/maven-repository -Dcandidate.sources=/work/src/main/java -Dacceptance.sources=/opt/acceptance -Dbuild.output=/work/target test
+const command = lockStatus + `cp -R /input/src /work/src || exit 90
+mvn -o -B -ntp -f /opt/contract/pom.xml -Dmaven.repo.local=/opt/maven-repository -Dcandidate.sources=/work/src/main/java -Dacceptance.sources=/opt/acceptance -Dbuild.output=/work/target test 3>&-
 status=$?
-printf '%s' "$status" > /work/.result-status.tmp || exit 91
-mv /work/.result-status.tmp /work/result-status || exit 92
-while :; do sleep 1; done`
+` + publishStatus
 
 // Stage observations are operational only: never persist them as execution
 // evidence or log command text, output, paths, credentials, or raw errors.
@@ -369,14 +367,16 @@ func (r *Runner) execute(ctx context.Context, record Result, monitor InputMonito
 		_ = join()
 		return r.finish(ctx, record, "INTERRUPTED", "running_state_persistence_failed", logs, err)
 	}
-	return r.observeExecution(ctx, record, logs, join, monitor)
+	return r.observeExecution(ctx, record, logs, join, monitor, waitStatusLock)
 }
 
-func (r *Runner) observeExecution(ctx context.Context, record Result, logs *tailLog, join func() error, monitor InputMonitor) (result Result, resultErr error) {
+func (r *Runner) observeExecution(ctx context.Context, record Result, logs *tailLog, join func() error, monitor InputMonitor, waitScript string) (result Result, resultErr error) {
 	execution := beginExecutionStage(record.Input, "command_execution")
 	// Restart never grants a fresh runtime budget.
 	runtime, cancelRuntime := context.WithDeadline(ctx, record.StartedAt.Add(time.Duration(record.Input.Limits.TimeoutSeconds)*time.Second))
-	state, reason := r.observe(runtime, &record, logs, monitor)
+	ticks := time.NewTicker(500 * time.Millisecond)
+	state, reason := r.observe(runtime, &record, logs, monitor, waitScript, ticks.C)
+	ticks.Stop()
 	if runtime.Err() != nil {
 		state, reason = "TIMED_OUT", "platform_deadline"
 	}
@@ -408,7 +408,7 @@ func (r *Runner) containerConfig(input Input) (*container.Config, *container.Hos
 	pids := limits.PIDs
 	config := &container.Config{Image: input.Image, User: "10001:10001", WorkingDir: "/work", Entrypoint: []string{"/bin/sh"}, Cmd: []string{"-c", command},
 		Env:             []string{"HOME=/tmp", "MAVEN_OPTS=-Xmx256m -XX:ActiveProcessorCount=1 -Djava.io.tmpdir=/tmp"},
-		Labels:          map[string]string{"codecraft.execution.owner": r.owner, "codecraft.execution.volume": r.volume, "codecraft.execution.id": input.ExecutionID, "codecraft.workspace.id": input.WorkspaceID},
+		Labels:          map[string]string{"codecraft.execution.completion": "flock-v1", "codecraft.execution.owner": r.owner, "codecraft.execution.volume": r.volume, "codecraft.execution.id": input.ExecutionID, "codecraft.workspace.id": input.WorkspaceID},
 		NetworkDisabled: true, AttachStdout: true, AttachStderr: true}
 	host := &container.HostConfig{NetworkMode: "none", ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges:true", "seccomp=" + security.SeccompProfile},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
@@ -429,23 +429,34 @@ func (r *Runner) containerConfig(input Input) (*container.Config, *container.Hos
 			config.Env = append(config.Env, "HTTP_PROXY="+r.proxyURL, "HTTPS_PROXY="+r.proxyURL, "http_proxy="+r.proxyURL, "https_proxy="+r.proxyURL, "NO_PROXY=", "no_proxy=")
 		}
 		host.Mounts[0].Target, host.Mounts[0].ReadOnly = "/project", false
-		cache := fmt.Sprintf("rw,nosuid,nodev,size=%dm,uid=10001,gid=10001", limits.WorkMiB)
-		host.Tmpfs["/cache"] = cache // Project build directories must remain removable (e.g. mvn clean).
+		host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: r.volume, Target: "/cache", VolumeOptions: &mount.VolumeOptions{NoCopy: true, Subpath: r.inputPrefix + input.WorkspaceID + "/dev-cache"}})
+		// A shared development cache must never carry bundled authority tests.
+		host.Tmpfs["/opt/acceptance"] = "ro,nosuid,nodev,noexec,size=1m"
 		if input.Command.Terminal {
 			config.Tty, config.OpenStdin, config.AttachStdin = true, true, true
 			config.Env = append(config.Env, "TERM=xterm-256color")
-			delete(host.Tmpfs, "/cache")
-			host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: r.volume, Target: "/cache", VolumeOptions: &mount.VolumeOptions{NoCopy: true, Subpath: r.inputPrefix + input.WorkspaceID + "/dev-cache"}})
-			// The development image must not expose its bundled authority tests.
-			host.Tmpfs["/opt/acceptance"] = "ro,nosuid,nodev,noexec,size=1m"
 		}
 	}
 	return config, host
 }
 
-func (r *Runner) observe(ctx context.Context, record *Result, logs *tailLog, monitor InputMonitor) (string, string) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+func (r *Runner) observe(ctx context.Context, record *Result, logs *tailLog, monitor InputMonitor, waitScript string, ticks <-chan time.Time) (string, string) {
+	// One attached collector waits for publication. Cancel and join it on every
+	// exit (stop/authority/budget checks continue independently on the ticker).
+	type completion struct {
+		data []byte
+		err  error
+	}
+	var ready chan completion
+	var completed *completion
+	wait, cancel := context.WithCancel(ctx)
+	joined := make(chan struct{})
+	defer func() {
+		cancel()
+		if ready != nil {
+			<-joined
+		}
+	}()
 	for {
 		if err := ctx.Err(); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -474,64 +485,65 @@ func (r *Runner) observe(ctx context.Context, record *Result, logs *tailLog, mon
 				return "INTERRUPTED", "command_storage_unavailable"
 			}
 		}
-		record.Logs, record.DroppedBytes = logs.snapshot()
-		if err := r.persist(*record); err != nil {
-			return "INTERRUPTED", "log_checkpoint_failed"
+		// Recheck intent, authority and storage at publication, even when a
+		// short command completed between ticks.
+		if completed != nil {
+			if completed.err != nil {
+				return "ENVIRONMENT_ERROR", "evidence_collection_failed"
+			}
+			return r.completedStatus(ctx, record, completed.data)
 		}
-		data, err := r.readFile(ctx, record.ContainerID, "/work/result-status", 16)
-		if err == nil {
-			exit, parseErr := strconv.Atoi(string(data))
-			if parseErr != nil || exit < 0 || exit > 255 {
-				return "ENVIRONMENT_ERROR", "invalid_controlled_exit"
+		if logs.checkpoint(record) {
+			if err := r.persist(*record); err != nil {
+				return "INTERRUPTED", "log_checkpoint_failed"
 			}
-			record.ExitCode = &exit
-			if record.Input.Purpose == "COMMAND" {
-				return "EXITED", "command_exit"
-			}
-			if exit == 1 {
-				compilation, readErr := r.readFile(ctx, record.ContainerID, "/work/compilation-result", compilationReportLimit)
-				if readErr == nil && validCompilationReport(compilation) {
-					record.CompilationReport = compilation
-					return "FAILED", "compilation_failed"
-				}
-				if readErr == nil || !errdefs.IsNotFound(readErr) {
-					return "ENVIRONMENT_ERROR", "compilation_evidence_invalid"
-				}
-			}
-			report, err := r.readFile(ctx, record.ContainerID, "/work/target/surefire-reports/TEST-"+record.Input.Suite+".xml", reportLimit)
-			if err != nil {
-				return "ENVIRONMENT_ERROR", "authority_report_unavailable"
-			}
-			record.Report = report
-			state, err := classifyReport(report, record.Input, exit)
-			if err != nil {
-				return "ENVIRONMENT_ERROR", "authority_report_invalid"
-			}
-			return state, "authority_report"
 		}
-		if !errdefs.IsNotFound(err) {
-			if ctx.Err() != nil {
-				continue
-			}
-			return "ENVIRONMENT_ERROR", "evidence_collection_failed"
-		}
-		call, cancel := context.WithTimeout(ctx, 5*time.Second)
-		inspected, inspectErr := r.docker.ContainerInspect(call, record.ContainerID)
-		cancel()
-		if inspectErr != nil {
-			if ctx.Err() != nil {
-				continue
-			}
-			return "ENVIRONMENT_ERROR", "execution_observation_failed"
-		}
-		if inspected.State == nil || !inspected.State.Running {
-			return "ENVIRONMENT_ERROR", "execution_exited_without_evidence"
+		if ready == nil {
+			ready = make(chan completion, 1)
+			go func(id string) {
+				defer close(joined)
+				data, err := r.collectFile(wait, id, "/work/result-status", 16, waitScript)
+				ready <- completion{data, err}
+			}(record.ContainerID)
 		}
 		select {
 		case <-ctx.Done():
-		case <-ticker.C:
+		case <-ticks:
+		case result := <-ready:
+			completed = &result
 		}
 	}
+}
+
+func (r *Runner) completedStatus(ctx context.Context, record *Result, data []byte) (string, string) {
+	exit, parseErr := strconv.Atoi(string(data))
+	if parseErr != nil || exit < 0 || exit > 255 {
+		return "ENVIRONMENT_ERROR", "invalid_controlled_exit"
+	}
+	record.ExitCode = &exit
+	if record.Input.Purpose == "COMMAND" {
+		return "EXITED", "command_exit"
+	}
+	if exit == 1 {
+		compilation, readErr := r.readFile(ctx, record.ContainerID, "/work/compilation-result", compilationReportLimit)
+		if readErr == nil && validCompilationReport(compilation) {
+			record.CompilationReport = compilation
+			return "FAILED", "compilation_failed"
+		}
+		if readErr == nil || !errdefs.IsNotFound(readErr) {
+			return "ENVIRONMENT_ERROR", "compilation_evidence_invalid"
+		}
+	}
+	report, err := r.readFile(ctx, record.ContainerID, "/work/target/surefire-reports/TEST-"+record.Input.Suite+".xml", reportLimit)
+	if err != nil {
+		return "ENVIRONMENT_ERROR", "authority_report_unavailable"
+	}
+	record.Report = report
+	state, err := classifyReport(report, record.Input, exit)
+	if err != nil {
+		return "ENVIRONMENT_ERROR", "authority_report_invalid"
+	}
+	return state, "authority_report"
 }
 
 // Docker's archive API cannot read tmpfs. A fixed exec collector reads one
@@ -540,10 +552,22 @@ func (r *Runner) observe(ctx context.Context, record *Result, logs *tailLog, mon
 func (r *Runner) readFile(ctx context.Context, id, name string, limit int) ([]byte, error) {
 	call, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	return r.collectFile(call, id, name, limit, "")
+}
+
+// The collector may beat PID 1 to startup. Wait locally for lock publication,
+// then block on the lock for the full runtime (also works on recovery).
+const waitStatusLock = `while [ ! -e /work/status-lock ]; do sleep 0.05; done
+flock -s /work/status-lock true || exit 93
+`
+
+func (r *Runner) collectFile(ctx context.Context, id, name string, limit int, waitScript string) ([]byte, error) {
+	call, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	created, err := r.docker.ContainerExecCreate(call, id, container.ExecOptions{User: "10001:10001", AttachStdout: true, AttachStderr: true,
-		Cmd: []string{"/bin/sh", "-c", `[ -e "$1" ] || exit 44
+		Cmd: []string{"/bin/sh", "-c", waitScript + `if [ ! -e "$1" ]; then printf missing >&2; exit; fi
 [ -f "$1" ] && [ ! -L "$1" ] || exit 45
-exec head -c "$2" "$1"`, "collect", name, strconv.Itoa(limit + 1)}})
+head -c "$2" "$1" && printf ok >&2`, "collect", name, strconv.Itoa(limit + 1)}})
 	if err != nil {
 		return nil, err
 	}
@@ -552,33 +576,22 @@ exec head -c "$2" "$1"`, "collect", name, strconv.Itoa(limit + 1)}})
 		return nil, err
 	}
 	defer attached.Close()
-	stop := context.AfterFunc(call, attached.Close)
+	stop := context.AfterFunc(ctx, attached.Close)
 	defer stop()
 	output := &boundedEvidence{limit: limit + 1}
-	_, err = stdcopy.StdCopy(output, io.Discard, attached.Reader)
-	if err != nil {
+	// A separate bounded control channel distinguishes complete reads from
+	// truncated/aborted streams. File contents cannot forge the completion tag.
+	control := &boundedEvidence{limit: 64}
+	if _, err = stdcopy.StdCopy(output, control, attached.Reader); err != nil {
 		return nil, err
 	}
-	for {
-		inspected, err := r.docker.ContainerExecInspect(call, created.ID)
-		if err != nil {
-			return nil, err
-		}
-		if !inspected.Running {
-			if inspected.ExitCode == 44 {
-				return nil, errdefs.NotFound(errors.New("evidence not ready"))
-			}
-			if inspected.ExitCode != 0 || output.Len() > limit {
-				return nil, errors.New("evidence unavailable or excessive")
-			}
-			return output.Bytes(), nil
-		}
-		select {
-		case <-call.Done():
-			return nil, call.Err()
-		case <-time.After(10 * time.Millisecond):
-		}
+	if control.String() == "missing" {
+		return nil, errdefs.NotFound(errors.New("evidence not found"))
 	}
+	if control.String() != "ok" || output.Len() > limit {
+		return nil, errors.New("evidence unavailable or excessive")
+	}
+	return output.Bytes(), nil
 }
 
 type boundedEvidence struct {

@@ -41,12 +41,20 @@ func ValidateCommand(input Input) error {
 // The holding parent publishes the actual Bash exit code. The writable project
 // lives in a dedicated retained copy, so killing the container on stop/timeout
 // cannot erase source modifications before the workspace coordinator sees them.
-const developmentCommand = `cd -- "/project/$CODECRAFT_DIRECTORY"
+const developmentCommand = lockStatus + `cd -- "/project/$CODECRAFT_DIRECTORY"
 status=$?
 if [ "$status" -eq 0 ]; then
-  /bin/bash --noprofile --norc -c "$CODECRAFT_COMMAND"
+  /bin/bash --noprofile --norc -c "$CODECRAFT_COMMAND" 3>&-
   status=$?
 fi
-printf '%s' "$status" > /work/.result-status.tmp || exit 91
+` + publishStatus
+
+// Publish the locked inode only after taking the exclusive lock. A collector
+// can then wait for completion without polling Docker or reading partial data.
+const lockStatus = `exec 3>/work/.status-lock || exit 93
+flock -x 3 && mv /work/.status-lock /work/status-lock || exit 93
+`
+const publishStatus = `printf '%s' "$status" > /work/.result-status.tmp || exit 91
 mv /work/.result-status.tmp /work/result-status || exit 92
-while :; do sleep 1; done`
+flock -u 3 || exit 93
+exec sleep infinity`

@@ -178,7 +178,7 @@ func (r *Runner) recoverExecution(ctx context.Context, record Result, monitor In
 	}
 	defer cancel()
 	defer output.Close()
-	logs := &tailLog{limit: record.Input.Limits.LogBytes, dropped: record.DroppedBytes}
+	logs := &tailLog{dirty: true, limit: record.Input.Limits.LogBytes, dropped: record.DroppedBytes}
 	record.LogsIncomplete = true
 	record.StreamID = rand.Text()
 	drained := make(chan error, 1)
@@ -195,5 +195,12 @@ func (r *Runner) recoverExecution(ctx context.Context, record Result, monitor In
 			return <-drained
 		}
 	}
-	return r.observeExecution(ctx, record, logs, join, monitor)
+	waitScript := waitStatusLock
+	if inspected.Config.Labels["codecraft.execution.completion"] != "flock-v1" {
+		// Pre-lock holding shells only publish the status file. Observe them
+		// with one bounded exec; never relaunch work during a rolling upgrade.
+		waitScript = `while [ ! -e "$1" ]; do sleep 1; done
+`
+	}
+	return r.observeExecution(ctx, record, logs, join, monitor, waitScript)
 }

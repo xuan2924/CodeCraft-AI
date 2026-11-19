@@ -12,6 +12,22 @@ import (
 	"github.com/docker/docker/api/types/container"
 )
 
+const defaultTerminalIdleTimeout = 30 * time.Minute
+
+// ConfigureTerminalIdleTimeout sets the attached PTY input-idle limit before serving.
+func (r *Runner) ConfigureTerminalIdleTimeout(timeout time.Duration) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.running || r.closed {
+		return ErrBusy
+	}
+	if timeout <= 0 {
+		return errors.New("terminal idle timeout must be positive")
+	}
+	r.terminalIdleTimeout = timeout
+	return nil
+}
+
 // ConfigureTerminalEnvironment installs a trusted, process-owned grant provider
 // before serving. Browser/protobuf input cannot select environment variables.
 // Values are never stored in Input, recovery labels, or application logs.
@@ -189,11 +205,14 @@ func (r *Runner) terminalExpired(id string) bool {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	timeout := 5 * time.Minute
+	return t.idleExpired(time.Now(), r.terminalIdleTimeout)
+}
+
+func (t *Terminal) idleExpired(now time.Time, timeout time.Duration) bool {
 	if !t.attached {
 		timeout = 30 * time.Second
 	}
-	return time.Since(t.lastActivity) >= timeout
+	return now.Sub(t.lastActivity) >= timeout
 }
 
 // TerminalBusy prevents a second writer from racing an admitted development copy.

@@ -20,8 +20,14 @@ func TestDevelopmentCommandRunsInDockerAndRetainsNonzeroChanges(t *testing.T) {
 	input.Purpose, input.Target, input.Suite, input.Tests = "COMMAND", "bash", "", nil
 	input.TaskID, input.ExerciseID, input.ProblemID, input.ProblemVersion = identifier(), identifier(), "cart-total", "1.0.1"
 	input.Subpath = input.WorkspaceID + "/command-" + input.ExecutionID + "/tree"
-	input.Command = &execution.CommandSpec{Directory: ".", Text: "printf 'command changed' > src/main/java/interview/CartTotal.java; mkdir -p target; touch target/cache; rm -rf target || exit 8; printf COMMAND_STDOUT; printf COMMAND_STDERR >&2; exit 7"}
+	input.Command = &execution.CommandSpec{Directory: ".", Text: "[ \"$(cat /cache/maven/seed)\" = retained ] || exit 9; printf reused > /cache/maven/next; printf 'command changed' > src/main/java/interview/CartTotal.java; mkdir -p target; touch target/cache; rm -rf target || exit 8; printf COMMAND_STDOUT; printf COMMAND_STDERR >&2; exit 7"}
 	prepare := func() error {
+		if err := os.MkdirAll(filepath.Join("/state", input.WorkspaceID, "dev-cache/maven"), 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join("/state", input.WorkspaceID, "dev-cache/maven/seed"), []byte("retained"), 0600); err != nil {
+			return err
+		}
 		return os.Rename(original, filepath.Dir(filepath.Join("/state", input.Subpath)))
 	}
 	monitor := func(ctx context.Context, current execution.Input) error {
@@ -54,6 +60,10 @@ func TestDevelopmentCommandRunsInDockerAndRetainsNonzeroChanges(t *testing.T) {
 	result, err := runner.Query(context.Background(), input.ExecutionID)
 	if err != nil || result.State != "EXITED" || result.ExitCode == nil || *result.ExitCode != 7 || result.Evidence() != nil || !result.Quiescent || result.CopyCleanup != "SUCCEEDED" || result.Cleanup != "SUCCEEDED" {
 		t.Fatalf("development outcome: state=%s reason=%s copy=%s error=%v", result.State, result.Reason, result.CopyCleanup, err)
+	}
+	data, err := os.ReadFile(filepath.Join("/state", input.WorkspaceID, "dev-cache/maven/next"))
+	if err != nil || string(data) != "reused" {
+		t.Fatalf("lost command cache: %q %v", data, err)
 	}
 	channels := map[string]string{}
 	for _, chunk := range result.Logs {

@@ -68,6 +68,7 @@ func (r Result) Evidence() *Evidence {
 }
 
 type tailLog struct {
+	dirty   bool
 	mu      sync.Mutex
 	limit   int
 	size    int
@@ -83,6 +84,9 @@ func (w channelWriter) Write(data []byte) (int, error) {
 	length := len(data)
 	w.log.mu.Lock()
 	defer w.log.mu.Unlock()
+	if length > 0 {
+		w.log.dirty = true
+	}
 	for len(data) > 0 {
 		size := min(len(data), 16*1024)
 		w.log.chunks = append(w.log.chunks, LogChunk{Channel: w.channel, Data: bytes.Clone(data[:size])})
@@ -113,6 +117,21 @@ func (w channelWriter) Write(data []byte) (int, error) {
 func (l *tailLog) snapshot() ([]LogChunk, uint64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.snapshotLocked()
+}
+
+func (l *tailLog) checkpoint(record *Result) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.dirty {
+		return false
+	}
+	record.Logs, record.DroppedBytes = l.snapshotLocked()
+	l.dirty = false
+	return true
+}
+
+func (l *tailLog) snapshotLocked() ([]LogChunk, uint64) {
 	result := make([]LogChunk, len(l.chunks))
 	for i, chunk := range l.chunks {
 		result[i] = LogChunk{Channel: chunk.Channel, Data: bytes.Clone(chunk.Data)}

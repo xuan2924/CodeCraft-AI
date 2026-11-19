@@ -131,7 +131,7 @@ func TestRunnerStageCancellationPreservesResultAndMeasuresCleanup(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	joined := false
-	result, err := runner.observeExecution(ctx, record, &tailLog{limit: 1024}, func() error { joined = true; return nil }, nil)
+	result, err := runner.observeExecution(ctx, record, &tailLog{limit: 1024}, func() error { joined = true; return nil }, nil, waitStatusLock)
 	if err == nil || !joined || result.State != "INTERRUPTED" || result.Quiescent || result.Reason != "execution_quiescence_unconfirmed" {
 		t.Fatalf("cancellation/ownership safety changed: %+v %v", result, err)
 	}
