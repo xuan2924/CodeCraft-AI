@@ -16,6 +16,15 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface CopilotCompactionRepository {
+    @Select("""
+        SELECT (usage_facts->>'inputTokens')::float8/baseline_input_tokens FROM copilot_turn
+        WHERE task_id IN (SELECT id FROM copilot_task WHERE conversation_id=#{conversation}::uuid)
+          AND model_configuration_id=#{model}::uuid AND model_configuration_version=#{modelVersion}::bigint
+          AND connection_configuration_version=#{connectionVersion}::bigint AND baseline_input_tokens>0
+          AND (usage_facts->>'inputTokens')::numeric>0 ORDER BY created_at DESC,ordinal DESC,id DESC LIMIT 1
+        """)
+    Double calibrationFactor(String conversation, String model, String modelVersion, String connectionVersion);
+
     @Update("UPDATE copilot_compaction_call SET price_snapshot=#{snapshot} WHERE id=#{id}::uuid AND state='DISPATCHED'")
     void recordPrice(String id, String snapshot);
     @Select("SELECT price_snapshot FROM copilot_compaction_call WHERE id=#{id}::uuid")
@@ -116,6 +125,6 @@ public interface CopilotCompactionRepository {
         WHERE m.kind IN ('ASSISTANT','TOOL')
         """)
     long foreignThrough(String conversation, long after, String connection, String model, long connectionVersion, long modelVersion);
-    @Update("UPDATE copilot_turn SET estimated_input_tokens=#{estimate},context_input_bytes=#{bytes},micro_saved_bytes=#{saved},context_version=#{version},context_summary_id=#{summary}::uuid,context_through_sequence=#{through},context_source_high_water=#{highWater},context_text_history_through=#{convertedThrough} WHERE id=#{turn}::uuid")
-    void dispatchContext(String turn, long estimate, long bytes, long saved, long version, String summary, long through, long highWater, long convertedThrough);
+    @Update("UPDATE copilot_turn SET estimated_input_tokens=#{estimate},baseline_input_tokens=#{baseline},context_input_bytes=#{bytes},micro_saved_bytes=#{saved},context_version=#{version},context_summary_id=#{summary}::uuid,context_through_sequence=#{through},context_source_high_water=#{highWater},context_text_history_through=#{convertedThrough} WHERE id=#{turn}::uuid")
+    void dispatchContext(String turn, long estimate, long baseline, long bytes, long saved, long version, String summary, long through, long highWater, long convertedThrough);
 }

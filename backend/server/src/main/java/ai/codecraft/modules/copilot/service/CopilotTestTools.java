@@ -46,7 +46,7 @@ public class CopilotTestTools {
                 return new CopilotToolExecutionDTO(false, json.writeValueAsString(new CopilotTestResultDTO(result.code(), true,
                     result.result(), result.logTruncated(), result.omittedLogBytes())));
             }
-            capacity.admit(task.sessionHash(), task.exerciseId(), measurement -> {
+            capacity.admitHeavy(task.sessionHash(), task.exerciseId(), measurement -> {
                 store.start(task.id(), worker, tool.id(), request, measurement);
                 return null;
             });

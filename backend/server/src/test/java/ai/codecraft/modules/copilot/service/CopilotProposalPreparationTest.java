@@ -30,8 +30,12 @@ class CopilotProposalPreparationTest {
     @Test void capturesTheWholeRenameBatchAgainstOneSavedRevisionWithoutWriting() {
         when(files.find("session", "exercise")).thenReturn(snapshot("7"));
         when(files.read("session", "exercise", "src/main/java/Before.java"))
-            .thenReturn(new WorkspaceFileResponse("instance", "7", "src/main/java/Before.java", "class Before {}"));
-        var result = prepare.prepare("session", "exercise", input);
+            .thenReturn(new WorkspaceFileResponse("instance", "7", "src/main/java/Before.java", "class Before {}", "a".repeat(64)));
+        var result = prepare.prepare("session", "exercise", "propose_changes", input, path -> "a".repeat(64));
+        assertThatThrownBy(() -> prepare.prepare("session", "exercise", "propose_changes", input, path -> "b".repeat(64)))
+            .hasMessage("REVISION_CONFLICT");
+        assertThatThrownBy(() -> prepare.prepare("session", "exercise", "propose_changes", input,
+            path -> path.endsWith("After.java") ? "a".repeat(64) : null)).hasMessage("REVISION_CONFLICT");
         assertThat(result.revision()).isEqualTo("7");
         assertThat(result.files()).hasSize(2);
         assertThat(result.files().getFirst().path()).isEqualTo("src/main/java/After.java");
@@ -43,16 +47,16 @@ class CopilotProposalPreparationTest {
     @Test void rejectsAmbiguousJsonAndProtectedPathsBeforeReadingWorkspaceContents() {
         for (String invalid : List.of("{", input + "{}", input.replace("\"expected_revision\":\"7\"", "\"expected_revision\":\"7\",\"expected_revision\":\"8\""),
             input.replace("\"changes\"", "\"unknown\":true,\"changes\""), input.replace("\"changes\"", "\"mode\":\"AUTO\",\"changes\""), input.replace("src/main/java/After.java", "../private"))) {
-            assertThatThrownBy(() -> prepare.prepare("session", "exercise", invalid)).isInstanceOf(BusinessException.class);
+            assertThatThrownBy(() -> prepare.prepare("session", "exercise", "propose_changes", invalid, path -> null)).isInstanceOf(BusinessException.class);
         }
-        assertThatThrownBy(() -> prepare.prepare("session", "exercise", input.replace("src/main/java/After.java", "authority/tests.java"))).hasMessage("PATH_FORBIDDEN");
+        assertThatThrownBy(() -> prepare.prepare("session", "exercise", "propose_changes", input.replace("src/main/java/After.java", "authority/tests.java"), path -> null)).hasMessage("PATH_FORBIDDEN");
         verify(files, never()).find(anyString(), anyString());
     }
     @Test void neverBuildsADiffFromMixedOrChangedRevisions() {
         when(files.find("session", "exercise")).thenReturn(snapshot("7"));
         when(files.read("session", "exercise", "src/main/java/Before.java"))
             .thenReturn(new WorkspaceFileResponse("instance", "8", "src/main/java/Before.java", "concurrent edit"));
-        assertThatThrownBy(() -> prepare.prepare("session", "exercise", input)).hasMessage("REVISION_CONFLICT");
+        assertThatThrownBy(() -> prepare.prepare("session", "exercise", "propose_changes", input, path -> "a".repeat(64))).hasMessage("REVISION_CONFLICT");
     }
 
     @Test void exactEditsUseOriginalOffsetsAndPreserveCrLf() throws Exception {
@@ -87,23 +91,23 @@ class CopilotProposalPreparationTest {
     @Test void modernEditAndWritePrepareTheSameAtomicApprovalEvidence() {
         when(files.find("session", "exercise")).thenReturn(snapshot("7"));
         when(files.read("session", "exercise", "src/main/java/Before.java"))
-            .thenReturn(new WorkspaceFileResponse("instance", "7", "src/main/java/Before.java", "class Before {}"));
+            .thenReturn(new WorkspaceFileResponse("instance", "7", "src/main/java/Before.java", "class Before {}", "a".repeat(64)));
         var edited = prepare.prepare("session", "exercise", "edit", """
             {"expected_revision":"7","files":[
               {"path":"src/main/java/Before.java","action":"EDIT","edits":[{"oldText":"Before","newText":"Changed"}]},
               {"path":"src/main/java/New.java","action":"CREATE","content":"class New {}"}]}
-            """);
+            """, path -> "a".repeat(64));
         assertThat(edited.files()).hasSize(2);
         assertThat(edited.files().getFirst().before()).isEqualTo("class Before {}");
         assertThat(edited.files().getFirst().after()).isEqualTo("class Changed {}");
         var written = prepare.prepare("session", "exercise", "write", """
             {"expected_revision":"7","path":"src/main/java/Before.java","content":"replacement"}
-            """);
+            """, path -> "a".repeat(64));
         assertThat(written.files().getFirst().kind()).isEqualTo("UPDATE");
         assertThat(written.files().getFirst().after()).isEqualTo("replacement");
         assertThatThrownBy(() -> prepare.prepare("session", "exercise", "write", """
             {"expected_revision":"6","path":"src/main/java/Before.java","content":"stale"}
-            """)).hasMessage("REVISION_CONFLICT");
+            """, path -> "a".repeat(64))).hasMessage("REVISION_CONFLICT");
     }
 
     private ExerciseResponse snapshot(String revision) {

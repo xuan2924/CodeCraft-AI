@@ -104,10 +104,10 @@ public class CopilotCommandService {
     }
 
     private <T> T admit(String session, String exercise, Function<StorageMeasurement, T> action) {
-        try { return capacity.admit(session, exercise, action); }
+        try { return capacity.admitHeavy(session, exercise, action); }
         catch (BusinessException rejection) {
             if (rejection.errorCode() != WorkspaceErrorCode.STORAGE_BUDGET_EXCEEDED || !coordinator.pruneForAdmission(exercise)) throw rejection;
-            return capacity.admit(session, exercise, action);
+            return capacity.admitHeavy(session, exercise, action);
         }
     }
 

@@ -18,7 +18,7 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class CopilotToolExecutor {
-    private static final String READ_TARGET = "{\"code\":\"REVISION_CONFLICT\",\"notice\":\"Read each target file at the current revision before replanning.\"}";
+    private static final String READ_TARGET = "{\"code\":\"REVISION_CONFLICT\",\"notice\":\"Read each target file whose content has changed before replanning.\"}";
     private final CopilotTaskRepository tasks;
     private final CopilotReadTools reads;
     private final CopilotProposalPreparation preparation;
@@ -50,15 +50,6 @@ public class CopilotToolExecutor {
                 String revision = tasks.planningRevision(task.id());
                 if (revision == null || arguments.has("expected_revision") && (!arguments.path("expected_revision").isTextual() || !revision.equals(arguments.path("expected_revision").textValue()))) {
                     return new ToolOutcome.Completed(ToolOutcome.Code.CONFLICT, "{\"code\":\"REVISION_CONFLICT\",\"notice\":\"Read current files before replanning.\"}");
-                }
-                if ("edit".equals(tool.name())) {
-                    var observed = tasks.readPaths(task.id(), revision);
-                    for (var file : arguments.path("files")) {
-                        if (("EDIT".equals(file.path("action").asText()) || "DELETE".equals(file.path("action").asText()))
-                            && !observed.contains(file.path("path").asText())) {
-                            return new ToolOutcome.Completed(ToolOutcome.Code.CONFLICT, READ_TARGET);
-                        }
-                    }
                 }
                 arguments.put("expected_revision", revision);
                 tool = new CopilotToolEntity(tool.id(), tool.turnId(), tool.taskId(), tool.exerciseId(), tool.position(), tool.callId(), tool.name(),
@@ -97,17 +88,13 @@ public class CopilotToolExecutor {
             return new CopilotToolExecutionDTO(false, json.writeValueAsString(reads.execute(task.sessionHash(), task.exerciseId(), tool.name(), tool.arguments())));
         }
         try {
-            var prepared = preparation.prepare(task.sessionHash(), task.exerciseId(), tool.name(), tool.arguments());
-            if (!"edit".equals(tool.name()) && prepared.files().stream().anyMatch(file -> !"CREATE".equals(file.kind()))) {
-                var observed = tasks.readPaths(task.id(), prepared.revision());
-                if (prepared.files().stream().anyMatch(file -> !"CREATE".equals(file.kind()) && !observed.contains(file.path()))) {
-                    return new CopilotToolExecutionDTO(false, READ_TARGET);
-                }
-            }
+            var prepared = preparation.prepare(task.sessionHash(), task.exerciseId(), tool.name(), tool.arguments(),
+                path -> tasks.observedDigest(task.id(), path));
             if (proposals.register(task.id(), worker, tool.id(), prepared)) return new CopilotToolExecutionDTO(true, null);
             return new CopilotToolExecutionDTO(false, json.writeValueAsString(Map.of("code", "PROPOSAL_PREVIOUSLY_REJECTED")));
         } catch (BusinessException rejected) {
-            return new CopilotToolExecutionDTO(false, json.writeValueAsString(Map.of("code", rejected.errorCode().code())));
+            return new CopilotToolExecutionDTO(false, "REVISION_CONFLICT".equals(rejected.errorCode().code()) ? READ_TARGET
+                : json.writeValueAsString(Map.of("code", rejected.errorCode().code())));
         }
     }
 }

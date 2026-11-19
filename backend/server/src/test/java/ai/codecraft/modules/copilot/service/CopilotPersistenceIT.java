@@ -134,6 +134,7 @@ import ai.codecraft.modules.modelaccess.service.ModelConnectionService;
 import ai.codecraft.modules.modelaccess.service.ModelConnectionValidator;
 import ai.codecraft.modules.modelaccess.service.ModelInvocationService;
 import ai.codecraft.modules.workspace.config.RetentionProperties;
+import ai.codecraft.modules.workspace.config.ExerciseAdmissionProperties;
 import ai.codecraft.modules.workspace.config.StorageProperties;
 import ai.codecraft.modules.workspace.model.dto.ExerciseResponse;
 import ai.codecraft.modules.workspace.model.dto.StorageMeasurement;
@@ -418,7 +419,7 @@ class CopilotPersistenceIT {
             platformBindings, capacityStore, secrets, json, clock, mock(ReportTimelineReader.class), mock(TaskWakeupPublisher.class)), ExerciseReportStore.class);
         when(platformBindings.version(exercise, PlatformRole.INTERVIEWER)).thenReturn(new PlatformBindingDTO(UUID.randomUUID().toString(), "{}", "fixture", "fixture", "fixture"));
         interviewer = proxy(new InterviewerStore(sql.getMapper(InterviewerRepository.class), exercises, identity, coordination, platformBindings,
-            mock(ExerciseModelService.class), capacityStore, secrets, clock, mock(TaskWakeupPublisher.class), new TransientTaskStreamHub()), InterviewerStore.class);
+            capacityStore, secrets, clock, mock(TaskWakeupPublisher.class), new TransientTaskStreamHub()), InterviewerStore.class);
         feedback = proxy(new FeedbackStore(sql.getMapper(FeedbackRepository.class), exercises, reports, interviewer, identity, secrets, capacityStore, clock), FeedbackStore.class);
         maintenance = proxy(new WorkspaceMaintenanceStore(sql.getMapper(WorkspaceMaintenanceRepository.class), exercises,
             sql.getMapper(DeletionRepository.class), identity, clock, budget, data, historyRepository), WorkspaceMaintenanceStore.class);
@@ -441,7 +442,7 @@ class CopilotPersistenceIT {
             sql.getMapper(CommandTaskRepository.class), executionProblems, capacityStore, json, clock, data, history), CommandTaskStore.class);
         commandLifecycle = proxy(new CopilotCommandLifecycle(sql.getMapper(CopilotCommandRepository.class), childCommands, clock), CopilotCommandLifecycle.class);
         var lifecycle = proxy(new ExerciseTransactionService(exercises, identity, mock(ProblemTransactionService.class), clock, secrets, coordination,
-            new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, selection, mock(PlatformBindingService.class)), ExerciseTransactionService.class);
+            new RetentionProperties(20, 30, 7, List.of(60, 300, 1800, 3600), 24, 60), capacityStore, new ExerciseAdmissionProperties(1), mock(PlatformBindingService.class)), ExerciseTransactionService.class);
         var operations = proxy(new WorkspaceAiOperationService(identity, exercises, writes, capacityStore, clock), WorkspaceAiOperationService.class);
         conversations = proxy(new CopilotConversationStore(sql.getMapper(CopilotConversationRepository.class), identity,
             lifecycle, coordination, operations, clock), CopilotConversationStore.class);
@@ -481,9 +482,11 @@ class CopilotPersistenceIT {
         approvalModes = new CopilotApprovalModeService(proxy(new CopilotApprovalModeStore(sql.getMapper(CopilotApprovalModeRepository.class),
             identity, secrets, lifecycle, coordination, operations, clock), CopilotApprovalModeStore.class), capacity);
         when(files.find(SESSION, exercise)).thenReturn(new ExerciseResponse(exercise, "problem", instance, preparation, "ACTIVE", "1", "1", List.of("src/Main.java"), clock.instant(), clock.instant().plusSeconds(1800), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, clock.instant()));
-        when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(new WorkspaceFileResponse(instance, "1", "src/Main.java", "class Main {}"));
+        when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(observedFile(instance, "1", "src/Main.java", "class Main {}"));
         driver = mock(ModelCallDriver.class);
         // Keep non-streaming scenarios focused on completed responses; streaming cases replace this bridge explicitly.
+        when(driver.call(any(), any(), any(), anyInt(), any(), any(), any(), any())).thenAnswer(call -> driver.call(
+            call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4), call.getArgument(5), call.getArgument(6)));
         when(driver.call(any(), any(), any(), anyInt(), any(), any(), any())).thenAnswer(call -> driver.call(
             call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), call.getArgument(4), call.getArgument(5)));
         when(driver.call(any(), any(), any(), anyInt(), any(), any())).thenAnswer(call -> driver.call(
@@ -647,6 +650,8 @@ class CopilotPersistenceIT {
         String worker = UUID.randomUUID().toString(); var job = compactions.accept(SESSION, exercise, CONTROL, "usage-summary", new CopilotCompactionRequest(true), measurement);
         summaryExecution.claim(job.id(), worker, null);
         var prepared = contextPreparation.prepare(summaryExecution.ticket(job.id(), worker));
+        var projection = prepared.plan().projection();
+        assertThat(projection.estimatedTokens()).isEqualTo((projection.baselineTokens() + 1) / 2); // prior actual=100, lower clamp
         var candidate = prepared.plan().compaction();
         var dispatch = summaryExecution.begin(job.id(), worker, prepared, candidate, json.writeValueAsString(candidate.sourceIds()), measurement);
         summaryExecution.complete(job.id(), worker, dispatch.call().id(), summaryReceipt(dispatch));
@@ -665,7 +670,7 @@ class CopilotPersistenceIT {
     void automaticSummaryUsesTheCurrentlySelectedExactModelAndContinuesWithoutBrowserCredentials() throws Exception {
         retainedSummaryHistory();
         var selected = selection.resolveForCall(SESSION, exercise);
-        var small = models.create(SESSION, selected.connection().id(), "small-context", new ModelConfigurationRequest("Small", "small", 60000, 4096,
+        var small = models.create(SESSION, selected.connection().id(), "small-context", new ModelConfigurationRequest("Small", "small", 23000, 4096,
             ModelThinkingMode.OFF, null, null, null, null));
         selection.select(SESSION, exercise, CONTROL, "select-small", new ModelInvocationReferenceDTO(selected.connection().id(), small.id(), 1, 1));
         var count = new AtomicInteger();
@@ -805,6 +810,7 @@ class CopilotPersistenceIT {
         retainedSummaryHistory();
         var job = compactions.accept(SESSION, exercise, CONTROL, "full-summary", new CopilotCompactionRequest(true), measurement);
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 2, 268435456);
+        capacity.reconcile(exercise);
         summaryRunner.runStandalone(job.id());
         assertThat(compactions.currentInConversation(SESSION, exercise, null).version()).isEqualTo("0");
         assertThat(compactions.currentInConversation(SESSION, exercise, null).requests().getFirst().reason()).isEqualTo("STORAGE_BUDGET_EXCEEDED");
@@ -907,6 +913,11 @@ class CopilotPersistenceIT {
         boolean fee, List<String> selected, StorageMeasurement measured, String conversation) {
         return tasks.acceptPrepared(session, exercise, credential, key, new CopilotStartRequest(text, fee, selected, conversation),
             new CopilotReferencesPreparedDTO(List.of(), ""), measured);
+    }
+
+    private static WorkspaceFileResponse observedFile(String instance, String revision, String path, String content) {
+        return new WorkspaceFileResponse(instance, revision, path, content, com.google.common.hash.Hashing.sha256()
+            .hashString(content, java.nio.charset.StandardCharsets.UTF_8).toString());
     }
 
     private void retainedSummaryHistory() throws Exception { retainedSummaryHistory(6); }
@@ -1173,6 +1184,7 @@ class CopilotPersistenceIT {
         var task = startTask(SESSION, exercise, CONTROL, "start", "Original", true, measurement);
         var factory = mock(ModelSdkClientFactory.class);
         var callsMade = new AtomicInteger();
+        var previews = new TransientTaskStreamHub();
         StreamingChatModel model = new StreamingChatModel() {
             @Override public Flow.Publisher<ChatModelStreamingEvent> chat(ChatRequest request) {
                 return subscriber -> subscriber.onSubscribe(new Flow.Subscription() {
@@ -1182,8 +1194,11 @@ class CopilotPersistenceIT {
                         requested = true;
                         if (callsMade.getAndIncrement() == 0) {
                             var fragment = mock(PartialToolCall.class);
-                            when(fragment.partialArguments()).thenReturn("{\"path\":");
+                            when(fragment.name()).thenReturn("read");
+                            when(fragment.partialArguments()).thenReturn("私secret");
                             subscriber.onNext(fragment);
+                            assertThat(new String(previews.latest(task.id()).frame(), StandardCharsets.UTF_8))
+                                .contains("\"toolName\":\"read\"", "\"toolArgumentBytes\":9").doesNotContain("secret");
                             steers.accept(SESSION, task.id(), CONTROL, "stream-steer", new CopilotSteerRequest("Different direction"));
                             assertThat(repository.latestTurn(task.id()).state()).isEqualTo("DISPATCHED");
                             verify(files, never()).read(anyString(), anyString(), anyString());
@@ -1202,7 +1217,7 @@ class CopilotPersistenceIT {
         when(factory.create(any(), any(), any())).thenReturn(model);
         var streamLimits = new ModelCallProperties(Duration.ofSeconds(5), Duration.ofSeconds(5), 1, 8388608, 65536, 262144);
         try (var actualDriver = new ModelCallDriver(factory, streamLimits, clock)) {
-            new CopilotRunner(execution, capacity, actualDriver, executor, limits, calls, contexts, new TransientTaskStreamHub(), json).run(task.id(), UUID.randomUUID().toString());
+            new CopilotRunner(execution, capacity, actualDriver, executor, limits, calls, contexts, previews, json).run(task.id(), UUID.randomUUID().toString());
         }
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED"); assertThat(callsMade.get()).isEqualTo(2);
         verify(files, never()).read(anyString(), anyString(), anyString());
@@ -1424,6 +1439,7 @@ class CopilotPersistenceIT {
         String unicode = "😀".repeat(1024);
         assertThat(steers.accept(SESSION, task.id(), CONTROL, "unicode", new CopilotSteerRequest(unicode)).text()).isEqualTo(unicode);
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 2, 268435456);
+        capacity.reconcile(exercise);
         assertThatThrownBy(() -> steers.accept(SESSION, task.id(), CONTROL, "full", new CopilotSteerRequest("Direction"))).hasMessage("STORAGE_BUDGET_EXCEEDED");
         assertThat(steers.list(SESSION, task.id(), 0).items()).hasSize(1);
         assertThat(tasks.stop(SESSION, task.id(), "stop").state()).isEqualTo("STOPPED");
@@ -1445,7 +1461,7 @@ class CopilotPersistenceIT {
                 assertThat(repository.instructionPaths(task.id())).containsExactly("{\"path\":\"src/Main.java\"}");
                 jdbc.update("UPDATE workspace_exercise SET revision=2 WHERE id=?::uuid", exercise);
                 when(files.find(SESSION, exercise)).thenReturn(new ExerciseResponse(exercise, "problem", instance, preparation, "ACTIVE", "2", "1", List.of("src/Main.java"), clock.instant(), clock.instant().plusSeconds(1800), "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, clock.instant()));
-                when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(new WorkspaceFileResponse(instance, "2", "src/Main.java", "class Main { int manual; }"));
+                when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(observedFile(instance, "2", "src/Main.java", "class Main { int manual; }"));
                 return new ModelCallResultDTO(ChatResponse.builder().aiMessage(AiMessage.from(List.of(
                     ToolExecutionRequest.builder().id("stale-test").name("run_tests").arguments("{\"target\":\"base\"}").build()))).build(), 100);
             }
@@ -1537,7 +1553,7 @@ class CopilotPersistenceIT {
         when(files.read(SESSION, exercise, "src/Main.java")).thenAnswer(call -> {
             assertThat(sql.getMapper(StorageCapacityRepository.class).reservedBytes(exercise)).isGreaterThanOrEqualTo(2 * 1024 * 1024);
             tasks.stop(SESSION, task.id(), "stop");
-            return new WorkspaceFileResponse(instance, "1", "src/Main.java", "class Main {}");
+            return observedFile(instance, "1", "src/Main.java", "class Main {}");
         });
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("STOPPED");
@@ -1750,7 +1766,7 @@ class CopilotPersistenceIT {
         when(files.read(SESSION, exercise, "src/Main.java")).thenAnswer(call -> {
             peak.accumulateAndGet(active.incrementAndGet(), Math::max);
             try { Thread.sleep(80); } finally { active.decrementAndGet(); }
-            return new WorkspaceFileResponse(original.workspaceInstanceId(), "1", "src/Main.java", content);
+            return observedFile(original.workspaceInstanceId(), "1", "src/Main.java", content);
         });
         var issued = new AtomicInteger();
         var finalBytes = new AtomicInteger();
@@ -1810,7 +1826,7 @@ class CopilotPersistenceIT {
         var bindings = sql.getMapper(CopilotDelegationRepository.class).pendingAll(parent.id());
         assertThat(bindings).hasSize(3);
         var original = files.read(SESSION, exercise, "src/Main.java");
-        when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(new WorkspaceFileResponse(original.workspaceInstanceId(), "1", "src/Main.java", "// private evidence line\n".repeat(100)));
+        when(files.read(SESSION, exercise, "src/Main.java")).thenReturn(observedFile(original.workspaceInstanceId(), "1", "src/Main.java", "// private evidence line\n".repeat(100)));
         var barrier = new java.util.concurrent.CyclicBarrier(3);
         var nextLine = new AtomicInteger();
         doAnswer(call -> {
@@ -2973,6 +2989,7 @@ class CopilotPersistenceIT {
         var request = new CopilotApprovalModeRequest("AUTO", "0");
         assertThatThrownBy(() -> approvalModes.change(SESSION, exercise, "obsolete", "wrong", request)).hasMessage("STALE_CONTROL");
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 2, 268435456);
+        capacity.reconcile(exercise);
         assertThatThrownBy(() -> approvalModes.change(SESSION, exercise, CONTROL, "full", request)).hasMessage("STORAGE_BUDGET_EXCEEDED");
         assertThat(approvalModes.current(SESSION, exercise).version()).isEqualTo("0");
         assertThat(approvalModes.current(SESSION, exercise).history()).isEmpty();
@@ -3134,6 +3151,7 @@ class CopilotPersistenceIT {
         approvalModes.change(SESSION, exercise, CONTROL, "auto", new CopilotApprovalModeRequest("AUTO", "0"));
         var workspace = new ProposalWorkspace();
         var task = beginProposal(workspace, false);
+        jdbc.update("UPDATE workspace_storage_budget SET sequence=0 WHERE exercise_id=?::uuid", exercise);
         when(sandbox.measureStorage(any())).thenThrow(Status.UNAVAILABLE.asRuntimeException());
         assertThatThrownBy(() -> automatic.apply(task.id())).hasMessage("STORAGE_METER_UNAVAILABLE");
         var original = proposals.list(SESSION, task.id(), 0).items().getFirst();
@@ -3153,6 +3171,7 @@ class CopilotPersistenceIT {
         var task = beginProposal(workspace, false);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
         measurement = new StorageMeasurement(exercise, "A".repeat(26), 2, 268435456);
+        capacity.reconcile(exercise);
         automatic.apply(task.id());
         assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("FAILED");
         assertThat(proposals.summary(SESSION, proposal).failureCode()).isEqualTo("STORAGE_BUDGET_EXCEEDED");
@@ -3219,6 +3238,7 @@ class CopilotPersistenceIT {
         var task = beginProposal(workspace, true);
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
         assertThat(proposalViews.detail(SESSION, proposal).files().getFirst().before()).isEqualTo("class Main {}");
+        assertThat(repository.observedDigest(task.id(), ProposalWorkspace.PATH)).isEqualTo(workspace.file().contentSha256());
         assertThat(tasks.messagesInConversation(SESSION, exercise, -1, null)).hasSize(3);
         runner = new CopilotRunner(execution, capacity, driver, executor, limits, calls, contexts, new TransientTaskStreamHub(), json);
         var approve = new CopilotProposalDecisionRequest("APPROVE", null);
@@ -3226,6 +3246,7 @@ class CopilotPersistenceIT {
         assertThat(proposals.decide(SESSION, proposal, "obsolete", "approve", approve, measurement).state()).isEqualTo("APPLYING");
         writeCoordinator.recover(); proposals.recoverTask(task.id());
         assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("APPLIED");
+        assertThat(repository.observedDigest(task.id(), ProposalWorkspace.PATH)).isEqualTo(workspace.file().contentSha256());
         runner.run(task.id(), UUID.randomUUID().toString());
         assertThat(tasks.find(SESSION, task.id()).state()).isEqualTo("SUCCEEDED");
         assertThat(workspace.applies.get()).isEqualTo(1);
@@ -3327,6 +3348,7 @@ class CopilotPersistenceIT {
         String proposal = proposals.list(SESSION, task.id(), 0).items().getFirst().id();
         var approve = new CopilotProposalDecisionRequest("APPROVE", null);
         var full = new StorageMeasurement(exercise, "A".repeat(26), 2, 268435456);
+        capacity.reconcile(exercise);
         assertThatThrownBy(() -> proposals.decide(SESSION, proposal, CONTROL, "approve", approve, full)).isInstanceOf(BusinessException.class);
         assertThat(proposals.summary(SESSION, proposal).state()).isEqualTo("PENDING");
         clock.now = clock.instant().plusSeconds(1801);
@@ -3991,7 +4013,7 @@ class CopilotPersistenceIT {
             String arguments = json.writeValueAsString(Map.of("expected_revision", "1", "changes", List.of(new FileChangeRequest(PATH, "UPDATE", "class Main { int answer = 42; }"))));
             return ToolExecutionRequest.builder().id("proposal-call").name("propose_changes").arguments(arguments).build();
         }
-        synchronized WorkspaceFileResponse file() { return new WorkspaceFileResponse(instance, Long.toString(revision), PATH, source); }
+        synchronized WorkspaceFileResponse file() { return observedFile(instance, Long.toString(revision), PATH, source); }
         synchronized WorkspaceSnapshot snapshot() { return WorkspaceSnapshot.newBuilder().setWorkspaceInstanceId(instance).setPrepared(true).setRevision(revision).addPaths(PATH).build(); }
         synchronized GateResponse gate() { return GateResponse.newBuilder().setWorkspaceInstanceId(instance).setEpoch(epoch).setState(gateState).build(); }
         synchronized GateResponse close(String id, long expected) {

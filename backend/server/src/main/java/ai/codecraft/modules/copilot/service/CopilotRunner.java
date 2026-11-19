@@ -79,7 +79,7 @@ public class CopilotRunner {
                     try (var preview = new CopilotPartialCapture(id, dispatch.turn().id(), notifications, json,
                         (text, thinking) -> store.partial(id, worker, dispatch.turn().id(), text, thinking), limits.responseBytes())) {
                         result = driver.call(target, dispatch.request(), new ModelInvocationLimitsDTO(target.model().maxOutputTokens(), target.model().thinkingBudgetTokens()),
-                            Math.min(limits.responseBytes(), calls.maxDecodedBytes()), dispatch.turn().notAfter(), preview::text, preview::thinking);
+                            Math.min(limits.responseBytes(), calls.maxDecodedBytes()), dispatch.turn().notAfter(), preview::text, preview::thinking, preview::tool);
                     }
                     assistant = result.response().aiMessage();
                     validate(assistant);

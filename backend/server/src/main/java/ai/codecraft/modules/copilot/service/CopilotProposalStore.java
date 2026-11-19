@@ -258,6 +258,7 @@ public class CopilotProposalStore {
 
     private void resolve(CopilotPendingProposalDTO proposal, String state, String code, Long revision, Boolean changed, String reason) {
         if (proposals.finish(proposal.id(), state, revision, changed, "APPLIED".equals(state) ? null : code, clock.instant()) != 1) return;
+        if ("APPLIED".equals(state)) tasks.observeAppliedProposal(proposal.id());
         String body = revision == null ? encode(Map.of("code", code, "reason", reason))
             : encode(Map.of("code", code, "revision", revision.toString(), "changed", changed));
         execution.resolveWaitingTool(proposal.taskId(), proposal.toolId(), body);

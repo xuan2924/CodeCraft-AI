@@ -34,7 +34,6 @@ public class InterviewerStore {
     private final IdentityTransactionService identity;
     private final WorkspaceCoordinationStore coordination;
     private final PlatformBindingService platform;
-    private final ExerciseModelService models;
     private final StorageCapacityStore capacity;
     private final IdentitySecrets secrets;
     private final Clock clock;
@@ -42,10 +41,10 @@ public class InterviewerStore {
     private final TransientTaskStreamHub streams;
 
     public InterviewerStore(InterviewerRepository tasks, ExerciseRepository exercises, IdentityTransactionService identity,
-        WorkspaceCoordinationStore coordination, PlatformBindingService platform, ExerciseModelService models,
+        WorkspaceCoordinationStore coordination, PlatformBindingService platform,
         StorageCapacityStore capacity, IdentitySecrets secrets, Clock clock, TaskWakeupPublisher wakeups, TransientTaskStreamHub streams) {
         this.tasks = tasks; this.exercises = exercises; this.identity = identity; this.coordination = coordination;
-        this.platform = platform; this.models = models; this.capacity = capacity; this.secrets = secrets; this.clock = clock; this.wakeups = wakeups; this.streams = streams;
+        this.platform = platform; this.capacity = capacity; this.secrets = secrets; this.clock = clock; this.wakeups = wakeups; this.streams = streams;
     }
 
     @Transactional
@@ -80,7 +79,6 @@ public class InterviewerStore {
         coordination.checkControl(id, IdentitySecrets.digest(credential));
         exercise = exercises.find(id);
         if (!answering(exercise) || "DEFENSE".equals(input.mode()) && !"ACTIVE".equals(exercise.state())) fail(WorkspaceErrorCode.INVALID_STATE);
-        if ("READY".equals(exercise.state())) models.requireReady(session, id);
         if (tasks.active(id) || tasks.count(id) >= 200) fail(WorkspaceErrorCode.INVALID_STATE);
         var version = platform.version(id, PlatformRole.INTERVIEWER);
         String taskId = UUID.randomUUID().toString();
@@ -129,7 +127,6 @@ public class InterviewerStore {
         if ("RUNNING".equals(task.state())) return null;
         if (!authorized(task)) { complete(task, null, "INTERVIEWER_INTERRUPTED", null); return null; }
         var exercise = exercises.find(task.exerciseId());
-        if ("READY".equals(exercise.state())) models.requireReady(task.sessionHash(), exercise.id());
         var version = platform.version(task.exerciseId(), PlatformRole.INTERVIEWER);
         if (!version.id().equals(task.platformVersionId())) { complete(task, null, "INTERVIEWER_INTERRUPTED", null); return null; }
         var auth = identity.tryAuthorizeMutation(task.sessionHash());

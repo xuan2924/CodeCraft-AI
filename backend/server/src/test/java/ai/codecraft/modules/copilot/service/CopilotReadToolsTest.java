@@ -18,16 +18,15 @@ import org.junit.jupiter.api.Test;
 
 class CopilotReadToolsTest {
     @Test
-    void regexGuardRejectsAlternationAcrossEveryLineTerminatorBeforeWorkspaceReads() throws Exception {
+    void forwardsRe2SyntaxAndPreservesGrepBounds() {
         var exercises = mock(ExerciseService.class);
-        var json = new ObjectMapper();
-        var tools = new CopilotReadTools(exercises, json);
-        for (String terminator : List.of("\n", "\r", "\r\n", "\u0085", "\u2028", "\u2029")) {
-            String arguments = json.createObjectNode().put("pattern", "^(a|aa)+" + terminator).put("is_regex", true).toString();
-            assertThat(tools.execute("s", "e", "grep", arguments).code()).isEqualTo("INVALID_ARGUMENTS");
-        }
-        verify(exercises, never()).find(anyString(), anyString());
-        verify(exercises, never()).read(anyString(), anyString(), anyString());
+        var tools = new CopilotReadTools(exercises, new ObjectMapper());
+        String pattern = "(?i)(foo|bar){2,}";
+        when(exercises.grep("s", "e", pattern, "", true, 2, 200)).thenReturn(new WorkspaceGrepResponse("7", List.of(), false));
+        String args = "{\"pattern\":\"" + pattern + "\",\"is_regex\":true";
+        assertThat(tools.execute("s", "e", "grep", args + "}").code()).isEqualTo("OK");
+        assertThat(tools.execute("s", "e", "grep", args + ",\"limit\":201}").code()).isEqualTo("INVALID_ARGUMENTS");
+        verify(exercises).grep("s", "e", pattern, "", true, 2, 200);
     }
     @Test
     void searchesLiteralTextAndMatchesOnlyPublishedPathsWithBoundedResults() {
@@ -68,10 +67,11 @@ class CopilotReadToolsTest {
         var exercises = mock(ExerciseService.class);
         when(exercises.find("session", "exercise")).thenReturn(new ExerciseResponse("exercise", "problem", "instance", "prepare", "ACTIVE", "7", "1",
             List.of("src/Main.java"), null, null, "UNAVAILABLE_NOT_IMPLEMENTED", null, null, null, null, null, null));
-        when(exercises.read("session", "exercise", "src/Main.java")).thenReturn(new WorkspaceFileResponse("instance", "7", "src/Main.java", "first\nsecond\nthird"));
+        when(exercises.read("session", "exercise", "src/Main.java")).thenReturn(new WorkspaceFileResponse("instance", "7", "src/Main.java", "first\nsecond\nthird", "b".repeat(64)));
         var tools = new CopilotReadTools(exercises, new ObjectMapper());
         var result = tools.execute("session", "exercise", "view_file", "{\"path\":\"src/Main.java\",\"start_line\":2,\"end_line\":2}");
         assertThat(result.code()).isEqualTo("OK");
+        assertThat(result.contentSha256()).isEqualTo("b".repeat(64));
         assertThat(result.revision()).isEqualTo("7");
         assertThat(result.lines()).hasSize(2).first().isEqualTo("src/Main.java:2: second");
         assertThat(tools.execute("session", "exercise", "view_file", "{\"path\":\"../private\"}").code()).isEqualTo("PATH_NOT_ALLOWED");
@@ -93,7 +93,6 @@ class CopilotReadToolsTest {
         assertThat(grep.lines()).contains("src/a:1: before", "src/a:2: needle", "src/a:3: after");
         assertThat(grep.truncated()).isTrue();
         verify(exercises, never()).read("s", "e", "other/b");
-        assertThat(tools.execute("s", "e", "grep", "{\"pattern\":\"(a+)+$\",\"is_regex\":true}").code()).isEqualTo("INVALID_ARGUMENTS");
     }
 
 }

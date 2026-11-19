@@ -47,8 +47,36 @@ public class CopilotRequestFactory {
     }
 
     long estimate(ChatRequest request) {
-        return ChatMessageSerializer.messagesToJson(request.messages()).getBytes(StandardCharsets.UTF_8).length
-            + request.parameters().toolSpecifications().toString().getBytes(StandardCharsets.UTF_8).length + 512L;
+        long bytes = 0;
+        for (var message : request.messages()) {
+            bytes += 12; // role and message boundary
+            if (message instanceof UserMessage user) bytes += size(user.singleText());
+            else if (message instanceof SystemMessage systemMessage) bytes += size(systemMessage.text());
+            else if (message instanceof ToolExecutionResultMessage result) bytes += size(result.id()) + size(result.toolName()) + size(result.text());
+            else if (message instanceof AiMessage ai) {
+                bytes += size(ai.text()) + size(ai.thinking()) + size(ai.attributes().toString());
+                for (var call : ai.toolExecutionRequests()) bytes += 12 + size(call.id()) + size(call.name()) + size(call.arguments());
+            } else throw new IllegalStateException("Unsupported Copilot message");
+        }
+        for (var tool : request.toolSpecifications()) bytes += size(tool.toJson());
+        return 128 + (bytes + 2) / 3;
+    }
+
+    private long size(String text) {
+        return text == null ? 0L : CopilotContextPlanner.bytes(text);
+    }
+
+    // Local request envelope, not the SDK/provider-specific HTTP framing or a tokenizer.
+    long encodedBytes(ChatRequest request) {
+        long bytes = size("{\"messages\":") + size(",\"tools\":[]}")
+            + CopilotContextPlanner.bytes(ChatMessageSerializer.messagesToJson(request.messages()));
+        var tools = request.toolSpecifications();
+        for (var tool : tools) bytes += CopilotContextPlanner.bytes(tool.toJson());
+        return bytes + Math.max(0, tools.size() - 1);
+    }
+
+    long calibrated(long baseline, Double factor) {
+        return factor == null ? baseline : (long) Math.ceil(baseline * Math.clamp(factor, 0.5, 3.0));
     }
 
     private ChatMessage asEvidence(ChatMessage message) {

@@ -28,23 +28,35 @@ public class InterviewerContextCollector {
             context.append("Question: ").append(excerpt(turn.question(), 1024))
                 .append("\nAnswer: ").append(excerpt(turn.answer(), 2048)).append('\n');
         }
-        if ("DEFENSE".equals(dispatch.mode())) {
+        boolean activeHint = "HINT".equals(dispatch.mode()) && "ACTIVE".equals(dispatch.phase());
+        if (activeHint) {
+            String failure = tasks.latestFailedTest(dispatch.exerciseId(), dispatch.revision());
+            context.append("\nLatest retained failed test: ").append(failure == null ? "none" : excerpt(failure, 1024)).append('\n');
+        }
+        if (activeHint || "DEFENSE".equals(dispatch.mode())) {
             var snapshot = exercises.find(dispatch.sessionHash(), dispatch.exerciseId());
-            if (!snapshot.revision().equals(String.valueOf(dispatch.revision()))) throw new IllegalStateException("Defense revision changed");
+            if (!snapshot.revision().equals(String.valueOf(dispatch.revision()))) throw new IllegalStateException("Saved evidence revision changed");
             context.append("\nUntrusted saved editable source excerpts:\n");
             var language = ProblemLanguage.valueOf(tasks.problemLanguage(snapshot.problemVersionId()));
             var changes = history.recent(dispatch.sessionHash(), dispatch.exerciseId(), Long.MAX_VALUE).changes().stream().limit(8).toList();
             var paths = new java.util.LinkedHashSet<String>();
+            if (activeHint) {
+                String question = (dispatch.question() + " " + dispatch.topic()).toLowerCase(java.util.Locale.ROOT);
+                snapshot.paths().stream().filter(language::editable).sorted().filter(path -> {
+                    String name = path.substring(path.lastIndexOf('/') + 1).toLowerCase(java.util.Locale.ROOT);
+                    return question.contains(name) || name.lastIndexOf('.') > 1 && question.contains(name.substring(0, name.lastIndexOf('.')));
+                }).forEach(paths::add);
+            }
             for (var change : changes) {
+                if (paths.size() >= 4) break;
                 if (!change.retained() || Long.parseLong(change.resultRevision()) > dispatch.revision()) continue;
                 var preview = history.preview(dispatch.sessionHash(), dispatch.exerciseId(), change.id(), snapshot.revision(), "DIFF", null);
                 preview.changes().stream().map(file -> file.path()).filter(snapshot.paths()::contains).filter(language::editable).forEach(paths::add);
-                if (paths.size() >= 4) break;
             }
             snapshot.paths().stream().filter(language::editable).sorted().forEach(paths::add);
             for (String path : paths.stream().limit(4).toList()) {
                 var file = exercises.read(dispatch.sessionHash(), dispatch.exerciseId(), path);
-                if (!file.revision().equals(snapshot.revision())) throw new IllegalStateException("Defense revision changed");
+                if (!file.revision().equals(snapshot.revision())) throw new IllegalStateException("Saved evidence revision changed");
                 context.append(path).append('\n').append(excerpt(file.content(), 2048)).append('\n');
             }
             context.append("\nRecent saved changes (at or before evidence revision):\n");

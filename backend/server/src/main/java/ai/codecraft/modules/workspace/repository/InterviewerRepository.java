@@ -33,6 +33,13 @@ public interface InterviewerRepository {
     List<InterviewerTaskEntity> completedHistory(String exercise);
     @Select("SELECT concat('state=',state,', target=',target,', revision=',revision) FROM workspace_test_task WHERE exercise_id=#{exercise}::uuid ORDER BY created_at DESC,id DESC LIMIT 1")
     String latestTest(String exercise);
+    @Select("""
+        SELECT concat('state=',state,', target=',target,', revision=',revision,', reason=',snapshot->>'reason',
+            ', exitCode=',snapshot->>'exitCode',', evidence=',snapshot->'evidence'->>'kind')
+        FROM workspace_test_task WHERE exercise_id=#{exercise}::uuid AND state='FAILED' AND revision<=#{revision}
+          AND NOT history_pruning AND history_pruned_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 1
+        """)
+    String latestFailedTest(String exercise, long revision);
     @Insert("INSERT INTO workspace_interviewer_task(id,exercise_id,user_id,session_hash,control_hash,request_key,question,state,platform_version_id,phase,stage,mode,topic,hint_level,revision,created_at,deadline_at) VALUES(#{id}::uuid,#{exerciseId}::uuid,#{userId}::uuid,#{sessionHash},#{controlHash},#{requestKey},#{question},'QUEUED',#{platformVersionId}::uuid,#{phase},#{stage},#{mode},#{topic},#{hintLevel},#{revision},#{createdAt},#{deadlineAt})")
     void insert(InterviewerTaskEntity task);
     @Update("UPDATE workspace_interviewer_task SET price_snapshot=#{price} WHERE id=#{id}::uuid AND state='RUNNING' AND price_snapshot IS NULL")

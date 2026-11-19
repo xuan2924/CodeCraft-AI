@@ -135,6 +135,8 @@ class CopilotContextPlannerTest {
         assertThat(plan.compaction()).isNotNull();
         assertThat(plan.compaction().throughSequence()).isEqualTo(3);
         assertThat(plan.compaction().sourceIds()).hasSize(3);
+        var calibrated = planner.plan(target(100000, ModelThinkingMode.OFF), input(history(), false), 2.0);
+        assertThat(calibrated.compaction().estimatedTokens()).isEqualTo(2 * plan.compaction().estimatedTokens());
         assertThat(plan.compaction().outputTokens()).isEqualTo(1024);
         assertThat(plan.compaction().estimatedTokens() + plan.compaction().outputTokens()).isLessThan(100000);
         assertThat((long) plan.compaction().maximumSummaryBytes()).isLessThan(plan.compaction().replacedBytes());
@@ -162,6 +164,28 @@ class CopilotContextPlannerTest {
         assertThat(messages.stream().filter(AiMessage.class::isInstance).map(AiMessage.class::cast).noneMatch(AiMessage::hasToolExecutionRequests)).isTrue();
     }
 
+    @Test void jsonEscapingCountsAgainstTransportButNotRawPromptTokens() {
+        var target = target(100000, ModelThinkingMode.OFF);
+        var escaped = planner.plan(target, input(List.of(row(1, UserMessage.from("".repeat(1000)))), false)).projection();
+        var plain = planner.plan(target, input(List.of(row(1, UserMessage.from("a".repeat(1000)))), false)).projection();
+        assertThat(escaped.estimatedTokens()).isEqualTo(plain.estimatedTokens());
+        assertThat(escaped.encodedBytes()).isGreaterThan(plain.encodedBytes());
+    }
+
+    @Test void realUsageCalibrationChangesTokenAdmissionButNeverTheTransportBound() {
+        var source = input(List.of(row(1, UserMessage.from("a".repeat(12000)))), false);
+        var target = target(16000, ModelThinkingMode.OFF);
+        var low = planner.plan(target, source, 0.5);
+        var high = planner.plan(target, source, 3.0);
+        assertThat(low.safe()).isTrue();
+        assertThat(high.safe()).isFalse();
+        assertThat(low.projection().encodedBytes()).isEqualTo(high.projection().encodedBytes());
+        var oversize = planner.plan(target(4000000, ModelThinkingMode.OFF),
+            input(List.of(row(1, UserMessage.from("a".repeat(1048576)))), false), 0.5);
+        assertThat(oversize.safe()).isFalse();
+        assertThat(oversize.automaticNeeded()).isTrue();
+    }
+
     @Test void checksThresholdSeparatelyFromHardWindowAndNeverLabelsEstimateAsActual() {
         var source = input(List.of(row(1, UserMessage.from("goal ".repeat(2000))), row(2, AiMessage.from("recent"))), false);
         long estimated = planner.plan(target(100000, ModelThinkingMode.OFF), source).projection().estimatedTokens();
@@ -172,7 +196,7 @@ class CopilotContextPlannerTest {
     }
 
     @Test void refusesOversizeIrreducibleGoalAndDoesNotLowerThinkingOutputBudget() {
-        var goal = row(1, UserMessage.from("x".repeat(20000)));
+        var goal = row(1, UserMessage.from("x".repeat(80000)));
         var plan = planner.plan(target(8192, ModelThinkingMode.OFF), input(List.of(goal), false));
         assertThat(plan.safe()).isFalse(); assertThat(plan.compaction()).isNull();
         var configuration = new ModelConfigurationResponse("model", "connection", "fixture", "fixture", 100000, 8192,
@@ -201,7 +225,7 @@ class CopilotContextPlannerTest {
         var goal = row(1, UserMessage.from("current goal"));
         var source = new CopilotContextInputDTO(null, null, 0,
             List.of(goal, row(2, AiMessage.from("x".repeat(16000))), row(3, AiMessage.from("recent"))), List.of(goal), List.of(), false, 0,
-            List.of(ChatMessageSerializer.messageToJson(UserMessage.from("s".repeat(64000)))));
+            List.of(ChatMessageSerializer.messageToJson(UserMessage.from("s".repeat(128000)))));
         var plan = planner.plan(target(32768, ModelThinkingMode.OFF), source);
         assertThat(plan.safe()).isFalse();
         assertThat(plan.compaction()).isNull();
@@ -209,7 +233,7 @@ class CopilotContextPlannerTest {
 
     @Test void doesNotChargeWhenUnappliedDirectionsAloneCannotFitTheWindow() {
         var pending = new ArrayList<String>();
-        for (int index = 0; index < 32; index++) pending.add(ChatMessageSerializer.messageToJson(UserMessage.from("x".repeat(4000))));
+        for (int index = 0; index < 32; index++) pending.add(ChatMessageSerializer.messageToJson(UserMessage.from("x".repeat(12000))));
         var source = new CopilotContextInputDTO(null, null, 0, List.of(row(1, UserMessage.from("old goal")),
             row(2, AiMessage.from("old explanation ".repeat(1000))), row(3, AiMessage.from("recent"))), List.of(), pending, false, 0);
         var plan = planner.plan(target(100000, ModelThinkingMode.OFF), source);
@@ -218,12 +242,12 @@ class CopilotContextPlannerTest {
 
     @Test void expandsTheCompletePrefixWhenKeepingRecentOpaqueHistoryWouldPreventContinuation() {
         var goal = row(1, UserMessage.from("current goal stays exact"));
-        var completed = row(2, AiMessage.builder().text("confirmed ordinary visible evidence").thinking("x".repeat(20000)).build());
+        var completed = row(2, AiMessage.builder().text("confirmed ordinary visible evidence").thinking("x".repeat(80000)).build());
         var source = new CopilotContextInputDTO(null, null, 0, List.of(goal, completed), List.of(goal), List.of(), false, 0);
         var plan = planner.plan(target(16000, ModelThinkingMode.OFF), source);
         assertThat(plan.safe()).isFalse(); assertThat(plan.compaction()).isNotNull();
         assertThat(plan.compaction().throughSequence()).isEqualTo(2);
-        assertThat(plan.compaction().request().messages().toString()).doesNotContain("x".repeat(20000));
+        assertThat(plan.compaction().request().messages().toString()).doesNotContain("x".repeat(80000));
         var foreign = new CopilotContextInputDTO(null, null, 0, List.of(goal, completed, row(3, AiMessage.from("recent"))),
             List.of(goal), List.of(), false, 3);
         assertThat(planner.plan(target(100000, ModelThinkingMode.OFF), foreign).compaction()).isNull();

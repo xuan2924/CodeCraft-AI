@@ -67,7 +67,8 @@ public class CopilotCompactionRunner {
                 var plan = prepared.plan().compaction();
                 if (plan == null) { execution.noCandidate(id, worker, prepared.plan().safe()); return; }
                 var candidate = repair ? repair(plan) : plan;
-                if (candidate.estimatedTokens() + candidate.outputTokens() >= Math.min(ticket.target().model().contextWindow(), limits.contextBytes())) {
+                if (candidate.estimatedTokens() + candidate.outputTokens() >= ticket.target().model().contextWindow()
+                    || requests.encodedBytes(candidate.request()) > limits.contextBytes()) {
                     execution.fail(id, worker, "COPILOT_CONTEXT_REQUIRED"); return;
                 }
                 String ids = json.writeValueAsString(candidate.sourceIds());

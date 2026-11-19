@@ -54,7 +54,7 @@ class CopilotToolExecutorTest {
             var outcome = (ToolOutcome.Completed) executor.execute(task("MAIN"), "worker", tool(name, "{\"expected_revision\":" + revision + "}"));
             assertThat(json.readTree(outcome.body()).path("code").asText()).isEqualTo("REVISION_CONFLICT");
         }
-        verify(preparation, never()).prepare(any(), any(), any(), any());
+        verify(preparation, never()).prepare(any(), any(), any(), any(), any());
         verify(tests, never()).execute(any(), any(), any());
         verify(commands, never()).execute(any(), any(), any());
     }
@@ -62,12 +62,12 @@ class CopilotToolExecutorTest {
     @Test void modernWriteUsesTheUnchangedApprovalPathAndBtwCannotReachIt() throws Exception {
         when(tasks.planningRevision("task")).thenReturn("7");
         var prepared = new CopilotProposalPreparedDTO("instance", "7", "{}", "[]", List.of());
-        when(preparation.prepare(eq("session"), eq("exercise"), eq("write"), any())).thenReturn(prepared);
+        when(preparation.prepare(eq("session"), eq("exercise"), eq("write"), any(), any())).thenReturn(prepared);
         when(proposals.register("task", "worker", "tool", prepared)).thenReturn(true);
         assertThat(executor.execute(task("MAIN"), "worker", tool("write", "{\"path\":\"a\",\"content\":\"b\"}"))).isInstanceOf(ToolOutcome.Suspended.class);
         var denied = executor.execute(task("BTW"), "worker", tool("edit", "{\"files\":[]}"));
         assertThat(((ToolOutcome.Completed) denied).outcomeCode()).isEqualTo(ToolOutcome.Code.DENIED);
-        verify(preparation, never()).prepare(any(), any(), eq("edit"), any());
+        verify(preparation, never()).prepare(any(), any(), eq("edit"), any(), any());
     }
 
     @ParameterizedTest
@@ -76,14 +76,14 @@ class CopilotToolExecutorTest {
         var result = (ToolOutcome.Completed) executor.execute(task("EXPLORE"), "worker", tool(name, "{}"));
         assertThat(result.outcomeCode()).isEqualTo(ToolOutcome.Code.DENIED);
         verify(tasks, never()).planningRevision(any());
-        verify(preparation, never()).prepare(any(), any(), any(), any());
+        verify(preparation, never()).prepare(any(), any(), any(), any(), any());
         verify(tests, never()).execute(any(), any(), any());
         verify(commands, never()).execute(any(), any(), any());
     }
 
     @Test void diagnosticEditFailureCompletesRatherThanCrashesTheTask() throws Exception {
         when(tasks.planningRevision("task")).thenReturn("7");
-        when(preparation.prepare(any(), any(), eq("edit"), any())).thenThrow(new CopilotEditException("EDIT_AMBIGUOUS_MATCH", "a", 42));
+        when(preparation.prepare(any(), any(), eq("edit"), any(), any())).thenThrow(new CopilotEditException("EDIT_AMBIGUOUS_MATCH", "a", 42));
         var outcome = (ToolOutcome.Completed) executor.execute(task("MAIN"), "worker", tool("edit", "{\"files\":[]}"));
         assertThat(outcome.outcomeCode()).isEqualTo(ToolOutcome.Code.INVALID_ARGUMENTS);
         assertThat(json.readTree(outcome.payload()).path("lineCount").asInt()).isEqualTo(42);
@@ -94,19 +94,6 @@ class CopilotToolExecutorTest {
         return new CopilotTaskEntity("task", "exercise", "user", "session", "key", "fingerprint", "RUNNING", null,
             false, "worker", Instant.MAX, Instant.EPOCH, null, "conversation", lane);
     }
-    @org.junit.jupiter.api.Test
-    void readOfBAtNewRevisionCannotAuthorizeOverwritingA() throws Exception {
-        when(tasks.planningRevision("task")).thenReturn("8");
-        when(tasks.readPaths("task", "7")).thenReturn(List.of("a"));
-        when(tasks.readPaths("task", "8")).thenReturn(List.of("b"));
-        var diff = new ai.codecraft.modules.copilot.model.dto.CopilotFileDiffDTO("a", "UPDATE", "user saved", "stale overwrite");
-        var prepared = new CopilotProposalPreparedDTO("instance", "8", "{}", "[]", List.of(diff));
-        when(preparation.prepare(any(), any(), eq("write"), any())).thenReturn(prepared);
-        var outcome = (ToolOutcome.Completed) executor.execute(task("MAIN"), "worker", tool("write", "{\"path\":\"a\",\"content\":\"stale overwrite\"}"));
-        assertThat(outcome.outcomeCode()).isEqualTo(ToolOutcome.Code.CONFLICT);
-        verify(proposals, never()).register(any(), any(), any(), any());
-    }
-
     private CopilotToolEntity tool(String name, String input) {
         return new CopilotToolEntity("tool", "turn", "task", "exercise", 0, "call", name, input, "RUNNING", null, Instant.EPOCH, null);
     }

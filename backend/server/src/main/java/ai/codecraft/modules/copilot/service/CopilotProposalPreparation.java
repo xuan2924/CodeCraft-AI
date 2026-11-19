@@ -18,6 +18,8 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Set;
+import java.util.function.Function;
+import ai.codecraft.modules.workspace.model.dto.WorkspaceFileResponse;
 import java.util.Arrays;
 import java.util.stream.Collectors;
 import ai.codecraft.modules.copilot.model.dto.CopilotTextReplacementDTO;
@@ -43,9 +45,9 @@ public class CopilotProposalPreparation {
             .with(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).with(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
     }
 
-    public CopilotProposalPreparedDTO prepare(String session, String exercise, String name, String arguments) {
-        if ("propose_changes".equals(name)) return prepare(session, exercise, arguments);
+    public CopilotProposalPreparedDTO prepare(String session, String exercise, String name, String arguments, Function<String, String> observation) {
         if (arguments == null || arguments.getBytes(StandardCharsets.UTF_8).length > MAX_ARGUMENT_BYTES) invalid();
+        if ("propose_changes".equals(name)) return prepareBatch(session, exercise, arguments, observation);
         try {
             JsonNode value = json.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                 .with(JsonParser.Feature.STRICT_DUPLICATE_DETECTION).readTree(arguments);
@@ -74,12 +76,13 @@ public class CopilotProposalPreparation {
                         if (!snapshot.paths().contains(path)) throw new BusinessException(WorkspaceErrorCode.FILE_NOT_FOUND);
                         var original = files.read(session, exercise, path);
                         if (!revision.equals(original.revision()) || !snapshot.workspaceInstanceId().equals(original.workspaceInstanceId())) throw new BusinessException(WorkspaceErrorCode.REVISION_CONFLICT);
+                        requireObserved(original, observation);
                         changes.add(new FileChangeRequest(path, "UPDATE", exactEdit(path, original.content(), file.path("edits"))));
                     } else invalid();
                 }
             }
             // The normal immutable proposal path rechecks all files and the revision after preparation.
-            return prepareBatch(session, exercise, json.writeValueAsString(new CopilotProposalInputDTO(revision, changes)));
+            return prepareBatch(session, exercise, json.writeValueAsString(new CopilotProposalInputDTO(revision, changes)), observation);
         } catch (JsonProcessingException malformed) { throw new BusinessException(CopilotErrorCode.COPILOT_INVALID_REQUEST); }
     }
 
@@ -186,12 +189,14 @@ public class CopilotProposalPreparation {
         return value.path(name).textValue();
     }
 
-    public CopilotProposalPreparedDTO prepare(String session, String exercise, String arguments) {
-        if (arguments == null || arguments.getBytes(StandardCharsets.UTF_8).length > MAX_ARGUMENT_BYTES) invalid();
-        return prepareBatch(session, exercise, arguments);
+    private static void requireObserved(WorkspaceFileResponse file, Function<String, String> observation) {
+        String digest = file.contentSha256();
+        if (digest == null || !digest.matches("[0-9a-f]{64}") || !digest.equals(observation.apply(file.path()))) {
+            throw new BusinessException(WorkspaceErrorCode.REVISION_CONFLICT);
+        }
     }
 
-    private CopilotProposalPreparedDTO prepareBatch(String session, String exercise, String arguments) {
+    private CopilotProposalPreparedDTO prepareBatch(String session, String exercise, String arguments, Function<String, String> observation) {
         FileBatchRequest batch;
         String payload;
         try {
@@ -214,6 +219,7 @@ public class CopilotProposalPreparation {
                 var file = files.read(session, exercise, change.path());
                 if (!initial.workspaceInstanceId().equals(file.workspaceInstanceId()) || !batch.expectedRevision().equals(file.revision())
                     || !change.path().equals(file.path())) throw new BusinessException(WorkspaceErrorCode.REVISION_CONFLICT);
+                requireObserved(file, observation);
                 before = file.content();
                 int bytes = before.getBytes(StandardCharsets.UTF_8).length;
                 originalBytes += bytes;

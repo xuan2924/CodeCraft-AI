@@ -13,8 +13,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.AntPathMatcher;
 import ai.codecraft.modules.workspace.model.dto.ExerciseResponse;
@@ -69,7 +67,7 @@ public class CopilotReadTools {
             if (truncated && result.isEmpty()) result.add("[Line " + first + " exceeds the byte limit; use read_source with kind FILE and byte pagination]");
             else if (more) result.add("[Showing lines " + first + "-" + (first + result.size() - 1) + " of " + lines.length
                 + ". Use start_line=" + (first + result.size()) + " to continue]");
-            return new ReadToolResultDTO("OK", file.revision(), result, more);
+            return new ReadToolResultDTO("OK", file.revision(), result, more, file.contentSha256());
         } catch (IOException malformed) { return failure("INVALID_ARGUMENTS"); }
         catch (BusinessException rejected) { return failure(rejected.errorCode().code()); }
     }
@@ -88,13 +86,6 @@ public class CopilotReadTools {
         if (context < 0 || context > 10 || limit < 1 || limit > MAX_LINES) return failure("INVALID_ARGUMENTS");
         boolean regex = value.path("is_regex").asBoolean(false);
         if (regex && value.path("literal").asBoolean(false)) return failure("INVALID_ARGUMENTS");
-        if (regex) {
-            // Deliberately restricted Java regex subset: no groups, alternation, backreferences or repeated quantifiers.
-            if (pattern.chars().anyMatch(c -> "(){}|".indexOf(c) >= 0) || pattern.contains("\\") || pattern.chars().filter(c -> c == '*' || c == '+' || c == '?').count() > 1
-                || !pattern.startsWith("^") && pattern.chars().anyMatch(c -> c == '*' || c == '+' || c == '?')) return failure("INVALID_ARGUMENTS");
-            try { Pattern.compile(pattern); }
-            catch (PatternSyntaxException invalid) { return failure("INVALID_ARGUMENTS"); }
-        }
         if (glob && (!pattern.matches("[A-Za-z0-9_./*?-]+") || pattern.startsWith("/")
             || List.of(pattern.split("/")).stream().anyMatch(part -> part.equals("..") || part.equals(".")))) return failure("INVALID_ARGUMENTS");
         if (!glob) {

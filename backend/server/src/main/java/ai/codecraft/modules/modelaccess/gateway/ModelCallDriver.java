@@ -68,6 +68,14 @@ public class ModelCallDriver implements AutoCloseable {
 
     public ModelCallResultDTO call(ModelInvocationDTO target, ChatRequest request, ModelInvocationLimitsDTO limits, int maximumDecodedBytes,
         Instant notAfter, Consumer<String> partialResponse, Consumer<String> partialThinking) throws InterruptedException {
+        return call(target, request, limits, maximumDecodedBytes, notAfter, partialResponse, partialThinking, (index, name, bytes) -> {});
+    }
+
+    @FunctionalInterface
+    public interface ToolProgress { void accept(int index, String name, int argumentBytes); }
+
+    public ModelCallResultDTO call(ModelInvocationDTO target, ChatRequest request, ModelInvocationLimitsDTO limits, int maximumDecodedBytes,
+        Instant notAfter, Consumer<String> partialResponse, Consumer<String> partialThinking, ToolProgress toolProgress) throws InterruptedException {
         if (TransactionSynchronizationManager.isActualTransactionActive()) throw new IllegalStateException("Model calls must run outside database transactions");
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Model worker interrupted");
         requestParameters(request);
@@ -79,7 +87,7 @@ public class ModelCallDriver implements AutoCloseable {
         reapClosedTransports();
         if (closed.get() || !capacity.tryAcquire()) throw new BusinessException(ModelAccessErrorCode.MODEL_RUNTIME_BUSY);
         long started = System.nanoTime();
-        var subscriber = new ResponseSubscriber(maximumDecodedBytes, partialResponse, partialThinking);
+        var subscriber = new ResponseSubscriber(maximumDecodedBytes, partialResponse, partialThinking, toolProgress);
         BoundedModelHttpClientBuilder transport = null;
         try {
             transport = new BoundedModelHttpClientBuilder(properties.responseBytes(), properties.errorBytes());
@@ -175,7 +183,9 @@ public class ModelCallDriver implements AutoCloseable {
         private int streamedBytes;
         private final Consumer<String> partialResponse;
         private final Consumer<String> partialThinking;
-        ResponseSubscriber(int maximum, Consumer<String> partialResponse, Consumer<String> partialThinking) {
+        private final ToolProgress toolProgress;
+        ResponseSubscriber(int maximum, Consumer<String> partialResponse, Consumer<String> partialThinking, ToolProgress toolProgress) {
+            this.toolProgress = toolProgress;
             this.maximum = maximum; this.partialResponse = partialResponse; this.partialThinking = partialThinking;
         }
         @Override public void onSubscribe(Flow.Subscription value) {
@@ -190,8 +200,9 @@ public class ModelCallDriver implements AutoCloseable {
                 case PartialToolCall tool -> tool.partialArguments();
                 default -> null;
             };
+            int bytes = 0;
             if (text != null) {
-                int bytes = text.getBytes(StandardCharsets.UTF_8).length;
+                bytes = text.getBytes(StandardCharsets.UTF_8).length;
                 if (bytes > maximum - streamedBytes) {
                     result.completeExceptionally(new BusinessException(ModelAccessErrorCode.MODEL_OUTPUT_LIMIT_EXCEEDED)); cancel(); return;
                 }
@@ -200,6 +211,7 @@ public class ModelCallDriver implements AutoCloseable {
             try {
                 if (event instanceof PartialResponse partial) partialResponse.accept(partial.text());
                 else if (event instanceof PartialThinking thinking) partialThinking.accept(thinking.text());
+                else if (event instanceof PartialToolCall tool) toolProgress.accept(tool.index(), tool.name(), bytes);
             } catch (RuntimeException failure) { result.completeExceptionally(failure); cancel(); return; }
             if (event instanceof CompleteResponse complete) response = complete.chatResponse();
         }

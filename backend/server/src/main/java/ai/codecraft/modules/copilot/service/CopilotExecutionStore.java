@@ -182,7 +182,7 @@ public class CopilotExecutionStore {
         tasks.recordProjectInstructions(turn.id(), prepared.projectPayload());
         tasks.recordPrice(turn.id(), evidence.price(target, turn.createdAt()));
         tasks.historyMode(turn.id(), converted);
-        contexts.dispatchContext(turn.id(), prepared.plan().projection().estimatedTokens(), prepared.plan().projection().encodedBytes(),
+        contexts.dispatchContext(turn.id(), prepared.plan().projection().estimatedTokens(), prepared.plan().projection().baselineTokens(), prepared.plan().projection().encodedBytes(),
             prepared.plan().projection().microSavedBytes(), ticket.version(), ticket.summaryId(), ticket.throughSequence(), tasks.lastSequence(task.conversationId()), ticket.textHistoryThroughSequence());
         if (!adjustments.isEmpty()) {
             if (steers.applied(id, turn.id(), clock.instant()) != adjustments.size()) throw new IllegalStateException("Steer dispatch lost its ordered instructions");
@@ -410,7 +410,9 @@ public class CopilotExecutionStore {
                 String revision = null;
                 if ("read".equals(CopilotToolCatalog.canonical(tool.name())) && "OK".equals(body.path("code").asText())) {
                     revision = body.path("revision").asText(null);
-                    if (revision != null && body.path("lines").path(0).asText().startsWith(TOOL_JSON.readTree(tool.arguments()).path("path").asText() + ":")) tasks.recordReadRevision(tool.id(), revision);
+                    String path = TOOL_JSON.readTree(tool.arguments()).path("path").asText();
+                    String digest = body.path("contentSha256").asText("");
+                    if (digest.matches("[0-9a-f]{64}") && body.path("lines").path(0).asText().startsWith(path + ":")) tasks.observeFile(task.id(), path, digest);
                 } else if ("APPLIED".equals(body.path("code").asText())) {
                     revision = body.path("revision").asText(null);
                 } else if ("COMMAND_RESULT".equals(body.path("code").asText())) {

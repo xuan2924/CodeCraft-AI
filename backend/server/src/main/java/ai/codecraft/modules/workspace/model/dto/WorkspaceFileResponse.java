@@ -1,3 +1,7 @@
 package ai.codecraft.modules.workspace.model.dto;
 
-public record WorkspaceFileResponse(String workspaceInstanceId, String revision, String path, String content) {}
+public record WorkspaceFileResponse(String workspaceInstanceId, String revision, String path, String content, String contentSha256) {
+    public WorkspaceFileResponse(String workspaceInstanceId, String revision, String path, String content) {
+        this(workspaceInstanceId, revision, path, content, null);
+    }
+}

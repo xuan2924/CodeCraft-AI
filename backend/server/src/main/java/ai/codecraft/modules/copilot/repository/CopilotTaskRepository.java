@@ -21,10 +21,18 @@ public interface CopilotTaskRepository {
 
     @Update("UPDATE copilot_task SET reference_count=#{count} WHERE id=#{id}::uuid")
     void referenceCount(String id, int count);
-    @Update("UPDATE copilot_tool SET read_revision=#{revision}::bigint WHERE id=#{tool}::uuid")
-    void recordReadRevision(String tool, String revision);
-    @Select("SELECT DISTINCT arguments::jsonb->>'path' FROM copilot_tool WHERE task_id=#{task}::uuid AND read_revision=#{revision}::bigint")
-    List<String> readPaths(String task, String revision);
+    @Update("UPDATE copilot_task SET file_observations=jsonb_set(file_observations,ARRAY[#{path}::text],to_jsonb(#{digest}::text)) WHERE id=#{task}::uuid")
+    void observeFile(String task, String path, String digest);
+    @Select("SELECT file_observations->>#{path} FROM copilot_task WHERE id=#{task}::uuid")
+    String observedDigest(String task, String path);
+    @Update("""
+        UPDATE copilot_task SET file_observations = (file_observations - ARRAY(
+            SELECT f->>'path' FROM jsonb_array_elements(p.batch_payload::jsonb->'changes') f WHERE f->>'kind'='DELETE'))
+            || (SELECT coalesce(jsonb_object_agg(f->>'path', encode(sha256(convert_to(f->>'content','UTF8')), 'hex')), '{}'::jsonb)
+                FROM jsonb_array_elements(p.batch_payload::jsonb->'changes') f WHERE f->>'kind' IN ('CREATE','UPDATE'))
+        FROM copilot_proposal p WHERE p.id=#{proposal}::uuid AND p.state='APPLIED' AND copilot_task.id=p.task_id
+        """)
+    void observeAppliedProposal(String proposal);
     @Select("SELECT planning_revision::text FROM copilot_task WHERE id=#{id}::uuid")
     String planningRevision(String id);
     @Update("UPDATE copilot_task SET planning_revision=greatest(planning_revision,#{revision}::bigint) WHERE id=#{id}::uuid")

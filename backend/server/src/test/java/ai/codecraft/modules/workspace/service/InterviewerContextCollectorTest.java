@@ -36,7 +36,7 @@ class InterviewerContextCollectorTest {
             7L, Instant.EPOCH, Instant.MAX, Instant.EPOCH, null)).toList();
         when(tasks.completedHistory("exercise")).thenReturn(turns);
         when(tasks.latestTest("exercise")).thenReturn("state=FAILED, target=challenge, revision=7");
-        String result = collector.collect(dispatch("HINT"));
+        String result = collector.collect(dispatch("CLARIFY"));
         assertThat(result).contains("CHALLENGE", "revision: 7", "hint level: 2", "state=FAILED", "[truncated]");
         assertThat(result.indexOf("question7")).isLessThan(result.indexOf("question0"));
         assertThat(result).doesNotContain("question8", "question9");
@@ -70,7 +70,24 @@ class InterviewerContextCollectorTest {
         when(change.source()).thenReturn("AI_PATCH");
         assertThat(collector.collect(dispatch("DEFENSE"))).contains("src/main/java/E.java").doesNotContain("src/main/java/D.java");
         when(exercises.read("session", "exercise", "src/main/java/A.java")).thenReturn(new WorkspaceFileResponse("instance", "8", "src/main/java/A.java", "changed"));
-        assertThatThrownBy(() -> collector.collect(dispatch("DEFENSE"))).hasMessage("Defense revision changed");
+        assertThatThrownBy(() -> collector.collect(dispatch("DEFENSE"))).hasMessage("Saved evidence revision changed");
+    }
+    @Test
+    void hintPrioritizesNamedEditableSourceAndKeepsOlderFailureSeparateFromLatestPass() {
+        when(tasks.latestTest("exercise")).thenReturn("state=PASSED, revision=7");
+        when(tasks.latestFailedTest("exercise", 7)).thenReturn("state=FAILED, revision=5, reason=compilation_failed");
+        var snapshot = mock(ExerciseResponse.class);
+        when(snapshot.revision()).thenReturn("7");
+        when(snapshot.problemVersionId()).thenReturn("v1");
+        when(tasks.problemLanguage("v1")).thenReturn("JAVA_MAVEN");
+        var paths = List.of("src/main/java/A.java", "src/main/java/B.java", "src/main/java/C.java", "src/main/java/D.java",
+            "src/test/java/Rounding.java", "private/Rounding.java");
+        when(snapshot.paths()).thenReturn(paths);
+        when(exercises.find("session", "exercise")).thenReturn(snapshot);
+        when(history.recent("session", "exercise", Long.MAX_VALUE)).thenReturn(new WorkspaceHistoryResponse("exercise", List.of(), null));
+        for (String path : paths) when(exercises.read("session", "exercise", path)).thenReturn(new WorkspaceFileResponse("instance", "7", path, "saved"));
+        assertThat(collector.collect(dispatch("HINT"))).contains("state=PASSED, revision=7", "state=FAILED, revision=5, reason=compilation_failed",
+            "src/test/java/Rounding.java").doesNotContain("private/Rounding.java", "src/main/java/D.java");
     }
     @Test
     void unicodeExcerptDoesNotSplitSurrogatePairs() {

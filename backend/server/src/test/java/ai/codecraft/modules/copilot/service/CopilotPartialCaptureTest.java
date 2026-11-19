@@ -49,6 +49,14 @@ class CopilotPartialCaptureTest {
                 capture.thinking("\u0001".repeat(6000));
                 assertTrue(hub.latest("task").frame().length <= 32768);
                 assertTrue(new String(hub.latest("task").frame(), StandardCharsets.UTF_8).contains("\"truncated\":true"));
+                capture.text("latest");
+                capture.thinking("reason");
+                capture.tool(0, "edit", 3);
+                capture.tool(1, "write", 8);
+                capture.tool(0, "edit", 4);
+                String frame = new String(hub.latest("task").frame(), StandardCharsets.UTF_8);
+                assertTrue(frame.contains("latest") && frame.contains("reason"));
+                assertTrue(frame.contains("\"toolName\":\"edit\"") && frame.contains("\"toolArgumentBytes\":7"));
                 throw new IllegalStateException("provider interrupted");
             }
         } catch (IllegalStateException expected) { assertEquals("provider interrupted", expected.getMessage()); }
